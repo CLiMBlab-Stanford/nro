@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# SynBOLD-DisCo calls epi_reg internally. nro computes a coverage-aware
+# rigid transform first, then this shim supplies it without changing inference.
+epi=""
+t1=""
+out=""
+for argument in "$@"; do
+    case "$argument" in
+        --epi=*) epi="${argument#--epi=}" ;;
+        --t1=*) t1="${argument#--t1=}" ;;
+        --out=*) out="${argument#--out=}" ;;
+    esac
+done
+
+if [[ -z "$epi" || -z "$t1" || -z "$out" ]]; then
+    echo "nro epi_reg shim received incomplete arguments" >&2
+    exit 2
+fi
+if [[ ! -f /INPUTS/epi_reg_d.mat ]]; then
+    echo "Missing precomputed /INPUTS/epi_reg_d.mat" >&2
+    exit 2
+fi
+
+cp /INPUTS/epi_reg_d.mat "${out}.mat"
+flirt \
+    -in "$epi" \
+    -ref "$t1" \
+    -applyxfm \
+    -init "${out}.mat" \
+    -interp trilinear \
+    -out "$out"

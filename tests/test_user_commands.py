@@ -1,0 +1,680 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from nro.bin.run import _write_worker_script, build_parser, main as run_main
+from nro.orchestration.registry import SCHEMA_VERSION, Registry
+from nro.bin.set import main as set_main
+from nro.bin.status import _render_report, main as status_main
+from nro.bin.stop import main as stop_main
+from nro.bin.stop import build_parser as stop_parser
+from nro.engine.cli import core_selection, page_text
+
+
+def _write(path: Path, text: str = "x") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_run_defaults() -> None:
+    args = build_parser().parse_args([])
+    selection = core_selection(args)
+    assert selection.participants == ()
+    assert selection.projects == ()
+    assert selection.modules == ("networks",)
+    assert selection.workflows == ("main",)
+    assert selection.spaces == ("fsnative",)
+    assert selection.smoothing == (2,)
+    assert args.concurrency == 50
+    assert args.partition == "sphinx"
+
+
+def test_shared_selection_options_accept_multiple_values() -> None:
+    args = build_parser().parse_args(
+        [
+            "-p", "sub-01", "02",
+            "-P", "alpha", "beta",
+            "-m", "clean", "networks",
+            "-w", "main", "experiment",
+            "-r", "task=language,spatial", "dir=LR",
+            "-s", "fsnative", "T1w",
+            "-S", "0", "2",
+        ]
+    )
+
+    selection = core_selection(args)
+    assert selection.participants == ("01", "02")
+    assert selection.projects == ("alpha", "beta")
+    assert selection.modules == ("clean", "networks")
+    assert selection.workflows == ("main", "experiment")
+    assert selection.runs == {"task": ("language", "spatial"), "dir": ("LR",)}
+    assert selection.spaces == ("fsnative", "T1w")
+    assert selection.smoothing == (0, 2)
+
+
+def test_module_specific_selectors_can_accompany_mixed_module_requests() -> None:
+    args = build_parser().parse_args(
+        ["-m", "anat", "networks", "-r", "task=rest", "-s", "T1w", "-S", "0"]
+    )
+    selection = core_selection(args)
+
+    assert selection.modules == ("anat", "networks")
+    assert selection.runs == {"task": ("rest",)}
+    assert selection.spaces == ("T1w",)
+    assert selection.smoothing == (0,)
+
+
+def test_stop_workers_short_flag_and_long_workflow_option() -> None:
+    worker_args = stop_parser().parse_args(["-W"])
+    assert worker_args.workers is True
+    assert worker_args.workflow is None
+    workflow_args = stop_parser().parse_args(["-w", "experiment"])
+    assert workflow_args.workers is False
+    assert workflow_args.workflow == ["experiment"]
+
+
+def test_status_report_pages_only_interactive_output(monkeypatch, capsys) -> None:
+    report = _render_report([])
+    assert report == (
+        f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} "
+        f"{'STATUS':12} {'MEM':8} ENTITIES\n"
+    )
+    page_text(report, use_pager=False)
+    assert capsys.readouterr().out == report
+
+    calls = []
+
+    class Interactive:
+        def isatty(self):
+            return True
+
+        def write(self, _value):
+            raise AssertionError("interactive status should use the pager")
+
+    monkeypatch.setattr("nro.engine.cli.sys.stdout", Interactive())
+    monkeypatch.setattr("nro.engine.cli.shutil.which", lambda _: "/usr/bin/less")
+    monkeypatch.setattr(
+        "nro.engine.cli.subprocess.run",
+        lambda command, **kwargs: calls.append((command, kwargs)),
+    )
+    page_text(report, use_pager=True)
+    assert calls == [(["/usr/bin/less", "-R"], {"input": report, "text": True, "check": False})]
+
+
+@pytest.mark.parametrize(
+    ("help_text", "expected_command"),
+    [
+        (
+            "  --header N    keep N header lines",
+            ["/usr/bin/less", "-R", "--header", "1"],
+        ),
+        ("classic less help", ["/usr/bin/less", "-R"]),
+    ],
+)
+def test_status_pager_uses_sticky_header_only_when_less_supports_it(
+    monkeypatch,
+    help_text: str,
+    expected_command: list[str],
+) -> None:
+    calls = []
+
+    class Interactive:
+        def isatty(self):
+            return True
+
+        def write(self, _value):
+            raise AssertionError("interactive status should use the pager")
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command == ["/usr/bin/less", "--help"]:
+            return subprocess.CompletedProcess(command, 0, help_text, "")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("nro.engine.cli.sys.stdout", Interactive())
+    monkeypatch.setattr("nro.engine.cli.shutil.which", lambda _: "/usr/bin/less")
+    monkeypatch.setattr("nro.engine.cli.subprocess.run", run)
+
+    page_text("PROJECT\n", use_pager=True, header_lines=1)
+
+    assert calls == [
+        (
+            ["/usr/bin/less", "--help"],
+            {"text": True, "capture_output": True, "check": False},
+        ),
+        (
+            expected_command,
+            {"input": "PROJECT\n", "text": True, "check": False},
+        ),
+    ]
+
+
+def test_status_report_colors_statuses_without_changing_column_width() -> None:
+    report = _render_report(
+        [
+            {
+                "project": "demo",
+                "participant": "01",
+                "module": "anat",
+                "status": "Success",
+                "memory_gb": 32,
+                "entities": {},
+            },
+            {
+                "project": "demo",
+                "participant": "02",
+                "module": "func",
+                "status": "Error",
+                "memory_gb": 32,
+                "entities": {"task": "rest"},
+            },
+        ],
+        color=True,
+    )
+
+    assert "\x1b[1m\x1b[96mPROJECT" in report
+    assert "\x1b[92mSuccess     \x1b[0m" in report
+    assert "\x1b[91m\x1b[1mError       \x1b[0m" in report
+    assert "\x1b[2mtask=rest\x1b[0m" in report
+
+
+def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> None:
+    report = _render_report(
+        [{"project": "demo", "participant": "01", "module": "clean", "status": "Blocked", "memory_gb": 32,
+          "entities": {}, "blocked_by": ("sub-01 func",)}],
+        errors=[{"project": "demo", "participant": "01", "module": "func", "entities": "run=01",
+                 "step": "Registration", "message": "bad transform", "log": "/tmp/instance.log",
+                 "blocked_instances": ["demo sub-01 clean"]}],
+        blocked_instances=[{"project": "demo", "participant": "01", "module": "clean", "entities": "",
+                        "upstream_errors": ["demo sub-01 func (run=01)"]}],
+    )
+    assert "Errors" in report
+    assert "Blocked instances" in report
+    assert "Failed step: Registration" in report
+
+
+def test_status_without_a_registry_prints_an_empty_table(
+    tmp_path: Path, capsys
+) -> None:
+    status_main(["--bids-root", str(tmp_path / "bids"), "--no-pager"])
+
+    output = capsys.readouterr().out
+    assert output.startswith("PROJECT")
+    assert len(output.splitlines()) == 1
+
+
+def test_run_repair_rebuilds_registry_and_discovers_source_tree(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+    obsolete = registry.paths.control / "obsolete-control-state"
+    obsolete.write_text("old")
+    with sqlite3.connect(registry.paths.database) as connection:
+        connection.execute("PRAGMA user_version=10")
+
+    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["repaired"] is True
+    assert result["projects"] == ["demo"]
+    assert result["participants"] == 1
+    assert result["instances"] == 0
+    assert result["requests"] == []
+    assert result["submitted_workers"] == []
+    assert not obsolete.exists()
+    assert registry.instance_rows() == []
+    assert registry.request_rows() == []
+    with registry.connection() as connection:
+        assert tuple(
+            connection.execute(
+                "SELECT project, participant FROM bids_participants"
+            ).fetchone()
+        ) == ("demo", "01")
+    with sqlite3.connect(registry.paths.database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+    status_main(["--bids-root", str(bids), "--no-pager"])
+    status_output = capsys.readouterr().out
+    assert status_output.startswith("PROJECT")
+    assert len(status_output.splitlines()) == 1
+
+
+def test_run_repair_requires_confirmation_before_stopping_active_workers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+    registry.register_worker("active-worker", resource_class="large")
+    called = False
+
+    def unexpected_shutdown(_registry):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    monkeypatch.setattr(
+        "nro.bin.run.stop_worker_pool_for_repair", unexpected_shutdown
+    )
+
+    with pytest.raises(SystemExit, match="repair cancelled"):
+        run_main(["--repair", "--bids-root", str(bids)])
+
+    assert called is False
+    assert registry.paths.database.is_file()
+    assert registry.worker_pool_activity()["workers"][0]["id"] == "active-worker"
+
+
+def test_run_repair_confirms_and_stops_active_workers_before_rebuild(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+    registry.register_worker("active-worker", resource_class="large")
+    calls: list[Registry] = []
+
+    def shutdown(shared_registry: Registry) -> dict:
+        calls.append(shared_registry)
+        return {"cancellation_failures": []}
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+    monkeypatch.setattr("nro.bin.run.stop_worker_pool_for_repair", shutdown)
+
+    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert len(calls) == 1
+    assert result["repaired"] is True
+    assert registry.worker_pool_activity()["workers"] == []
+
+
+def test_run_repair_discovers_participant_without_planning_anatomy(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-02"
+    _write(subject / "func" / "sub-02_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-02_task-rest_run-1_bold.json", "{}")
+
+    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    registry = Registry.for_project("demo", bids_root=bids)
+
+    assert result["repaired"] is True
+    assert result["projects"] == ["demo"]
+    assert result["participants"] == 1
+    assert result["instances"] == 0
+    assert registry.paths.database.is_file()
+    assert registry.instance_rows() == []
+
+
+def test_run_repair_rejects_derivative_selection(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="lab-wide.*--project"):
+        run_main(
+            ["--repair", "-P", "demo", "--bids-root", str(tmp_path / "bids")]
+        )
+
+
+def test_run_reports_when_only_selected_participant_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-02"
+    _write(subject / "func" / "sub-02_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-02_task-rest_run-1_bold.json", "{}")
+
+    with pytest.raises(SystemExit, match="No requested work is available") as error:
+        run_main(
+            [
+                "-p",
+                "02",
+                "-P",
+                "demo",
+                "--bids-root",
+                str(bids),
+                "--no-submit",
+            ]
+        )
+
+    assert "No T1w or T2w images found" in str(error.value)
+
+
+def test_run_continues_past_unavailable_participant(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    available = bids / "demo" / "sub-01"
+    _write(available / "anat" / "sub-01_T1w.nii.gz")
+    _write(available / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(available / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    unavailable = bids / "demo" / "sub-02"
+    _write(unavailable / "func" / "sub-02_task-rest_run-1_bold.nii.gz")
+    _write(unavailable / "func" / "sub-02_task-rest_run-1_bold.json", "{}")
+
+    run_main(
+        [
+            "-P",
+            "demo",
+            "--bids-root",
+            str(bids),
+            "--no-submit",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["participants"] == {"demo": ["01"]}
+    assert result["instances"] == 5
+    assert result["unavailable"] == [
+        {
+            "project": "demo",
+            "participant": "02",
+            "module": "networks",
+            "reason": f"No T1w or T2w images found under {unavailable}",
+        }
+    ]
+
+
+def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-20"
+    _write(subject / "anat" / "sub-20_T1w.nii.gz")
+    for run in ("1", "2"):
+        stem = f"sub-20_task-rest_run-{run}_bold"
+        _write(subject / "func" / f"{stem}.nii.gz")
+        _write(subject / "func" / f"{stem}.json", "{}")
+
+    run_main(
+        ["-p", "20", "-P", "demo", "-m", "clean", "--bids-root", str(bids), "--no-submit", "--json"]
+    )
+    request = json.loads(capsys.readouterr().out)
+    assert request["modules"] == ["clean"]
+    assert request["instances"] == 5  # one anat plus func and clean for both runs
+    assert request["concurrency"] == 50
+
+
+def test_bare_semantics_select_all_participants_through_networks(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "climblab_multisession"
+    for participant in ("01", "02"):
+        subject = project / f"sub-{participant}"
+        _write(subject / "anat" / f"sub-{participant}_T1w.nii.gz")
+        stem = f"sub-{participant}_task-rest_run-1_bold"
+        _write(subject / "func" / f"{stem}.nii.gz")
+        _write(subject / "func" / f"{stem}.json", "{}")
+
+    run_main(["--bids-root", str(bids), "--no-submit", "--json"])
+    request = json.loads(capsys.readouterr().out)
+    assert request["projects"] == ["climblab_multisession"]
+    assert request["participants"] == {"climblab_multisession": ["01", "02"]}
+    assert request["modules"] == ["networks"]
+    assert request["instances"] == 10
+    assert request["concurrency"] == 50
+
+
+def test_participant_selection_spans_every_matching_project(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    for project in ("alpha", "beta"):
+        subject = bids / project / "sub-01"
+        _write(subject / "anat" / "sub-01_T1w.nii.gz")
+        _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+        _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    unmatched = bids / "beta" / "sub-02"
+    _write(unmatched / "anat" / "sub-02_T1w.nii.gz")
+
+    run_main(
+        [
+            "-p", "01", "-m", "func", "--bids-root", str(bids),
+            "--no-submit", "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    registry = Registry.for_project("alpha", bids_root=bids)
+
+    assert result["projects"] == ["alpha", "beta"]
+    assert result["participants"] == {"alpha": ["01"], "beta": ["01"]}
+    assert len(result["requests"]) == 2
+    assert {row["project"] for row in registry.request_rows()} == {"alpha", "beta"}
+    assert {
+        row["project"] for row in registry.instance_rows()
+    } == {"alpha", "beta"}
+
+
+def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+
+    run_main(
+        ["-p", "01", "-P", "demo", "-m", "func", "--bids-root", str(bids), "--no-submit", "--json"]
+    )
+    request = json.loads(capsys.readouterr().out)
+    assert request["instances"] == 2
+    assert request["submitted_workers"] == []
+
+    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    report = json.loads(capsys.readouterr().out)
+    assert set(report) == {"instances", "errors", "blocked_instances"}
+    assert {row["status"] for row in report["instances"]} == {"Queued"}
+    assert report["errors"] == []
+    assert report["blocked_instances"] == []
+
+    status_main(
+        [
+            "-p", "01", "-P", "demo", "-w", "main", "--bids-root", str(bids),
+            "-r", "task=rest", "run=1", "--json",
+        ]
+    )
+    selected = json.loads(capsys.readouterr().out)
+    assert len(selected["instances"]) == 1
+    assert selected["instances"][0]["module"] == "func"
+    assert selected["instances"][0]["workflows"] == ["main"]
+
+    stop_main(["-p", "01", "-m", "anat", "-P", "demo", "--bids-root", str(bids)])
+    assert "Cancelled" in capsys.readouterr().out
+    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    rows = json.loads(capsys.readouterr().out)["instances"]
+    assert {row["status"] for row in rows} == {"Unsubmitted"}
+
+
+def test_set_updates_active_concurrency_without_creating_new_demand(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    run_main(
+        [
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "anat",
+            "--concurrency",
+            "2",
+            "--bids-root",
+            str(bids),
+            "--no-submit",
+            "--json",
+        ]
+    )
+    capsys.readouterr()
+    registry = Registry.for_project("demo", bids_root=bids)
+    original_updated_at = registry.request_rows()[0]["updated_at"]
+
+    set_main(
+        [
+            "unsupported=value",
+            "concurrency=7",
+            "another=setting",
+            "--bids-root",
+            str(bids),
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    warnings = captured.err
+    request = registry.request_rows()[0]
+
+    assert result == {
+        "settings": {"concurrency": 7},
+        "updated_requests": 1,
+    }
+    assert request["concurrency"] == 7
+    assert request["updated_at"] == original_updated_at
+    assert len(registry.request_rows()) == 1
+    assert "unsupported registry setting: unsupported" in warnings
+    assert "unsupported registry setting: another" in warnings
+
+
+def test_set_ignores_invocation_with_only_unsupported_settings(capsys) -> None:
+    set_main(["future-setting=value", "--json"])
+    captured = capsys.readouterr()
+
+    assert json.loads(captured.out) == {"settings": {}, "updated_requests": 0}
+    assert "unsupported registry setting: future-setting" in captured.err
+
+
+def test_status_reports_blocked_instances_and_their_root_errors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    run_main(
+        [
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "--bids-root",
+            str(bids),
+            "--no-submit",
+            "--json",
+        ]
+    )
+    capsys.readouterr()
+
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.register_worker("failed-worker", resource_class="large")
+    claimed = registry.claim_ready_instance("failed-worker", ("large",))
+    assert claimed is not None
+    assert claimed.module == "anat"
+    registry.finish_attempt(
+        claimed.attempt_id,
+        state="error",
+        error_type="RuntimeError",
+        error_message="anatomical failure",
+    )
+
+    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    report = json.loads(capsys.readouterr().out)
+    statuses = {row["module"]: row["status"] for row in report["instances"]}
+
+    assert statuses == {"anat": "Error", "func": "Blocked"}
+    assert len(report["errors"]) == 1
+    assert report["errors"][0]["blocked_instances"] == [
+        "demo sub-01 func (run=1 task=rest)"
+    ]
+    assert len(report["blocked_instances"]) == 1
+    assert report["blocked_instances"][0]["upstream_errors"] == [
+        "demo sub-01 anat"
+    ]
+
+
+def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    run_main(
+        ["-p", "01", "-P", "demo", "-m", "func", "--bids-root", str(bids), "--no-submit", "--json"]
+    )
+    capsys.readouterr()
+    registry = Registry.for_project("demo", bids_root=bids)
+    database_mtime = registry.paths.database.stat().st_mtime_ns
+    control_mtime = registry.paths.control.stat().st_mtime_ns
+
+    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    capsys.readouterr()
+
+    assert registry.paths.database.stat().st_mtime_ns == database_mtime
+    assert registry.paths.control.stat().st_mtime_ns == control_mtime
+
+
+def test_worker_script_records_memory_tier(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+    script = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=24,
+        memory_gb=64,
+        cpus=8,
+    )
+    text = script.read_text()
+    assert script.name.startswith("worker-large-64gb-")
+    assert script.name.endswith(".sbatch")
+    assert "#SBATCH --mem=64G" in text
+    assert "--memory-gb 64" in text
+    assert "--idle-timeout 30" in text
+    assert "--walltime-seconds 86400" in text
+    assert "--drain-seconds 900" in text
+    assert f"cd {Path(__file__).parents[1]}" in text
+    assert "--profile" in text
+    assert f"cd {Path(__file__).resolve().parents[1]}" in text
+
+    other = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="john",
+        account="nlp",
+        hours=24,
+        memory_gb=64,
+        cpus=8,
+    )
+    assert other != script
+    assert "#SBATCH --partition=sphinx" in script.read_text()
+    assert "#SBATCH --partition=john" in other.read_text()

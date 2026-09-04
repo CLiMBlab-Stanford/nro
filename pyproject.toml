@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nro"
+version = "0.0.dev0"
+description = "Climblab fMRI derivative orchestration"
+requires-python = ">=3.12"
+
+[project.scripts]
+nro = "nro.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nro*"]
+
+[tool.setuptools.package-data]
+"nro.configuration" = ["files/*/*.yml"]
+"nro.func.resources.ica_aroma" = ["*.nii.gz"]
+"nro.func.resources.synbold_disco" = ["epi_reg"]
+"nro.microparcellation" = ["*.scene.in", "*.b85"]
+"nro.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
+"nro.qc" = ["*.scene.in"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
