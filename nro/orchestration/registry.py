@@ -33,14 +33,14 @@ from nro.configuration.store import (
     fingerprint,
 )
 from nro.engine.io import atomic_write_text
-from nro.engine.bids import matches_selectors
+from nro.engine.cli import matches_instance_selectors as matches_selectors
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import ExecutionEnvelope, InstanceSpec
 
 
 APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def utcnow() -> str:
@@ -99,6 +99,7 @@ def _instance_relative_directory(instance: dict) -> Path:
 
 @dataclass(frozen=True)
 class RegistryPaths:
+    """Resolved project context and paths into the shared orchestration store."""
     project: str
     bids_root: Path
     project_root: Path
@@ -121,6 +122,11 @@ class RegistryPaths:
         bids_root: str | Path = BIDS_PATH,
         registry_path: str | Path | None = None,
     ) -> "RegistryPaths":
+        """Resolve project and control paths without creating directories.
+
+        An explicit registry_path overrides the site default. A nondefault BIDS
+        root otherwise uses a sibling .nro directory.
+        """
         resolved_bids_root = Path(bids_root).expanduser().resolve()
         project_root = resolved_bids_root / project
         if registry_path is None:
@@ -150,6 +156,7 @@ class RegistryPaths:
 
 @dataclass(frozen=True)
 class LockOwner:
+    """Process and scheduler identity recorded by a registry lock holder."""
     token: str
     hostname: str
     pid: int
@@ -160,10 +167,12 @@ class LockOwner:
 
 
 class RegistryLockTimeout(TimeoutError):
+    """Raised when the registry lock cannot be acquired within its timeout."""
     pass
 
 
 class RegistryLock:
+    """Filesystem lock with owner metadata and conservative abandoned-lock recovery."""
     def __init__(
         self,
         path: Path,
@@ -172,6 +181,7 @@ class RegistryLock:
         timeout: float = 120.0,
         stale_after: float = 300.0,
     ) -> None:
+        """Configure lock paths and waiting/recovery thresholds in seconds."""
         self.path = path
         self.recovery_path = recovery_path
         self.timeout = timeout
@@ -189,6 +199,7 @@ class RegistryLock:
 
     @property
     def owner_path(self) -> Path:
+        """Return the owner-metadata file within the lock directory."""
         return self.path / "owner.json"
 
     def _read_owner(self) -> dict | None:
@@ -199,17 +210,30 @@ class RegistryLock:
 
     @staticmethod
     def _slurm_terminal(job_id: str) -> bool | None:
+        """Check whether a job has left Slurm; query failures remain unknown.
+
+        Slurm may report an expired job ID as an error instead of an empty
+        result. Only that specific diagnostic establishes absence on failure.
+        """
         if not shutil.which("squeue"):
             return None
         try:
             result = subprocess.run(
                 ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T"],
-                check=True,
+                check=False,
                 text=True,
                 capture_output=True,
                 timeout=15,
+                env={**os.environ, "LC_ALL": "C"},
             )
         except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode:
+            if (
+                not result.stdout.strip()
+                and result.stderr.strip() == "slurm_load_jobs error: Invalid job id specified"
+            ):
+                return True
             return None
         return not bool(result.stdout.strip())
 
@@ -280,6 +304,10 @@ class RegistryLock:
                 pass
 
     def acquire(self) -> "RegistryLock":
+        """Acquire the lock, recovering only demonstrably abandoned ownership.
+
+        Raise RegistryLockTimeout when the configured waiting period expires.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
         deadline = time.monotonic() + self.timeout
         delay = 0.05
@@ -305,6 +333,7 @@ class RegistryLock:
             return self
 
     def release(self) -> None:
+        """Release the lock owned by this object and remove its owner record."""
         if not self._held:
             return
         current = self._read_owner()
@@ -522,16 +551,19 @@ CREATE INDEX request_state ON requests(state);
 
 @dataclass(frozen=True)
 class RegisteredWorkflow:
+    """Registered revision, configuration lineages, and assigned output directories."""
     workflow_id: str
     revision: int
     revision_id: int
     fingerprint: str
     lineages: dict[str, int]
+    lineage_fingerprints: dict[str, str]
     directories: dict[str, str]
     created: bool
 
     @property
     def selector(self) -> str:
+        """Return the workflow ID qualified by its registered revision."""
         return f"{self.workflow_id}@{self.revision}"
 
 
@@ -540,10 +572,16 @@ CONFIGURATION_FILE_SUFFIX = {
     "clean": "clean",
     "microparcellation": "microparcellation",
     "networks": "networks",
+    "firstlevels": "firstlevels",
 }
 
 
 class Registry:
+    """Transactional authority for instances, demand, attempts, and worker state.
+
+    Construction does not initialize storage. Mutating methods acquire the
+    registry lock; callers should not alter the database directly.
+    """
     def __init__(
         self,
         paths: RegistryPaths,
@@ -551,6 +589,7 @@ class Registry:
         lock_timeout: float = 120.0,
         stale_lock_after: float = 300.0,
     ) -> None:
+        """Bind resolved paths and lock timings without opening the database."""
         self.paths = paths
         self.lock_timeout = lock_timeout
         self.stale_lock_after = stale_lock_after
@@ -564,6 +603,7 @@ class Registry:
         registry_path: str | Path | None = None,
         **kwargs,
     ) -> "Registry":
+        """Create a registry handle for a project using the shared control store."""
         return cls(
             RegistryPaths.for_project(
                 project,
@@ -586,6 +626,7 @@ class Registry:
         return self.paths.database
 
     def existing_control_path(self) -> Path:
+        """Return the control directory without creating or repairing it."""
         database = self.existing_database_path()
         return database.parent if database.is_file() else self.paths.control
 
@@ -676,6 +717,11 @@ class Registry:
 
     @contextlib.contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+        """Open a locked database context, optionally for a write transaction.
+
+        Schema incompatibility raises RuntimeError. Writes commit on success and
+        roll back on failure; the context releases its connection and lock.
+        """
         self._prepare_directories()
         with self._lock():
             self._initialize_locked()
@@ -745,25 +791,30 @@ class Registry:
             connection.close()
 
     def initialize(self) -> None:
+        """Create and validate the private registry structure without requesting work."""
         with self.connection():
             pass
 
     def reinitialize(self) -> None:
-        """Replace all private control state with a fresh current registry.
+        """Rebuild derivative control state while preserving ingestion records.
 
         Existing state is treated as opaque and is never migrated. The active
         registry lock remains in place throughout replacement so another
         registry client cannot observe a partially rebuilt control directory.
         If initialization fails, the original control state is restored.
+        Running ingestion leases must be resolved before replacement.
         """
         self._prepare_directories()
         quarantine = self.paths.control / f".repair-{uuid.uuid4().hex}"
         with self._lock():
+            from nro.bidsify.store import IngestionStore
+            if any(r['state'] == 'running' for r in IngestionStore(self).rows()):
+                raise ValueError('Resolve active ingestion worker leases before registry repair')
             quarantine.mkdir(mode=0o2775)
             moved: list[tuple[Path, Path]] = []
             try:
                 for source in tuple(self.paths.control.iterdir()):
-                    if source in (self.paths.lock, quarantine):
+                    if source in (self.paths.lock, quarantine, self.paths.control / "ingestion"):
                         continue
                     destination = quarantine / source.name
                     source.rename(destination)
@@ -774,7 +825,7 @@ class Registry:
                 connection.close()
             except BaseException:
                 for path in tuple(self.paths.control.iterdir()):
-                    if path in (self.paths.lock, quarantine):
+                    if path in (self.paths.lock, quarantine, self.paths.control / "ingestion"):
                         continue
                     if path.is_dir():
                         shutil.rmtree(path)
@@ -815,8 +866,10 @@ class Registry:
         ensure_shared_directory(runtime_directory)
         for derivative_class in DERIVATIVE_CLASSES:
             values = dict(workflow.configurations[derivative_class].values)
-            if derivative_class == "clean":
+            if derivative_class in {"clean", "firstlevels"}:
                 values["preprocessing_directory"] = directories["preprocessing"]
+                if derivative_class == "firstlevels":
+                    values["preprocessing_aroma"] = workflow.configuration("preprocessing").values["func"]["clean_ica_aroma"]
             elif derivative_class == "microparcellation":
                 values["preprocessing_directory"] = directories["preprocessing"]
                 values["clean_directory"] = directories["clean"]
@@ -829,6 +882,7 @@ class Registry:
     def runtime_config_path(
         self, registered: RegisteredWorkflow, derivative_class: str
     ) -> Path:
+        """Return the stored runtime configuration path for a registered lineage."""
         if derivative_class not in DERIVATIVE_CLASSES:
             raise ValueError(f"Unknown derivative class: {derivative_class}")
         suffix = CONFIGURATION_FILE_SUFFIX[derivative_class]
@@ -840,6 +894,7 @@ class Registry:
         )
 
     def register_workflow(self, workflow: ResolvedWorkflow) -> RegisteredWorkflow:
+        """Register resolved workflow configurations and return their lineage assignments."""
         created = False
         with self.connection(write=True) as db:
             row = db.execute(
@@ -886,7 +941,8 @@ class Registry:
 
             existing_bindings = db.execute(
                 """
-                SELECT wb.derivative_class, wb.configuration_lineage_id, ci.directory_label
+                SELECT wb.derivative_class, wb.configuration_lineage_id,
+                       ci.lineage_fingerprint, ci.directory_label
                 FROM workflow_bindings wb
                 JOIN configuration_lineages ci ON ci.id=wb.configuration_lineage_id
                 WHERE wb.workflow_revision_id=?
@@ -900,6 +956,10 @@ class Registry:
                 }
                 directories = {
                     str(item["derivative_class"]): str(item["directory_label"])
+                    for item in existing_bindings
+                }
+                lineage_fingerprints = {
+                    str(item["derivative_class"]): str(item["lineage_fingerprint"])
                     for item in existing_bindings
                 }
                 # A workflow revision can become current again after a config
@@ -1042,11 +1102,13 @@ class Registry:
             revision_id=revision_id,
             fingerprint=workflow.fingerprint,
             lineages=lineages,
+            lineage_fingerprints=lineage_fingerprints,
             directories=directories,
             created=created,
         )
 
     def workflow_history(self, workflow_id: str) -> list[dict]:
+        """Return recorded revisions for a workflow in history order."""
         with self.connection() as db:
             rows = db.execute(
                 """
@@ -1067,6 +1129,9 @@ class Registry:
         now: str,
     ) -> dict[str, int]:
         """Merge logical instances and dependency edges without creating demand."""
+        from nro.orchestration.catalog import canonical_contract
+        from nro.orchestration.manifests import _read_manifest
+
         instance_ids: dict[str, int] = {}
         replace_dependencies: dict[int, bool] = {}
         for spec, record in instance_records:
@@ -1081,13 +1146,17 @@ class Registry:
             ).fetchone()
             if existing:
                 instance_id = int(existing["id"])
+                certificate = _read_manifest(manifest)
                 # The planner is authoritative for the current execution
                 # recipe. Only a change to the semantic instance contract,
                 # rather than command spelling or resource settings, makes an
                 # existing derivative stale.
-                artifact_changed = (
-                    existing["artifact_fingerprint"] != record["artifact_fingerprint"]
-                )
+                try:
+                    recorded_contract = canonical_contract(json.loads(existing["artifact_contract_json"]),
+                        certificate.get("configuration") if certificate else None)
+                    artifact_changed = fingerprint(recorded_contract) != record["artifact_fingerprint"]
+                except (ValueError, TypeError, KeyError):
+                    artifact_changed = True
                 replace_dependencies[instance_id] = artifact_changed
                 recipe_locked = not artifact_changed and bool(
                     db.execute(
@@ -1265,6 +1334,106 @@ class Registry:
             self._normalize_active_request_graph_locked(db)
             return instance_ids
 
+    def register_owned_lineages(
+        self, records: Sequence[Mapping[str, object]]
+    ) -> dict[str, int]:
+        """Restore configuration lineages from derivative ownership records."""
+        ordered = sorted(
+            records,
+            key=lambda item: (
+                DERIVATIVE_CLASSES.index(str(item["derivative_class"])),
+                str(item["lineage_fingerprint"]),
+            ),
+        )
+        lineage_ids: dict[str, int] = {}
+        now = utcnow()
+        with self.connection(write=True) as db:
+            for record in ordered:
+                derivative_class = str(record["derivative_class"])
+                lineage_fingerprint = str(record["lineage_fingerprint"])
+                directory_label = str(record["directory_label"])
+                configuration = record["configuration"]
+                if not isinstance(configuration, Mapping):
+                    raise ValueError("Ownership record configuration must be a mapping")
+                existing = db.execute(
+                    """SELECT id, config_id, directory_label
+                       FROM configuration_lineages
+                       WHERE derivative_class=? AND lineage_fingerprint=?""",
+                    (derivative_class, lineage_fingerprint),
+                ).fetchone()
+                collision = db.execute(
+                    """SELECT lineage_fingerprint FROM configuration_lineages
+                       WHERE derivative_class=? AND directory_label=?""",
+                    (derivative_class, directory_label),
+                ).fetchone()
+                if collision and str(collision["lineage_fingerprint"]) != lineage_fingerprint:
+                    raise ValueError(
+                        f"Derivative directory {derivative_class}/{directory_label} "
+                        "declares conflicting configuration lineages"
+                    )
+                if existing:
+                    if (
+                        str(existing["config_id"]) != str(configuration["id"])
+                        or str(existing["directory_label"]) != directory_label
+                    ):
+                        raise ValueError(
+                            f"Ownership record conflicts with registered lineage {lineage_fingerprint}"
+                        )
+                    lineage_id = int(existing["id"])
+                    db.execute(
+                        """UPDATE configuration_lineages
+                           SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
+                        (
+                            str(configuration["fingerprint"]),
+                            yaml.safe_dump(configuration["resolved"], sort_keys=False),
+                            lineage_id,
+                        ),
+                    )
+                else:
+                    cursor = db.execute(
+                        """
+                        INSERT INTO configuration_lineages(
+                            derivative_class, config_id, config_fingerprint,
+                            lineage_fingerprint, resolved_yaml, directory_label, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            derivative_class,
+                            str(configuration["id"]),
+                            str(configuration["fingerprint"]),
+                            lineage_fingerprint,
+                            yaml.safe_dump(configuration["resolved"], sort_keys=False),
+                            directory_label,
+                            now,
+                        ),
+                    )
+                    lineage_id = int(cursor.lastrowid)
+                lineage_ids[lineage_fingerprint] = lineage_id
+
+            for record in ordered:
+                lineage_id = lineage_ids[str(record["lineage_fingerprint"])]
+                db.execute(
+                    "DELETE FROM configuration_lineage_dependencies "
+                    "WHERE configuration_lineage_id=?",
+                    (lineage_id,),
+                )
+                for upstream in record["upstream"]:
+                    parent_fingerprint = str(upstream["lineage_fingerprint"])
+                    try:
+                        parent_id = lineage_ids[parent_fingerprint]
+                    except KeyError as error:
+                        raise ValueError(
+                            f"Ownership record lacks upstream lineage {parent_fingerprint}"
+                        ) from error
+                    db.execute(
+                        """INSERT INTO configuration_lineage_dependencies(
+                               configuration_lineage_id,
+                               upstream_configuration_lineage_id, role
+                           ) VALUES (?, ?, ?)""",
+                        (lineage_id, parent_id, str(upstream["role"])),
+                    )
+        return lineage_ids
+
     def replace_bids_inventory(
         self, inventory: Mapping[str, Sequence[str]]
     ) -> None:
@@ -1381,6 +1550,7 @@ class Registry:
         return request_id
 
     def request_rows(self, *, include_terminal: bool = True) -> list[dict]:
+        """Read request records matching the supplied selection filters."""
         where = "" if include_terminal else "WHERE state='active'"
         with self.connection() as db:
             rows = db.execute(
@@ -1403,14 +1573,27 @@ class Registry:
                 "UPDATE requests SET concurrency=? WHERE state='active'",
                 (concurrency,),
             )
-            return int(cursor.rowcount)
+            from nro.bidsify.store import IngestionStore, ACTIVE
+            store = IngestionStore(self)
+            changed = int(cursor.rowcount)
+            for row in store.rows():
+                if row["state"] in ACTIVE:
+                    row["config"]["concurrency"] = concurrency
+                    store.write_locked(row)
+                    changed += 1
+            return changed
 
     def instance_rows(self, *, read_only: bool = False) -> list[dict]:
+        """Read instance records with their current orchestration and artifact state."""
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
             rows = db.execute(
                 """
-                SELECT t.*,
+                SELECT t.*, ci.directory_label, ci.lineage_fingerprint,
+                       EXISTS(
+                         SELECT 1 FROM workflow_bindings binding
+                         WHERE binding.configuration_lineage_id=t.configuration_lineage_id
+                       ) AS recomputable,
                        EXISTS(SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
                               WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
                        (SELECT a.state FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
@@ -1435,12 +1618,14 @@ class Registry:
                          JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
                          WHERE rt.instance_id=t.id) AS workflow_ids
                 FROM instances t
+                JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
                 ORDER BY t.participant, t.module, t.instance_key
                 """
             ).fetchall()
             return [dict(row) for row in rows]
 
     def instance_dependencies(self, *, read_only: bool = False) -> list[tuple[int, int]]:
+        """Return dependency relationships for the selected instance records."""
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
             return [
@@ -1451,14 +1636,26 @@ class Registry:
                 )
             ]
 
-    def instance_status_snapshot(self, *, read_only: bool = False) -> list[dict]:
+    def instance_status_snapshot(
+        self,
+        *,
+        read_only: bool = False,
+        artifact_states: Mapping[int, tuple[str, str]] | None = None,
+        expose_nonfresh: bool = False,
+    ) -> list[dict]:
         """Return the registry's canonical current state for every instance.
 
         ``instances`` retain artifact freshness and ``attempts`` retain immutable
         execution history.  This method is the sole projection of those facts
-        into one current instance state for user-facing tools.
+        into one current instance state for user-facing tools.  A read-only
+        preview may supply temporary artifact states without persisting them.
         """
         rows = self.instance_rows(read_only=read_only)
+        if artifact_states:
+            for row in rows:
+                projected = artifact_states.get(int(row["id"]))
+                if projected is not None:
+                    row["artifact_state"], row["artifact_reason"] = projected
         by_id = {int(row["id"]): row for row in rows}
         parents: dict[int, list[int]] = {}
         for instance_id, upstream_id in self.instance_dependencies(read_only=read_only):
@@ -1495,6 +1692,8 @@ class Registry:
             attempt = item.get("attempt_state")
             if item["artifact_state"] == "fresh":
                 state = "Success"
+            elif not item.get("recomputable") and not item.get("demanded"):
+                state = "Unavailable"
             elif attempt == "error" and instance_id in roots:
                 state = "Error"
             elif roots and item.get("demanded"):
@@ -1507,6 +1706,8 @@ class Registry:
                 state = "Error"
             elif item.get("demanded"):
                 state = "Queued"
+            elif expose_nonfresh and item["artifact_state"] in {"missing", "stale"}:
+                state = str(item["artifact_state"]).title()
             else:
                 state = "Unsubmitted"
             item["status"] = state
@@ -1523,6 +1724,10 @@ class Registry:
         slurm_job_id: str | None = None,
         lease_seconds: float = 120.0,
     ) -> None:
+        """Register or refresh a worker lease and its scheduler allocation.
+
+        Workers registering during maintenance are marked for shutdown.
+        """
         now = utcnow()
         with self.connection(write=True) as db:
             repair = db.execute(
@@ -1542,6 +1747,7 @@ class Registry:
             )
 
     def heartbeat_worker(self, worker_id: str, *, state: str, lease_seconds: float = 120.0) -> None:
+        """Renew a worker lease without clearing an existing shutdown request."""
         with self.connection(write=True) as db:
             db.execute(
                 """UPDATE workers
@@ -1551,6 +1757,7 @@ class Registry:
             )
 
     def worker_shutdown_requested(self, worker_id: str) -> bool:
+        """Return whether the worker has a persisted shutdown request."""
         with self.connection() as db:
             row = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
             return bool(row and row["state"] == "shutdown_requested")
@@ -1649,10 +1856,12 @@ class Registry:
                     LEFT JOIN requests r ON r.id=ss.request_id
                     LEFT JOIN workers predecessor ON predecessor.id=ss.predecessor_worker_id
                     LEFT JOIN workers allocation ON allocation.slurm_job_id=ss.slurm_job_id
+                    LEFT JOIN metadata ingestion_owner ON ingestion_owner.key='ingestion_submission_owner:' || ss.id
                     WHERE ss.state IN ('prepared', 'submitted', 'running', 'cancel_requested')
-                      AND (r.user_name=? OR predecessor.user_name=? OR allocation.user_name=?)
+                      AND (ingestion_owner.value=? OR (ingestion_owner.value IS NULL
+                           AND (r.user_name=? OR predecessor.user_name=? OR allocation.user_name=?)))
                 """
-                submission_parameters = (owner, owner, owner)
+                submission_parameters = (owner, owner, owner, owner)
             submissions = [
                 dict(row)
                 for row in db.execute(submission_query, submission_parameters)
@@ -1687,6 +1896,7 @@ class Registry:
         }
 
     def close_worker(self, worker_id: str, *, state: str = "exited") -> None:
+        """Record a terminal worker state and end its active lease."""
         with self.connection(write=True) as db:
             db.execute(
                 "UPDATE workers SET state=?, lease_expires_at=NULL, updated_at=? WHERE id=?",
@@ -1733,6 +1943,10 @@ class Registry:
                     "SELECT COUNT(*) FROM attempts WHERE state IN ('queued', 'running', 'cancel_requested')"
                 ).fetchone()[0]
             )
+            from nro.bidsify.store import IngestionStore
+            ingestion_active, _, ingestion_limit = IngestionStore(self).summary(memory_gb)
+            concurrency = max(concurrency, ingestion_limit)
+            active += ingestion_active
             if concurrency < 1 or active >= concurrency:
                 return None
             row = db.execute(
@@ -1812,6 +2026,7 @@ class Registry:
             return ExecutionEnvelope.from_registry_row(instance)
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
+        """Return whether the current attempt has been marked for cancellation."""
         with self.connection() as db:
             row = db.execute("SELECT state FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             return bool(row and row["state"] == "cancel_requested")
@@ -1984,6 +2199,7 @@ class Registry:
         error_type: str | None = None,
         error_message: str | None = None,
     ) -> None:
+        """Persist attempt completion and update the associated instance state."""
         if state not in {"success", "error", "cancelled"}:
             raise ValueError(f"Invalid terminal attempt state: {state}")
         with self.connection(write=True) as db:
@@ -2077,6 +2293,7 @@ class Registry:
         return next_memory
 
     def record_oom(self, attempt_id: int, *, message: str) -> int | None:
+        """Record an out-of-memory failure and update retry memory requirements."""
         with self.connection(write=True) as db:
             return self._record_oom_locked(db, attempt_id, message=message)
 
@@ -2225,6 +2442,7 @@ class Registry:
             return {"instances": demand_count, "requests": len(cancelled_requests), "attempts": cursor.rowcount}
 
     def reconcile_requests(self) -> None:
+        """Update request states from their demanded instances' current outcomes."""
         with self.connection(write=True) as db:
             db.execute(
                 """
@@ -2251,15 +2469,19 @@ class Registry:
         resource_class: str,
         memory_gb: int = 32,
     ) -> list[tuple[int, str]]:
-        """Reserve only enough workers for the DAG's current runnable width."""
+        """Reserve workers for ready derivative and ingestion work under one limit."""
         with self.connection(write=True) as db:
+            if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
+                return []
+            from nro.bidsify.store import IngestionStore
+            ingestion_active, ingestion_ready, ingestion_limit = IngestionStore(self).summary(memory_gb)
             if request_id is None:
                 request = db.execute(
                     "SELECT id FROM requests WHERE state='active' ORDER BY created_at LIMIT 1"
                 ).fetchone()
-                if request is None:
+                if request is None and not ingestion_ready:
                     return []
-                request_id = str(request["id"])
+                request_id = str(request["id"]) if request else None
             desired = int(
                 db.execute(
                     "SELECT COALESCE(MAX(concurrency), 0) FROM requests WHERE state='active'"
@@ -2320,7 +2542,7 @@ class Registry:
                     (*compatible, memory_gb),
                 ).fetchone()[0]
             )
-            desired = min(desired, active_instances + ready_instances)
+            desired = min(max(desired, ingestion_limit), active_instances + ready_instances + ingestion_active + ingestion_ready)
             live_workers = int(
                 db.execute(
                     """SELECT COUNT(*) FROM workers
@@ -2338,6 +2560,12 @@ class Registry:
                 ).fetchone()[0]
             )
             count = max(0, desired - live_workers - pending)
+            if ingestion_ready:
+                # Cloud credentials belong to the submitting user. Idle
+                # workers belonging to someone else cannot fulfill this demand.
+                own_idle = db.execute("SELECT COUNT(*) FROM workers WHERE state='idle' AND user_name=? AND lease_expires_at>? AND memory_gb>=?",
+                                      (getpass.getuser(), time.time(), memory_gb)).fetchone()[0]
+                count = max(count, min(ingestion_ready, max(0, max(desired, ingestion_limit) - active_instances - ingestion_active - pending)) - own_idle)
             reservations: list[tuple[int, str]] = []
             for _ in range(count):
                 token = uuid.uuid4().hex
@@ -2350,6 +2578,9 @@ class Registry:
                     (token, request_id, resource_class, memory_gb, utcnow()),
                 )
                 reservations.append((int(cursor.lastrowid), token))
+                if ingestion_ready:
+                    db.execute("INSERT INTO metadata(key,value) VALUES (?,?)",
+                               (f'ingestion_submission_owner:{cursor.lastrowid}', getpass.getuser()))
             return reservations
 
     def reconcile_scheduler_submissions(self, *, prepared_timeout: float = 300.0) -> int:
@@ -2399,7 +2630,9 @@ class Registry:
             request = db.execute(
                 "SELECT id FROM requests WHERE state='active' ORDER BY created_at LIMIT 1"
             ).fetchone()
-            if request is None:
+            from nro.bidsify.store import IngestionStore
+            ingestion_active, ingestion_ready, _ = IngestionStore(self).summary(memory_gb)
+            if request is None and not (ingestion_active or ingestion_ready):
                 return None
             token = uuid.uuid4().hex
             cursor = db.execute(
@@ -2409,7 +2642,7 @@ class Registry:
                     memory_gb, state, created_at
                 ) VALUES (?, ?, ?, ?, ?, 'prepared', ?)
                 """,
-                (token, request["id"], worker_id, resource_class, memory_gb, utcnow()),
+                (token, request["id"] if request else None, worker_id, resource_class, memory_gb, utcnow()),
             )
             submission_id = int(cursor.lastrowid)
             db.execute(
@@ -2522,6 +2755,8 @@ class Registry:
         recovered = 0
         with self.connection(write=True) as db:
             for worker_id in dead:
+                from nro.bidsify.store import IngestionStore
+                recovered += IngestionStore(self).recover_locked({worker_id})
                 attempts = db.execute(
                     "SELECT id, instance_id FROM attempts WHERE worker_id=? AND state IN ('queued', 'running', 'cancel_requested')",
                     (worker_id,),
@@ -2572,6 +2807,7 @@ class Registry:
         state: str,
         slurm_job_id: str | None = None,
     ) -> None:
+        """Persist a scheduler submission state and optional Slurm job ID."""
         with self.connection(write=True) as db:
             db.execute(
                 """
@@ -2583,6 +2819,7 @@ class Registry:
             )
 
     def mark_submission_running(self, slurm_job_id: str) -> None:
+        """Mark the submitted allocation matching a Slurm job ID as running."""
         with self.connection(write=True) as db:
             db.execute(
                 "UPDATE scheduler_submissions SET state='running' WHERE slurm_job_id=? AND state='submitted'",
@@ -2590,6 +2827,7 @@ class Registry:
             )
 
     def mark_submission_complete(self, slurm_job_id: str | None) -> None:
+        """Record completion for the matching scheduler allocation."""
         if not slurm_job_id:
             return
         with self.connection(write=True) as db:
@@ -2599,6 +2837,7 @@ class Registry:
             )
 
     def publication_instances(self, request_id: str) -> tuple[dict, list[dict]]:
+        """Return a request and its terminal instances for publication validation."""
         with self.connection() as db:
             request = db.execute(
                 """

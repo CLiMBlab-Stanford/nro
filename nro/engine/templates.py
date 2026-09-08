@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import nibabel as nib
@@ -15,7 +14,8 @@ from .images import gifti_vertex_count
 def templateflow_roots() -> tuple[Path, ...]:
     """Return existing local TemplateFlow trees in preference order."""
     candidates: list[Path] = []
-    configured = os.environ.get("TEMPLATEFLOW_HOME", "").strip()
+    from nro.configuration.site import settings
+    configured = settings()[0]["templates"]
     if configured:
         candidates.append(Path(configured).expanduser())
 

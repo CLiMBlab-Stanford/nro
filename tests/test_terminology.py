@@ -31,8 +31,9 @@ def test_code_defines_the_canonical_system_vocabulary() -> None:
         "clean",
         "microparcellation",
         "networks",
+        "firstlevels",
     )
-    assert MODULES == ("anat", "func", "clean", "microparcellation", "networks")
+    assert MODULES == ("anat", "func", "clean", "microparcellation", "networks", "firstlevels")
     assert tuple(descriptor.name for descriptor in BUILTIN_MODULES) == MODULES
 
 
@@ -111,7 +112,7 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
 
 
 def test_primary_user_commands_live_in_bin() -> None:
-    for name in ("run", "status", "stop", "log", "set", "purge", "publish", "qc"):
+    for name in ("run", "status", "stop", "log", "set", "purge", "publish", "qc", "wb_view"):
         assert (ROOT / "nro" / "bin" / f"{name}.py").is_file()
         assert not (ROOT / "nro" / f"{name}.py").exists()
         if name != "publish":

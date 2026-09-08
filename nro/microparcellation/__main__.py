@@ -21,6 +21,7 @@ from nro.microparcellation.config import (
     QualityConfig,
 )
 from nro.microparcellation.module import build_module
+from nro.microparcellation.paths import output_paths
 from nro.microparcellation.targets import CleanTarget, expected_clean_target
 from nro.microparcellation.gifti import func_shape
 from nro.engine.templates import (
@@ -41,7 +42,8 @@ from nro.engine.cli import stderr
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
-    bids_scale_value,
+    smoothing_entity_value,
+    target_directory_name,
 )
 
 
@@ -144,12 +146,13 @@ def _entity_from_name(name: str, entity: str) -> str | None:
 def target_output_names(
     base_prefix: str, space: str, smoothing_mm: int
 ) -> tuple[str, str]:
-    """Return the private target directory and public BIDS prefix."""
-    private_target = f"space-{space}_smoothing-{smoothing_mm}mm"
-    public_prefix = (
-        f"{base_prefix}_space-{space}_scale-{bids_scale_value(smoothing_mm)}"
+    """Return the target directory and output filename prefix."""
+    target = target_directory_name(space, smoothing_mm)
+    prefix = (
+        f"{base_prefix}_space-{space}_"
+        f"smoothing-{smoothing_entity_value(smoothing_mm)}"
     )
-    return private_target, public_prefix
+    return target, prefix
 
 
 def make_target_config(
@@ -168,22 +171,20 @@ def make_target_config(
             "clean_target must be constructed from source BIDS and requested entities"
         )
     target = clean_target
-    default_root = (
+    default_base = (
         Path(BIDS_PATH)
         / project
         / "derivatives"
         / "microparcellation"
         / microparcellation_id
-        / sub_id
     )
-    output_root = Path(config.get("output_dir") or default_root)
-    work_root = (
+    output_base = Path(config.get("output_dir") or default_base)
+    work_base = (
         Path(WORK_PATH)
         / project
         / "derivatives"
         / "microparcellation"
         / microparcellation_id
-        / sub_id
     )
     if target.domain == "surface":
         anat_path = find_preprocessed_anat_dir(
@@ -213,6 +214,7 @@ def make_target_config(
     cfg = ModuleConfig(
         inputs=InputsConfig(
             functional=target.functional,
+            temporal_masks=target.temporal_masks,
             domain=target.domain,
             space=target.space,
             smoothing_mm=target.smoothing_mm,
@@ -222,12 +224,11 @@ def make_target_config(
             volume_connectivity=int(config.get("volume_connectivity", 6)),
         ),
         output=OutputConfig(
-            directory=output_root,
-            work_directory=work_root / target_name,
+            directory=output_base / target_name / sub_id,
+            work_directory=work_base / target_name / sub_id,
             prefix=target_prefix,
             overwrite=config["overwrite"] if overwrite is None else overwrite,
         ),
-        wb_command=str(config["wb_command"]),
         coarsening=CoarseningConfig(**config["coarsening"]),
         connectivity=ConnectivityConfig(**config["connectivity"]),
         quality=QualityConfig(**config["quality"]),
@@ -309,10 +310,7 @@ def main(argv: list[str] | None = None):
     )
     result = build_module(cfg, runner, completion_boundary=False)
     manifest = Path(result["manifest"])
-    publication_index = (
-        cfg.output.directory
-        / f"{cfg.output.prefix}_desc-microparcellation_manifest.json"
-    )
+    publication_index = output_paths(cfg.output.directory, cfg.output.prefix)["index"]
     payload = {
         "manifest_version": 1,
         "module": "microparcellation",

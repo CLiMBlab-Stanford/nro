@@ -12,7 +12,7 @@ from nro.microparcellation.scene import SURFACE_SCENE_TEMPLATE, VOLUME_SCENE_TEM
 
 def _surface_kind(path: Path) -> str:
     for kind in ("pial", "midthickness", "white", "inflated"):
-        if path.name.endswith(f"_{kind}.surf.gii"):
+        if path.name.endswith(f"_{kind}.surf.gii") or f"_desc-{kind}_surface.surf.gii" in path.name:
             return kind
     raise ValueError(f"Unrecognized scene surface: {path}")
 
@@ -62,19 +62,25 @@ def write_network_scene(
 ) -> tuple[Path, tuple[Path, ...]]:
     """Package a relocatable scene that pages named network maps."""
     output_dir = path.parent
-    prefix = path.name.removesuffix("_networks.scene")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prefix = path.name.removesuffix("_desc-networks_scene.scene")
+    membership_copy = output_dir / membership.name
+    if membership.resolve() != membership_copy.resolve():
+        shutil.copyfile(membership, membership_copy)
+    membership = membership_copy
     connectivity_copy = output_dir / f"{prefix}_connectivity.pconn.nii"
     shutil.copyfile(connectivity, connectivity_copy)
-    assets: list[Path] = [connectivity_copy]
+    assets: list[Path] = [membership_copy, connectivity_copy]
     if domain == "surface":
         sources = _surface_inventory(scene_surfaces)
         inventory = {
-            (hemi, kind): output_dir / f"{prefix}_hemi-{hemi}_{kind}.surf.gii"
+            (hemi, kind): output_dir / f"{prefix}_hemi-{hemi}_desc-{kind}_surface.surf.gii"
             for hemi in ("L", "R")
             for kind in ("pial", "midthickness", "white", "inflated")
         }
         for identity, destination in inventory.items():
-            shutil.copyfile(sources[identity], destination)
+            if sources[identity].resolve() != destination.resolve():
+                shutil.copyfile(sources[identity], destination)
         assets.extend(inventory.values())
         left = inventory[("L", "midthickness")]
         right = inventory[("R", "midthickness")]
@@ -92,7 +98,7 @@ def write_network_scene(
     elif domain == "volume":
         if label_volume is None:
             raise ValueError("Volumetric network scene requires its microparcel label volume")
-        label_copy = output_dir / f"{prefix}_microparcels.nii.gz"
+        label_copy = output_dir / f"{prefix}_desc-microparcellation_dseg.nii.gz"
         shutil.copyfile(label_volume, label_copy)
         assets.append(label_copy)
         encoded = "".join(VOLUME_SCENE_TEMPLATE.read_text(encoding="ascii").split())

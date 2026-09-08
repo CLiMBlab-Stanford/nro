@@ -6,6 +6,11 @@ from nro.qc.engine import main as run_quality_control
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.qc") -> None:
+    """Dispatch a quality-control type to its engine implementation.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     run_quality_control(argv, prog=prog)
 
 

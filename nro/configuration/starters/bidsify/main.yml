@@ -1,0 +1,19 @@
+servers: {}
+project_sources: {}
+staging: null
+dcm2niix: null
+synthstrip: null
+validator: [bids-validator]
+memory_gb: 32
+cpus: 2
+hours: 12
+concurrency: 50
+# Acquisition review confirms each classification before transfer.
+protocols:
+  - {pattern: '(?i)(t1.*mprage|bravo|t1w)', datatype: anat, suffix: T1w}
+  - {pattern: '(?i)(t2.*space|cube|t2w)', datatype: anat, suffix: T2w}
+  - {pattern: '(?i)sbref', datatype: func, suffix: sbref}
+  - {pattern: '(?i)(spin.?echo|se.?epi|ep2dse|boldse)', datatype: fmap, suffix: epi}
+  - {pattern: '(?i)(bold|fmri)', datatype: func, suffix: bold}
+event_rules: []
+session_rules: []

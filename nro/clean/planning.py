@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.clean.paths import clean_manifest_path
 from nro.engine.bids import BidsRun
-from nro.engine.targets import bids_scale_value
+from nro.engine.targets import smoothing_entity_value
 from nro.func.planning import run_arguments
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -48,13 +48,18 @@ def plan_instances(
     for run in context.runs:
         for space, smoothing in context.target_pairs:
             entities = {**run.entities, "space": space, "smoothing": str(smoothing)}
-            prefix = f"{run.stem}_space-{space}_scale-{bids_scale_value(smoothing)}"
+            prefix = (
+                f"{run.stem}_space-{space}_"
+                f"smoothing-{smoothing_entity_value(smoothing)}"
+            )
             result.append(
                 InstanceSpec.create(
                     key=instance_key(
                         context.project,
                         descriptor.name,
-                        lineage,
+                        context.registered.lineage_fingerprints[
+                            descriptor.configuration_class
+                        ],
                         context.participant,
                         entities,
                     ),
@@ -66,7 +71,7 @@ def plan_instances(
                     configuration_lineage_id=lineage,
                     config_fingerprint=context.workflow.configuration(
                         descriptor.configuration_class
-                    ).fingerprint,
+                    ).scientific_fingerprint,
                     directory_label=directory_label,
                     runtime_config=runtime_config,
                     command=(
@@ -102,6 +107,7 @@ def plan_instances(
                             ses_id=f"ses-{run.session}" if run.session else None,
                         ),
                     ),
+                    processing=descriptor.processing_contract(),
                 )
             )
     return tuple(result)

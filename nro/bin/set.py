@@ -12,6 +12,7 @@ from nro.orchestration.registry import Registry
 
 
 def build_parser(*, prog: str = "nro.bin.set") -> argparse.ArgumentParser:
+    """Construct the set parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("assignments", nargs="+", metavar="NAME=VALUE")
     parser.add_argument("--bids-root", default=BIDS_PATH)
@@ -42,6 +43,11 @@ def _parse_assignments(values: list[str]) -> dict[str, int]:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
+    """Update recognized active-request settings; warn for unsupported keys.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     settings = _parse_assignments(args.assignments)
     if not settings:

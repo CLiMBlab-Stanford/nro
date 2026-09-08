@@ -14,7 +14,7 @@ def test_direct_workflow_selection_exports_intrinsic_configuration_fingerprint(
 ) -> None:
     monkeypatch.delenv("NRO_RUNTIME_CONFIG", raising=False)
     monkeypatch.delenv(CONFIGURATION_FINGERPRINT_ENV, raising=False)
-    expected = ConfigStore().resolve("main").configuration("clean").fingerprint
+    expected = ConfigStore().resolve("main").configuration("clean").scientific_fingerprint
 
     runtime = select_runtime_config(
         project="demo",

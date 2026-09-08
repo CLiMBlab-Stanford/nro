@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
 
 from nro.configuration.store import main_configuration_factory
+from nro.configuration.schema import validate_parameters
 from nro.engine.targets import DEFAULT_SMOOTHING_MM
 
 
@@ -16,7 +17,9 @@ microparcellation_default = partial(
 
 @dataclass(frozen=True)
 class InputsConfig:
+    """Cleaned runs, spatial geometry, masks, and target identity for microparcellation."""
     functional: tuple[tuple[Path, ...], ...]
+    temporal_masks: tuple[Path, ...] = ()
     domain: str = "surface"
     space: str | None = None
     smoothing_mm: int = DEFAULT_SMOOTHING_MM
@@ -32,6 +35,7 @@ class InputsConfig:
 
 @dataclass(frozen=True)
 class CoarseningConfig:
+    """Target parcel count and local-variation spectral coarsening controls."""
     target_vertices: int = field(
         default_factory=microparcellation_default("coarsening", "target_vertices")
     )
@@ -52,8 +56,41 @@ class CoarseningConfig:
 
 @dataclass(frozen=True)
 class ConnectivityConfig:
-    minimum_trs: int = field(
-        default_factory=microparcellation_default("connectivity", "minimum_trs")
+    """Sidecar-based run admission thresholds and streaming connectivity controls."""
+    minimum_retained_frames: int = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_retained_frames"
+        )
+    )
+    minimum_retained_fraction: float = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_retained_fraction"
+        )
+    )
+    minimum_residual_design_dof: int = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_residual_design_dof"
+        )
+    )
+    minimum_participation_effective_rank: float = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_participation_effective_rank"
+        )
+    )
+    maximum_dominant_temporal_variance_fraction: float = field(
+        default_factory=microparcellation_default(
+            "connectivity", "maximum_dominant_temporal_variance_fraction"
+        )
+    )
+    minimum_usable_runs: int = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_usable_runs"
+        )
+    )
+    minimum_aggregate_retained_frames: int = field(
+        default_factory=microparcellation_default(
+            "connectivity", "minimum_aggregate_retained_frames"
+        )
     )
     temporal_block_size: int = field(
         default_factory=microparcellation_default(
@@ -75,6 +112,10 @@ class ConnectivityConfig:
 
 @dataclass(frozen=True)
 class QualityConfig:
+    """Spatial-null generation and connectome diagnostic approximation settings."""
+    split_half_block_frames: int = field(
+        default_factory=microparcellation_default("quality", "split_half_block_frames")
+    )
     null_parcellations: int = field(
         default_factory=microparcellation_default("quality", "null_parcellations")
     )
@@ -82,10 +123,16 @@ class QualityConfig:
     region_growing_attempts: int = field(
         default_factory=microparcellation_default("quality", "region_growing_attempts")
     )
+    connectome_power_iterations: int = field(
+        default_factory=microparcellation_default(
+            "quality", "connectome_power_iterations"
+        )
+    )
 
 
 @dataclass(frozen=True)
 class OutputConfig:
+    """Public/private output directories, prefix, and overwrite policy."""
     directory: Path
     work_directory: Path
     prefix: str
@@ -96,19 +143,24 @@ class OutputConfig:
 
 @dataclass(frozen=True)
 class ModuleConfig:
+    """Complete input, coarsening, connectivity, quality, and output configuration."""
     inputs: InputsConfig
     output: OutputConfig
-    wb_command: str
     coarsening: CoarseningConfig = field(default_factory=CoarseningConfig)
     connectivity: ConnectivityConfig = field(default_factory=ConnectivityConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
 
 
 def validate_config(cfg: ModuleConfig) -> None:
+    """Reject unsupported domains, missing input resources, and inconsistent algorithm settings."""
     if cfg.inputs.domain not in {"surface", "volume"}:
         raise ValueError("inputs.domain must be 'surface' or 'volume'")
     if not cfg.inputs.functional:
         raise ValueError("At least one functional run is required")
+    if len(cfg.inputs.temporal_masks) != len(cfg.inputs.functional):
+        raise ValueError(
+            "inputs.temporal_masks must contain one mask for each functional run"
+        )
     if cfg.inputs.smoothing_mm < 0:
         raise ValueError("inputs.smoothing_mm must be nonnegative")
     if cfg.inputs.domain == "surface":
@@ -121,27 +173,8 @@ def validate_config(cfg: ModuleConfig) -> None:
             raise ValueError("Volumetric microparcellation does not accept surface geometry")
         if not isinstance(cfg.inputs.mask, Path):
             raise ValueError("Volumetric microparcellation requires a gray-matter volume mask")
-        if not 0 <= cfg.inputs.mask_threshold < 1:
-            raise ValueError("inputs.mask_threshold must be in [0, 1)")
-        if cfg.inputs.volume_connectivity not in {6, 18, 26}:
-            raise ValueError("inputs.volume_connectivity must be 6, 18, or 26")
-    if cfg.coarsening.target_vertices < 2:
-        raise ValueError("coarsening.target_vertices must be >= 2")
-    if cfg.coarsening.iterations < 1:
-        raise ValueError("coarsening.iterations must be positive")
-    if cfg.coarsening.eigenvectors < 2 or cfg.coarsening.max_levels < 1:
-        raise ValueError("coarsening.eigenvectors must be >= 2 and max_levels must be positive")
-    if cfg.coarsening.exponential_temperature <= 0:
-        raise ValueError("coarsening.exponential_temperature must be positive")
-    if cfg.connectivity.temporal_block_size < 1 or cfg.connectivity.reliability_vertex_block_size < 1:
-        raise ValueError("Connectivity block sizes must be positive")
-    if cfg.connectivity.reliability_weighting and cfg.connectivity.minimum_trs < 8:
-        raise ValueError("connectivity.minimum_trs must be at least 8 for quarter-split reliability")
-    if cfg.connectivity.minimum_trs < 2:
-        raise ValueError("connectivity.minimum_trs must be at least 2")
-    if cfg.quality.null_parcellations < 1:
-        raise ValueError("quality.null_parcellations must be positive")
-    if cfg.quality.random_seed < 0:
-        raise ValueError("quality.random_seed must be nonnegative")
-    if cfg.quality.region_growing_attempts < 1:
-        raise ValueError("quality.region_growing_attempts must be positive")
+    validate_parameters("microparcellation", {
+        "coarsening": asdict(cfg.coarsening), "connectivity": asdict(cfg.connectivity),
+        "quality": asdict(cfg.quality), "mask_threshold": cfg.inputs.mask_threshold,
+        "volume_connectivity": cfg.inputs.volume_connectivity,
+    })

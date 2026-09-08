@@ -2,16 +2,12 @@
 """
 Assemble a confounds TSV broadly compatible with common fMRIPrep-style regressors.
 
-This script computes fMRIPrep-style confounds used by the supported nuisance
-regression strategy:
-- 6 rigid-body motion params from FSL MCFLIRT (trans/rot)
-- mean white-matter, CSF, and global signals
-- temporal derivatives and squared terms for all 9 base signals, including
-  squared derivatives (the Satterthwaite 36-parameter expansion)
-- framewise displacement (Power et al., using a fixed head radius)
-- aCompCor components (first K PCs from WM+CSF voxels using FreeSurfer aseg)
-- non_steady_state_outlier* spike regressors (heuristic based on early global-signal instability)
-- motion_outlier* spike regressors (FD threshold)
+Compute six MCFLIRT motion parameters, mean white-matter/CSF/global signals,
+and the derivatives and squared terms of the nine base signals. Also export
+Power framewise displacement, aCompCor components, and early non-steady-state
+flags. The functional workflow augments these with numbered FD/DVARS outlier
+families. Column availability does not determine clean-regressor selection;
+the clean configuration owns that choice.
 """
 
 from __future__ import annotations

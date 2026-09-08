@@ -19,7 +19,9 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
-from nro.configuration.paths import CONFIG_PATH
+from nro.configuration.site import definitions_root, resolve_resources
+from nro.configuration.parsing import DefinitionError, parse_mapping
+from nro.configuration.schema import RUNTIME_FIELDS, SCHEMAS, compile_configuration, normalize_fields, scientific_values
 
 
 DERIVATIVE_CLASSES: tuple[str, ...] = (
@@ -27,6 +29,7 @@ DERIVATIVE_CLASSES: tuple[str, ...] = (
     "clean",
     "microparcellation",
     "networks",
+    "firstlevels",
 )
 
 UPSTREAM_CLASS: dict[str, str | None] = {
@@ -34,19 +37,10 @@ UPSTREAM_CLASS: dict[str, str | None] = {
     "clean": "preprocessing",
     "microparcellation": "clean",
     "networks": "microparcellation",
+    "firstlevels": "preprocessing",
 }
 
-_UPSTREAM_KEYS = {
-    "preprocessing": frozenset(),
-    "clean": frozenset({"preprocessing_directory"}),
-    "microparcellation": frozenset(
-        {"preprocessing_directory", "clean_directory"}
-    ),
-    "networks": frozenset({"microparcellation_directory"}),
-}
-
-
-class WorkflowError(ValueError):
+class WorkflowError(DefinitionError):
     """A workflow or one of its derivative configurations is invalid."""
 
 
@@ -94,15 +88,29 @@ def fingerprint(value: Any) -> str:
 
 @dataclass(frozen=True)
 class ResolvedConfiguration:
+    """Resolved class configuration with its source ID, values, and fingerprint."""
     derivative_class: str
     config_id: str
     path: Path
     values: dict[str, Any]
     fingerprint: str
 
+    @property
+    def scientific_fingerprint(self) -> str:
+        """Identify the named scientific settings, excluding execution controls."""
+        return configuration_fingerprint(self.derivative_class, self.config_id, self.values, scientific=True)
+
+
+def configuration_fingerprint(kind: str, identifier: str, values: dict, *, scientific: bool = False) -> str:
+    """Hash a named snapshot; optionally compare only its scientific settings."""
+    if scientific:
+        values = scientific_values(kind, compile_configuration(kind, values))
+    return fingerprint({"derivative_class": kind, "config_id": identifier, "values": values})
+
 
 @dataclass(frozen=True)
 class ResolvedWorkflow:
+    """Workflow selection and the resolved configurations it references."""
     workflow_id: str
     path: Path
     selections: dict[str, str]
@@ -110,6 +118,7 @@ class ResolvedWorkflow:
     fingerprint: str
 
     def configuration(self, name: str) -> ResolvedConfiguration:
+        """Return the resolved configuration for a derivative class; unknown names raise KeyError."""
         try:
             return self.configurations[name]
         except KeyError as error:
@@ -117,15 +126,25 @@ class ResolvedWorkflow:
 
 
 class ConfigStore:
-    """Resolve IDs from the repository's single configuration store."""
+    """Resolve IDs from one external definitions store."""
 
-    def __init__(self) -> None:
-        self.root = Path(CONFIG_PATH).expanduser().resolve()
+    def __init__(self, root: Path | None = None) -> None:
+        """Use the selected definitions root, or an explicit root for validation and drafts."""
+        self.root = Path(root).expanduser().resolve() if root is not None else definitions_root()
         if not self.root.is_dir():
-            raise WorkflowError(f"Configured central store does not exist: {self.root}")
+            raise WorkflowError(f"Definitions store does not exist: {self.root}; use nro definitions create")
+        if (self.root / '.nro-incomplete').exists():
+            raise WorkflowError(f'Definitions publication is incomplete: {self.root}')
+
+    @property
+    def configs(self) -> Path:
+        """Return the directory containing the derivative-class configurations."""
+        return self.root / "configs"
 
     def _find(self, filename: str, *, category: str) -> Path:
-        organized = self.root / category / filename
+        organized = (self.root if category == "workflows" else self.configs) / category / filename
+        if not organized.resolve().is_relative_to(self.root):
+            raise WorkflowError(f"Definition escapes the store: {organized}")
         if organized.is_file():
             return organized
         raise WorkflowError(
@@ -134,17 +153,19 @@ class ConfigStore:
 
     @staticmethod
     def _read_mapping(path: Path) -> dict[str, Any]:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(loaded, dict):
-            raise WorkflowError(f"Configuration must contain a mapping: {path}")
-        return loaded
+        try:
+            return parse_mapping(path.read_text(encoding="utf-8"), source=str(path))
+        except DefinitionError as error:
+            raise WorkflowError(str(error)) from error
 
     def workflow_path(self, workflow: str) -> tuple[str, Path]:
+        """Validate a workflow selector and return its ID and source file."""
         suffix = "_workflow.yml"
         workflow_id = validate_config_id(str(workflow), kind="workflow")
         return workflow_id, self._find(f"{workflow_id}{suffix}", category="workflows")
 
     def configuration_path(self, derivative_class: str, config_id: str) -> Path:
+        """Return the source file for a validated derivative-class configuration ID."""
         if derivative_class not in DERIVATIVE_CLASSES:
             raise WorkflowError(f"Unknown derivative class: {derivative_class}")
         config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
@@ -153,20 +174,36 @@ class ConfigStore:
         )
 
     def load_configuration(
-        self, derivative_class: str, config_id: str
+        self, derivative_class: str, config_id: str, *, document: Mapping[str, Any] | None = None,
     ) -> ResolvedConfiguration:
-        path = self.configuration_path(derivative_class, config_id)
+        """Load main defaults and merge a named configuration override.
+
+        Resolve site references before fingerprinting. Invalid mappings and unknown
+        override keys raise WorkflowError rather than being silently accepted.
+        document validates a staged definition without writing it to the store.
+        """
         base_path = self.configuration_path(derivative_class, "main")
-        base = self._read_mapping(base_path)
-        override = {} if path == base_path else self._read_mapping(path)
-        forbidden = sorted(
-            (set(base) | set(override)) & _UPSTREAM_KEYS[derivative_class]
-        )
+        config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
+        path = (self.configuration_path(derivative_class, config_id) if document is None
+                else self.configs / derivative_class / f"{config_id}_{derivative_class}.yml")
+        if document is not None and not isinstance(document, Mapping):
+            raise WorkflowError("Configuration must contain a mapping")
+        declared = self._read_mapping(path) if document is None else dict(document)
+        forbidden = sorted(set(declared) & RUNTIME_FIELDS[derivative_class].keys())
         if forbidden:
-            raise WorkflowError(
-                f"{path.name} contains upstream configuration key(s) that belong in a "
-                f"workflow: {', '.join(forbidden)}"
-            )
+            raise WorkflowError(f"{path}: {', '.join(forbidden)} belong in a workflow")
+        if derivative_class == "firstlevels" and set(declared) & {"model", "models", "task", "model_set", "model_documents"}:
+            raise WorkflowError(f"{path}: Firstlevels selection keys belong in CLI requests, not configuration")
+        try:
+            base = compile_configuration(derivative_class, resolve_resources(
+                declared if config_id == "main" else self._read_mapping(base_path)))
+        except (ValueError, TypeError) as error:
+            raise WorkflowError(f"{path if config_id == 'main' else base_path}: {error}") from error
+        try:
+            override = normalize_fields(SCHEMAS[derivative_class], resolve_resources(
+                {} if config_id == "main" else declared), location=derivative_class, complete=False)
+        except (ValueError, TypeError) as error:
+            raise WorkflowError(f"{path}: {error}") from error
         flexible_filter = (
             override.pop("input_filter", None)
             if derivative_class == "microparcellation"
@@ -177,23 +214,33 @@ class ConfigStore:
             if not isinstance(flexible_filter, Mapping):
                 raise WorkflowError("Configuration option input_filter must be a mapping")
             values["input_filter"] = deepcopy(dict(flexible_filter))
+        try:
+            values = compile_configuration(derivative_class, values)
+        except DefinitionError as error:
+            raise WorkflowError(f"{path}: {error}") from error
         return ResolvedConfiguration(
             derivative_class=derivative_class,
             config_id=config_id,
             path=path,
             values=values,
-            fingerprint=fingerprint(
-                {
-                    "derivative_class": derivative_class,
-                    "config_id": config_id,
-                    "values": values,
-                }
-            ),
+            fingerprint=configuration_fingerprint(derivative_class, config_id, values),
         )
 
-    def resolve(self, workflow: str | Path = "main") -> ResolvedWorkflow:
-        workflow_id, path = self.workflow_path(workflow)
-        declared = self._read_mapping(path)
+    def resolve(
+        self, workflow: str | Path = "main", *, document: Mapping[str, Any] | None = None,
+    ) -> ResolvedWorkflow:
+        """Resolve a workflow and all selected class configurations.
+
+        Return immutable selection metadata and resolved values; missing or invalid
+        workflow definitions raise WorkflowError. document validates a staged
+        workflow without publishing a file.
+        """
+        workflow_id = validate_config_id(str(workflow), kind="workflow")
+        path = (self.workflow_path(workflow_id)[1] if document is None
+                else self.root / "workflows" / f"{workflow_id}_workflow.yml")
+        declared = self._read_mapping(path) if document is None else document
+        if not isinstance(declared, Mapping) or any(not isinstance(key, str) for key in declared):
+            raise WorkflowError(f"{path}: Workflow must contain a mapping with string keys")
         unknown = sorted(set(declared) - set(DERIVATIVE_CLASSES))
         if unknown:
             raise WorkflowError(

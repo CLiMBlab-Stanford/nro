@@ -11,20 +11,32 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from nro.configuration.paths import WB_COMMAND_PATH
+from nro.configuration.schema import scientific_values
+from nro.engine.bids import parse_bids_entities
 from nro.orchestration.runtime import selected_configuration_fingerprint
 from .cifti import (
     load_dlabel,
-    resolve_wb_command,
     surface_parcel_axis,
     volume_parcel_axis,
-    write_borders,
     write_dlabel,
     write_pconn,
     write_volume_dlabel,
 )
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
-from nro.engine.images import gifti_vertex_count
+from nro.engine.images import (
+    gifti_vertex_count,
+    sidecar_json_path,
+    write_cifti_dense_scalar,
+)
+from nro.engine.cleaned_timeseries import (
+    CleanedRunInclusionPolicy,
+    CleanedRunMetadata,
+    cleaned_run_exclusions,
+    load_cleaned_run_metadata,
+    load_retained_frame_mask,
+)
 from nro.engine.io import (
     atomic_save_npy,
     atomic_save_npz,
@@ -35,13 +47,19 @@ from nro.engine.io import (
 )
 from .coarsen import loukas_variation_edges
 from .config import ModuleConfig, validate_config
-from .gifti import load_mask, load_surfaces, mesh_edges
+from .contract import (
+    microparcellation_output_contract,
+    validate_microparcellation_manifest,
+    validate_microparcellation_quality,
+)
+from .paths import output_paths
+from .gifti import load_functional, load_mask, load_surfaces, mesh_edges
+from .quality import spatial_null_partitions
 from .scene import (
     surface_scene_output_paths,
     write_volume_workbench_scene,
     write_workbench_scene,
 )
-from .quality import spatial_null_partitions
 from .statistics import (
     local_edge_correlations,
     make_parcel_mean_loader,
@@ -123,40 +141,35 @@ def build_module(
     work = cfg.output.work_directory
     force = bool(cfg.output.overwrite)
 
-    manifest_path = out / f"{cfg.output.prefix}_manifest.yaml"
-    dlabel_path = out / f"{cfg.output.prefix}_microparcels.dlabel.nii"
-    pconn_path = out / f"{cfg.output.prefix}_microparcel_connectivity.pconn.nii"
-    quality_path = out / f"{cfg.output.prefix}_desc-quality_metrics.json"
-    scene_path = out / f"{cfg.output.prefix}_microparcellation.scene"
-    label_volume_path = out / f"{cfg.output.prefix}_microparcels.nii.gz"
+    paths = output_paths(out, cfg.output.prefix)
+    manifest_path = paths["manifest"]
+    dlabel_path = paths["microparcels"]
+    pconn_path = paths["connectivity"]
+    quality_path = paths["quality"]
+    parcel_reliability_path = paths["parcel_reliability"]
+    label_volume_path = paths["microparcels_volume"]
     outputs: dict[str, Path | tuple[Path, ...]] = {
         "microparcels": dlabel_path,
         "connectivity": pconn_path,
         "quality": quality_path,
-        "scene": scene_path,
+        "parcel_reliability": parcel_reliability_path,
     }
     if cfg.inputs.domain == "surface":
-        structures = tuple(
-            "R" if "_hemi-R_" in path.name or ".R." in path.name else "L"
-            for path in cfg.inputs.surface
-        )
-        border_paths = tuple(
-            out / f"{cfg.output.prefix}_hemi-{hemi}_microparcels.border"
-            for hemi in structures
-        )
-        surface_scene_path, packaged_surfaces, source_scene_surfaces = (
-            surface_scene_output_paths(out, cfg.output.prefix, cfg.inputs.surface)
-        )
-        assert surface_scene_path == scene_path
-        outputs["borders"] = border_paths
-        outputs["scene_surfaces"] = packaged_surfaces
         label_outputs = (dlabel_path,)
+        scene_path, scene_surfaces, scene_sources = surface_scene_output_paths(
+            out,
+            cfg.output.prefix,
+            cfg.inputs.surface,
+        )
+        outputs["scene"] = scene_path
+        outputs["scene_surfaces"] = scene_surfaces
     else:
-        source_scene_surfaces = ()
-        packaged_surfaces = ()
-        border_paths = ()
         outputs["microparcels_volume"] = label_volume_path
         label_outputs = (label_volume_path, dlabel_path)
+        scene_path = out / f"{cfg.output.prefix}_desc-microparcellation_scene.scene"
+        scene_surfaces = ()
+        scene_sources = ()
+        outputs["scene"] = scene_path
 
     fixed_public_outputs = tuple(
         path
@@ -164,6 +177,10 @@ def build_module(
         for path in ((value,) if isinstance(value, Path) else value)
     )
     functional_inputs = _flatten_functional(cfg.inputs.functional)
+    functional_sidecars = tuple(
+        dict.fromkeys(sidecar_json_path(path) for path in functional_inputs)
+    )
+    temporal_masks = tuple(cfg.inputs.temporal_masks)
     if cfg.inputs.mask is None:
         mask_inputs: tuple[Path, ...] = ()
     elif isinstance(cfg.inputs.mask, Path):
@@ -171,8 +188,79 @@ def build_module(
     else:
         mask_inputs = tuple(cfg.inputs.mask)
     source_inputs = tuple(
-        dict.fromkeys(functional_inputs + source_scene_surfaces + mask_inputs)
+        dict.fromkeys(
+            functional_inputs
+            + functional_sidecars
+            + temporal_masks
+            + tuple(cfg.inputs.surface)
+            + mask_inputs
+        )
     )
+
+    inclusion_policy = CleanedRunInclusionPolicy(
+        minimum_retained_frames=cfg.connectivity.minimum_retained_frames,
+        minimum_retained_fraction=cfg.connectivity.minimum_retained_fraction,
+        minimum_residual_design_dof=cfg.connectivity.minimum_residual_design_dof,
+        minimum_participation_effective_rank=(
+            cfg.connectivity.minimum_participation_effective_rank
+        ),
+        maximum_dominant_temporal_variance_fraction=(
+            cfg.connectivity.maximum_dominant_temporal_variance_fraction
+        ),
+    )
+    cleaning_metadata_cache: dict[tuple[Path, ...], CleanedRunMetadata] = {}
+    temporal_mask_by_run = dict(zip(cfg.inputs.functional, temporal_masks))
+
+    def run_metadata(run: tuple[Path, ...]) -> CleanedRunMetadata:
+        if run not in cleaning_metadata_cache:
+            metadata = load_cleaned_run_metadata(run)
+            expected_mask = temporal_mask_by_run[run]
+            if metadata.temporal_mask_file.resolve() != expected_mask.resolve():
+                raise ValueError(
+                    "Cleaned sidecar names an unexpected temporal mask: "
+                    f"{metadata.temporal_mask_file} != {expected_mask}"
+                )
+            cleaning_metadata_cache[run] = metadata
+        return cleaning_metadata_cache[run]
+
+    def cleaning_eligibility() -> tuple[
+        np.ndarray, dict[int, tuple[dict[str, object], ...]]
+    ]:
+        included: list[int] = []
+        excluded: dict[int, tuple[dict[str, object], ...]] = {}
+        for index, run in enumerate(cfg.inputs.functional):
+            reasons = cleaned_run_exclusions(run_metadata(run), inclusion_policy)
+            if not reasons:
+                included.append(index)
+            else:
+                excluded[index] = reasons
+        retained_total = sum(
+            run_metadata(cfg.inputs.functional[index]).retained_frames
+            for index in included
+        )
+        if len(included) < cfg.connectivity.minimum_usable_runs:
+            raise ValueError(
+                "Too few cleaned runs satisfy the sidecar inclusion policy: "
+                f"{len(included)} < {cfg.connectivity.minimum_usable_runs}"
+            )
+        if retained_total < cfg.connectivity.minimum_aggregate_retained_frames:
+            raise ValueError(
+                "Eligible cleaned runs have too few aggregate retained frames: "
+                f"{retained_total} < "
+                f"{cfg.connectivity.minimum_aggregate_retained_frames}"
+            )
+        return np.asarray(included, dtype=np.int64), excluded
+
+    def retained_run_loader(run: tuple[Path, ...], *, base_loader=None) -> np.ndarray:
+        loader = load_functional if base_loader is None else base_loader
+        data = loader(run)
+        metadata = run_metadata(run)
+        if len(data) != metadata.total_frames:
+            raise ValueError(
+                "Functional frame count disagrees with clean metadata: "
+                f"{len(data)} != {metadata.total_frames} ({run})"
+            )
+        return data[load_retained_frame_mask(metadata)]
 
     # Source geometry is BIDS input state, so it may determine topology during
     # construction. No derivative or step result is consulted here.
@@ -246,6 +334,7 @@ def build_module(
         "quality": asdict(cfg.quality),
         "output_prefix": cfg.output.prefix,
     }
+    config_payload = scientific_values("microparcellation", config_payload)
     config_text = (
         json.dumps(config_payload, default=json_path_default, indent=2, sort_keys=True)
         + "\n"
@@ -253,8 +342,9 @@ def build_module(
 
     def validate_config_snapshot() -> tuple[bool, str]:
         try:
-            matches = config_snapshot.read_text(encoding="utf-8") == config_text
-        except OSError:
+            recorded = json.loads(config_snapshot.read_text(encoding="utf-8"))
+            matches = scientific_values("microparcellation", recorded) == json.loads(config_text)
+        except (OSError, ValueError, TypeError):
             matches = False
         return matches, (
             "Recorded microparcellation configuration matches the requested workflow."
@@ -326,6 +416,8 @@ def build_module(
         label_checkpoints.append(labels_checkpoint)
         correlation_inputs = (
             functional_inputs
+            + functional_sidecars
+            + temporal_masks
             + tuple(cfg.inputs.surface)
             + mask_inputs
             + (config_snapshot,)
@@ -350,8 +442,9 @@ def build_module(
             labels = input_labels(previous)
             current_count = int(labels[mask].max()) + 1
             current_edges = _region_edges(edges, labels)
+            retained_loader = partial(retained_run_loader, base_loader=load_run)
             step_loader, node_masses = make_parcel_mean_loader(
-                labels, mask, load_run=load_run
+                labels, mask, load_run=retained_loader
             )
             if correlation_checkpoints and checkpoint != correlation_checkpoints[0]:
                 with np.load(correlation_checkpoints[0], allow_pickle=False) as first:
@@ -360,7 +453,10 @@ def build_module(
                     cfg.inputs.functional[int(index)] for index in included
                 )
             else:
-                step_files = cfg.inputs.functional
+                eligible, exclusions = cleaning_eligibility()
+                step_files = tuple(
+                    cfg.inputs.functional[int(index)] for index in eligible
+                )
             LOG.info(
                 "%s: correlations for %d edges among %d regions (target %d)",
                 progress,
@@ -374,7 +470,6 @@ def build_module(
                 current_count,
                 cfg.connectivity.temporal_block_size,
                 mask=np.ones(current_count, dtype=bool),
-                minimum_trs=cfg.connectivity.minimum_trs,
                 global_signal_regression=cfg.connectivity.global_signal_regression,
                 reliability_vertex_block_size=cfg.connectivity.reliability_vertex_block_size,
                 reliability_weighting=cfg.connectivity.reliability_weighting,
@@ -386,21 +481,22 @@ def build_module(
                 [run_to_index[run] for run in result.included_runs],
                 dtype=np.int64,
             )
-            skipped_indices = np.asarray(
-                [run_to_index[run.files] for run in result.skipped_runs],
-                dtype=np.int64,
-            )
-            skipped_trs = np.asarray(
-                [run.timepoints for run in result.skipped_runs],
-                dtype=np.int64,
-            )
+            if checkpoint == correlation_checkpoints[0]:
+                excluded_indices = np.asarray(sorted(exclusions), dtype=np.int64)
+                exclusion_records = np.asarray(
+                    [json.dumps(exclusions[index], sort_keys=True) for index in excluded_indices],
+                    dtype=np.str_,
+                )
+            else:
+                excluded_indices = np.empty(0, dtype=np.int64)
+                exclusion_records = np.empty(0, dtype=np.str_)
             atomic_save_npz(
                 checkpoint,
                 compressed=True,
                 correlations=result.correlations.astype(np.float32, copy=False),
                 included_indices=global_included,
-                skipped_indices=skipped_indices,
-                skipped_timepoints=skipped_trs,
+                excluded_indices=excluded_indices,
+                exclusion_records=exclusion_records,
             )
 
         runner.add_step(
@@ -517,16 +613,20 @@ def build_module(
             return labels
         return load_volume_labels(label_volume_path)
 
-    def read_run_eligibility() -> tuple[np.ndarray, dict[int, int]]:
+    def read_run_eligibility() -> tuple[
+        np.ndarray,
+        dict[int, tuple[dict[str, object], ...]],
+    ]:
         if not correlation_checkpoints:
-            return np.arange(len(cfg.inputs.functional), dtype=np.int64), {}
+            included, exclusions = cleaning_eligibility()
+            return included, exclusions
         with np.load(correlation_checkpoints[0], allow_pickle=False) as checkpoint:
             included = np.asarray(checkpoint["included_indices"], dtype=np.int64)
-            skipped_indices = np.asarray(checkpoint["skipped_indices"], dtype=np.int64)
-            skipped_trs = np.asarray(checkpoint["skipped_timepoints"], dtype=np.int64)
+            excluded_indices = np.asarray(checkpoint["excluded_indices"], dtype=np.int64)
+            exclusion_records = np.asarray(checkpoint["exclusion_records"], dtype=np.str_)
         return included, {
-            int(index): int(trs)
-            for index, trs in zip(skipped_indices, skipped_trs)
+            int(index): tuple(json.loads(str(records)))
+            for index, records in zip(excluded_indices, exclusion_records)
         }
 
     def write_connectivity() -> None:
@@ -544,6 +644,7 @@ def build_module(
             seed=cfg.quality.random_seed,
             candidate_attempts=cfg.quality.region_growing_attempts,
         )
+        retained_loader = partial(retained_run_loader, base_loader=load_run)
         result = parcel_correlations(
             active_stage_files,
             labels,
@@ -552,7 +653,9 @@ def build_module(
             global_signal_regression=cfg.connectivity.global_signal_regression,
             reliability_vertex_block_size=cfg.connectivity.reliability_vertex_block_size,
             reliability_weighting=cfg.connectivity.reliability_weighting,
-            load_run=load_run,
+            connectome_power_iterations=cfg.quality.connectome_power_iterations,
+            split_half_block_frames=cfg.quality.split_half_block_frames,
+            load_run=retained_loader,
             null_partitions=tuple(null.labels for null in nulls),
         )
         adjacency = result.correlations
@@ -569,6 +672,33 @@ def build_module(
         temporary = temporary_sibling(pconn_path)
         write_pconn(temporary, adjacency, parcel_axis)
         temporary.replace(pconn_path)
+        reliability_arrays = []
+        for parcel_values in (
+            result.parcel_reliability_mean,
+            result.parcel_reliability_minimum,
+            result.parcel_reliability_maximum,
+            result.parcel_supporting_runs,
+            result.parcel_effective_runs,
+        ):
+            spatial_values = np.zeros(len(labels), dtype=np.float32)
+            spatial_values[mask] = np.asarray(parcel_values, dtype=np.float32)[
+                labels[mask]
+            ]
+            reliability_arrays.append(spatial_values)
+        temporary_reliability = temporary_sibling(parcel_reliability_path)
+        write_cifti_dense_scalar(
+            temporary_reliability,
+            dlabel_path,
+            reliability_arrays,
+            [
+                "Mean run reliability",
+                "Minimum run reliability",
+                "Maximum run reliability",
+                "Supporting runs",
+                "Effective contributing runs",
+            ],
+        )
+        temporary_reliability.replace(parcel_reliability_path)
         null_scores = np.asarray(result.null_variance_preserved, dtype=np.float64)
         null_records = [
             {
@@ -584,6 +714,15 @@ def build_module(
                 nulls,
             )
         ]
+        run_contributions = []
+        for paths_for_run, record in zip(active_stage_files, result.run_contributions):
+            run_contributions.append(
+                {
+                    **record,
+                    "files": [str(path) for path in paths_for_run],
+                    "entities": parse_bids_entities(paths_for_run[0].name),
+                }
+            )
         quality = {
             "metric": (
                 "fraction of standardized temporal variance preserved by "
@@ -598,6 +737,24 @@ def build_module(
             "variance_lost": 1.0 - result.variance_preserved,
             "residual_sum_squares": result.residual_sum_squares,
             "total_sum_squares": result.total_sum_squares,
+            "parcel_reliability": {
+                "maps": [
+                    "Mean run reliability",
+                    "Minimum run reliability",
+                    "Maximum run reliability",
+                    "Supporting runs",
+                    "Effective contributing runs",
+                ],
+                "mean": float(result.parcel_reliability_mean.mean()),
+                "minimum": float(result.parcel_reliability_mean.min()),
+                "maximum": float(result.parcel_reliability_mean.max()),
+                "median": float(np.median(result.parcel_reliability_mean)),
+                "mean_effective_runs": float(result.parcel_effective_runs.mean()),
+                "minimum_effective_runs": float(result.parcel_effective_runs.min()),
+            },
+            "run_contributions": run_contributions,
+            "split_half": result.split_half,
+            "connectome": result.connectome,
             "null_baseline": {
                 "method": (
                     "quota-matched random region growing on the source spatial graph"
@@ -613,41 +770,22 @@ def build_module(
                 ),
             },
         }
+        validate_microparcellation_quality(quality)
         atomic_write_text(quality_path, json.dumps(quality, indent=2) + "\n")
 
     runner.add_step(
         Step.python(
             name="Stream Final Microparcel Connectivity",
-            outputs=(pconn_path, quality_path),
+            outputs=(pconn_path, parcel_reliability_path, quality_path),
             inputs=functional_inputs + label_outputs + tuple(correlation_checkpoints),
             force=force,
             action=write_connectivity,
         )
     )
 
-    if cfg.inputs.domain == "surface":
-
-        def write_surface_borders() -> None:
-            write_borders(
-                dlabel_path,
-                cfg.inputs.surface,
-                out,
-                cfg.output.prefix,
-                runner=runner,
-                executable=resolve_wb_command(cfg.wb_command),
-            )
-
-        runner.add_step(
-            Step.python(
-                name="Write Microparcel Borders",
-                outputs=border_paths,
-                inputs=(dlabel_path,) + tuple(cfg.inputs.surface),
-                force=force,
-                action=write_surface_borders,
-                )
-        )
-
-        def write_surface_scene() -> None:
+    def write_scene() -> None:
+        out.mkdir(parents=True, exist_ok=True)
+        if cfg.inputs.domain == "surface":
             write_workbench_scene(
                 out,
                 cfg.output.prefix,
@@ -655,21 +793,9 @@ def build_module(
                 dlabel_path,
                 pconn_path,
                 runner=runner,
-                executable=resolve_wb_command(cfg.wb_command),
+                executable=str(WB_COMMAND_PATH),
             )
-
-        runner.add_step(
-            Step.python(
-                name="Package Workbench Microparcellation Scene",
-                outputs=(scene_path,) + packaged_surfaces,
-                inputs=(dlabel_path, pconn_path) + source_scene_surfaces,
-                force=force,
-                action=write_surface_scene,
-                )
-        )
-    else:
-
-        def write_volume_scene() -> None:
+        else:
             write_volume_workbench_scene(
                 out,
                 cfg.output.prefix,
@@ -678,15 +804,15 @@ def build_module(
                 pconn_path,
             )
 
-        runner.add_step(
-            Step.python(
-                name="Package Workbench Volumetric Microparcellation Scene",
-                outputs=(scene_path,),
-                inputs=(label_volume_path, dlabel_path, pconn_path),
-                force=force,
-                action=write_volume_scene,
-                )
+    runner.add_step(
+        Step.python(
+            name="Package Microparcellation Workbench Scene",
+            outputs=(scene_path, *scene_surfaces),
+            inputs=(*label_outputs, pconn_path, *scene_sources),
+            force=force,
+            action=write_scene,
         )
+    )
 
     manifest_inputs = fixed_public_outputs + source_inputs
 
@@ -712,8 +838,16 @@ def build_module(
         return records
 
     def write_manifest() -> None:
+        current_outputs = {*fixed_public_outputs, manifest_path}
+        for path in out.iterdir():
+            if (
+                path.name.startswith(f"{cfg.output.prefix}_")
+                and path not in current_outputs
+                and (path.is_file() or path.is_symlink())
+            ):
+                path.unlink()
         labels = load_final_labels()
-        included_indices, skipped_timepoints = read_run_eligibility()
+        included_indices, excluded_runs = read_run_eligibility()
         manifest = {
             "domain": cfg.inputs.domain,
             "space": cfg.inputs.space,
@@ -745,7 +879,15 @@ def build_module(
                 else None
             ),
             "functional_runs": {
-                "minimum_trs": cfg.connectivity.minimum_trs,
+                "inclusion_policy": asdict(inclusion_policy),
+                "minimum_usable_runs": cfg.connectivity.minimum_usable_runs,
+                "minimum_aggregate_retained_frames": (
+                    cfg.connectivity.minimum_aggregate_retained_frames
+                ),
+                "aggregate_retained_frames": sum(
+                    run_metadata(cfg.inputs.functional[int(index)]).retained_frames
+                    for index in included_indices
+                ),
                 "included": [
                     [str(path) for path in cfg.inputs.functional[int(index)]]
                     for index in included_indices
@@ -753,11 +895,9 @@ def build_module(
                 "skipped": [
                     {
                         "files": [str(path) for path in cfg.inputs.functional[index]],
-                        "timepoints": timepoints,
-                        "minimum_trs": cfg.connectivity.minimum_trs,
-                        "reason": "below_minimum_trs",
+                        "reasons": list(reasons),
                     }
-                    for index, timepoints in sorted(skipped_timepoints.items())
+                    for index, reasons in sorted(excluded_runs.items())
                 ],
             },
             "outputs": {
@@ -773,7 +913,9 @@ def build_module(
             "quality": json.loads(quality_path.read_text(encoding="utf-8")),
             "config": asdict(cfg),
             "configuration_fingerprint": selected_configuration_fingerprint(),
+            "output_metadata_contract": microparcellation_output_contract(),
         }
+        validate_microparcellation_manifest(manifest)
         atomic_write_text(
             manifest_path,
             yaml.safe_dump(
@@ -785,15 +927,20 @@ def build_module(
     def validate_manifest() -> tuple[bool, str]:
         try:
             published = yaml.safe_load(manifest_path.read_text()) or {}
+            validate_microparcellation_manifest(published)
+            quality_metadata = json.loads(quality_path.read_text(encoding="utf-8"))
+            validate_microparcellation_quality(quality_metadata)
         except (OSError, TypeError, yaml.YAMLError):
             return False, f"Microparcellation manifest is unreadable: {manifest_path}"
+        except (ValueError, json.JSONDecodeError):
+            return False, "Microparcellation metadata violates its artifact contract."
         expected_inventory = {
             name: manifest_value(value) for name, value in outputs.items()
         }
         if published.get("outputs") != expected_inventory:
             return False, "Published microparcellation inventory is stale."
         current = json.loads(json.dumps(asdict(cfg), default=json_path_default))
-        if published.get("config") != current:
+        if scientific_values("microparcellation", published.get("config", {})) != scientific_values("microparcellation", current):
             return False, "Published microparcellation configuration is stale."
         fingerprint = selected_configuration_fingerprint()
         if (
@@ -828,6 +975,11 @@ def run(
     *,
     runner: Runner | None = None,
 ) -> dict[str, Path | tuple[Path, ...]]:
+    """Construct the module graph, execute it through the shared runner, and publish outputs.
+
+    Freshness is evaluated after graph construction. Processing and validation
+    errors propagate to the caller; partial private outputs can support resumption.
+    """
     runner_started = time.perf_counter()
     active_runner = runner or Runner(
         module_name="Microparcellation Module",

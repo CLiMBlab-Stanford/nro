@@ -157,13 +157,30 @@ module-local planning functions.
 
 The **registry** is the planner's durable lab-wide SQL state. It stores the
 discovered source project/participant tree, workflows, instances, dependency
-edges, requests, attempts, workers, and scheduler submissions. Source discovery
-does not create derivative instances or demand. The registry is the single
-locking and transaction authority; it is not a second planner implementation.
+edges, requests, attempts, workers, and scheduler submissions. Ordinary source
+discovery does not create derivative instances or demand. Registry bootstrap
+and repair additionally discover existing files in nro-controlled derivative
+locations and register the instances that own them, without creating demand.
+The registry is the single locking and transaction authority; it is not a
+second planner implementation.
 
 The filesystem remains authoritative for whether derivative files currently
 exist and match their completion records. The registry is authoritative for
 orchestration identity, demand, and history.
+
+Each owned derivative configuration root contains `.nro/lineage.json` and one
+receipt under `.nro/instances/` for every instance it owns. These records keep
+the configuration lineage, instance identity, dependencies, and artifact
+contract with the derivative. Registry repair reads them before resolving the
+workflows in the current configuration store. Removing or renaming a workflow
+therefore does not make its existing derivatives invisible.
+
+Ownership does not imply that an instance can be recomputed. A current workflow
+must select its configuration lineage before the planner can request it. Status
+reports a nonfresh historical instance as `Unavailable` when no current
+workflow selects that lineage. A fresh historical instance remains `Success`
+because its artifact is still usable. Purge can select either case without the
+originating workflow.
 
 ### Request and demand
 
@@ -195,7 +212,7 @@ not permanently redefine the instance.
 | Workflow / module | A workflow selects configurations; a module performs scientific computation. |
 | Planner / runner | The planner schedules instances; the runner executes steps inside one instance. |
 | Request / attempt | A request expresses demand; an attempt records one execution. |
-| Space / smoothing | Both are instance selectors from `clean` onward. BIDS filenames encode smoothing through `scale`, but the concept is always called smoothing elsewhere. |
+| Space / smoothing | Both are instance selectors from `clean` onward. Nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
 
 The planner-facing record hierarchy is defined separately in
 [Instance planning and execution](instance-lifecycle.md).

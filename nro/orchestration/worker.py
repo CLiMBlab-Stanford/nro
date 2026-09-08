@@ -299,6 +299,7 @@ def _looks_like_oom(log_path: Path, return_code: int) -> bool:
 
 
 class Worker:
+    """Claim derivative instances or ingestion stages and supervise their execution."""
     def __init__(
         self,
         registry: Registry,
@@ -312,6 +313,7 @@ class Worker:
         profile: str | None = None,
         launcher: ExecutionLauncher | None = None,
     ) -> None:
+        """Configure registry access, resource limits, polling, and the execution launcher."""
         self.registry = registry
         self.resource_class = resource_class
         self.memory_gb = memory_gb
@@ -675,6 +677,43 @@ class Worker:
                  "traceback": traceback.format_exc()},
             )
 
+    def _execute_ingestion(self, record: dict) -> None:
+        """Supervise a noninteractive ingestion stage without derivative completion checks."""
+        from types import SimpleNamespace
+        from nro.bidsify.store import IngestionStore
+        from nro.orchestration.contracts import ExecutionRecipe
+
+        store = IngestionStore(self.registry)
+        log_path = store.root / f"{record['id']}.log"
+        result_path = store.root / f"{record['id']}.result"
+        result_path.unlink(missing_ok=True)
+        envelope = SimpleNamespace(execution=ExecutionRecipe(
+            command=(sys.executable, '-m', 'nro.bidsify', '--request', record['id'],
+                     '--bids-root', str(self.registry.paths.bids_root), '--control', str(self.registry.paths.control)),
+            runtime_config=store.root / f"{record['id']}.json"))
+        self.registry.heartbeat_worker(self.worker_id, state='running')
+        try:
+            with log_path.open('a') as log:
+                log_path.chmod(0o660)
+                log.write(f"{utcnow()} Stage: {record['stage']}\n")
+                log.flush()
+                result = self.launcher.run(
+                    envelope, stdout=log, environment=dict(os.environ), poll_interval=self.poll_interval,
+                    cancellation_state=lambda: (self.stop_requested or self.registry.worker_shutdown_requested(self.worker_id), False),
+                    heartbeat=lambda: self.registry.heartbeat_worker(self.worker_id, state='running'))
+            if result.cancelled:
+                store.finish(record['id'], self.worker_id, state='interrupted')
+            elif result.return_code != 0 or not result_path.is_file():
+                store.finish(record['id'], self.worker_id, state='failed', changes={'issues': ['Scheduled stage failed; inspect the ingestion log and retry through nro bidsify']})
+            else:
+                changes = json.loads(result_path.read_text())
+                store.finish(record['id'], self.worker_id, state=changes.pop('state'), changes=changes)
+        except Exception:
+            store.finish(record['id'], self.worker_id, state='interrupted')
+        finally:
+            self.registry.heartbeat_worker(self.worker_id, state='idle')
+            self._expand_ready_pool()
+
     def _cancel_failed_descendants(self, instance: ExecutionEnvelope) -> None:
         cancelled = self.registry.cancel_attempts_downstream_of_failure(
             instance.instance_id
@@ -704,6 +743,11 @@ class Worker:
             self.registry.finish_artifact_assessment()
 
     def run(self) -> int:
+        """Run the claim/execute loop until shutdown, draining, or idle timeout.
+
+        Register and renew the worker lease, update attempts, and close the worker
+        record on exit. Scientific failures are recorded per attempt.
+        """
         signal.signal(signal.SIGTERM, self._signal)
         signal.signal(signal.SIGINT, self._signal)
         self.registry.register_worker(
@@ -745,6 +789,13 @@ class Worker:
                     memory_gb=self.memory_gb,
                 )
                 if instance is None:
+                    from nro.bidsify.store import IngestionStore
+                    ingestion = IngestionStore(self.registry).claim(self.worker_id, self.memory_gb)
+                    if ingestion is not None:
+                        idle_since = time.monotonic()
+                        idle_announced = False
+                        self._execute_ingestion(ingestion)
+                        continue
                     required_memory = self.registry.required_memory_above(self.memory_gb)
                     if required_memory is not None:
                         self._submit_adaptive_worker(required_memory)

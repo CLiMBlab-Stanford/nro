@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from nro.engine.bids import matches_selectors
+from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.configuration.paths import BIDS_PATH
 from nro.orchestration.registry import Registry
@@ -96,6 +96,7 @@ def collect_log_paths(
 
 
 def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
+    """Construct the log parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
@@ -107,6 +108,11 @@ def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
+    """Open matching worker or instance logs in the configured pager.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     try:
         selection = core_selection(args)

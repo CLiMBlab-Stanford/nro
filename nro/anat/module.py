@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from nro.anat.contract import anatomical_output_contract, validate_anatomical_manifest
 from nro.orchestration.runtime import selected_configuration_fingerprint
 from nro.orchestration.runner_graph import Step
 from nro.anat.common import AnatImage, load_anat_image, robust_template_cmd, sort_anat_images
@@ -114,6 +115,7 @@ next_step = new_step_counter()
 
 @dataclass(frozen=True)
 class Inputs:
+    """Subject identity and available T1w/T2w acquisitions for anatomical construction."""
     sub_id: str
     t1w: tuple[AnatImage, ...]
     t2w: tuple[AnatImage, ...]
@@ -121,6 +123,7 @@ class Inputs:
 
 @dataclass(frozen=True)
 class Options:
+    """Resolved anatomy resources, output paths, selection strategy, and execution controls."""
     project: str
     preprocessing_id: str
     out_dir: Path
@@ -960,6 +963,7 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             opts.work_dir,
             opts.freesurfer_subjects_dir,
             opts.mni_template,
+            Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
         ]
     )
     runner = Runner(
@@ -1828,6 +1832,7 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             },
             "configuration_fingerprint": selected_configuration_fingerprint(),
         },
+        "output_metadata_contract": anatomical_output_contract(),
         "complete": True,
     }
     manifest_path = anatomical_manifest_path(
@@ -1842,6 +1847,7 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
     def validate_publication() -> tuple[bool, str]:
         try:
             current = read_json(manifest_path)
+            validate_anatomical_manifest(current)
         except (OSError, ValueError, TypeError):
             return False, "Anatomical publication manifest is missing or unreadable."
         if current != manifest:
@@ -1855,12 +1861,16 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             return False, "Anatomical publication is missing outputs: " + ", ".join(missing)
         return True, "Anatomical publication is complete and current."
 
+    def publish_manifest() -> None:
+        validate_anatomical_manifest(manifest)
+        write_json(manifest_path, manifest)
+
     runner.add_step(Step.python(
         name="Write Anatomical Publication Manifest",
         outputs=(manifest_path,),
         inputs=(*published_outputs, *public_inputs),
         force=opts.force,
-        action=lambda: write_json(manifest_path, manifest),
+        action=publish_manifest,
         validate=validate_publication,
         completion_boundary=True,
     ))
@@ -1869,6 +1879,11 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
 
 
 def run(inputs: Inputs, opts: Options) -> None:
+    """Construct the module graph, execute it through the shared runner, and publish outputs.
+
+    Freshness is evaluated after graph construction. Processing and validation
+    errors propagate to the caller; partial private outputs can support resumption.
+    """
     runner_started = time.perf_counter()
     runner = build_module(inputs, opts)
     with runner.run_context(started_at=runner_started):

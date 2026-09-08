@@ -29,6 +29,7 @@ class InstanceIdentity:
     configuration_lineage_id: int
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize semantic identity with sorted entities, excluding the internal key."""
         return {
             "project": self.project,
             "module": self.module,
@@ -48,6 +49,7 @@ class OutputContract:
     format: str
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize normalized absolute output paths and the promised output format."""
         return {
             "root": _normalized_path(self.root),
             "prefix": self.prefix,
@@ -72,6 +74,7 @@ class InstanceContract:
     processing: Mapping[str, Any] = field(default_factory=dict)
 
     def as_dict(self, identity: InstanceIdentity) -> dict[str, Any]:
+        """Serialize freshness-relevant configuration, topology, inputs, and outputs."""
         result: dict[str, Any] = {
             "module": identity.module,
             "configuration": self.configuration_fingerprint,
@@ -180,83 +183,103 @@ class InstanceSpec:
 
     @property
     def key(self) -> str:
+        """Stable instance key used by dependency references."""
         return self.identity.key
 
     @property
     def module(self) -> str:
+        """Scientific module owning this instance."""
         return self.identity.module
 
     @property
     def project(self) -> str:
+        """BIDS project identifier."""
         return self.identity.project
 
     @property
     def participant(self) -> str:
+        """Participant identifier for this instance."""
         return self.identity.participant
 
     @property
     def entities(self) -> Mapping[str, str]:
+        """Applicable run, space, and smoothing identity fields."""
         return self.identity.entities
 
     @property
     def configuration_lineage_id(self) -> int:
+        """Registry identifier for the selected configuration lineage."""
         return self.identity.configuration_lineage_id
 
     @property
     def config_fingerprint(self) -> str:
+        """Fingerprint of the resolved scientific configuration."""
         return self.contract.configuration_fingerprint
 
     @property
     def dependencies(self) -> tuple[str, ...]:
+        """Upstream instance keys required before execution."""
         return self.contract.dependencies
 
     @property
     def input_paths(self) -> tuple[Path, ...]:
+        """Declared external input paths for freshness assessment."""
         return self.contract.inputs
 
     @property
     def output_root(self) -> Path:
+        """Root of this instance's public artifact boundary."""
         return self.contract.output.root
 
     @property
     def output_prefix(self) -> str | None:
+        """Filename prefix for public outputs, when applicable."""
         return self.contract.output.prefix
 
     @property
     def expected_outputs(self) -> tuple[Path, ...]:
+        """Exact required public output paths."""
         return self.contract.output.expected
 
     @property
     def command(self) -> tuple[str, ...]:
+        """Argument vector stored in the execution recipe."""
         return self.execution.command
 
     @property
     def runtime_config(self) -> Path:
+        """Path to the resolved execution configuration snapshot."""
         return self.execution.runtime_config
 
     @property
     def resource_class(self) -> str:
+        """Worker resource class eligible to execute this instance."""
         return self.resources.resource_class
 
     @property
     def memory_gb(self) -> int:
+        """Requested starting memory in gigabytes."""
         return self.resources.memory_gb
 
     @property
     def max_memory_gb(self) -> int:
+        """Maximum memory allowed for retry escalation."""
         return self.resources.max_memory_gb
 
     @property
     def instance_contract(self) -> dict[str, Any]:
         """Return the normalized semantic contract used for freshness."""
-        return self.contract.as_dict(self.identity)
+        from nro.orchestration.catalog import canonical_contract
+        return canonical_contract(self.contract.as_dict(self.identity))
 
     @property
     def contract_fingerprint(self) -> str:
+        """Return the hash of the substantive instance contract."""
         return fingerprint(self.instance_contract)
 
     @property
     def revision_fingerprint(self) -> str:
+        """Return the revision hash used to track changes to the registered specification."""
         return fingerprint(
             {
                 "contract_version": INSTANCE_CONTRACT_VERSION,

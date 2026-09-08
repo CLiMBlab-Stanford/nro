@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import json
 import nibabel as nib
 import numpy as np
 import time
@@ -18,6 +19,7 @@ from nro.microparcellation.config import (
     ModuleConfig,
 )
 from nro.configuration.store import ConfigStore
+from nro.engine.images import sidecar_json_path
 from nro.microparcellation.module import run
 from nro.microparcellation.volume import (
     VolumeSpace,
@@ -27,8 +29,38 @@ from nro.microparcellation.volume import (
 )
 
 
-def _write_volume_run(path: Path, data: np.ndarray) -> None:
+def _write_volume_run(
+    path: Path,
+    data: np.ndarray,
+    *,
+    cleaning_defined: bool = True,
+    undefined_reason: str | None = None,
+) -> None:
     nib.save(nib.Nifti1Image(np.asarray(data, dtype=np.float32), np.eye(4)), path)
+    frames = int(data.shape[3])
+    mask_file = path.with_name(path.name.removesuffix(".nii.gz") + "_confounds.tsv")
+    mask_file.write_text("motion_outlier00\n" + "0\n" * frames)
+    sidecar_json_path(path).write_text(
+        json.dumps(
+            {
+                "Cleaning": {
+                    "CleaningDefined": cleaning_defined,
+                    "CleaningUndefinedReason": undefined_reason,
+                    "TotalFrames": frames,
+                    "RetainedFrames": frames,
+                    "CensoredFraction": 0.0,
+                    "ResidualDesignDegreesOfFreedom": max(0, frames - 2),
+                    "AlgebraicTemporalRank": max(0, frames - 2),
+                    "TemporalMaskFile": str(mask_file),
+                    "TemporalMaskRegex": ".*outlier.*",
+                    "QualityControl": {
+                        "ParticipationRatioEffectiveTemporalRank": 8.0,
+                        "DominantTemporalVarianceFraction": 0.2,
+                    },
+                }
+            }
+        )
+    )
 
 
 def test_oblique_volume_cifti_uses_plumb_grid_without_losing_parcels(tmp_path: Path) -> None:
@@ -146,22 +178,41 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
     mask_path = tmp_path / "gray-matter.nii.gz"
     nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_path)
     runs = []
-    for index in range(2):
+    for index in range(3):
         path = tmp_path / f"run-{index + 1}.nii.gz"
-        _write_volume_run(path, rng.normal(size=(4, 4, 4, 12)))
+        data = (
+            np.zeros((4, 4, 4, 12), dtype=np.float32)
+            if index == 2
+            else rng.normal(size=(4, 4, 4, 12))
+        )
+        _write_volume_run(
+            path,
+            data,
+            cleaning_defined=index != 2,
+            undefined_reason=(
+                "passband_basis_not_identifiable_from_retained_frames"
+                if index == 2
+                else None
+            )
+        )
         runs.append((path,))
 
     output = tmp_path / "output"
     cfg = ModuleConfig(
         inputs=InputsConfig(
             functional=tuple(runs),
+            temporal_masks=tuple(
+                path[0].with_name(
+                    path[0].name.removesuffix(".nii.gz") + "_confounds.tsv"
+                )
+                for path in runs
+            ),
             domain="volume",
             mask=mask_path,
             mask_threshold=0.5,
             volume_connectivity=6,
         ),
         output=OutputConfig(directory=output, work_directory=tmp_path / "work", prefix="sub-test"),
-        wb_command="/bin/true",
         coarsening=CoarseningConfig(
             target_vertices=3,
             iterations=3,
@@ -171,7 +222,13 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
             eigensolver_tolerance=1e-5,
         ),
         connectivity=ConnectivityConfig(
-            minimum_trs=4,
+            minimum_retained_frames=4,
+            minimum_retained_fraction=0.0,
+            minimum_residual_design_dof=0,
+            minimum_participation_effective_rank=0.0,
+            maximum_dominant_temporal_variance_fraction=1.0,
+            minimum_usable_runs=1,
+            minimum_aggregate_retained_frames=4,
             temporal_block_size=4,
             reliability_weighting=False,
             reliability_vertex_block_size=8,
@@ -180,6 +237,12 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
     )
     outputs = run(cfg)
 
+    assert outputs["microparcels"].name.endswith(
+        "_desc-microparcellation_dseg.dlabel.nii"
+    )
+    assert outputs["connectivity"].name.endswith(
+        "_connectivity.pconn.nii"
+    )
     label_volume = np.asarray(nib.load(outputs["microparcels_volume"]).dataobj)
     label_image = nib.load(outputs["microparcels_volume"])
     assert np.all(label_volume[mask == 0] == 0)
@@ -206,15 +269,38 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
     assert [step["target_regions"] for step in manifest["coarsening_steps"]] == [6, 3]
     assert [step["input_regions"] for step in manifest["coarsening_steps"]] == [8, 6]
     quality = manifest["quality"]
+    assert quality["included_runs"] == 2
+    assert manifest["functional_runs"]["skipped"] == [
+        {
+            "files": [str(runs[2][0])],
+            "reasons": [
+                {
+                    "reason": "cleaning_undefined",
+                    "cleaning_undefined_reasons": [
+                        "passband_basis_not_identifiable_from_retained_frames"
+                    ],
+                }
+            ],
+        }
+    ]
     assert 0.0 <= quality["variance_preserved"] <= 1.0
     assert quality["null_baseline"]["seed"] == 1
     assert len(quality["null_baseline"]["parcellations"]) == 5
     assert outputs["quality"].is_file()
-    scene = outputs["scene"].read_text()
-    assert outputs["microparcels_volume"].name in scene
-    assert outputs["microparcels"].name in scene
-    assert outputs["connectivity"].name in scene
-    assert "{{" not in scene
+    reliability = nib.load(outputs["parcel_reliability"])
+    assert reliability.shape == (5, 8)
+    assert reliability.header.get_axis(0).name.tolist() == [
+        "Mean run reliability",
+        "Minimum run reliability",
+        "Maximum run reliability",
+        "Supporting runs",
+        "Effective contributing runs",
+    ]
+    assert len(quality["run_contributions"]) == 2
+    assert quality["split_half"]["method"] == "whole runs"
+    assert quality["connectome"]["unique_edges"] == 3
+    assert len(quality["connectome"]["encoded_histogram"]["counts"]) == 255
+    assert outputs["scene"].is_file()
 
 
 def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
@@ -232,13 +318,17 @@ def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
         ModuleConfig(
             inputs=InputsConfig(
                 functional=((run,),),
+                temporal_masks=(
+                    run.with_name(
+                        run.name.removesuffix(".nii.gz") + "_confounds.tsv"
+                    ),
+                ),
                 domain="volume",
                 mask=mask_path,
                 mask_threshold=0.5,
                 volume_connectivity=6,
             ),
             output=OutputConfig(directory=output, work_directory=tmp_path / "work", prefix="sub-resume"),
-            wb_command="/bin/true",
             coarsening=CoarseningConfig(
                 target_vertices=3,
                 iterations=3,
@@ -248,7 +338,13 @@ def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
                 eigensolver_tolerance=1e-5,
             ),
             connectivity=ConnectivityConfig(
-                minimum_trs=4,
+                minimum_retained_frames=4,
+                minimum_retained_fraction=0.0,
+                minimum_residual_design_dof=0,
+                minimum_participation_effective_rank=0.0,
+                maximum_dominant_temporal_variance_fraction=1.0,
+                minimum_usable_runs=1,
+                minimum_aggregate_retained_frames=4,
                 temporal_block_size=4,
                 reliability_weighting=False,
                 reliability_vertex_block_size=8,

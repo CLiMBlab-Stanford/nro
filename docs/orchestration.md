@@ -32,11 +32,17 @@ nro run -p t20 -P nptl -m networks \
 ```
 
 The corresponding filenames include both entities, for example
-`_space-fsnative_scale-2mm_`. All pairs for a derivative configuration share
-its subject/session folder; the filename entities keep their products distinct.
+`_space-fsnative_smoothing-2mm_`. Cleaned runs retain the source BIDS
+subject/session layout. Microparcellation and network artifacts use
+`space-<space>_smoothing-<mm>mm/sub-<participant>/` so each target has an
+independent, relocatable directory.
 
-The requested module is terminal: the planner adds every required upstream
-instance. Run-level `func` and `clean` requests expand from source BIDS only;
+Each requested module defines terminal instances: the planner adds every
+required upstream instance. Within a project and workflow, targets already
+covered by another selected target's dependencies create no separate demand.
+Coverage is checked by instance, so upstream runs outside a downstream module's
+input selection remain requested. Existing requests are unchanged.
+Run-level `func` and `clean` requests expand from source BIDS only;
 derivative contents never expand the source run universe. Use exact BIDS entity
 selectors when narrowing those modules:
 
@@ -45,9 +51,12 @@ nro run -p t20 -P nptl -m clean \
   --run ses=ex31792 task=Rest dir=LR run=01
 ```
 
-An empty invocation targets `networks` for every source-BIDS participant in
-every discovered project, using workflow `main`, concurrency 50, and partition
-`sphinx`. Participant filters are matched across projects, so `-p t12` does not
+An empty invocation targets every module with no downstream consumers, currently
+`networks` and `firstlevels`, for every source-BIDS participant in every
+discovered project. It uses workflow `main`, model set `main`, concurrency 50,
+and the configured partition. Common upstream instances are shared between
+branches. An explicit `--module` restricts the requested endpoints.
+Participant filters are matched across projects, so `-p t12` does not
 require a project when only one project contains `sub-t12`.
 
 A source subject directory is discoverable even when it cannot support the
@@ -62,16 +71,21 @@ Important options:
 
 - `--repair` destroys the entire lab-wide private `.nro` registry state,
   creates the current schema, and discovers the source BIDS project and
-  participant directories. It does not plan or register derivative instances,
-  register workflows, remove public derivatives, create a request, or submit
-  workers. Selection options cannot accompany this lab-wide operation.
+  participant directories. It restores instances from ownership receipts
+  stored with nro derivatives, including instances whose workflows are no
+  longer in the configuration store. It also scans current workflow locations
+  for artifacts created before ownership receipts were introduced. The
+  registry registers each artifact with its dependency graph and then assesses
+  it. This discovery does not create requests or demand, remove public
+  derivatives, or submit workers.
+  Selection options cannot accompany this lab-wide operation.
   Repair freezes the worker pool before replacing registry state. If workers or
   pending worker submissions exist, it asks for confirmation, requests every
   user's workers to stop, cancels their Slurm allocations, and waits until all
   worker processes are inactive. Declining the prompt leaves the registry and
   workers unchanged.
-  Immediately after repair, `nro status` therefore prints its table header with
-  no derivative rows.
+  If no controlled artifacts exist, `nro status` immediately after repair
+  prints its table header with no derivative rows.
 - `--no-submit` creates demand without submitting workers.
 - `--local` runs a worker in the current allocation.
 - `--concurrency` limits active module instances shared by overlapping requests.
@@ -89,13 +103,14 @@ the ceiling is terminal.
 
 ## Configuration
 
-The only editable configuration store is `nro/configuration/files/`. Public
-interfaces accept IDs, never arbitrary paths or alternate store locations.
+The [definitions store](definitions.md) is external to the installation and
+selected through `nro paths`. Processing requests select configuration and
+workflow IDs within that store.
 
 A workflow file selects one configuration ID per derivative class:
 
 ```yaml
-# nro/configuration/files/workflows/expreg_workflow.yml
+# DEFINITIONS/workflows/expreg_workflow.yml
 preprocessing: expreg
 clean: main
 microparcellation: main
@@ -131,17 +146,26 @@ distinct derivative directories.
 
 ## Status and logs
 
-Status is strictly read-only:
+By default, status performs a lightweight, read-only preview using the current
+module processing contracts, declared inputs and outputs, and dependency graph:
 
 ```bash
 nro status
 nro status -p t20 -P nptl -m clean --json
 nro status -p t20 -P nptl -w expreg \
   --run ses=ex31792 task=Rest --space fsnative --smoothing 2
+nro status --cached
+nro status --verify
 ```
 
-It reports registry state without assessing artifacts, reconciling requests,
-or cancelling work. Planning and workers own those mutations.
+`--cached` reports only the state already saved in the registry and does no
+filesystem checking. The default preview detects cheap warning signs such as a
+changed module processing contract, missing direct input, missing declared
+output, or stale upstream derivative, but does not fingerprint large files or
+write its conclusions back. `--verify` runs the authoritative thorough artifact
+assessment, updates the registry, and then reports the newly saved state. A
+verified processing-contract change also requests cancellation of an active
+attempt so it cannot publish an obsolete derivative.
 
 Logs use the same project, participant, workflow, module, run, space, and
 smoothing filters. The default view opens Slurm worker logs;

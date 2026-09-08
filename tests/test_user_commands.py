@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nro.bin.run import _write_worker_script, build_parser, main as run_main
+from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.registry import SCHEMA_VERSION, Registry
 from nro.bin.set import main as set_main
 from nro.bin.status import _render_report, main as status_main
@@ -26,12 +27,32 @@ def test_run_defaults() -> None:
     selection = core_selection(args)
     assert selection.participants == ()
     assert selection.projects == ()
-    assert selection.modules == ("networks",)
+    assert selection.modules == ("networks", "firstlevels")
     assert selection.workflows == ("main",)
     assert selection.spaces == ("fsnative",)
     assert selection.smoothing == (2,)
     assert args.concurrency == 50
+    assert args.cpus == 2
     assert args.partition == "sphinx"
+
+
+def test_run_cpu_override() -> None:
+    assert build_parser().parse_args(["--cpus", "8"]).cpus == 8
+
+
+def test_run_default_targets_follow_catalog(monkeypatch) -> None:
+    from dataclasses import replace
+    from nro.orchestration import catalog
+
+    consumer = replace(
+        catalog.module_descriptor("firstlevels"), name="consumer",
+        upstream_modules=("firstlevels",),
+    )
+    monkeypatch.setitem(catalog.MODULE_CATALOG, consumer.name, consumer)
+    selection = core_selection(build_parser().parse_args([]))
+    assert selection.modules == ("networks", "consumer")
+    explicit = core_selection(build_parser().parse_args(["-m", "func"]))
+    assert explicit.modules == ("func",)
 
 
 def test_shared_selection_options_accept_multiple_values() -> None:
@@ -251,6 +272,87 @@ def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     assert len(status_output.splitlines()) == 1
 
 
+def test_run_repair_registers_existing_artifacts_without_demand(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    bids = tmp_path / "bids"
+    monkeypatch.setattr("nro.engine.paths.BIDS_PATH", bids)
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    artifact = (
+        bids
+        / "demo"
+        / "derivatives"
+        / "preprocessing"
+        / "main"
+        / "sub-01"
+        / "anat"
+        / "sub-01_desc-preprocessAnat_manifest.json"
+    )
+    _write(
+        artifact,
+        json.dumps(
+            {
+                "complete": True,
+                "output_metadata_contract": module_descriptor(
+                    "anat"
+                ).processing_contract()["output_metadata"],
+            }
+        ),
+    )
+
+    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    registry = Registry.for_project("demo", bids_root=bids)
+    rows = registry.instance_rows()
+
+    assert result["artifacts"] == 1
+    assert result["instances"] == 1
+    assert [(row["module"], row["participant"]) for row in rows] == [("anat", "01")]
+    assert rows[0]["artifact_state"] == "fresh"
+    assert rows[0]["demanded"] == 0
+    assert registry.request_rows() == []
+
+
+def test_repair_registers_only_existing_artifacts_and_their_dependencies(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    _write(
+        bids
+        / "demo"
+        / "derivatives"
+        / "clean"
+        / "main"
+        / "sub-01"
+        / (
+            "sub-01_task-rest_run-1_space-fsnative_smoothing-2mm_"
+            "desc-clean_manifest.json"
+        ),
+        json.dumps({"complete": True}),
+    )
+
+    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    result = json.loads(capsys.readouterr().out)
+    registry = Registry.for_project("demo", bids_root=bids)
+
+    assert result["artifacts"] == 1
+    assert result["instances"] == 3
+    assert {row["module"] for row in registry.instance_rows()} == {
+        "anat",
+        "func",
+        "clean",
+    }
+    assert registry.request_rows() == []
+
+
 def test_run_repair_requires_confirmation_before_stopping_active_workers(
     tmp_path: Path,
     monkeypatch,
@@ -387,7 +489,11 @@ def test_run_continues_past_unavailable_participant(
 
     assert result["participants"] == {"demo": ["01"]}
     assert result["instances"] == 5
-    assert result["unavailable"] == [
+    assert {
+        "project": "demo", "participant": "01", "module": "firstlevels",
+        "reason": f"No raw BOLD runs matched under {available}",
+    } in result["unavailable"]
+    assert [item for item in result["unavailable"] if item["module"] == "networks"] == [
         {
             "project": "demo",
             "participant": "02",
@@ -415,7 +521,7 @@ def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None
     assert request["concurrency"] == 50
 
 
-def test_bare_semantics_select_all_participants_through_networks(
+def test_bare_request_keeps_networks_when_no_task_models_match(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -432,9 +538,58 @@ def test_bare_semantics_select_all_participants_through_networks(
     request = json.loads(capsys.readouterr().out)
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
-    assert request["modules"] == ["networks"]
+    assert request["modules"] == ["networks", "firstlevels"]
     assert request["instances"] == 10
     assert request["concurrency"] == 50
+
+
+@pytest.mark.parametrize("modules", [(), ("networks",), ("firstlevels",)])
+def test_run_requests_each_selected_branch_across_projects(
+    tmp_path: Path, capsys, monkeypatch, modules,
+) -> None:
+    from nro.firstlevels import task_models
+
+    models = tmp_path / "config" / "models" / "langlocSN"
+    definition = "conditions: trial_type\ncontrasts:\n  S: {S: 1}\n"
+    _write(models / "main.yml", "model_set: main\n" + definition)
+    _write(models / "development.yml", "model_set: development\n" + definition)
+    monkeypatch.setattr(task_models, "definitions_root", lambda: tmp_path / "config")
+    bids = tmp_path / "bids"
+    for project in ("alpha", "beta"):
+        for participant, task in (("01", "langlocSN"), ("02", "rest")):
+            subject = bids / project / f"sub-{participant}"
+            _write(subject / "anat" / f"sub-{participant}_T1w.nii.gz")
+            stem = f"sub-{participant}_task-{task}_run-1"
+            _write(subject / "func" / f"{stem}_bold.nii.gz")
+            _write(subject / "func" / f"{stem}_bold.json", "{}")
+            _write(subject / "func" / f"{stem}_events.tsv",
+                   "onset\tduration\ttrial_type\n0\t1\tS\n")
+
+    argv = ["--bids-root", str(bids), "--no-submit", "--json"]
+    if modules:
+        argv.extend(["-m", *modules])
+    run_main(argv)
+    result = json.loads(capsys.readouterr().out)
+    selected = modules or ("networks", "firstlevels")
+    assert result["modules"] == list(selected)
+    registry = Registry.for_project("alpha", bids_root=bids)
+    rows = registry.instance_rows()
+    assert {row["project"] for row in rows} == {"alpha", "beta"}
+    assert all(row["demanded"] for row in rows)
+    for project in ("alpha", "beta"):
+        project_rows = [row for row in rows if row["project"] == project]
+        # Shared anatomy and functional instances must not be registered twice.
+        subjects = 2 if "networks" in selected else 1
+        for module in ("anat", "func"):
+            assert sum(row["module"] == module for row in project_rows) == subjects
+        fits = [row for row in project_rows if row["module"] == "firstlevels"]
+        assert len(fits) == int("firstlevels" in selected)
+        if fits:
+            assert json.loads(fits[0]["entities_json"])["model"] == "main"
+        assert sum(row["module"] == "networks" for row in project_rows) == (
+            2 if "networks" in selected else 0
+        )
+    assert len(registry.request_rows()) == len(selected) * 2
 
 
 def test_participant_selection_spans_every_matching_project(
@@ -484,7 +639,7 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
 
     status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
     report = json.loads(capsys.readouterr().out)
-    assert set(report) == {"instances", "errors", "blocked_instances"}
+    assert set(report) == {"instances", "errors", "blocked_instances", "bidsification"}
     assert {row["status"] for row in report["instances"]} == {"Queued"}
     assert report["errors"] == []
     assert report["blocked_instances"] == []
@@ -502,9 +657,14 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
 
     stop_main(["-p", "01", "-m", "anat", "-P", "demo", "--bids-root", str(bids)])
     assert "Cancelled" in capsys.readouterr().out
+    status_main([
+        "-p", "01", "-P", "demo", "--bids-root", str(bids), "--cached", "--json"
+    ])
+    cached = json.loads(capsys.readouterr().out)["instances"]
+    assert {row["status"] for row in cached} == {"Unsubmitted"}
     status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
     rows = json.loads(capsys.readouterr().out)["instances"]
-    assert {row["status"] for row in rows} == {"Unsubmitted"}
+    assert {row["status"] for row in rows} == {"Missing", "Stale"}
 
 
 def test_set_updates_active_concurrency_without_creating_new_demand(
@@ -639,6 +799,46 @@ def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
 
     assert registry.paths.database.stat().st_mtime_ns == database_mtime
     assert registry.paths.control.stat().st_mtime_ns == control_mtime
+
+
+def test_status_cached_preview_and_verify_have_distinct_freshness_semantics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    run_main([
+        "-p", "01", "-P", "demo", "-m", "anat", "--bids-root", str(bids),
+        "--no-submit", "--json",
+    ])
+    capsys.readouterr()
+    registry = Registry.for_project("demo", bids_root=bids)
+    row = registry.instance_rows()[0]
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE instances SET artifact_state='fresh', artifact_reason='Cached success' "
+            "WHERE id=?",
+            (row["id"],),
+        )
+
+    status_main([
+        "-P", "demo", "--bids-root", str(bids), "--cached", "--json"
+    ])
+    cached = json.loads(capsys.readouterr().out)["instances"]
+    assert cached[0]["status"] == "Success"
+
+    status_main(["-P", "demo", "--bids-root", str(bids), "--json"])
+    preview = json.loads(capsys.readouterr().out)["instances"]
+    assert preview[0]["status"] == "Queued"
+    assert preview[0]["reason"] != "Cached success"
+    assert registry.instance_rows()[0]["artifact_state"] == "fresh"
+
+    status_main([
+        "-P", "demo", "--bids-root", str(bids), "--verify", "--json"
+    ])
+    capsys.readouterr()
+    assert registry.instance_rows()[0]["artifact_state"] == "missing"
 
 
 def test_worker_script_records_memory_tier(tmp_path: Path) -> None:

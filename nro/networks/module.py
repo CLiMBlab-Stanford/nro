@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import shutil
 import time
 from dataclasses import asdict, replace
 from itertools import count
@@ -12,8 +11,11 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from nro.configuration.paths import WB_COMMAND_PATH
+from nro.configuration.schema import scientific_values
 from nro.orchestration.runtime import selected_configuration_fingerprint
 from nro.microparcellation.cifti import load_dlabel
+from nro.microparcellation.scene import write_workbench_scene
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.engine.images import write_cifti_dense_scalar
@@ -25,7 +27,14 @@ from nro.engine.io import (
 )
 from .adjacency import load_adjacency, pconn_to_adjacency, save_adjacency
 from .config import ModuleConfig, validate_config
+from .clustering import clustering_membership
+from .contract import (
+    networks_output_contract,
+    validate_network_label_metadata,
+    validate_network_manifest,
+)
 from .consensus import membership_stability
+from .ica import ica_membership
 from .leiden import leiden_partition, write_hint
 from .oslom import parse_tp, resolve_oslom_executable, run_oslom, write_oslom_graph
 from .labeling import (
@@ -35,6 +44,7 @@ from .labeling import (
     rank_reference_candidates,
     reference_paths,
 )
+from .paths import fixed_output_paths, network_descriptor, network_map_path
 from .scene import write_network_scene
 
 LOG = logging.getLogger(__name__)
@@ -112,7 +122,7 @@ def _load_inputs(cfg: ModuleConfig):
 
 
 NetworkOutputs = dict[
-    str, Path | tuple[Path, Path] | list[Path | tuple[Path, Path]]
+    str, Path | tuple[Path, ...] | list[Path | tuple[Path, Path]]
 ]
 
 
@@ -126,21 +136,16 @@ def build_module(
     validate_config(cfg)
     out = cfg.output.directory
     work = cfg.output.work_directory
-    manifest_path = out / f"{cfg.output.prefix}_manifest.yaml"
+    manifest_path = fixed_output_paths(out, cfg.output.prefix)["manifest"]
     publication_breadcrumb = out / f".{cfg.output.prefix}_complete"
     labeling_inputs = reference_paths() if cfg.labeling.enabled else ()
     source_inputs = tuple(
         dict.fromkeys(
             (
+                cfg.inputs.microparcellation_manifest,
                 cfg.inputs.microparcels,
                 cfg.inputs.connectivity,
                 *cfg.inputs.source_surfaces,
-                *cfg.inputs.scene_surfaces,
-                *(
-                    (cfg.inputs.label_volume,)
-                    if cfg.inputs.label_volume is not None
-                    else ()
-                ),
                 *(
                     (cfg.inputs.anatomical_manifest,)
                     if cfg.inputs.anatomical_manifest is not None
@@ -201,49 +206,32 @@ def build_module(
                 return False, "Networks publication member changed after completion: " + ", ".join(changed), recorded_outputs
         return True, "Networks publication and its complete output inventory are valid.", recorded_outputs
 
-    graph_path = work / f"{cfg.output.prefix}_graph.dat"
     adjacency_path = work / f"{cfg.output.prefix}_adjacency.npz"
     input_state_path = work / f"{cfg.output.prefix}_input_state.npz"
-    graph_validation_path = work / f"{cfg.output.prefix}_graph_validation.json"
-    executable_path = work / f"{cfg.output.prefix}_oslom_executable.txt"
-    consensus_path = work / f"{cfg.output.prefix}_consensus.npz"
-    consensus_assignments_path = work / f"{cfg.output.prefix}_consensus_assignments.json"
+    network_validation_path = work / f"{cfg.output.prefix}_network_validation.json"
+    network_state_path = work / f"{cfg.output.prefix}_network_membership.npz"
     labeling_path = work / f"{cfg.output.prefix}_network_labels.json"
-    leiden_hint_path = (
-        work / f"{cfg.output.prefix}_leiden_hint.dat"
-        if cfg.oslom.initialization == "leiden"
-        else None
-    )
-    run_root = work / "oslom_runs"
-    repetition_breadcrumbs = tuple(
-        run_root / f"run_{i + 1:03d}" / ".nro_complete"
-        for i in range(cfg.oslom.repetitions)
-    )
-    private_outputs = (
-        graph_path,
+    strategy_outputs: list[Path] = []
+    private_outputs = [
         adjacency_path,
         input_state_path,
-        graph_validation_path,
-        executable_path,
-        consensus_path,
-        consensus_assignments_path,
+        network_validation_path,
+        network_state_path,
         labeling_path,
-        *((leiden_hint_path,) if leiden_hint_path is not None else ()),
-        *repetition_breadcrumbs,
-    )
-    publication_inputs = (*source_inputs, *private_outputs)
+    ]
 
     initialization_breadcrumb = work / "initialized.complete"
     validation_path = work / f"{cfg.output.prefix}_validated_config.json"
-    validation_text = json.dumps(asdict(cfg), default=json_path_default, sort_keys=True) + "\n"
+    validation_text = json.dumps(scientific_values("networks", asdict(cfg)), default=json_path_default, sort_keys=True) + "\n"
     def validate_and_record_config() -> None:
         validate_config(cfg)
         atomic_write_text(validation_path, validation_text)
 
     def validate_recorded_config() -> tuple[bool, str]:
         try:
-            matches = validation_path.read_text(encoding="utf-8") == validation_text
-        except OSError:
+            recorded = json.loads(validation_path.read_text(encoding="utf-8"))
+            matches = scientific_values("networks", recorded) == json.loads(validation_text)
+        except (OSError, ValueError, TypeError):
             matches = False
         return matches, (
             "Recorded networks configuration matches the requested workflow."
@@ -301,25 +289,13 @@ def build_module(
         action=transform_inputs,
     ))
 
-    def write_graph() -> None:
-        adjacency = load_adjacency(adjacency_path)
-        write_oslom_graph(graph_path, adjacency)
-
-    runner.add_step(Step.python(
-        name="Construct Network Adjacency and Write OSLOM Graph",
-        outputs=(graph_path,),
-        inputs=(adjacency_path, input_state_path, validation_path),
-        force=bool(cfg.output.overwrite),
-        action=write_graph,
-    ))
-
-    def validate_graph() -> None:
+    def validate_network_adjacency() -> None:
         with np.load(input_state_path, allow_pickle=False) as state:
             n_microparcels = int(state["n_microparcels"][0])
             percentile_value = float(state["percentile_weight"][0])
         percentile_weight = None if np.isnan(percentile_value) else percentile_value
         possible_edges = n_microparcels * (n_microparcels - 1) // 2
-        edge_count = sum(1 for line in graph_path.read_text().splitlines() if line.strip())
+        edge_count = int(load_adjacency(adjacency_path).nnz)
         if percentile_weight is not None:
             LOG.info(
                 "Connectivity percentile cutoff P%g corresponds to weight >= %.9g",
@@ -327,7 +303,7 @@ def build_module(
                 percentile_weight,
             )
         LOG.info(
-            "Sparsified OSLOM graph has %d nodes and %d edges (%.2f%% density)",
+            "Sparsified network adjacency has %d nodes and %d edges (%.2f%% density)",
             n_microparcels,
             edge_count,
             100.0 * edge_count / possible_edges if possible_edges else 0.0,
@@ -335,170 +311,281 @@ def build_module(
         if edge_count == 0:
             raise ValueError("No graph edges survived connectivity thresholding")
         atomic_write_text(
-            graph_validation_path,
+            network_validation_path,
             json.dumps({"edge_count": edge_count, "possible_edges": possible_edges})
             + "\n",
         )
 
     runner.add_step(Step.python(
-        name="Validate OSLOM Graph",
-        outputs=(graph_validation_path,),
-        inputs=(graph_path, input_state_path),
+        name="Validate Network Adjacency",
+        outputs=(network_validation_path,),
+        inputs=(adjacency_path, input_state_path),
         force=bool(cfg.output.overwrite),
-        action=validate_graph,
+        action=validate_network_adjacency,
     ))
-    oslom_initialization_breadcrumb = work / "oslom_initialization.complete"
-
-    def resolve_executable() -> None:
-        executable = resolve_oslom_executable(cfg.oslom.executable)
-        atomic_write_text(executable_path, str(executable) + "\n")
-
-    runner.add_step(Step.python(
-        name="Resolve OSLOM Executable",
-        outputs=(executable_path,),
-        inputs=(validation_path,),
-        force=bool(cfg.output.overwrite),
-        action=resolve_executable,
-    ))
-    hint_path: Path | None = cfg.oslom.initial_partition
-    if cfg.oslom.initialization == "leiden":
-        hint_path = leiden_hint_path
-        assert hint_path is not None
-
-        def write_initial_partition() -> None:
-            adjacency = load_adjacency(adjacency_path)
-            write_hint(
-                hint_path,
-                leiden_partition(
-                    adjacency,
-                    resolution=cfg.oslom.leiden_resolution,
-                    iterations=cfg.oslom.leiden_iterations,
-                    seed=cfg.oslom.leiden_seed,
-                ),
+    if cfg.parcellation_strategy == "ica":
+        def compute_ica() -> None:
+            with np.load(input_state_path, allow_pickle=False) as state:
+                labels = np.asarray(state["labels"], dtype=np.int64)
+                mask = np.asarray(state["mask"], dtype=bool)
+            membership = ica_membership(load_adjacency(adjacency_path), cfg.ica)
+            vertex_membership = np.zeros(
+                (len(labels), membership.shape[1]), dtype=np.float32
             )
-            write_completion_breadcrumb(
-                oslom_initialization_breadcrumb, "Network initialization complete\n"
+            vertex_membership[mask] = membership[labels[mask]]
+            atomic_save_npz(
+                network_state_path,
+                compressed=True,
+                vertex_stability=vertex_membership,
+                vertex_homeless=np.zeros(len(labels), dtype=np.float32),
+                vertex_overlap=np.zeros(len(labels), dtype=np.float32),
+                ref_idx=np.asarray([-1], dtype=np.int64),
             )
 
         runner.add_step(Step.python(
-            name="Resolve Network Initialization",
-            outputs=(hint_path, oslom_initialization_breadcrumb),
-            inputs=(graph_path, adjacency_path, validation_path),
+            name="Estimate ICA Networks",
+            outputs=(network_state_path,),
+            inputs=(adjacency_path, input_state_path, network_validation_path),
             force=bool(cfg.output.overwrite),
-            action=write_initial_partition,
+            action=compute_ica,
+        ))
+    elif cfg.parcellation_strategy == "clustering":
+        clustering_evaluation_path = work / f"{cfg.output.prefix}_clustering_evaluation.json"
+        strategy_outputs.append(clustering_evaluation_path)
+
+        def compute_clustering() -> None:
+            with np.load(input_state_path, allow_pickle=False) as state:
+                labels = np.asarray(state["labels"], dtype=np.int64)
+                mask = np.asarray(state["mask"], dtype=bool)
+            membership, inertias = clustering_membership(
+                load_adjacency(adjacency_path), cfg.clustering
+            )
+            vertex_membership = np.zeros(
+                (len(labels), membership.shape[1]), dtype=np.float32
+            )
+            vertex_membership[mask] = membership[labels[mask]]
+            atomic_save_npz(
+                network_state_path,
+                compressed=True,
+                vertex_stability=vertex_membership,
+                vertex_homeless=np.zeros(len(labels), dtype=np.float32),
+                vertex_overlap=np.zeros(len(labels), dtype=np.float32),
+                ref_idx=np.asarray([-1], dtype=np.int64),
+            )
+            atomic_write_text(
+                clustering_evaluation_path,
+                json.dumps(
+                    {
+                        "fit_inertias_best_to_worst": inertias.tolist(),
+                        "alignment_reference": "lowest-inertia fit",
+                    },
+                    indent=2,
+                )
+                + "\n",
+            )
+
+        runner.add_step(Step.python(
+            name="Estimate Clustered Networks",
+            outputs=(network_state_path, clustering_evaluation_path),
+            inputs=(adjacency_path, input_state_path, network_validation_path),
+            force=bool(cfg.output.overwrite),
+            action=compute_clustering,
         ))
     else:
-        hint_path = None
-        runner.add_step(Step.python(
-            name="Resolve Network Initialization",
-            outputs=(oslom_initialization_breadcrumb,),
-            inputs=(graph_path, validation_path),
-            force=bool(cfg.output.overwrite),
-            action=lambda: write_completion_breadcrumb(
-                oslom_initialization_breadcrumb, "Network initialization complete\n"
-            ),
-        ))
-
-    for i in range(cfg.oslom.repetitions):
-        repetition_name = f"OSLOM Repetition {i + 1}/{cfg.oslom.repetitions}"
-        repetition_dir = run_root / f"run_{i + 1:03d}"
-        repetition_breadcrumb = repetition_dir / ".nro_complete"
-        def execute_repetition(
-            repetition_dir: Path = repetition_dir,
-            hint_path: Path | None = hint_path,
-        ) -> None:
-            executable = Path(executable_path.read_text(encoding="utf-8").strip())
-            oslom_cfg = replace(
-                cfg.oslom,
-                executable=executable,
-                initial_partition=hint_path,
-            )
-            run_oslom(graph_path, repetition_dir, oslom_cfg, runner=runner)
-
-        def validate_repetition(
-            repetition_dir: Path = repetition_dir,
-        ) -> tuple[bool, str]:
-            candidates = (
-                repetition_dir / "graph.dat_oslo_files" / "tp_without_singletons",
-                repetition_dir / "graph.dat_oslo_files" / "tp",
-            )
-            if any(path.is_file() and path.stat().st_size > 0 for path in candidates):
-                return True, "OSLOM repetition contains a nonempty partition output."
-            return False, f"OSLOM repetition has no nonempty tp output: {repetition_dir}"
-
-        runner.add_step(Step.directory_step(
-            name=repetition_name,
-            directory=repetition_dir,
-            breadcrumb=repetition_breadcrumb,
-            inputs=(
+        graph_path = work / f"{cfg.output.prefix}_graph.dat"
+        executable_path = work / f"{cfg.output.prefix}_oslom_executable.txt"
+        assignments_path = work / f"{cfg.output.prefix}_oslom_assignments.json"
+        oslom_initialization_breadcrumb = work / "oslom_initialization.complete"
+        leiden_hint_path = (
+            work / f"{cfg.output.prefix}_leiden_hint.dat"
+            if cfg.oslom.initialization == "leiden"
+            else None
+        )
+        run_root = work / "oslom_runs"
+        repetition_breadcrumbs = tuple(
+            run_root / f"run_{i + 1:03d}" / ".nro_complete"
+            for i in range(cfg.oslom.repetitions)
+        )
+        strategy_outputs.extend(
+            (
                 graph_path,
                 executable_path,
+                assignments_path,
                 oslom_initialization_breadcrumb,
-                *((hint_path,) if hint_path is not None else ()),
-            ),
+                *((leiden_hint_path,) if leiden_hint_path is not None else ()),
+                *repetition_breadcrumbs,
+            )
+        )
+
+        def write_graph() -> None:
+            write_oslom_graph(graph_path, load_adjacency(adjacency_path))
+
+        runner.add_step(Step.python(
+            name="Write OSLOM Graph",
+            outputs=(graph_path,),
+            inputs=(adjacency_path, network_validation_path),
             force=bool(cfg.output.overwrite),
-            action=execute_repetition,
-            validate=validate_repetition,
-            breadcrumb_text="OSLOM repetition complete\n",
+            action=write_graph,
         ))
 
-    def compute_consensus() -> None:
-        with np.load(input_state_path, allow_pickle=False) as state:
-            labels = np.asarray(state["labels"], dtype=np.int64)
-            mask = np.asarray(state["mask"], dtype=bool)
-            n_microparcels = int(state["n_microparcels"][0])
-        n_vertices = len(labels)
-        runs: list[list[set[int]]] = []
-        for index in range(cfg.oslom.repetitions):
-            repetition_dir = run_root / f"run_{index + 1:03d}"
-            candidates = (
-                repetition_dir / "graph.dat_oslo_files" / "tp_without_singletons",
-                repetition_dir / "graph.dat_oslo_files" / "tp",
-            )
-            existing = next((path for path in candidates if path.is_file()), None)
-            if existing is None:
-                raise RuntimeError(f"Completed OSLOM repetition has no tp output: {repetition_dir}")
-            runs.append(parse_tp(existing))
-        stability, homeless, overlap, ref_idx = membership_stability(
-            runs,
-            n_microparcels,
-            cfg.consensus.minimum_match_jaccard,
-        )
-        vertex_stability = np.zeros((n_vertices, stability.shape[1]), dtype=np.float32)
-        vertex_stability[mask] = stability[labels[mask]]
-        vertex_homeless = np.ones(n_vertices, dtype=np.float32)
-        vertex_homeless[mask] = homeless[labels[mask]]
-        vertex_overlap = np.zeros(n_vertices, dtype=np.float32)
-        vertex_overlap[mask] = overlap[labels[mask]]
-        atomic_save_npz(
-            consensus_path,
-            compressed=True,
-            vertex_stability=vertex_stability,
-            vertex_homeless=vertex_homeless,
-            vertex_overlap=vertex_overlap,
-            ref_idx=np.asarray([ref_idx], dtype=np.int64),
-        )
-        atomic_write_text(
-            consensus_assignments_path,
-            json.dumps(
-                [
-                    [[int(vertex) for vertex in sorted(group)] for group in fit]
-                    for fit in runs
-                ]
-            )
-            + "\n",
-        )
+        def resolve_executable() -> None:
+            executable = resolve_oslom_executable(cfg.oslom.executable)
+            atomic_write_text(executable_path, str(executable) + "\n")
 
-    runner.add_step(Step.python(
-        name="Compute Network Consensus",
-        outputs=(consensus_path, consensus_assignments_path),
-        inputs=tuple(repetition_breadcrumbs) + (input_state_path, validation_path),
-        force=bool(cfg.output.overwrite),
-        action=compute_consensus,
-    ))
+        runner.add_step(Step.python(
+            name="Resolve OSLOM Executable",
+            outputs=(executable_path,),
+            inputs=(validation_path,),
+            force=bool(cfg.output.overwrite),
+            action=resolve_executable,
+        ))
+        hint_path: Path | None = cfg.oslom.initial_partition
+        if cfg.oslom.initialization == "leiden":
+            hint_path = leiden_hint_path
+            assert hint_path is not None
+
+            def write_initial_partition() -> None:
+                write_hint(
+                    hint_path,
+                    leiden_partition(
+                        load_adjacency(adjacency_path),
+                        resolution=cfg.oslom.leiden_resolution,
+                        iterations=cfg.oslom.leiden_iterations,
+                        seed=cfg.oslom.leiden_seed,
+                    ),
+                )
+                write_completion_breadcrumb(
+                    oslom_initialization_breadcrumb,
+                    "Network initialization complete\n",
+                )
+
+            runner.add_step(Step.python(
+                name="Resolve Network Initialization",
+                outputs=(hint_path, oslom_initialization_breadcrumb),
+                inputs=(graph_path, adjacency_path, validation_path),
+                force=bool(cfg.output.overwrite),
+                action=write_initial_partition,
+            ))
+        else:
+            hint_path = None
+            runner.add_step(Step.python(
+                name="Resolve Network Initialization",
+                outputs=(oslom_initialization_breadcrumb,),
+                inputs=(graph_path, validation_path),
+                force=bool(cfg.output.overwrite),
+                action=lambda: write_completion_breadcrumb(
+                    oslom_initialization_breadcrumb,
+                    "Network initialization complete\n",
+                ),
+            ))
+
+        for i in range(cfg.oslom.repetitions):
+            repetition_name = f"OSLOM Repetition {i + 1}/{cfg.oslom.repetitions}"
+            repetition_dir = run_root / f"run_{i + 1:03d}"
+            repetition_breadcrumb = repetition_dir / ".nro_complete"
+
+            def execute_repetition(
+                repetition_dir: Path = repetition_dir,
+                hint_path: Path | None = hint_path,
+            ) -> None:
+                executable = Path(executable_path.read_text(encoding="utf-8").strip())
+                oslom_cfg = replace(
+                    cfg.oslom,
+                    executable=executable,
+                    initial_partition=hint_path,
+                )
+                run_oslom(graph_path, repetition_dir, oslom_cfg, runner=runner)
+
+            def validate_repetition(
+                repetition_dir: Path = repetition_dir,
+            ) -> tuple[bool, str]:
+                candidates = (
+                    repetition_dir / "graph.dat_oslo_files" / "tp_without_singletons",
+                    repetition_dir / "graph.dat_oslo_files" / "tp",
+                )
+                if any(path.is_file() and path.stat().st_size > 0 for path in candidates):
+                    return True, "OSLOM repetition contains a nonempty partition output."
+                return False, f"OSLOM repetition has no nonempty tp output: {repetition_dir}"
+
+            runner.add_step(Step.directory_step(
+                name=repetition_name,
+                directory=repetition_dir,
+                breadcrumb=repetition_breadcrumb,
+                inputs=(
+                    graph_path,
+                    executable_path,
+                    oslom_initialization_breadcrumb,
+                    *((hint_path,) if hint_path is not None else ()),
+                ),
+                force=bool(cfg.output.overwrite),
+                action=execute_repetition,
+                validate=validate_repetition,
+                breadcrumb_text="OSLOM repetition complete\n",
+            ))
+
+        def compute_consensus() -> None:
+            with np.load(input_state_path, allow_pickle=False) as state:
+                labels = np.asarray(state["labels"], dtype=np.int64)
+                mask = np.asarray(state["mask"], dtype=bool)
+                n_microparcels = int(state["n_microparcels"][0])
+            runs: list[list[set[int]]] = []
+            for index in range(cfg.oslom.repetitions):
+                repetition_dir = run_root / f"run_{index + 1:03d}"
+                candidates = (
+                    repetition_dir / "graph.dat_oslo_files" / "tp_without_singletons",
+                    repetition_dir / "graph.dat_oslo_files" / "tp",
+                )
+                existing = next((path for path in candidates if path.is_file()), None)
+                if existing is None:
+                    raise RuntimeError(
+                        f"Completed OSLOM repetition has no tp output: {repetition_dir}"
+                    )
+                runs.append(parse_tp(existing))
+            stability, homeless, overlap, ref_idx = membership_stability(
+                runs,
+                n_microparcels,
+                cfg.consensus.minimum_match_jaccard,
+            )
+            vertex_stability = np.zeros(
+                (len(labels), stability.shape[1]), dtype=np.float32
+            )
+            vertex_stability[mask] = stability[labels[mask]]
+            vertex_homeless = np.ones(len(labels), dtype=np.float32)
+            vertex_homeless[mask] = homeless[labels[mask]]
+            vertex_overlap = np.zeros(len(labels), dtype=np.float32)
+            vertex_overlap[mask] = overlap[labels[mask]]
+            atomic_save_npz(
+                network_state_path,
+                compressed=True,
+                vertex_stability=vertex_stability,
+                vertex_homeless=vertex_homeless,
+                vertex_overlap=vertex_overlap,
+                ref_idx=np.asarray([ref_idx], dtype=np.int64),
+            )
+            atomic_write_text(
+                assignments_path,
+                json.dumps(
+                    [
+                        [[int(vertex) for vertex in sorted(group)] for group in fit]
+                        for fit in runs
+                    ]
+                )
+                + "\n",
+            )
+
+        runner.add_step(Step.python(
+            name="Compute OSLOM Consensus",
+            outputs=(network_state_path, assignments_path),
+            inputs=tuple(repetition_breadcrumbs) + (input_state_path, validation_path),
+            force=bool(cfg.output.overwrite),
+            action=compute_consensus,
+        ))
+
+    private_outputs.extend(strategy_outputs)
+    publication_inputs = (*source_inputs, *private_outputs)
 
     def compute_labels() -> None:
-        with np.load(consensus_path, allow_pickle=False) as consensus:
+        with np.load(network_state_path, allow_pickle=False) as consensus:
             vertex_stability = np.asarray(
                 consensus["vertex_stability"], dtype=np.float32
             )
@@ -535,7 +622,7 @@ def build_module(
         inputs=tuple(
             dict.fromkeys(
                 (
-                    consensus_path,
+                    network_state_path,
                     cfg.inputs.microparcels,
                     *cfg.inputs.source_surfaces,
                     *((cfg.inputs.anatomical_manifest,) if cfg.inputs.anatomical_manifest else ()),
@@ -549,54 +636,39 @@ def build_module(
         action=compute_labels,
     ))
 
-    membership_path = out / f"{cfg.output.prefix}_desc-membership_network.dscalar.nii"
-    stability_path = out / f"{cfg.output.prefix}_desc-stability_network.dscalar.nii"
-    homeless_path = out / f"{cfg.output.prefix}_desc-homeless_network.dscalar.nii"
-    overlap_path = out / f"{cfg.output.prefix}_desc-overlap_network.dscalar.nii"
-    labels_tsv_path = out / f"{cfg.output.prefix}_network-labels.tsv"
-    labels_json_path = out / f"{cfg.output.prefix}_network-labels.json"
-    scene_path = out / f"{cfg.output.prefix}_networks.scene"
+    paths = fixed_output_paths(out, cfg.output.prefix)
+    membership_path = paths["membership"]
+    stability_path = paths["stability"]
+    homeless_path = paths["homeless"]
+    overlap_path = paths["overlap"]
+    labels_tsv_path = paths["network_labels"]
+    labels_json_path = paths["network_labels_metadata"]
+    scene_path = out / f"{cfg.output.prefix}_desc-networks_scene.scene"
     scene_connectivity_path = out / f"{cfg.output.prefix}_connectivity.pconn.nii"
     if cfg.inputs.domain == "surface":
-        scene_assets = (
-            scene_connectivity_path,
-            *(
-                out / f"{cfg.output.prefix}_hemi-{hemi}_{kind}.surf.gii"
-                for hemi in ("L", "R")
-                for kind in ("pial", "midthickness", "white", "inflated")
-            ),
+        scene_supporting_files = tuple(
+            out / f"{cfg.output.prefix}_hemi-{hemi}_desc-{kind}_surface.surf.gii"
+            for hemi in ("L", "R")
+            for kind in ("pial", "midthickness", "white", "inflated")
         )
     else:
-        scene_assets = (
-            scene_connectivity_path,
-            out / f"{cfg.output.prefix}_microparcels.nii.gz",
+        scene_supporting_files = (
+            out / f"{cfg.output.prefix}_desc-microparcellation_dseg.nii.gz",
         )
-
-    public_graph_path = out / f"{cfg.output.prefix}_graph.dat"
-    public_adjacency_path = (
-        out / f"{cfg.output.prefix}_adjacency.npz"
-        if cfg.connectivity.write_matrix
-        else None
-    )
-    public_hint_path = (
-        out / f"{cfg.output.prefix}_leiden_hint.dat"
-        if leiden_hint_path is not None
-        else None
-    )
-    assignment_path = out / f"{cfg.output.prefix}_oslom_assignments.json"
     outputs: NetworkOutputs = {
-        "oslom_graph": public_graph_path,
-        **({"adjacency": public_adjacency_path} if public_adjacency_path is not None else {}),
-        **({"leiden_hint": public_hint_path} if public_hint_path is not None else {}),
         "membership": membership_path,
-        **({"stability": stability_path} if cfg.oslom.repetitions > 1 else {}),
-        **({"homeless": homeless_path} if cfg.oslom.repetitions > 1 else {}),
-        **({"overlap": overlap_path} if cfg.oslom.repetitions > 1 else {}),
+        **(
+            {"stability": stability_path, "homeless": homeless_path, "overlap": overlap_path}
+            if cfg.parcellation_strategy == "oslom" and cfg.oslom.repetitions > 1
+            else {}
+        ),
         "network_labels": labels_tsv_path,
         "network_labels_metadata": labels_json_path,
         "scene": scene_path,
-        "scene_assets": list(scene_assets),
-        "oslom_assignments": assignment_path,
+        "scene_supporting_files": (
+            scene_connectivity_path,
+            *scene_supporting_files,
+        ),
     }
 
     def write_publication() -> None:
@@ -605,22 +677,29 @@ def build_module(
             mask = np.asarray(state["mask"], dtype=bool)
             vertex_counts = tuple(int(value) for value in state["vertex_counts"])
             n_microparcels = int(state["n_microparcels"][0])
-        with np.load(consensus_path, allow_pickle=False) as consensus:
+        with np.load(network_state_path, allow_pickle=False) as consensus:
             vertex_stability = np.asarray(consensus["vertex_stability"], dtype=np.float32)
             vertex_homeless = np.asarray(consensus["vertex_homeless"], dtype=np.float32)
             vertex_overlap = np.asarray(consensus["vertex_overlap"], dtype=np.float32)
             ref_idx = int(consensus["ref_idx"][0])
-        graph_validation = json.loads(graph_validation_path.read_text(encoding="utf-8"))
-        edge_count = int(graph_validation["edge_count"])
-        assignments = json.loads(consensus_assignments_path.read_text(encoding="utf-8"))
+        network_validation = json.loads(
+            network_validation_path.read_text(encoding="utf-8")
+        )
+        edge_count = int(network_validation["edge_count"])
         labeling = json.loads(labeling_path.read_text(encoding="utf-8"))
         map_names = [str(value) for value in labeling["map_names"]]
         label_records = list(labeling["candidates"])
         n_vertices = len(labels)
-        binary_arrays = [
-            (vertex_stability[:, i] > cfg.consensus.assignment_threshold).astype(np.float32)
-            for i in range(vertex_stability.shape[1])
-        ]
+        network_arrays = (
+            [vertex_stability[:, index] for index in range(vertex_stability.shape[1])]
+            if cfg.parcellation_strategy in {"ica", "clustering"}
+            else [
+                (vertex_stability[:, index] > cfg.consensus.assignment_threshold).astype(
+                    np.float32
+                )
+                for index in range(vertex_stability.shape[1])
+            ]
+        )
 
         out.mkdir(parents=True, exist_ok=True)
         for old_path in out.iterdir():
@@ -628,15 +707,28 @@ def build_module(
                 continue
             if old_path.is_file() or old_path.is_symlink():
                 old_path.unlink()
-        shutil.copy2(graph_path, public_graph_path)
-        if adjacency_path is not None and public_adjacency_path is not None:
-            shutil.copy2(adjacency_path, public_adjacency_path)
-        if leiden_hint_path is not None and public_hint_path is not None:
-            shutil.copy2(leiden_hint_path, public_hint_path)
         write_cifti_dense_scalar(
-            membership_path, cfg.inputs.microparcels, binary_arrays, map_names
+            membership_path, cfg.inputs.microparcels, network_arrays, map_names
         )
-        if cfg.oslom.repetitions > 1:
+        candidate_by_network: dict[int, list[str]] = {}
+        for record in label_records:
+            candidate_by_network.setdefault(int(record["network"]), []).append(
+                str(record["candidate"])
+            )
+        network_paths: dict[str, Path] = {}
+        for network, values in enumerate(network_arrays, start=1):
+            candidates = candidate_by_network.get(network) or [None]
+            for candidate in candidates:
+                descriptor = network_descriptor(candidate, network)
+                path = network_map_path(out, cfg.output.prefix, descriptor)
+                write_cifti_dense_scalar(
+                    path,
+                    cfg.inputs.microparcels,
+                    [values],
+                    [descriptor],
+                )
+                network_paths[descriptor] = path
+        if cfg.parcellation_strategy == "oslom" and cfg.oslom.repetitions > 1:
             write_cifti_dense_scalar(
                 stability_path,
                 cfg.inputs.microparcels,
@@ -658,7 +750,6 @@ def build_module(
                 [vertex_overlap],
                 ["Overlap stability"],
             )
-        atomic_write_text(assignment_path, json.dumps(assignments) + "\n")
         with labels_tsv_path.open("w", encoding="utf-8", newline="") as stream:
             writer = csv.DictWriter(
                 stream,
@@ -673,31 +764,59 @@ def build_module(
             )
             writer.writeheader()
             writer.writerows(label_records)
+        label_metadata = {
+            "method": "independent spatial correlation with population reference maps",
+            "candidates_per_reference": cfg.labeling.candidates_per_reference,
+            "references": [atlas.identifier for atlas in REFERENCE_ATLASES]
+            if cfg.labeling.enabled
+            else [],
+            "map_names": map_names,
+        }
+        validate_network_label_metadata(label_metadata)
         atomic_write_text(
             labels_json_path,
-            json.dumps(
-                {
-                    "method": "independent spatial correlation with population reference maps",
-                    "candidates_per_reference": cfg.labeling.candidates_per_reference,
-                    "references": [atlas.identifier for atlas in REFERENCE_ATLASES]
-                    if cfg.labeling.enabled
-                    else [],
-                    "map_names": map_names,
-                },
-                indent=2,
+            json.dumps(label_metadata, indent=2) + "\n",
+        )
+        if cfg.inputs.domain == "surface":
+            temporary_scene, packaged_surfaces = write_workbench_scene(
+                out,
+                cfg.output.prefix,
+                cfg.inputs.source_surfaces,
+                cfg.inputs.microparcels,
+                cfg.inputs.connectivity,
+                runner=runner,
+                executable=str(WB_COMMAND_PATH),
             )
-            + "\n",
-        )
-        _scene_path, written_scene_assets = write_network_scene(
-            scene_path,
-            domain=cfg.inputs.domain,
-            membership=membership_path,
-            connectivity=cfg.inputs.connectivity,
-            scene_surfaces=cfg.inputs.scene_surfaces,
-            label_volume=cfg.inputs.label_volume,
-        )
-        if written_scene_assets != scene_assets:
-            raise RuntimeError("Network scene asset inventory is inconsistent")
+            temporary_scene.unlink(missing_ok=True)
+            write_network_scene(
+                scene_path,
+                domain="surface",
+                membership=membership_path,
+                connectivity=cfg.inputs.connectivity,
+                scene_surfaces=packaged_surfaces,
+            )
+        else:
+            micro_manifest = yaml.safe_load(
+                cfg.inputs.microparcellation_manifest.read_text(encoding="utf-8")
+            ) or {}
+            micro_outputs = micro_manifest.get("outputs") or {}
+            label_value = micro_outputs.get("microparcels_volume")
+            if not label_value:
+                raise ValueError(
+                    "Volumetric microparcellation manifest lacks "
+                    "outputs.microparcels_volume"
+                )
+            label_volume = Path(str(label_value)).expanduser()
+            if not label_volume.is_absolute():
+                label_volume = cfg.inputs.microparcellation_manifest.parent / label_volume
+            write_network_scene(
+                scene_path,
+                domain="volume",
+                membership=membership_path,
+                connectivity=cfg.inputs.connectivity,
+                label_volume=label_volume,
+            )
+        publication_outputs = {**outputs, "network_maps": network_paths}
         manifest = {
             "domain": cfg.inputs.domain,
             "space": cfg.inputs.space,
@@ -709,9 +828,13 @@ def build_module(
             "n_gray_matter_voxels": n_vertices if cfg.inputs.domain == "volume" else None,
             "n_microparcels": n_microparcels,
             "n_edges": edge_count,
-            "reference_run": ref_idx + 1,
+            "parcellation_strategy": cfg.parcellation_strategy,
+            "reference_run": (
+                ref_idx + 1 if cfg.parcellation_strategy == "oslom" else None
+            ),
             "n_reference_networks": vertex_stability.shape[1],
             "source_surfaces": [str(path) for path in cfg.inputs.source_surfaces],
+            "microparcellation_manifest": str(cfg.inputs.microparcellation_manifest),
             "anatomical_labeling_provenance": (
                 {
                     "manifest": str(cfg.inputs.anatomical_manifest),
@@ -721,15 +844,31 @@ def build_module(
                 if cfg.labeling.enabled and cfg.inputs.space in {"T1w", "fsnative"}
                 else None
             ),
-            "outputs": {name: manifest_value(path) for name, path in outputs.items()},
+            "outputs": {
+                name: manifest_value(path) for name, path in publication_outputs.items()
+            },
             "config": asdict(cfg),
             "configuration_fingerprint": selected_configuration_fingerprint(),
             "interpretation": (
-                "Network stability values are repeated-fit assignment frequencies, not posterior probabilities."
-                if cfg.oslom.repetitions > 1
-                else "Single-repetition run: stability, homeless, and overlap metrics were not written."
+                "ICA maps are sign-oriented positive loadings normalized to [0, 1]. "
+                "These pseudo-probability display weights are not posterior probabilities."
+                if cfg.parcellation_strategy == "ica"
+                else (
+                    "Clustering maps are min-max-normalized frequencies of assignment "
+                    "across aligned mini-batch k-means fits."
+                    if cfg.parcellation_strategy == "clustering"
+                    else (
+                        "Network stability values are repeated-fit assignment frequencies, "
+                        "not posterior probabilities."
+                        if cfg.oslom.repetitions > 1
+                        else "Single-repetition OSLOM fit: stability, homeless, and overlap "
+                        "metrics were not written."
+                    )
+                )
             ),
+            "output_metadata_contract": networks_output_contract(),
         }
+        validate_network_manifest(manifest)
         atomic_write_text(
             manifest_path,
             yaml.safe_dump(
@@ -741,7 +880,10 @@ def build_module(
     def validate_publication() -> tuple[bool, str]:
         try:
             manifest = yaml.safe_load(manifest_path.read_text()) or {}
-        except (OSError, yaml.YAMLError, TypeError):
+            validate_network_manifest(manifest)
+            label_metadata = json.loads(labels_json_path.read_text(encoding="utf-8"))
+            validate_network_label_metadata(label_metadata)
+        except (OSError, yaml.YAMLError, TypeError, ValueError):
             return False, f"Networks publication manifest is unreadable: {manifest_path}"
         valid, reason, _recorded_outputs = validate_recorded_publication(
             manifest,
@@ -749,7 +891,7 @@ def build_module(
         )
         if valid:
             current_config = json.loads(json.dumps(asdict(cfg), default=json_path_default))
-            if manifest.get("config") != current_config:
+            if scientific_values("networks", manifest.get("config", {})) != scientific_values("networks", current_config):
                 return False, "Published networks configuration differs from the requested workflow."
             current_fingerprint = selected_configuration_fingerprint()
             if (
@@ -781,6 +923,11 @@ def run(
     *,
     runner: Runner | None = None,
 ) -> NetworkOutputs:
+    """Construct the module graph, execute it through the shared runner, and publish outputs.
+
+    Freshness is evaluated after graph construction. Processing and validation
+    errors propagate to the caller; partial private outputs can support resumption.
+    """
     runner_started = time.perf_counter()
     active_runner = runner or Runner(
         module_name="Networks Module",

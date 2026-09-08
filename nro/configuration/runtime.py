@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-import yaml
+from .parsing import parse_mapping
+from .schema import compile_configuration
 
 _RUNTIME_SUFFIX = {
     "preprocessing": "_preprocess.yml",
     "clean": "_clean.yml",
     "microparcellation": "_microparcellation.yml",
     "networks": "_networks.yml",
+    "firstlevels": "_firstlevels.yml",
 }
 
 
@@ -20,9 +21,11 @@ class ConfigNode:
     """Provide attribute access to one resolved runtime configuration mapping."""
 
     def __init__(self, data: dict[str, Any]) -> None:
+        """Wrap a resolved mapping for attribute and item access."""
         self.replace(data)
 
     def replace(self, data: dict[str, Any]) -> None:
+        """Replace the underlying mapping in place so existing imports retain this wrapper."""
         self._data = data
 
     def __getattr__(self, name: str) -> Any:
@@ -35,6 +38,7 @@ class ConfigNode:
         return _wrap(self._data[key])
 
     def get(self, key: str, default: Any = None) -> Any:
+        """Return a value or default, wrapping nested mappings as ConfigNode objects."""
         return _wrap(self._data.get(key, default))
 
 
@@ -67,12 +71,11 @@ def load_runtime_configuration(
     if not resolved_path.is_file():
         raise ValueError(f"Runtime config does not exist: {resolved_path}")
     try:
-        values = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as error:
-        raise ValueError(f"Invalid runtime config: {resolved_path}") from error
-    if not isinstance(values, dict):
-        raise ValueError(f"Runtime config must contain a mapping: {resolved_path}")
-    return resolved_path.name[: -len(suffix)], deepcopy(values)
+        values = parse_mapping(resolved_path.read_text(encoding="utf-8"), source=str(resolved_path))
+        values = compile_configuration(derivative_class, values, runtime=True)
+    except ValueError as error:
+        raise ValueError(f"Invalid runtime config {resolved_path}: {error}") from error
+    return resolved_path.name[: -len(suffix)], values
 
 
 def configure_preprocessing(

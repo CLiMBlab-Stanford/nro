@@ -155,6 +155,33 @@ def bids_entity(path: Path, name: str, *, default: str | None = None) -> str | N
     return parse_bids_entities(Path(path).name).get(name, default)
 
 
+def resolve_bids_table(path: Path, *, suffix: str) -> Path:
+    """Find the most specific inherited TSV for an image, without merging rows.
+
+    Search from the image directory toward the dataset root. At a given level,
+    prefer the largest matching entity set; ties are ambiguous and raise
+    ValueError. Raise FileNotFoundError when no applicable table exists.
+    """
+    path = Path(path).expanduser().absolute()
+    root = bids_dataset_root(path)
+    target = parse_bids_entities(path.name)
+    for directory in path.parents:
+        matches = []
+        for candidate in directory.glob(f"*{suffix}.tsv"):
+            entities = parse_bids_entities(candidate.name)
+            if bids_suffix(candidate) == suffix and all(target.get(k) == v for k, v in entities.items()):
+                matches.append((len(entities), candidate))
+        if matches:
+            specificity = max(count for count, _ in matches)
+            selected = [candidate for count, candidate in matches if count == specificity]
+            if len(selected) != 1:
+                raise ValueError(f"Ambiguous BIDS {suffix} tables for {path}: {selected}")
+            return selected[0]
+        if directory == root:
+            break
+    raise FileNotFoundError(f"No applicable BIDS {suffix}.tsv found for {path}")
+
+
 def replace_bids_entity_token(path: Path, old: str, new: str) -> Path:
     """Replace one complete BIDS filename entity token."""
     path = Path(path)
@@ -270,6 +297,7 @@ def raw_run_stem(path: Path) -> str:
 
 @dataclass(frozen=True)
 class BidsRun:
+    """One discovered BOLD acquisition and its identifying BIDS entities."""
     participant: str
     session: str | None
     stem: str

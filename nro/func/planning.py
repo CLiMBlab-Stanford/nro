@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.bids import BidsRun
 from nro.engine.paths import functional_manifest_path
-from nro.func.contracts import final_resampling_contract
 from nro.func.resolver import (
     FmapPair,
     inherit_sbref_metadata,
@@ -148,7 +147,9 @@ def plan_instances(
                 key=instance_key(
                     context.project,
                     descriptor.name,
-                    lineage,
+                    context.registered.lineage_fingerprints[
+                        descriptor.configuration_class
+                    ],
                     context.participant,
                     entities,
                 ),
@@ -160,7 +161,7 @@ def plan_instances(
                 configuration_lineage_id=lineage,
                 config_fingerprint=context.workflow.configuration(
                     descriptor.configuration_class
-                ).fingerprint,
+                ).scientific_fingerprint,
                 directory_label=directory_label,
                 runtime_config=runtime_config,
                 command=(
@@ -194,7 +195,7 @@ def plan_instances(
                         ses_id=f"ses-{run.session}" if run.session else None,
                     ),
                 ),
-                processing={"final_resampling": final_resampling_contract()},
+                processing=descriptor.processing_contract(),
             )
         )
     return tuple(result)

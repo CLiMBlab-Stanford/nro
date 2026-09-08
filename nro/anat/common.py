@@ -49,6 +49,7 @@ def infer_session_id(path: Path, *, default_session: str | None = None) -> str:
 
 @dataclass(frozen=True)
 class AnatImage:
+    """An anatomical acquisition with parsed entities and an ordering timestamp."""
     image: Path
     json: Optional[Path]
     modality: str

@@ -269,7 +269,7 @@ def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None
     assert anat_file.exists()
 
 
-def test_purge_removes_one_space_smoothing_target_from_shared_subject_directory(
+def test_purge_removes_one_space_smoothing_subject_artifact(
     tmp_path: Path, capsys
 ) -> None:
     bids = tmp_path / "bids"
@@ -309,12 +309,12 @@ def test_purge_removes_one_space_smoothing_target_from_shared_subject_directory(
     )
     work = tmp_path / "work"
     selected_work = _write(
-        work / "demo/derivatives/microparcellation/main/sub-01"
-        / "space-fsnative_smoothing-0mm/scratch.txt"
+        work / "demo/derivatives/microparcellation/main"
+        / "space-fsnative_smoothing-0mm/sub-01/scratch.txt"
     ).parent
     preserved_work = _write(
-        work / "demo/derivatives/microparcellation/main/sub-01"
-        / "space-fsnative_smoothing-2mm/scratch.txt"
+        work / "demo/derivatives/microparcellation/main"
+        / "space-fsnative_smoothing-2mm/sub-01/scratch.txt"
     ).parent
 
     purge_main(

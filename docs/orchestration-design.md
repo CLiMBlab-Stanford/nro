@@ -23,9 +23,10 @@ module. Lab-wide planning, state, and workers remain in `nro/orchestration`.
 
 ## Configuration authority
 
-`nro/configuration/store.py` is the sole resolver. Its fixed store is
-`nro/configuration/files/`, containing one directory per derivative class and
-one `workflows/` directory. Public interfaces accept identifiers only.
+`nro/configuration/store.py` resolves configurations and workflows from the
+external [definitions store](definitions.md). Its `configs/` directory contains
+one directory per derivative class. Workflows live in `workflows/`. Processing
+requests accept identifiers; `nro paths` selects the store root.
 
 A derivative configuration contains only local parameters. A workflow selects
 configuration IDs and therefore supplies upstream lineage. The complete base

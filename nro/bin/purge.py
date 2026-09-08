@@ -10,17 +10,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from nro.engine.bids import matches_selectors
+from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.selection import selected_projects
-from nro.orchestration.catalog import MODULES, normalize_module
+from nro.orchestration.catalog import MODULES, module_descriptor, normalize_module
+from nro.orchestration.ownership import (
+    instance_record_path,
+    remove_empty_ownership_root,
+)
 from nro.engine.bids import parse_bids_entities
 
 
 @dataclass(frozen=True)
 class PurgeResult:
+    """Counters and removed-path records accumulated during a purge."""
     projects: int = 0
     instances: int = 0
     derivative_paths: int = 0
@@ -29,6 +34,7 @@ class PurgeResult:
     worker_logs: int = 0
 
     def add(self, **values: int) -> "PurgeResult":
+        """Accumulate another purge result into this mutable report."""
         current = self.__dict__.copy()
         for key, value in values.items():
             current[key] += value
@@ -170,6 +176,12 @@ def _instance_paths(
     entities = json.loads(instance["entities_json"])
     if module == "anat":
         derivative_paths.append(output_root)
+    elif module in {"microparcellation", "networks"}:
+        derivative_paths.append(output_root)
+    elif module == "firstlevels":
+        # A task root spans participants, variants and levels. Only this exact
+        # participant/model/target prefix is owned by the selected instance.
+        derivative_paths.extend(path for path in output_root.glob(f"node-*/{sub_id}/{output_prefix}_*") if path.is_file())
     else:
         derivative_paths.extend(
             _prefix_owned_paths(
@@ -203,18 +215,25 @@ def _instance_paths(
             target = (
                 f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
             )
-            filename_target = (
-                f"space-{entities['space']}_scale-{entities['smoothing']}mm"
-            )
+            filename_target = target
             run_prefix = output_prefix.removesuffix(f"_{filename_target}")
             work_paths.append(base / run_prefix / target)
         elif module in {"microparcellation", "networks"}:
-            target = (
-                f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
-            )
-            work_paths.append(project_work_derivatives / relative_output / target)
+            work_paths.append(project_work_derivatives / relative_output)
+        elif module == "firstlevels":
+            work_paths.append(project_work_derivatives / "firstlevels" / str(instance["directory_label"]) / output_prefix)
 
     derivative_paths.append(Path(instance["manifest_path"]))
+    descriptor = module_descriptor(module)
+    derivative_paths.append(
+        instance_record_path(
+            registry.paths.project_root,
+            descriptor.configuration_class,
+            str(instance["directory_label"]),
+            module,
+            str(instance["instance_key"]),
+        )
+    )
     allowed_derivative_roots = (derivatives_root, registry.paths.control)
     derivative_root_resolved = {
         root.resolve(strict=False) for root in allowed_derivative_roots
@@ -309,6 +328,20 @@ def _purge_instances(
                 f"""UPDATE instances SET artifact_state='missing', artifact_reason='Purged by user',
                     updated_at=? WHERE id IN ({placeholders})""",
                 (utcnow(), *tuple(sorted(instance_ids))),
+            )
+
+    if not dry_run:
+        lineage_roots = {
+            (
+                registry.paths.project_root,
+                module_descriptor(str(instance["module"])).configuration_class,
+                str(instance["directory_label"]),
+            )
+            for registry, instance in selected
+        }
+        for project_root, derivative_class, directory_label in lineage_roots:
+            remove_empty_ownership_root(
+                project_root, derivative_class, directory_label
             )
 
     return PurgeResult(
@@ -482,6 +515,7 @@ def _slurm_job_may_be_active(job_id: str) -> bool:
 
 
 def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
+    """Construct the purge parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
@@ -500,6 +534,11 @@ def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
+    """Preview and optionally delete selected owned artifacts and logs.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     try:
         selection = core_selection(args)

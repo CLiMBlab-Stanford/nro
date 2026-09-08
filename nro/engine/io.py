@@ -42,11 +42,13 @@ def manifest_value(value: Any) -> Any:
 
 
 def flatten_paths(value: Any) -> list[Path]:
-    """Collect paths recursively from nested lists and tuples."""
+    """Collect paths recursively from nested mappings and sequences."""
     if isinstance(value, Path):
         return [value]
     if isinstance(value, (list, tuple)):
         return [path for item in value for path in flatten_paths(item)]
+    if isinstance(value, dict):
+        return [path for item in value.values() for path in flatten_paths(item)]
     return []
 
 

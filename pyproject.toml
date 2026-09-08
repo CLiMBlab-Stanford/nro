@@ -7,6 +7,18 @@ name = "nro"
 version = "0.0.dev0"
 description = "Climblab fMRI derivative orchestration"
 requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26,<3", "scipy>=1.12,<2", "pandas>=2.2,<3",
+    "nibabel>=5.2,<6", "PyYAML>=6,<7", "scikit-learn>=1.4,<2",
+    "nilearn>=0.10,<1", "nitransforms>=24,<26",
+]
+
+[project.optional-dependencies]
+bidsify = ["flywheel-sdk>=20,<21", "dcm2bids>=3.2,<4", "pydicom>=3,<4"]
+oslom = ["igraph>=0.11,<0.12", "leidenalg>=0.10,<0.11"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
 
 [project.scripts]
 nro = "nro.cli:main"
@@ -15,7 +27,7 @@ nro = "nro.cli:main"
 include = ["nro*"]
 
 [tool.setuptools.package-data]
-"nro.configuration" = ["files/*/*.yml"]
+"nro.configuration" = ["starters/configs/*/*.yml", "starters/workflows/*.yml", "starters/bidsify/*.yml", "starters/README.md", "starters/gitignore", "template_resources.json"]
 "nro.func.resources.ica_aroma" = ["*.nii.gz"]
 "nro.func.resources.synbold_disco" = ["epi_reg"]
 "nro.microparcellation" = ["*.scene.in", "*.b85"]

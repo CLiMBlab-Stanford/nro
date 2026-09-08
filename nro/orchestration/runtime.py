@@ -73,7 +73,7 @@ def select_runtime_config(
         os.environ["NRO_RUNTIME_CONFIG"] = str(path)
         os.environ[CONFIGURATION_FINGERPRINT_ENV] = workflow.configuration(
             derivative_class
-        ).fingerprint
+        ).scientific_fingerprint
         return path
     registry = Registry.for_project(project, bids_root=bids_root)
     path = Path(selected).expanduser().resolve()

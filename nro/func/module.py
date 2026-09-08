@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 from nro.orchestration.runtime import selected_configuration_fingerprint
+from nro.configuration.schema import scientific_values
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import (
     bids_entity,
@@ -105,6 +106,9 @@ from nro.func.contracts import (
     FINAL_WARP_INTERPOLATION,
     final_resampling_contract,
     final_resampling_metadata,
+    functional_output_contract,
+    validate_functional_image_sidecar,
+    validate_functional_manifest,
 )
 from nro.func.resampling import (
     validate_afni_motion_affines,
@@ -1475,6 +1479,7 @@ def _create_tkregister2_regheader_fslmat_step(
 
 @dataclass(frozen=True)
 class TopupDfOutputs:
+    """Declared TOPUP outputs and displacement-field paths for composing SDC transforms."""
     step: Step
     out_prefix: Path
     field_hz: Path
@@ -1886,22 +1891,22 @@ def _create_temporal_mean_step(
         if nvols < 1:
             raise RuntimeError(f"Temporal mean requires at least one volume: {in_4d}")
         block_size = max(1, int(chunk_vols))
-        accum = np.zeros(tuple(int(v) for v in img.shape[:3]), dtype=np.float32)
+        accum = np.zeros(tuple(int(v) for v in img.shape[:3]), dtype=np.float64)
         # Materialize a compressed NIfTI exactly once. Proxy slicing a .nii.gz
         # for each block can restart decompression and multiply disk reads by
-        # the number of temporal blocks. Retain the existing blockwise float32
-        # summation order after the one-time load for numerical reproducibility.
+        # the number of temporal blocks. Accumulate in float64 so changing the
+        # I/O chunk size does not amplify float32 cancellation error.
         data = np.asarray(img.dataobj, dtype=np.float32)
         for start in range(0, nvols, block_size):
             stop = min(start + block_size, nvols)
             block = data[..., start:stop]
-            accum += block.sum(axis=3, dtype=np.float32)
+            accum += block.sum(axis=3, dtype=np.float64)
         accum /= float(nvols)
         header = img.header.copy()
         header.set_data_shape(accum.shape)
         header.set_data_dtype(np.float32)
         with atomic_output_path(out_3d) as staged:
-            nib.save(nib.Nifti1Image(accum, img.affine, header), str(staged))
+            nib.save(nib.Nifti1Image(accum.astype(np.float32), img.affine, header), str(staged))
             if not nifti_is_valid(staged):
                 raise RuntimeError(f"Temporal mean output is unreadable: {staged}")
 
@@ -2940,6 +2945,7 @@ def _create_wb_convert_itk_warp_to_fnirt_step(
 
 @dataclass(frozen=True)
 class Inputs:
+    """Resolved BOLD, reference, fieldmap, and anatomy inputs for one functional run."""
     sbref: Optional[Path]
     epi: Path
     se1: Optional[Path]
@@ -2961,6 +2967,7 @@ class Inputs:
 
 @dataclass(frozen=True)
 class Options:
+    """Functional registration, resampling, denoising, output-space, and execution settings."""
     out_dir: Path
     work_dir: Path
     project: str
@@ -3028,7 +3035,6 @@ def _functional_config_payload(opts: Options) -> dict[str, object]:
         "bbregister_dof": int(opts.bbregister_dof),
         "debug_first_nvols": int(opts.debug_first_nvols),
         "output_spaces": list(opts.output_spaces),
-        "io_chunk_vols": int(opts.io_chunk_vols),
         "final_resampling": final_resampling_contract(),
         "sdc_method": opts.sdc_method,
         "synbold_disco_image": str(opts.synbold_disco_image),
@@ -3179,6 +3185,7 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             anat_brain_mask,
             opts.ica_aroma_cmd,
             (subjects_dir if subjects_dir.exists() else None),
+            Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             opts.out_dir,
             opts.work_dir,
         ]
@@ -3220,6 +3227,8 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             current = read_json(configuration_snapshot)
         except (OSError, ValueError, TypeError):
             return False, "Functional configuration snapshot is missing or unreadable."
+        if isinstance(current.get("configuration"), dict):
+            current["configuration"] = scientific_values("preprocessing", {"func": current["configuration"]})["func"]
         if current != configuration:
             return False, "Functional configuration changed."
         return True, "Functional configuration is unchanged."
@@ -5238,6 +5247,7 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             "confounds_json": str(confounds_json),
             "files": [str(path) for path in public_files],
         },
+        "output_metadata_contract": functional_output_contract(),
     }
 
     def publication_payload() -> dict[str, object]:
@@ -5276,26 +5286,27 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
 
     def publish() -> None:
         payload = publication_payload()
+        validate_functional_manifest(payload)
         for image_path, metadata_path in zip(public_images, metadata_outputs):
             space = bids_entity(image_path, "space", default=None)
-            write_json(
-                metadata_path,
-                {
-                    **epi_input_meta,
-                    "Description": "nro functional preprocessing derivative.",
-                    "Sources": [str(inputs.epi), str(anat_manifest)],
-                    "SpatialReference": space,
-                    "Registration": payload["registration"],
-                    "Denoising": payload["denoising"],
-                    "Configuration": configuration["configuration"],
-                    "ConfigurationFingerprint": configuration["configuration_fingerprint"],
-                },
-            )
+            metadata = {
+                **epi_input_meta,
+                "Description": "nro functional preprocessing derivative.",
+                "Sources": [str(inputs.epi), str(anat_manifest)],
+                "SpatialReference": space,
+                "Registration": payload["registration"],
+                "Denoising": payload["denoising"],
+                "Configuration": configuration["configuration"],
+                "ConfigurationFingerprint": configuration["configuration_fingerprint"],
+            }
+            validate_functional_image_sidecar(metadata)
+            write_json(metadata_path, metadata)
         write_json(publication_manifest, payload)
 
     def validate_publication() -> tuple[bool, str]:
         try:
             current = read_json(publication_manifest)
+            validate_functional_manifest(current)
         except (OSError, ValueError, TypeError):
             return False, "Functional publication manifest is missing or unreadable."
         for key, expected in publication_identity.items():
@@ -5326,6 +5337,11 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
             }.items()
         ):
             return False, "Functional denoising publication differs from the requested module."
+        try:
+            for metadata_path in metadata_outputs:
+                validate_functional_image_sidecar(read_json(metadata_path))
+        except (OSError, TypeError, ValueError):
+            return False, "A functional image sidecar violates its metadata contract."
         missing = [
             str(path)
             for path in (*public_files, *metadata_outputs)
@@ -5348,6 +5364,11 @@ def build_module(inputs: Inputs, opts: Options) -> Runner:
 
 
 def run(inputs: Inputs, opts: Options) -> None:
+    """Construct the module graph, execute it through the shared runner, and publish outputs.
+
+    Freshness is evaluated after graph construction. Processing and validation
+    errors propagate to the caller; partial private outputs can support resumption.
+    """
     runner_started = time.perf_counter()
     runner = build_module(inputs, opts)
     with runner.run_context(started_at=runner_started):

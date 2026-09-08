@@ -118,8 +118,9 @@ def neuroimaging_environment(
         "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count,
         "SUBJECTS_DIR": str(subjects_dir),
     }
-    if "FS_LICENSE" in os.environ:
-        environment["FS_LICENSE"] = os.environ["FS_LICENSE"]
+    from nro.configuration.site import settings
+    site, _ = settings()
+    environment["FS_LICENSE"] = site["license"]
     return environment
 
 

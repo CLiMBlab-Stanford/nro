@@ -5,18 +5,22 @@ import nibabel as nib
 import numpy as np
 import pytest
 import yaml
+from scipy import sparse
 
 import nro.networks.__main__ as networks_main
 from nro.configuration.store import ConfigStore
 from nro.microparcellation.cifti import write_pconn, write_volume_dlabel
 from nro.networks.config import (
+    ClusteringConfig,
     ConnectivityConfig,
+    IcaConfig,
     InputsConfig,
     OslomConfig,
     OutputConfig,
     ModuleConfig,
     LabelingConfig,
 )
+from nro.networks.clustering import clustering_membership
 from nro.networks.labeling import (
     REFERENCE_ATLASES,
     ReferenceAtlas,
@@ -24,9 +28,11 @@ from nro.networks.labeling import (
     project_references_to_cifti,
     rank_reference_candidates,
 )
+from nro.networks.ica import ica_membership
 from nro.engine.images import write_cifti_dense_scalar
 from nro.networks.module import _load_inputs, run
 from nro.networks.scene import write_network_scene
+from nro.networks.paths import network_descriptor
 from nro.networks.targets import discover_microparcellation_targets
 
 
@@ -37,30 +43,74 @@ def _fake_oslom(_graph, directory: Path, _config, *, runner):
     return [{0, 1}, {2}]
 
 
+def test_ica_membership_is_reproducible_and_normalized() -> None:
+    random = np.random.default_rng(4)
+    sources = random.laplace(size=(80, 4))
+    profiles = sources @ random.normal(size=(4, 30))
+    adjacency = profiles @ profiles.T
+    adjacency = np.maximum(adjacency, 0.0)
+    np.fill_diagonal(adjacency, 0.0)
+    lower = sparse.tril(sparse.csr_matrix(adjacency), k=-1, format="csr")
+    config = IcaConfig(n_networks=4, random_seed=7)
+
+    first = ica_membership(lower, config)
+    second = ica_membership(lower, config)
+
+    assert first.shape == (80, 4)
+    np.testing.assert_array_equal(first, second)
+    assert np.all((0 <= first) & (first <= 1))
+    np.testing.assert_allclose(first.max(axis=0), 1.0)
+
+
+def test_clustering_membership_is_reproducible_and_minmax_normalized() -> None:
+    adjacency = np.zeros((40, 40), dtype=np.float32)
+    adjacency[:20, :20] = 1.0
+    adjacency[20:, 20:] = 1.0
+    np.fill_diagonal(adjacency, 0.0)
+    lower = sparse.tril(sparse.csr_matrix(adjacency), k=-1, format="csr")
+    config = ClusteringConfig(
+        n_networks=2,
+        repetitions=4,
+        random_seed=7,
+        n_init=1,
+        max_iterations=20,
+        batch_size=20,
+        max_no_improvement=5,
+        reassignment_ratio=0.01,
+    )
+
+    first, first_inertias = clustering_membership(lower, config)
+    second, second_inertias = clustering_membership(lower, config)
+
+    assert first.shape == (40, 2)
+    assert first_inertias.shape == (4,)
+    np.testing.assert_array_equal(first, second)
+    np.testing.assert_array_equal(first_inertias, second_inertias)
+    np.testing.assert_allclose(first.min(axis=0), 0.0)
+    np.testing.assert_allclose(first.max(axis=0), 1.0)
+    assert np.all(first[:20].argmax(axis=1) == first[0].argmax())
+    assert np.all(first[20:].argmax(axis=1) != first[0].argmax())
+
+
 def _manifest(root: Path, space: str, domain: str, smoothing_mm: int = 2) -> Path:
     directory = root
     directory.mkdir(parents=True, exist_ok=True)
-    prefix = f"sub-01_space-{space}_scale-{smoothing_mm}mm"
-    microparcels = directory / f"{prefix}_microparcels.dlabel.nii"
-    connectivity = directory / f"{prefix}_microparcel_connectivity.pconn.nii"
+    prefix = f"sub-01_space-{space}_smoothing-{smoothing_mm}mm"
+    microparcels = directory / f"{prefix}_desc-microparcellation_dseg.dlabel.nii"
+    connectivity = directory / f"{prefix}_connectivity.pconn.nii"
     microparcels.touch()
     connectivity.touch()
     surfaces = []
-    scene_surfaces = []
     label_volume = None
     if domain == "surface":
         for hemi in ("L", "R"):
             surface = directory / f"sub-01_hemi-{hemi}_pial.surf.gii"
             surface.touch()
             surfaces.append(str(surface))
-            for kind in ("pial", "midthickness", "white", "inflated"):
-                display = directory / f"{prefix}_hemi-{hemi}_{kind}.surf.gii"
-                display.touch()
-                scene_surfaces.append(str(display))
     else:
         label_volume = directory / f"{prefix}_microparcels.nii.gz"
         label_volume.touch()
-    path = directory / f"{prefix}_manifest.yaml"
+    path = directory / f"{prefix}_desc-microparcellation_manifest.yaml"
     path.write_text(
         yaml.safe_dump(
             {
@@ -71,7 +121,6 @@ def _manifest(root: Path, space: str, domain: str, smoothing_mm: int = 2) -> Pat
                 "outputs": {
                     "microparcels": str(microparcels),
                     "connectivity": str(connectivity),
-                    "scene_surfaces": scene_surfaces,
                     "microparcels_volume": str(label_volume) if label_volume else None,
                 },
             }
@@ -93,12 +142,10 @@ def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path)
         ("volume", "T1w", 2),
     ]
     assert len(targets[0].source_surfaces) == 2
-    assert len(targets[0].scene_surfaces) == 8
     assert targets[1].source_surfaces == ()
-    assert targets[1].label_volume is not None
 
 
-def test_network_config_uses_shared_subject_output_and_isolated_work_target(
+def test_network_config_uses_target_then_subject_directories(
     tmp_path: Path, monkeypatch
 ) -> None:
     subject = (
@@ -119,10 +166,36 @@ def test_network_config_uses_shared_subject_output_and_isolated_work_target(
     )
 
     assert (target.space, target.smoothing_mm) == ("fsnative", 2)
-    assert cfg.output.directory == tmp_path / "project/derivatives/networks/main/sub-01"
-    assert cfg.output.work_directory.name == "space-fsnative_smoothing-2mm"
-    assert cfg.output.prefix == "sub-01_space-fsnative_scale-2mm"
+    assert cfg.output.directory == (
+        tmp_path
+        / "project/derivatives/networks/main/space-fsnative_smoothing-2mm/sub-01"
+    )
+    assert cfg.output.work_directory.parts[-3:] == (
+        "main",
+        "space-fsnative_smoothing-2mm",
+        "sub-01",
+    )
+    assert cfg.output.prefix == "sub-01_space-fsnative_smoothing-2mm"
     assert cfg.inputs.domain == "surface"
+    assert cfg.parcellation_strategy == "ica"
+    assert cfg.ica.n_networks == 50
+
+
+def test_oslom_workflow_selects_oslom_network_configuration() -> None:
+    workflow = ConfigStore().resolve("oslom")
+
+    assert workflow.selections["networks"] == "oslom"
+    assert workflow.configuration("networks").values["parcellation_strategy"] == "oslom"
+
+
+def test_clustering_workflow_selects_clustering_network_configuration() -> None:
+    workflow = ConfigStore().resolve("clustering")
+
+    assert workflow.selections["networks"] == "clustering"
+    config = workflow.configuration("networks").values
+    assert config["parcellation_strategy"] == "clustering"
+    assert config["clustering"]["n_networks"] == 50
+    assert config["clustering"]["repetitions"] == 100
 
 
 def test_volumetric_network_scalars_reuse_microparcellation_brain_model(
@@ -166,6 +239,8 @@ def test_candidate_labels_rank_each_reference_independently() -> None:
     assert {record["network"] for record in records if record["similarity_rank"] == 1} == {1}
     assert "lana001" in names[0] and "aud001" in names[0]
     assert names[2] == "Network 003"
+    assert network_descriptor("lana001", 1) == "networkLANA001"
+    assert network_descriptor(None, 5) == "network005"
 
 
 def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> None:
@@ -179,8 +254,16 @@ def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> 
         np.eye(4),
     )
     pconn = write_pconn(tmp_path / "connectivity.pconn.nii", np.eye(3), wrong_axis)
+    manifest = tmp_path / "microparcellation_manifest.yaml"
+    manifest.write_text("{}")
     cfg = ModuleConfig(
-        inputs=InputsConfig(dlabel, pconn, domain="volume", space="T1w"),
+        inputs=InputsConfig(
+            microparcellation_manifest=manifest,
+            microparcels=dlabel,
+            connectivity=pconn,
+            domain="volume",
+            space="T1w",
+        ),
         output=OutputConfig(tmp_path / "out", tmp_path / "work", "sub-01_space-T1w"),
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
@@ -236,7 +319,7 @@ def test_surface_network_scene_copies_display_surfaces_without_source_references
     membership.write_bytes(b"dscalar")
 
     scene, assets = write_network_scene(
-        output / "sub-01_space-fsnative_networks.scene",
+        output / "sub-01_space-fsnative_desc-networks_scene.scene",
         domain="surface",
         membership=membership,
         connectivity=connectivity,
@@ -244,10 +327,10 @@ def test_surface_network_scene_copies_display_surfaces_without_source_references
     )
 
     text = scene.read_text(encoding="utf-8")
-    assert len(assets) == 9
+    assert len(assets) == 10
     assert all(path.is_file() for path in assets)
     assert str(source.resolve()) not in text
-    assert "sub-01_space-fsnative_hemi-L_midthickness.surf.gii" in text
+    assert "sub-01_space-fsnative_hemi-L_desc-midthickness_surface.surf.gii" in text
 
 
 def test_volumetric_network_module_writes_dense_network_maps(
@@ -281,13 +364,19 @@ def test_volumetric_network_module_writes_dense_network_maps(
         "nro.networks.module.run_oslom",
         _fake_oslom,
     )
+    micro_manifest = tmp_path / "microparcellation_manifest.yaml"
+    micro_manifest.write_text(
+        yaml.safe_dump(
+            {"outputs": {"microparcels_volume": str(tmp_path / "microparcels.nii.gz")}}
+        )
+    )
     cfg = ModuleConfig(
         inputs=InputsConfig(
+            microparcellation_manifest=micro_manifest,
             microparcels=microparcels,
             connectivity=connectivity,
             domain="volume",
             space="T1w",
-            label_volume=tmp_path / "microparcels.nii.gz",
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
@@ -298,8 +387,8 @@ def test_volumetric_network_module_writes_dense_network_maps(
             transform="clip_positive",
             minimum_weight=0.0,
             percentile_cutoff=None,
-            write_matrix=False,
         ),
+        parcellation_strategy="oslom",
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
     )
@@ -310,16 +399,19 @@ def test_volumetric_network_module_writes_dense_network_maps(
     assert membership.shape == (2, 8)
     assert membership.header.get_axis(0).name.tolist() == ["Network 001", "Network 002"]
     assert outputs["scene"].is_file()
-    assert all(path.is_file() for path in outputs["scene_assets"])
-    scene_text = outputs["scene"].read_text(encoding="utf-8")
-    assert str(connectivity.resolve()) not in scene_text
-    assert outputs["scene_assets"][0].name in scene_text
+    assert all(path.is_file() for path in outputs["scene_supporting_files"])
     manifest = yaml.safe_load(outputs["manifest"].read_text())
     assert manifest["domain"] == "volume"
     assert manifest["space"] == "T1w"
     assert manifest["n_surface_vertices"] is None
     assert manifest["n_gray_matter_voxels"] == 8
-
+    assert {
+        descriptor: Path(path).name
+        for descriptor, path in manifest["outputs"]["network_maps"].items()
+    } == {
+        "network001": "sub-01_space-T1w_desc-network001_stat.dscalar.nii",
+        "network002": "sub-01_space-T1w_desc-network002_stat.dscalar.nii",
+    }
     shutil.rmtree(cfg.output.work_directory)
     monkeypatch.setattr(
         "nro.networks.module._load_inputs",
@@ -330,6 +422,149 @@ def test_volumetric_network_module_writes_dense_network_maps(
     resumed = run(cfg)
     assert resumed["manifest"] == outputs["manifest"]
     assert not cfg.output.work_directory.exists()
+
+
+def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
+    tmp_path: Path, monkeypatch
+) -> None:
+    mask = np.ones((2, 2, 2), dtype=bool)
+    labels = np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int64)
+    microparcels, parcel_axis = write_volume_dlabel(
+        tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4)
+    )
+    connectivity = write_pconn(
+        tmp_path / "connectivity.pconn.nii",
+        np.array(
+            [[0.0, 0.8, 0.4], [0.8, 0.0, 0.6], [0.4, 0.6, 0.0]],
+            dtype=np.float32,
+        ),
+        parcel_axis,
+    )
+    label_volume = tmp_path / "microparcels.nii.gz"
+    nib.save(
+        nib.Nifti1Image(labels.reshape(mask.shape).astype(np.int16), np.eye(4)),
+        label_volume,
+    )
+    micro_manifest = tmp_path / "microparcellation_manifest.yaml"
+    micro_manifest.write_text(
+        yaml.safe_dump({"outputs": {"microparcels_volume": str(label_volume)}})
+    )
+    probabilities = np.array(
+        [[0.0, 1.0], [0.5, 0.25], [1.0, 0.0]], dtype=np.float32
+    )
+    monkeypatch.setattr(
+        "nro.networks.module.ica_membership",
+        lambda _adjacency, _config: probabilities,
+    )
+    monkeypatch.setattr(
+        "nro.networks.module.resolve_oslom_executable",
+        lambda _configured: (_ for _ in ()).throw(
+            AssertionError("the ICA strategy must not resolve OSLOM")
+        ),
+    )
+    cfg = ModuleConfig(
+        inputs=InputsConfig(
+            microparcellation_manifest=micro_manifest,
+            microparcels=microparcels,
+            connectivity=connectivity,
+            domain="volume",
+            space="T1w",
+        ),
+        output=OutputConfig(
+            directory=tmp_path / "networks",
+            work_directory=tmp_path / "work" / "networks",
+            prefix="sub-01_space-T1w",
+        ),
+        connectivity=ConnectivityConfig(percentile_cutoff=None),
+        parcellation_strategy="ica",
+        ica=IcaConfig(n_networks=2),
+        oslom=OslomConfig(initialization="none", repetitions=1),
+        labeling=LabelingConfig(enabled=False),
+    )
+
+    outputs = run(cfg)
+
+    membership = np.asarray(nib.load(outputs["membership"]).dataobj)
+    np.testing.assert_array_equal(membership, probabilities[labels].T)
+    manifest = yaml.safe_load(outputs["manifest"].read_text())
+    assert manifest["parcellation_strategy"] == "ica"
+    assert manifest["reference_run"] is None
+    assert "pseudo-probability" in manifest["interpretation"]
+    assert "not posterior probabilities" in manifest["interpretation"]
+    assert "stability" not in outputs
+
+    from dataclasses import replace
+    mtimes = {path: path.stat().st_mtime_ns for path in outputs.values() if isinstance(path, Path) and path.is_file()}
+    run(replace(cfg, oslom=replace(cfg.oslom, timeout_seconds=60)))
+    assert all(path.stat().st_mtime_ns == stamp for path, stamp in mtimes.items())
+
+
+def test_volumetric_network_module_publishes_clustering_frequencies(
+    tmp_path: Path, monkeypatch
+) -> None:
+    mask = np.ones((2, 2, 2), dtype=bool)
+    labels = np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int64)
+    microparcels, parcel_axis = write_volume_dlabel(
+        tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4)
+    )
+    connectivity = write_pconn(
+        tmp_path / "connectivity.pconn.nii",
+        np.array(
+            [[0.0, 0.8, 0.4], [0.8, 0.0, 0.6], [0.4, 0.6, 0.0]],
+            dtype=np.float32,
+        ),
+        parcel_axis,
+    )
+    label_volume = tmp_path / "microparcels.nii.gz"
+    nib.save(
+        nib.Nifti1Image(labels.reshape(mask.shape).astype(np.int16), np.eye(4)),
+        label_volume,
+    )
+    micro_manifest = tmp_path / "microparcellation_manifest.yaml"
+    micro_manifest.write_text(
+        yaml.safe_dump({"outputs": {"microparcels_volume": str(label_volume)}})
+    )
+    frequencies = np.array(
+        [[1.0, 0.0], [0.75, 0.25], [0.0, 1.0]], dtype=np.float32
+    )
+    monkeypatch.setattr(
+        "nro.networks.module.clustering_membership",
+        lambda _adjacency, _config: (frequencies, np.array([1.0, 2.0])),
+    )
+    monkeypatch.setattr(
+        "nro.networks.module.resolve_oslom_executable",
+        lambda _configured: (_ for _ in ()).throw(
+            AssertionError("the clustering strategy must not resolve OSLOM")
+        ),
+    )
+    cfg = ModuleConfig(
+        inputs=InputsConfig(
+            microparcellation_manifest=micro_manifest,
+            microparcels=microparcels,
+            connectivity=connectivity,
+            domain="volume",
+            space="T1w",
+        ),
+        output=OutputConfig(
+            directory=tmp_path / "networks",
+            work_directory=tmp_path / "work" / "networks",
+            prefix="sub-01_space-T1w",
+        ),
+        connectivity=ConnectivityConfig(percentile_cutoff=None),
+        parcellation_strategy="clustering",
+        clustering=ClusteringConfig(n_networks=2, repetitions=2),
+        oslom=OslomConfig(initialization="none", repetitions=1),
+        labeling=LabelingConfig(enabled=False),
+    )
+
+    outputs = run(cfg)
+
+    membership = np.asarray(nib.load(outputs["membership"]).dataobj)
+    np.testing.assert_array_equal(membership, frequencies[labels].T)
+    manifest = yaml.safe_load(outputs["manifest"].read_text())
+    assert manifest["parcellation_strategy"] == "clustering"
+    assert "frequencies of assignment" in manifest["interpretation"]
+    assert "stability" not in outputs
 
 
 def test_missing_public_network_metric_is_rebuilt(
@@ -360,13 +595,19 @@ def test_missing_public_network_metric_is_rebuilt(
         "nro.networks.module.run_oslom",
         _fake_oslom,
     )
+    micro_manifest = tmp_path / "microparcellation_manifest.yaml"
+    micro_manifest.write_text(
+        yaml.safe_dump(
+            {"outputs": {"microparcels_volume": str(tmp_path / "microparcels.nii.gz")}}
+        )
+    )
     cfg = ModuleConfig(
         inputs=InputsConfig(
+            microparcellation_manifest=micro_manifest,
             microparcels=microparcels,
             connectivity=connectivity,
             domain="volume",
             space="T1w",
-            label_volume=tmp_path / "microparcels.nii.gz",
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
@@ -377,8 +618,8 @@ def test_missing_public_network_metric_is_rebuilt(
             transform="clip_positive",
             minimum_weight=0.0,
             percentile_cutoff=None,
-            write_matrix=False,
         ),
+        parcellation_strategy="oslom",
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
     )

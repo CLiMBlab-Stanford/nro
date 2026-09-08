@@ -13,11 +13,13 @@ _RESOURCE_DIR = Path(__file__).with_name("resources")
 
 @dataclass(frozen=True)
 class ReferenceAtlas:
+    """A named bundled population map used for heuristic network labeling."""
     identifier: str
     filename: str
 
     @property
     def path(self) -> Path:
+        """Return the installed resource path for this reference atlas."""
         return _RESOURCE_DIR / self.filename
 
 

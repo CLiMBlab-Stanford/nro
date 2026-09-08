@@ -5,11 +5,17 @@ from pathlib import Path
 
 import yaml
 import shutil
+import pytest
 
 import nro.func.planning as func_planning
+from nro.anat.contract import anatomical_output_contract
+from nro.clean.contract import clean_output_contract
+from nro.func.contracts import functional_output_contract
+from nro.microparcellation.contract import microparcellation_output_contract
+from nro.networks.contract import networks_output_contract
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.registry import Registry
-from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.planner import Planner, build_subject_instances
 from nro.configuration.store import ConfigStore
 from nro.orchestration.worker import _runner_graph_signature
 from nro.func.contracts import final_resampling_contract
@@ -18,6 +24,92 @@ from nro.func.contracts import final_resampling_contract
 def _write(path: Path, content: str = "x") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+@pytest.fixture
+def branch_registry(tmp_path: Path) -> Registry:
+    bids = tmp_path / "bids"
+    for participant, tasks in (("01", ("langlocSN", "rest")),
+                               ("02", ("rest",)), ("03", ("langlocSN",))):
+        subject = bids / "demo" / f"sub-{participant}"
+        _write(subject / "anat" / f"sub-{participant}_T1w.nii.gz")
+        for task in tasks:
+            stem = f"sub-{participant}_task-{task}_run-1"
+            _write(subject / "func" / f"{stem}_bold.nii.gz")
+            _write(subject / "func" / f"{stem}_bold.json", "{}")
+            _write(subject / "func" / f"{stem}_events.tsv",
+                   "onset\tduration\ttrial_type\n0\t1\tS\n")
+    return Registry.for_project("demo", bids_root=bids)
+
+
+def _plan_modules(registry, tmp_path, modules, workflow_ids=("main",)):
+    workflows = {name: ConfigStore().resolve(name) for name in workflow_ids}
+    return Planner(registry, bids_root=tmp_path / "bids").plan(
+        projects=("demo",), requested_participants=(), modules=modules,
+        workflows=workflows,
+        registered_workflows={name: registry.register_workflow(workflow)
+                              for name, workflow in workflows.items()},
+        selectors={}, spaces=("fsnative", "T1w"), smoothing_levels=(0, 2),
+        memory_gb=32, max_memory_gb=256,
+    )
+
+
+@pytest.mark.parametrize("modules", [
+    ("microparcellation", "networks"),
+    ("networks", "microparcellation"),
+    ("anat", "func", "clean", "microparcellation", "networks", "networks"),
+])
+def test_upstream_targets_collapse_to_endpoint(branch_registry, tmp_path, modules):
+    expected = _plan_modules(branch_registry, tmp_path, ("networks",))
+    actual = _plan_modules(branch_registry, tmp_path, modules)
+    assert actual.instances == expected.instances
+    assert actual.matched_participants == expected.matched_participants
+    assert len(actual.requests) == 1
+    request = actual.requests[0]
+    assert request.module == "networks"
+    assert request.terminal_keys == expected.requests[0].terminal_keys
+    assert request.instances == expected.requests[0].instances
+    planner = Planner(branch_registry, bids_root=tmp_path / "bids")
+    planner.register_requests(actual, selectors={}, concurrency=50, partition=None)
+    assert len(branch_registry.request_rows()) == 1
+    branch_registry.request_cancellation(modules=("networks",))
+    assert not any(row["demanded"] for row in branch_registry.instance_rows())
+
+
+@pytest.mark.parametrize("modules", [("func", "firstlevels"), ("firstlevels", "func")])
+def test_partial_upstream_coverage_keeps_only_uncovered_runs(
+    branch_registry, tmp_path, modules,
+):
+    plan = _plan_modules(branch_registry, tmp_path, modules)
+    requests = {request.module: request for request in plan.requests}
+    assert set(requests) == {"func", "firstlevels"}
+    func = requests["func"]
+    assert func.participants == ("01", "02")
+    assert len(func.terminal_keys) == 2
+    assert {plan.instances[key].entities["task"] for key in func.terminal_keys} == {"rest"}
+    assert {item.participant for item in func.instances} == {"01", "02"}
+    assert all(item.entities.get("task") != "langlocSN" for item in func.instances)
+    fits = requests["firstlevels"]
+    assert fits.participants == ("01", "03")
+    planner = Planner(branch_registry, bids_root=tmp_path / "bids")
+    planner.register_requests(plan, selectors={}, concurrency=50, partition=None)
+    branch_registry.request_cancellation(modules=("firstlevels",))
+    demanded = [row for row in branch_registry.instance_rows() if row["demanded"]]
+    assert {row["participant"] for row in demanded} == {"01", "02"}
+    assert all(json.loads(row["entities_json"]).get("task") != "langlocSN" for row in demanded)
+
+
+def test_independent_endpoints_cover_upstream_without_merging_workflows(
+    branch_registry, tmp_path,
+):
+    plan = _plan_modules(branch_registry, tmp_path,
+                         ("func", "networks", "firstlevels"), ("main", "oslom"))
+    assert {(request.workflow_id, request.module) for request in plan.requests} == {
+        (workflow, module)
+        for workflow in ("main", "oslom")
+        for module in ("networks", "firstlevels")
+    }
+    assert len(plan.requests) == 4
 
 
 def test_func_instance_contract_tracks_final_resampling_policy(tmp_path: Path) -> None:
@@ -263,7 +355,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     (configs / "workflows" / "rest_workflow.yml").write_text(
         yaml.safe_dump({"microparcellation": "rest"})
     )
-    (configs / "microparcellation" / "rest_microparcellation.yml").write_text(
+    (configs / "configs" / "microparcellation" / "rest_microparcellation.yml").write_text(
         yaml.safe_dump({"input_filter": {"task": "rest"}})
     )
     store = ConfigStore()
@@ -300,23 +392,39 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     assert len(by_module["clean"]) == 1
     assert len(by_module["microparcellation"]) == 1
     assert len(by_module["networks"]) == 1
+    assert by_module["anat"][0].instance_contract["processing"] == {
+        "output_metadata": anatomical_output_contract()
+    }
+    assert by_module["func"][0].instance_contract["processing"] == {
+        "final_resampling": final_resampling_contract(),
+        "output_metadata": functional_output_contract(),
+    }
     assert by_module["func"][0].entities == {"task": "rest", "dir": "LR", "run": "1"}
     assert by_module["clean"][0].entities == {
         "task": "rest", "dir": "LR", "run": "1",
         "space": "fsnative", "smoothing": "2",
     }
+    assert by_module["clean"][0].instance_contract["processing"] == {
+        "output_metadata": clean_output_contract()
+    }
     assert by_module["microparcellation"][0].entities == {
         "space": "fsnative", "smoothing": "2"
     }
     assert by_module["microparcellation"][0].dependencies == (by_module["clean"][0].key,)
+    assert by_module["microparcellation"][0].instance_contract["processing"] == {
+        "output_metadata": microparcellation_output_contract()
+    }
     micro_outputs = by_module["microparcellation"][0].expected_outputs
-    assert micro_outputs[0].name == "sub-01_space-fsnative_scale-2mm_manifest.yaml"
-    assert micro_outputs[1].name.endswith("_desc-quality_metrics.json")
-    assert micro_outputs[2].name.endswith("_desc-microparcellation_manifest.json")
+    assert micro_outputs[0].name.endswith("_desc-microparcellation_manifest.yaml")
+    assert micro_outputs[1].name.endswith("_desc-microparcellationQuality_metrics.json")
+    assert micro_outputs[2].name.endswith("_desc-microparcellationIndex_manifest.json")
     assert by_module["networks"][0].dependencies == (
         by_module["microparcellation"][0].key,
         by_module["anat"][0].key,
     )
+    assert by_module["networks"][0].instance_contract["processing"] == {
+        "output_metadata": networks_output_contract()
+    }
     assert registered.directories["preprocessing"] == "main"
     assert registered.directories["microparcellation"] == "rest"
     assert registered.directories["networks"] == "rest"

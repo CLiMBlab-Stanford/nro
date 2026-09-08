@@ -1,0 +1,47 @@
+output_dir: null
+prefix: null
+overwrite: false
+parcellation_strategy: ica
+connectivity:
+  transform: clip_positive
+  minimum_weight: 0.0
+  percentile_cutoff: 90
+ica:
+  n_networks: 50
+  random_seed: 1
+  max_iterations: 500
+  tolerance: 0.0001
+  upper_quantile: 0.99
+  svd_oversamples: 10
+  svd_power_iterations: 2
+clustering:
+  n_networks: 50
+  repetitions: 100
+  random_seed: 1
+  n_init: 1
+  max_iterations: 100
+  batch_size: 1024
+  max_no_improvement: 10
+  reassignment_ratio: 0.01
+oslom:
+  executable: site:oslom
+  initialization: leiden
+  initial_partition: null
+  leiden_resolution: 1.0
+  leiden_iterations: 2
+  leiden_seed: 1
+  weighted: true
+  directed: false
+  significance: 0.1
+  repetitions: 1
+  internal_runs: 10
+  hierarchical_runs: 50
+  extra_args: []
+  timeout_seconds: null
+consensus:
+  assignment_threshold: 0.5
+  homeless_threshold: 0.5
+  minimum_match_jaccard: 0.2
+labeling:
+  enabled: true
+  candidates_per_reference: 3

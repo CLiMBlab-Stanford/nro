@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.engine.targets import bids_scale_value
+from nro.engine.targets import smoothing_entity_value, target_directory_name
+from nro.microparcellation.paths import output_paths
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
 
@@ -23,19 +24,22 @@ def plan_instances(
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     values = context.workflow.configuration("microparcellation").values
-    output_root = Path(
+    output_base = Path(
         values.get("output_dir")
         or context.project_root
         / "derivatives"
         / "microparcellation"
         / directory_label
-        / context.sub_id
     ).expanduser().resolve()
     base_prefix = str(values.get("prefix") or context.sub_id)
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
-        prefix = f"{base_prefix}_space-{space}_scale-{bids_scale_value(smoothing)}"
+        output_root = output_base / target_directory_name(space, smoothing) / context.sub_id
+        prefix = (
+            f"{base_prefix}_space-{space}_"
+            f"smoothing-{smoothing_entity_value(smoothing)}"
+        )
         dependencies = tuple(
             instance.key
             for instance in upstream["clean"]
@@ -47,7 +51,9 @@ def plan_instances(
                 key=instance_key(
                     context.project,
                     descriptor.name,
-                    lineage,
+                    context.registered.lineage_fingerprints[
+                        descriptor.configuration_class
+                    ],
                     context.participant,
                     entities,
                 ),
@@ -59,7 +65,7 @@ def plan_instances(
                 configuration_lineage_id=lineage,
                 config_fingerprint=context.workflow.configuration(
                     descriptor.configuration_class
-                ).fingerprint,
+                ).scientific_fingerprint,
                 directory_label=directory_label,
                 runtime_config=context.runtime_config(descriptor.configuration_class),
                 command=(
@@ -83,11 +89,11 @@ def plan_instances(
                 resource_class=descriptor.resource_class,
                 memory_gb=context.memory_gb,
                 max_memory_gb=context.max_memory_gb,
-                expected_outputs=(
-                    output_root / f"{prefix}_manifest.yaml",
-                    output_root / f"{prefix}_desc-quality_metrics.json",
-                    output_root / f"{prefix}_desc-microparcellation_manifest.json",
+                expected_outputs=tuple(
+                    output_paths(output_root, prefix)[name]
+                    for name in ("manifest", "quality", "index")
                 ),
+                processing=descriptor.processing_contract(),
             )
         )
     return tuple(result)

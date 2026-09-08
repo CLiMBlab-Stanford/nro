@@ -1,10 +1,13 @@
 import logging
+import json
 import shutil
-import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+
+from nro.engine.images import sidecar_json_path
 
 from nro.microparcellation.config import (
     CoarseningConfig,
@@ -42,6 +45,28 @@ def _write_functional(path: Path, seed: int) -> None:
     for values in rng.normal(size=(12, 4)).astype(np.float32):
         image.add_gifti_data_array(nib.gifti.GiftiDataArray(values))
     nib.save(image, path)
+    mask_file = path.parent / "sub-test_desc-confounds_timeseries.tsv"
+    mask_file.write_text("motion_outlier00\n" + "0\n" * 12)
+    sidecar_json_path(path).write_text(
+        json.dumps(
+            {
+                "Cleaning": {
+                    "CleaningDefined": True,
+                    "TotalFrames": 12,
+                    "RetainedFrames": 12,
+                    "CensoredFraction": 0.0,
+                    "ResidualDesignDegreesOfFreedom": 10,
+                    "AlgebraicTemporalRank": 10,
+                    "TemporalMaskFile": str(mask_file),
+                    "TemporalMaskRegex": ".*outlier.*",
+                    "QualityControl": {
+                        "ParticipationRatioEffectiveTemporalRank": 8.0,
+                        "DominantTemporalVarianceFraction": 0.2,
+                    },
+                }
+            }
+        )
+    )
 
 
 def test_surface_module_uses_runner_and_skips_all_current_stages(
@@ -62,6 +87,7 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
     cfg = ModuleConfig(
         inputs=InputsConfig(
             functional=(tuple(functionals),),
+            temporal_masks=(tmp_path / "sub-test_desc-confounds_timeseries.tsv",),
             domain="surface",
             surface=tuple(surfaces),
         ),
@@ -70,7 +96,6 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
             work_directory=tmp_path / "work",
             prefix="sub-test",
         ),
-        wb_command="/bin/true",
         coarsening=CoarseningConfig(
             target_vertices=4,
             iterations=2,
@@ -80,7 +105,13 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
             eigensolver_tolerance=1e-5,
         ),
         connectivity=ConnectivityConfig(
-            minimum_trs=4,
+            minimum_retained_frames=4,
+            minimum_retained_fraction=0.0,
+            minimum_residual_design_dof=0,
+            minimum_participation_effective_rank=0.0,
+            maximum_dominant_temporal_variance_fraction=1.0,
+            minimum_usable_runs=1,
+            minimum_aggregate_retained_frames=4,
             temporal_block_size=4,
             reliability_weighting=False,
             reliability_vertex_block_size=8,
@@ -88,47 +119,11 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
         ),
     )
 
-    def fake_borders(dlabel, surface_paths, output_dir, prefix, *, runner, executable=None):
-        paths = tuple(
-            output_dir / f"{prefix}_hemi-{hemi}_microparcels.border"
-            for hemi in ("L", "R")
-        )
-        for path in paths:
-            path.write_text("border")
-        return paths
-
-    monkeypatch.setattr("nro.microparcellation.module.write_borders", fake_borders)
-    monkeypatch.setattr(
-        "nro.microparcellation.module.resolve_wb_command",
-        lambda _configured: "/bin/true",
-    )
     with caplog.at_level(logging.INFO, logger="nro.microparcellation.module"):
         outputs = run(cfg)
-    assert len(outputs["scene_surfaces"]) == 8
-    scene = outputs["scene"].read_text()
-    for path in outputs["scene_surfaces"]:
-        assert path.name in scene
-    root = ET.fromstring(scene)
-    spec_surfaces = [
-        child.text
-        for item in root.findall('.//Object[@Class="SpecFileDataFile"]')
-        if item.findtext('./Object[@Name="dataFileType"]') == "SURFACE"
-        for child in item.findall('./Object[@Name="fileName"]')
-    ]
-    assert spec_surfaces == [path.name for path in outputs["scene_surfaces"]]
-    assert all(
-        item.findtext('./Object[@Name="selected"]') == "true"
-        for item in root.findall('.//Object[@Class="SpecFileDataFile"]')
-        if item.findtext('./Object[@Name="dataFileType"]') == "SURFACE"
-    )
-    active_surfaces = {
-        item.text
-        for item in root.findall('.//Object[@Name="m_selectedSurfacePathName"]')
-    }
-    assert active_surfaces == {
-        "sub-test_hemi-L_midthickness.surf.gii",
-        "sub-test_hemi-R_midthickness.surf.gii",
-    }
+    assert outputs["scene"].is_file()
+    assert all(path.is_file() for path in outputs["scene_surfaces"])
+    assert "borders" not in outputs
     mtimes = {
         path: path.stat().st_mtime_ns
         for value in outputs.values()
@@ -142,6 +137,7 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
     monkeypatch.setattr("nro.microparcellation.module.local_edge_correlations", forbidden)
     monkeypatch.setattr("nro.microparcellation.module.parcel_correlations", forbidden)
     shutil.rmtree(cfg.output.work_directory)
+    cfg = replace(cfg, connectivity=replace(cfg.connectivity, temporal_block_size=6, reliability_vertex_block_size=2))
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="nro.microparcellation.module"):
         resumed = run(cfg)

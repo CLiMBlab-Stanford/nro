@@ -9,8 +9,10 @@ from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.networks.config import (
+    ClusteringConfig,
     ConnectivityConfig,
     ConsensusConfig,
+    IcaConfig,
     InputsConfig,
     OslomConfig,
     OutputConfig,
@@ -18,6 +20,7 @@ from nro.networks.config import (
     LabelingConfig,
 )
 from nro.networks.module import build_module
+from nro.networks.paths import fixed_output_paths
 from nro.networks.targets import (
     MicroparcellationTarget,
     discover_microparcellation_targets,
@@ -30,24 +33,25 @@ from nro.orchestration.runtime import (
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 from nro.engine.publication import write_json_atomic
-from nro.engine.io import flatten_paths
 from nro.engine.paths import anatomical_manifest_path, optional_path
 from nro.engine.cli import stderr
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
-    bids_scale_value,
+    smoothing_entity_value,
+    target_directory_name,
 )
 
 
 def target_output_names(
     base_prefix: str, space: str, smoothing_mm: int
 ) -> tuple[str, str]:
-    private_target = f"space-{space}_smoothing-{smoothing_mm}mm"
-    public_prefix = (
-        f"{base_prefix}_space-{space}_scale-{bids_scale_value(smoothing_mm)}"
+    target = target_directory_name(space, smoothing_mm)
+    prefix = (
+        f"{base_prefix}_space-{space}_"
+        f"smoothing-{smoothing_entity_value(smoothing_mm)}"
     )
-    return private_target, public_prefix
+    return target, prefix
 
 
 def _target_module_config(
@@ -68,14 +72,13 @@ def _target_module_config(
     oslom["extra_args"] = tuple(oslom["extra_args"])
     return ModuleConfig(
         inputs=InputsConfig(
+            microparcellation_manifest=target.manifest,
             microparcels=target.microparcels,
             connectivity=target.connectivity,
             domain=target.domain,
             space=target.space,
             smoothing_mm=target.smoothing_mm,
             source_surfaces=target.source_surfaces,
-            scene_surfaces=target.scene_surfaces,
-            label_volume=target.label_volume,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
             mni_to_t1_transform=mni_to_t1_transform,
@@ -87,6 +90,9 @@ def _target_module_config(
             overwrite=config["overwrite"] if overwrite is None else overwrite,
         ),
         connectivity=ConnectivityConfig(**config["connectivity"]),
+        parcellation_strategy=str(config["parcellation_strategy"]),
+        ica=IcaConfig(**config["ica"]),
+        clustering=ClusteringConfig(**config["clustering"]),
         oslom=OslomConfig(**oslom),
         consensus=ConsensusConfig(**config["consensus"]),
         labeling=LabelingConfig(**config["labeling"]),
@@ -115,16 +121,15 @@ def make_target_config(
     if len(targets) != 1:
         raise ValueError(f"Expected one microparcellation target, found {len(targets)}")
     target = targets[0]
-    output_root = Path(config.get("output_dir") or (
-        Path(BIDS_PATH) / project / "derivatives" / "networks" / networks_id / subject_id
+    output_base = Path(config.get("output_dir") or (
+        Path(BIDS_PATH) / project / "derivatives" / "networks" / networks_id
     ))
-    work_root = (
+    work_base = (
         Path(WORK_PATH)
         / project
         / "derivatives"
         / "networks"
         / networks_id
-        / subject_id
     )
     target_dir, target_prefix = target_output_names(
         config.get("prefix") or subject_id,
@@ -135,8 +140,8 @@ def make_target_config(
         target,
         _target_module_config(
             target,
-            output_root,
-            work_root / target_dir,
+            output_base / target_dir / subject_id,
+            work_base / target_dir / subject_id,
             target_prefix,
             config,
             overwrite=overwrite,
@@ -149,7 +154,7 @@ def make_target_config(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        "Run OSLOM network parcellation for one space and smoothing level"
+        "Estimate networks for one space and smoothing level"
     )
     parser.add_argument("-p", "--participant", required=True, help="BIDS participant ID")
     parser.add_argument("-P", "--project", required=True)
@@ -229,19 +234,27 @@ def main(argv: list[str] | None = None):
         for run in discover_raw_runs(Path(BIDS_PATH) / args.project / participant_id)
         if matches_filter(run.entities, micro_config.get("input_filter"))
     )
-    micro_subject = Path(
+    micro_base = Path(
         micro_config.get("output_dir")
         or Path(BIDS_PATH) / args.project / "derivatives" / "microparcellation"
-        / config["microparcellation_directory"] / participant_id
+        / config["microparcellation_directory"]
     ).expanduser().resolve()
     micro_prefix = str(micro_config.get("prefix") or participant_id)
-    micro_target_prefix = (
-        f"{micro_prefix}_space-{args.space}_scale-{bids_scale_value(smoothing_mm)}"
+    micro_subject = (
+        micro_base
+        / target_directory_name(args.space, smoothing_mm)
+        / participant_id
     )
-    micro_manifest = micro_subject / f"{micro_target_prefix}_manifest.yaml"
+    micro_target_prefix = (
+        f"{micro_prefix}_space-{args.space}_"
+        f"smoothing-{smoothing_entity_value(smoothing_mm)}"
+    )
+    from nro.microparcellation.paths import output_paths as micro_output_paths
+
+    micro_paths = micro_output_paths(micro_subject, micro_target_prefix)
+    micro_manifest = micro_paths["manifest"]
     publication_index = (
-        micro_subject
-        / f"{micro_target_prefix}_desc-microparcellation_manifest.json"
+        micro_paths["index"]
     )
     if not publication_index.is_file():
         raise FileNotFoundError(
@@ -282,31 +295,47 @@ def main(argv: list[str] | None = None):
     )
     result = build_module(cfg, runner, completion_boundary=False)
     manifest = Path(result["manifest"])
-    output_index = (
-        cfg.output.directory / f"{cfg.output.prefix}_desc-networks_manifest.json"
-    )
-    payload = {
-        "manifest_version": 1,
-        "module": "networks",
-        "participant": participant_id,
-        "domain": target.domain,
-        "space": target.space,
-        "smoothing_fwhm_mm": target.smoothing_mm,
-        "source_runs": [source.stem for source in source_runs],
-        "target_manifest": str(manifest),
-        "public_outputs": [
-            str(path) for value in result.values() for path in flatten_paths(value)
-        ],
-        "configuration_fingerprint": selected_configuration_fingerprint(),
-        "complete": True,
-    }
+    output_index = fixed_output_paths(cfg.output.directory, cfg.output.prefix)["index"]
+
+    def published_paths(value: object):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from published_paths(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from published_paths(item)
+
+    def index_payload() -> dict[str, object]:
+        import yaml
+
+        publication = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        public_outputs = [
+            path
+            for value in (publication.get("outputs") or {}).values()
+            for path in published_paths(value)
+        ]
+        return {
+            "manifest_version": 1,
+            "module": "networks",
+            "participant": participant_id,
+            "domain": target.domain,
+            "space": target.space,
+            "smoothing_fwhm_mm": target.smoothing_mm,
+            "source_runs": [source.stem for source in source_runs],
+            "target_manifest": str(manifest),
+            "public_outputs": [*public_outputs, str(manifest)],
+            "configuration_fingerprint": selected_configuration_fingerprint(),
+            "complete": True,
+        }
 
     def validate_index() -> tuple[bool, str]:
         try:
             current = json.loads(output_index.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             return False, "Networks publication index is missing or unreadable."
-        if current != payload:
+        if current != index_payload():
             return False, "Networks publication index differs from the requested module."
         return True, "Networks publication index is complete and current."
 
@@ -316,7 +345,7 @@ def main(argv: list[str] | None = None):
             outputs=(output_index,),
             inputs=(manifest,),
             force=bool(args.overwrite),
-            action=lambda: write_json_atomic(output_index, payload),
+            action=lambda: write_json_atomic(output_index, index_payload()),
             validate=validate_index,
             completion_boundary=True,
         )

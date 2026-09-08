@@ -1,5 +1,12 @@
 from pathlib import Path
 
+import pytest
+
+from nro.clean.contract import (
+    CLEAN_SIDECAR_FIELDS,
+    clean_output_contract,
+    validate_clean_sidecar,
+)
 from nro.clean.module import _expected_input_groups, _volume_gm_mask_path
 
 
@@ -77,3 +84,41 @@ def test_volume_gray_matter_mask_is_shared_across_cleaning_variants(
     assert first.name == "sub-01_space-T1w_desc-grayMatterMask_bold.nii.gz"
     assert first_is_new
     assert not second_is_new
+
+
+def test_clean_output_contract_tracks_required_temporal_metadata() -> None:
+    contract = clean_output_contract()
+    fields = contract["sidecar_fields"]
+
+    assert fields["Cleaning.TemporalMaskFile"] == "string"
+    assert fields["Cleaning.RetainedFrames"] == "integer"
+    assert (
+        fields["Cleaning.QualityControl.ParticipationRatioEffectiveTemporalRank"]
+        == "number"
+    )
+
+
+def test_clean_sidecar_validation_rejects_a_missing_contract_field() -> None:
+    def sample(kind: str):
+        return {
+            "boolean": True,
+            "integer": 1,
+            "number": 1.0,
+            "nullable_number": None,
+            "string": "value",
+            "nullable_string": None,
+            "string_list": ["source"],
+        }[kind]
+
+    document: dict[str, object] = {}
+    for path, kind in CLEAN_SIDECAR_FIELDS.items():
+        target = document
+        components = path.split(".")
+        for component in components[:-1]:
+            target = target.setdefault(component, {})
+        target[components[-1]] = sample(kind)
+
+    validate_clean_sidecar(document, volume=False)
+    del document["Cleaning"]["TemporalMaskFile"]
+    with pytest.raises(ValueError, match="Cleaning.TemporalMaskFile"):
+        validate_clean_sidecar(document, volume=False)

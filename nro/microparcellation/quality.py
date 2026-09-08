@@ -12,6 +12,7 @@ from scipy.sparse.csgraph import connected_components
 
 @dataclass(frozen=True)
 class NullPartition:
+    """Spatial null labels and parcel-size diagnostics used during variance scoring."""
     labels: np.ndarray
     mean_absolute_size_error: float
     maximum_absolute_size_error: int

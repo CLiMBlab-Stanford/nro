@@ -15,6 +15,7 @@ from nro.orchestration.worker_control import cancel_worker_allocations
 
 
 def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
+    """Construct the stop parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument(
@@ -37,6 +38,11 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
+    """Cancel selected demand or shut down workers without deleting artifacts.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     try:
         selection = core_selection(args)
@@ -55,6 +61,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             or selection.runs
             or selection.spaces
             or selection.smoothing
+            or selection.models
+            or selection.model_sets
             or args.only
             or args.force
         ):

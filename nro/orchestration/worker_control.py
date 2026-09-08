@@ -147,4 +147,9 @@ def stop_worker_pool_for_repair(registry: Registry) -> dict:
         registry, shutdown, update_registry=False
     )
     wait_for_worker_shutdown(registry)
+    from nro.bidsify.store import IngestionStore
+    # These allocations are now confirmed stopped. Ingestion survives repair,
+    # so release its leases before the worker table is discarded.
+    with registry._lock():
+        IngestionStore(registry).recover_locked({row['id'] for row in shutdown['worker_rows']})
     return {**shutdown, "stopped_jobs": stopped_jobs, "cancellation_failures": failures}

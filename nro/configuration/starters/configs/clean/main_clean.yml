@@ -1,6 +1,9 @@
 min_trs: 50
 gm_mask_threshold: 0.2
 confounds_regex: '^(global_signal|csf|white_matter|trans_[xyz]|rot_[xyz])(?:_derivative1)?(?:_power2)?$'
+nuisance_variance_explained: 0.99
+minimum_temporal_rank: 30
+minimum_temporal_rank_fraction: 0.5
 temporal_mask_regex: '.*outlier.*'
 standardize: true
 detrend: true
@@ -9,12 +12,11 @@ low_pass: 0.1
 high_pass: 0.01
 force: false
 verbose: false
-container: /juice6/u/nlp/climblab/apptainer/images/qunex_suite-1.5.1.sif
+container: site:qunex
 no_container: false
-container_engine: singularity
+container_engine: site:runtime
 container_cleanenv: true
-container_bind:
-  - /juice6:/juice6
+container_bind: site:binds
 container_home: null
 container_inner_setup: >-
   set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;

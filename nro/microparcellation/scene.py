@@ -74,7 +74,7 @@ def write_workbench_scene(
     )
     families = tuple(_surface_family(Path(path)) for path in surface_paths)
     packaged = {
-        (hemi, kind): output_dir / f"{prefix}_hemi-{hemi}_{kind}.surf.gii"
+        (hemi, kind): output_dir / f"{prefix}_hemi-{hemi}_desc-{kind}_surface.surf.gii"
         for hemi in ("L", "R")
         for kind in _SURFACE_TYPES
     }
@@ -109,7 +109,7 @@ def write_workbench_scene(
                 raise FileNotFoundError(
                     f"Missing inflated surface for hemisphere {hemi} and no Workbench runner was provided"
                 )
-            very_inflated = output_dir / f".{prefix}_hemi-{hemi}_veryInflated.surf.gii"
+            very_inflated = output_dir / f".{prefix}_hemi-{hemi}_desc-veryInflated_surface.surf.gii"
             try:
                 runner.run_child(
                     [
@@ -166,11 +166,11 @@ def surface_scene_output_paths(
         if source is not None
     )
     packaged_surfaces = tuple(
-        output_dir / f"{prefix}_hemi-{hemi}_{kind}.surf.gii"
+        output_dir / f"{prefix}_hemi-{hemi}_desc-{kind}_surface.surf.gii"
         for hemi in ("L", "R")
         for kind in _SURFACE_TYPES
     )
-    scene_path = output_dir / f"{prefix}_microparcellation.scene"
+    scene_path = output_dir / f"{prefix}_desc-microparcellation_scene.scene"
     return scene_path, packaged_surfaces, source_surfaces
 
 
@@ -193,6 +193,6 @@ def write_volume_workbench_scene(
         scene = scene.replace(placeholder, value)
     if "{{" in scene or "}}" in scene:
         raise RuntimeError("Unresolved placeholder in Workbench volume scene template")
-    scene_path = output_dir / f"{prefix}_microparcellation.scene"
+    scene_path = output_dir / f"{prefix}_desc-microparcellation_scene.scene"
     scene_path.write_text(scene, encoding="utf-8")
     return scene_path

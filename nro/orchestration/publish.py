@@ -72,6 +72,12 @@ def publish(
     destination: Path,
     validate: bool = True,
 ) -> Path:
+    """Snapshot fresh terminal artifacts and recursive provenance into a new destination.
+
+    Reassess the registry before and after copying. Validate checksums and
+    generations; reject an existing destination or changed source artifacts.
+    Run an available BIDS validator unless validate is false.
+    """
     assess_registry(registry, projects=(registry.paths.project,))
     request, instances = registry.publication_instances(request_id)
     if not instances:

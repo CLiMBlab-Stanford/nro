@@ -1,0 +1,78 @@
+container:
+  image: site:qunex
+  engine: site:runtime
+  cleanenv: true
+  bind: site:binds
+  home: null
+  inner_setup: >-
+    set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;
+    qx_setup_rc=$?; set -e; if [ "$qx_setup_rc" -ne 0 ]; then
+    echo "QuNex environment setup failed with status $qx_setup_rc" >&2;
+    exit "$qx_setup_rc"; fi
+  no_container: false
+anat:
+  selection_strategy: first
+  mni_template: site:mni_template
+  synthstrip_container: site:synthstrip
+  freesurfer_subjects_dir: null
+  fs_subject: null
+  nthreads: 8
+  nthreads_divisor: 2
+  nthreads_min: 1
+  force: false
+  verbose: false
+func:
+  # Per-run fallback: ordinary anatomical SyN is used when inherited BIDS
+  # metadata cannot supply the phase-encoding and readout values SynBOLD needs.
+  sdc_method: synbold_disco
+  synbold_disco_image: site:synbold
+  synbold_disco_license: site:license
+  bbregister_surf: white
+  bbregister_init: coreg
+  bbregister_dof: 6
+  output_grid: t1_epi_vox
+  topup_config: auto
+  ica_aroma_cmd: null
+  use_jacobian: false
+  fieldmap_syn_refine: false
+  synbold_overlap_erosion_voxels: 2
+  synbold_min_overlap_voxels: 1000
+  synbold_max_rigid_translation_mm: 30.0
+  synbold_max_rigid_rotation_degrees: 20.0
+  sbref_max_rigid_displacement_mm: 20.0
+  sbref_max_rigid_rotation_degrees: 10.0
+  sbref_min_support_overlap: 0.80
+  sbref_min_intensity_correlation: 0.40
+  syn_base_transform: SyN[0.2,3,0]
+  syn_base_convergence: '[40x20x0,1e-7,8]'
+  syn_base_shrink_factors: 4x2x1
+  syn_base_smoothing_sigmas: 2x1x0vox
+  syn_refine_transform: SyN[0.05,3,1]
+  syn_refine_convergence: '[40x20x10,1e-7,8]'
+  syn_refine_shrink_factors: 4x2x1
+  syn_refine_smoothing_sigmas: 2x1x0vox
+  clean_ica_aroma: true
+  ica_aroma_denoise_type: aggr
+  sdc_from_sbref_pair: false
+  nthreads: 8
+  nthreads_divisor: 2
+  nthreads_min: 1
+  debug_first_nvols: 0
+  io_chunk_vols: 64
+  output_spaces:
+    - T1w
+    - fsnative
+    - MNI152NLin2009cAsym
+    - fsaverage
+  force: false
+  verbose: false
+confounds:
+  aseg_in_epi: null
+  brain_mask_in_epi: null
+  n_acompcor: 10
+  acompcor_max_voxels: 20000
+  fd_radius_mm: 50.0
+  motion_outlier_fd_thresh: 1.0
+  nonsteady_max_vols: 20
+  nonsteady_rel_thresh: 0.05
+  nonsteady_stable_run: 3

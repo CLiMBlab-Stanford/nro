@@ -22,7 +22,7 @@ def _touch(path: Path) -> Path:
 def test_output_names_use_space_without_redundant_domain() -> None:
     directory, prefix = target_output_names("sub-01", "T1w", 2)
     assert directory == "space-T1w_smoothing-2mm"
-    assert prefix == "sub-01_space-T1w_scale-2mm"
+    assert prefix == "sub-01_space-T1w_smoothing-2mm"
     assert "domain-" not in directory + prefix
 
 
@@ -49,8 +49,8 @@ def test_expected_target_is_derived_from_source_bids_and_requested_entities(
         "surface", "fsnative", 2
     )
     assert [path.name for path in target.functional[0]] == [
-        "sub-01_ses-a_task-rest_run-01_space-fsnative_scale-2mm_hemi-L_desc-clean_bold.func.gii",
-        "sub-01_ses-a_task-rest_run-01_space-fsnative_scale-2mm_hemi-R_desc-clean_bold.func.gii",
+        "sub-01_ses-a_task-rest_run-01_space-fsnative_smoothing-2mm_hemi-L_desc-clean_bold.func.gii",
+        "sub-01_ses-a_task-rest_run-01_space-fsnative_smoothing-2mm_hemi-R_desc-clean_bold.func.gii",
     ]
 
 

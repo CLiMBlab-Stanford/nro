@@ -8,15 +8,17 @@ from typing import Iterable
 
 from nro.engine.bids import BidsRun
 from nro.clean.paths import clean_session_dir, clean_subject_dir
-from nro.engine.targets import bids_scale_value
+from nro.engine.targets import smoothing_entity_value
 
 
 @dataclass(frozen=True)
 class CleanTarget:
+    """Matched clean artifact inputs for one space and smoothing target."""
     domain: str
     space: str
     smoothing_mm: int
     functional: tuple[tuple[Path, ...], ...]
+    temporal_masks: tuple[Path, ...]
 
 
 def expected_clean_target(
@@ -32,8 +34,9 @@ def expected_clean_target(
     if not source_runs:
         raise FileNotFoundError("No source-BIDS runs were selected for microparcellation")
     domain = "surface" if space in {"fsnative", "fsaverage"} else "volume"
-    bids_scale = bids_scale_value(smoothing_mm)
+    smoothing = smoothing_entity_value(smoothing_mm)
     functionals: list[tuple[Path, ...]] = []
+    temporal_masks: list[Path] = []
     for run in source_runs:
         sub_id = f"sub-{run.participant}"
         directory = (
@@ -48,7 +51,7 @@ def expected_clean_target(
                 tuple(
                     directory
                     / (
-                        f"{run.stem}_space-{space}_scale-{bids_scale}_hemi-{hemi}"
+                        f"{run.stem}_space-{space}_smoothing-{smoothing}_hemi-{hemi}"
                         "_desc-clean_bold.func.gii"
                     )
                     for hemi in ("L", "R")
@@ -59,9 +62,22 @@ def expected_clean_target(
                 (
                     directory
                     / (
-                        f"{run.stem}_space-{space}_scale-{bids_scale}"
+                        f"{run.stem}_space-{space}_smoothing-{smoothing}"
                         "_desc-clean_bold.nii.gz"
                     ),
                 )
             )
-    return CleanTarget(domain, space, smoothing_mm, tuple(functionals))
+        temporal_masks.append(
+            directory
+            / (
+                f"{run.stem}_space-{space}_smoothing-{smoothing}_"
+                "desc-confounds_timeseries.tsv"
+            )
+        )
+    return CleanTarget(
+        domain,
+        space,
+        smoothing_mm,
+        tuple(functionals),
+        tuple(temporal_masks),
+    )

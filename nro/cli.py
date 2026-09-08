@@ -12,6 +12,15 @@ import nro.bin
 
 
 COMMAND_HELP = {
+    "bidsify": "Download, review, convert, and approve BIDS sessions.",
+    "create": "Create a model, config, or workflow definition.",
+    "edit": "Edit an existing model, config, or workflow definition.",
+    "delete": "Delete a definition without removing derivatives.",
+    "definitions": "Create or validate an external definitions store.",
+    "models": "Inspect, validate, register, and compile task models.",
+    "setup": "Set up dependencies or connect to a shared installation.",
+    "paths": "View and edit site paths.",
+    "doctor": "Check dependencies and site access.",
     "log": "Browse worker or derivative-instance logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
     "purge": "Remove nro-controlled derivatives and logs.",
@@ -20,6 +29,7 @@ COMMAND_HELP = {
     "set": "Update live planner settings.",
     "status": "Report derivative status.",
     "stop": "Cancel derivative demand or stop workers.",
+    "wb_view": "Open Workbench scenes stored with completed derivatives.",
 }
 
 
@@ -35,6 +45,7 @@ def available_commands() -> tuple[str, ...]:
 
 
 def build_parser(*, prog: str = "nro") -> argparse.ArgumentParser:
+    """Construct the command dispatcher from public nro.bin executables."""
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Run and inspect nro derivative workflows.",
@@ -58,6 +69,7 @@ def _command_main(command: str) -> Callable[..., None]:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
+    """Dispatch argv to a user command; unknown commands exit with a parser error."""
     values = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser(prog=prog)
     if not values or values[0] in {"-h", "--help"}:

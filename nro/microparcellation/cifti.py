@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 
-from nro.orchestration.runner import Runner
 from nibabel.processing import resample_to_output
 
 INT8_SCALE = 127.0
@@ -318,23 +317,3 @@ def resolve_wb_command(configured: str | Path) -> str:
             f"Connectome Workbench executable is not available: {executable}"
         )
     return str(executable)
-
-
-def write_borders(
-    dlabel_path: Path,
-    surface_paths: tuple[Path, ...],
-    output_dir: Path,
-    prefix: str,
-    runner: Runner,
-    executable: str,
-) -> tuple[Path, ...]:
-    structures = _structures(surface_paths)
-    paths = tuple(
-        output_dir / f"{prefix}_hemi-{'L' if structure.endswith('LEFT') else 'R'}_microparcels.border"
-        for structure in structures
-    )
-    command = [executable, "-cifti-label-to-border", str(dlabel_path)]
-    for surface, border in zip(surface_paths, paths):
-        command.extend(("-border", str(surface), str(border)))
-    runner.run_child(command)
-    return paths

@@ -1,0 +1,33 @@
+input_filter: {}
+surface: pial
+mask: null
+mask_threshold: 0.5
+volume_connectivity: 6
+output_dir: null
+prefix: null
+overwrite: false
+coarsening:
+  target_vertices: 40000
+  iterations: 3
+  exponential_temperature: 0.1
+  eigenvectors: 10
+  max_levels: 20
+  eigensolver_tolerance: 1.0e-5
+connectivity:
+  minimum_retained_frames: 100
+  minimum_retained_fraction: 0.7
+  minimum_residual_design_dof: 50
+  minimum_participation_effective_rank: 10.0
+  maximum_dominant_temporal_variance_fraction: 0.5
+  minimum_usable_runs: 2
+  minimum_aggregate_retained_frames: 1100
+  temporal_block_size: 128
+  reliability_weighting: true
+  reliability_vertex_block_size: 8192
+  global_signal_regression: true
+quality:
+  split_half_block_frames: 128
+  null_parcellations: 5
+  random_seed: 1
+  region_growing_attempts: 4
+  connectome_power_iterations: 20

@@ -1,0 +1,6 @@
+.*.edit.lock
+.definition-*/
+*.swp
+*.swo
+*~
+__pycache__/

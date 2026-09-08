@@ -164,6 +164,7 @@ def same_readout_time(a: Optional[float], b: Optional[float], *, tol: float = 1e
 
 @dataclass(frozen=True)
 class ImageRec:
+    """Image path, inherited metadata, geometry, and acquisition ordering for reference selection."""
     img: Path
     metadata_path: Path
     metadata_sources: tuple[Path, ...]
@@ -178,9 +179,11 @@ class ImageRec:
 
     @property
     def key(self) -> tuple[str, float]:
+        """Return the acquisition ordering key used to compare candidate references."""
         return (self.tkind, self.tval)
 
     def before_or_equal(self, other: "ImageRec") -> bool:
+        """Return whether this acquisition precedes or matches the supplied acquisition."""
         if self.tkind == other.tkind:
             return self.tval <= other.tval
         return True
@@ -188,12 +191,14 @@ class ImageRec:
 
 @dataclass(frozen=True)
 class FmapPair:
+    """Compatible opposite-phase spin-echo images selected as a fieldmap pair."""
     se1: ImageRec
     se2: ImageRec
 
 
 @dataclass(frozen=True)
 class ResolvedFuncRun:
+    """Selected BOLD, SBRef, fieldmap pair, and metadata provenance for a run."""
     func_root: Path
     fmap_root: Path
     bold: ImageRec
@@ -555,7 +560,17 @@ def resolve_func_run_request(
     selection_warning: Optional[str] = stem_warning
     if inheritance_warning:
         selection_warning = inheritance_warning if selection_warning is None else f"{selection_warning} {inheritance_warning}"
-    if sbrefs:
+    explicit_references = bold.metadata.get('NROReferencePolicy') == 'explicit'
+    if explicit_references:
+        selected = bold.metadata.get('NROSBRef')
+        if selected is not None:
+            if not isinstance(selected, str) or Path(selected).name != selected:
+                raise ValueError('Invalid explicit SBRef filename')
+            matches = [s for s in sbrefs if s.img.name == selected]
+            if len(matches) != 1:
+                raise ValueError('The explicitly assigned SBRef is missing or invalid')
+            sbref = matches[0]
+    elif sbrefs:
         try:
             sbref = pick_prev_sbref(sbrefs, bold)
         except Exception as e:
@@ -570,7 +585,17 @@ def resolve_func_run_request(
             else:
                 selection_warning = f"No SBRef available under {func_dir}"
 
-    if sdc_from_sbref_pair and sbref is not None:
+    if explicit_references:
+        sources = bold.metadata.get('B0FieldSource', [])
+        if sources:
+            if isinstance(sources, str):
+                sources = [sources]
+            fmaps = [load_rec(p) for p in sorted(fmap_dir.glob(f"{prefix}_*_epi.nii*"))] if fmap_dir.exists() else []
+            linked = [f for f in fmaps if f.metadata.get('B0FieldIdentifier') in sources]
+            if len(sources) != 1 or len(linked) != 2 or not all(fmap_targets_bold(f, bold) for f in linked):
+                raise ValueError('Explicit fieldmap association is missing or inconsistent')
+            pair = pick_prev_fmap_pair(linked, bold)
+    elif sdc_from_sbref_pair and sbref is not None:
         try:
             sbref_opp = pick_nearest_opp_sbref(sbrefs, sbref)
             pair = FmapPair(se1=sbref, se2=sbref_opp)

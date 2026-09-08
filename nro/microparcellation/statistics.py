@@ -12,29 +12,33 @@ from .gifti import load_functional
 
 LOG = logging.getLogger(__name__)
 FLOAT32_TINY = np.finfo(np.float32).tiny
-
-
-@dataclass(frozen=True)
-class SkippedRun:
-    files: tuple[Path, ...]
-    timepoints: int
+CONNECTOME_POWER_INITIALIZATION_SEED = 0
 
 
 @dataclass(frozen=True)
 class LocalCorrelationResult:
+    """Local edge correlations with spatial support and run-quality bookkeeping."""
     correlations: np.ndarray
     included_runs: tuple[tuple[Path, ...], ...]
-    skipped_runs: tuple[SkippedRun, ...]
 
 
 @dataclass(frozen=True)
 class ParcelCorrelationResult:
+    """Parcel connectivity, validity, reliability, and accumulated quality statistics."""
     correlations: np.ndarray
     variance_preserved: float
     residual_sum_squares: float
     total_sum_squares: float
     null_variance_preserved: tuple[float, ...]
     null_residual_sum_squares: tuple[float, ...]
+    parcel_reliability_mean: np.ndarray
+    parcel_reliability_minimum: np.ndarray
+    parcel_reliability_maximum: np.ndarray
+    parcel_supporting_runs: np.ndarray
+    parcel_effective_runs: np.ndarray
+    run_contributions: tuple[dict[str, float | int], ...]
+    split_half: dict[str, float | int | str | list[int] | None]
+    connectome: dict[str, object]
 
 
 def _log_run_progress(phase: str, completed: int, total: int) -> None:
@@ -51,8 +55,9 @@ def _log_run_progress(phase: str, completed: int, total: int) -> None:
 def _combine_vertex_moments(
     n: int, mean: np.ndarray, m2: np.ndarray, block: np.ndarray
 ) -> tuple[int, np.ndarray, np.ndarray]:
-    """Stably combine a temporal block with running float32 vertex moments."""
+    """Combine temporal blocks using float64 moments to limit chunk-order error."""
     bn = block.shape[0]
+    block = np.asarray(block, dtype=np.float64)
     bmean = block.mean(axis=0)
     centered = block - bmean
     bm2 = np.einsum("tv,tv->v", centered, centered)
@@ -60,13 +65,13 @@ def _combine_vertex_moments(
         return bn, bmean, bm2
     new_n = n + bn
     delta = bmean - mean
-    factor = np.float32(n * bn / new_n)
-    return new_n, mean + delta * np.float32(bn / new_n), m2 + bm2 + delta * delta * factor
+    factor = n * bn / new_n
+    return new_n, mean + delta * (bn / new_n), m2 + bm2 + delta * delta * factor
 
 
 def _moments(data: np.ndarray, block_size: int) -> tuple[np.ndarray, np.ndarray]:
-    mean = np.zeros(data.shape[1], dtype=np.float32)
-    m2 = np.zeros(data.shape[1], dtype=np.float32)
+    mean = np.zeros(data.shape[1], dtype=np.float64)
+    m2 = np.zeros(data.shape[1], dtype=np.float64)
     n = 0
     for start in range(0, len(data), block_size):
         n, mean, m2 = _combine_vertex_moments(n, mean, m2, data[start:start + block_size])
@@ -77,6 +82,195 @@ def _valid_variance(m2: np.ndarray, sample_count: int) -> np.ndarray:
     """Reject zero, non-finite, and subnormal float32 sample variances."""
     threshold = np.float32(sample_count - 1) * FLOAT32_TINY
     return np.isfinite(m2) & (m2 > threshold)
+
+
+def _split_half_connectome_summary(
+    first: np.ndarray,
+    second: np.ndarray,
+    first_sum_vector: np.ndarray,
+    second_sum_vector: np.ndarray,
+    first_frames: int,
+    second_frames: int,
+) -> dict[str, float | int]:
+    """Compare unique off-diagonal correlations without constructing them."""
+    if first_frames:
+        first_diagonal = np.maximum(
+            np.diag(first)
+            - np.square(first_sum_vector, dtype=np.float64) / first_frames,
+            0.0,
+        )
+    else:
+        first_diagonal = np.zeros(first.shape[0], dtype=np.float64)
+    if second_frames:
+        second_diagonal = np.maximum(
+            np.diag(second)
+            - np.square(second_sum_vector, dtype=np.float64) / second_frames,
+            0.0,
+        )
+    else:
+        second_diagonal = np.zeros(second.shape[0], dtype=np.float64)
+    valid = (first_diagonal > 0) & (second_diagonal > 0)
+    first_scale = np.sqrt(first_diagonal)
+    second_scale = np.sqrt(second_diagonal)
+    count = 0
+    first_sum = second_sum = first_square = second_square = cross = 0.0
+    absolute_difference = squared_difference = 0.0
+    for row in range(1, first.shape[0]):
+        keep = valid[:row] & valid[row]
+        if not np.any(keep):
+            continue
+        first_cross = first[row, :row][keep] - (
+            first_sum_vector[row] * first_sum_vector[:row][keep] / first_frames
+        )
+        second_cross = second[row, :row][keep] - (
+            second_sum_vector[row] * second_sum_vector[:row][keep] / second_frames
+        )
+        first_values = first_cross / (
+            first_scale[row] * first_scale[:row][keep]
+        )
+        second_values = second_cross / (
+            second_scale[row] * second_scale[:row][keep]
+        )
+        difference = first_values - second_values
+        count += int(first_values.size)
+        first_sum += float(first_values.sum(dtype=np.float64))
+        second_sum += float(second_values.sum(dtype=np.float64))
+        first_square += float(np.square(first_values, dtype=np.float64).sum())
+        second_square += float(np.square(second_values, dtype=np.float64).sum())
+        cross += float(
+            np.multiply(first_values, second_values, dtype=np.float64).sum()
+        )
+        absolute_difference += float(np.abs(difference).sum(dtype=np.float64))
+        squared_difference += float(np.square(difference, dtype=np.float64).sum())
+    if count < 2:
+        correlation = 0.0
+    else:
+        covariance = cross - first_sum * second_sum / count
+        first_variance = first_square - first_sum * first_sum / count
+        second_variance = second_square - second_sum * second_sum / count
+        denominator = np.sqrt(max(first_variance * second_variance, 0.0))
+        correlation = float(covariance / denominator) if denominator > 0 else 0.0
+        correlation = float(np.clip(correlation, -1.0, 1.0))
+    spearman_brown = (
+        2.0 * correlation / (1.0 + correlation)
+        if correlation > -1.0
+        else -1.0
+    )
+    return {
+        "comparable_edges": count,
+        "edge_correlation": correlation,
+        "spearman_brown_reliability": float(spearman_brown),
+        "mean_absolute_difference": absolute_difference / count if count else 0.0,
+        "root_mean_square_difference": float(np.sqrt(squared_difference / count))
+        if count
+        else 0.0,
+    }
+
+
+def _histogram_quantile(counts: np.ndarray, probability: float) -> float:
+    total = int(counts.sum())
+    if total == 0:
+        return 0.0
+    rank = int(np.ceil(probability * total) - 1)
+    index = int(np.searchsorted(np.cumsum(counts), max(rank, 0), side="right"))
+    return float((index - 127) / 127.0)
+
+
+def _connectome_summary(
+    correlations: np.ndarray,
+    valid_diagonal: np.ndarray,
+    *,
+    power_iterations: int,
+) -> dict[str, object]:
+    """Summarize a dense correlation matrix with vectors and scalar accumulators."""
+    histogram = np.zeros(255, dtype=np.int64)
+    count = 0
+    value_sum = value_square_sum = 0.0
+    maximum_asymmetry = 0.0
+    for row in range(1, correlations.shape[0]):
+        values = correlations[row, :row]
+        codes = np.rint(np.clip(values, -1.0, 1.0) * 127.0).astype(np.int16)
+        histogram += np.bincount(codes + 127, minlength=255)
+        count += int(values.size)
+        value_sum += float(values.sum(dtype=np.float64))
+        value_square_sum += float(np.square(values, dtype=np.float64).sum())
+    for start in range(0, correlations.shape[0], 512):
+        stop = min(start + 512, correlations.shape[0])
+        maximum_asymmetry = max(
+            maximum_asymmetry,
+            float(
+                np.max(
+                    np.abs(
+                        correlations[start:stop]
+                        - correlations[:, start:stop].T
+                    ),
+                    initial=0.0,
+                )
+            ),
+        )
+    mean = value_sum / count if count else 0.0
+    variance = max(value_square_sum / count - mean * mean, 0.0) if count else 0.0
+    valid_count = int(np.count_nonzero(valid_diagonal))
+    frobenius_square = float(valid_count + 2.0 * value_square_sum)
+    participation_rank = (
+        float(valid_count * valid_count / frobenius_square)
+        if frobenius_square > 0
+        else 0.0
+    )
+
+    dominant_fraction = 0.0
+    if valid_count:
+        vector = np.zeros(correlations.shape[0], dtype=np.float64)
+        vector[valid_diagonal] = np.random.default_rng(
+            CONNECTOME_POWER_INITIALIZATION_SEED
+        ).normal(size=valid_count)
+        vector /= np.linalg.norm(vector)
+        for _ in range(power_iterations):
+            product = correlations @ vector
+            product[valid_diagonal] += vector[valid_diagonal]
+            norm = np.linalg.norm(product)
+            if not np.isfinite(norm) or norm == 0:
+                break
+            vector = product / norm
+        product = correlations @ vector
+        product[valid_diagonal] += vector[valid_diagonal]
+        dominant_fraction = float(
+            np.clip(max(vector @ product, 0.0) / valid_count, 0.0, 1.0)
+        )
+
+    quantiles = {
+        f"p{int(probability * 100):02d}": _histogram_quantile(
+            histogram, probability
+        )
+        for probability in (0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)
+    }
+    return {
+        "unique_edges": count,
+        "off_diagonal_mean": mean,
+        "off_diagonal_standard_deviation": float(np.sqrt(variance)),
+        "encoded_quantiles": quantiles,
+        "encoded_positive_fraction": float(histogram[128:].sum() / count)
+        if count
+        else 0.0,
+        "encoded_negative_fraction": float(histogram[:127].sum() / count)
+        if count
+        else 0.0,
+        "encoded_zero_fraction": float(histogram[127] / count) if count else 0.0,
+        "encoded_saturation_fraction": float(
+            (histogram[0] + histogram[-1]) / count
+        )
+        if count
+        else 0.0,
+        "encoded_histogram": {
+            "codes": list(range(-127, 128)),
+            "counts": histogram.tolist(),
+        },
+        "maximum_asymmetry": maximum_asymmetry,
+        "participation_ratio_rank": participation_rank,
+        "dominant_eigenvalue_fraction": dominant_fraction,
+        "power_iterations": power_iterations,
+        "power_initialization_seed": CONNECTOME_POWER_INITIALIZATION_SEED,
+    }
 
 
 def _standardization_parameters(
@@ -112,7 +306,7 @@ def _standardization_parameters(
         global_signal -= global_signal.mean()
         global_ss = np.dot(global_signal, global_signal)
         if np.isfinite(global_ss) and global_ss > FLOAT32_TINY:
-            covariance = np.zeros(data.shape[1], dtype=np.float32)
+            covariance = np.zeros(data.shape[1], dtype=np.float64)
             for start in range(0, len(data), block_size):
                 stop = min(start + block_size, len(data))
                 covariance += (data[start:stop] - mean).T @ global_signal[start:stop]
@@ -348,7 +542,6 @@ def local_edge_correlations(
     n_vertices: int,
     block_size: int,
     *,
-    minimum_trs: int,
     global_signal_regression: bool,
     reliability_vertex_block_size: int,
     reliability_weighting: bool = True,
@@ -359,24 +552,18 @@ def local_edge_correlations(
 ) -> LocalCorrelationResult:
     """Stream correlations for spatial graph edges."""
     load_run = load_functional if load_run is None else load_run
-    edge_gram = np.zeros(len(edges), dtype=np.float32)
-    vertex_diagonal = np.zeros(n_vertices, dtype=np.float32)
+    edge_gram = np.zeros(len(edges), dtype=np.float64)
+    vertex_diagonal = np.zeros(n_vertices, dtype=np.float64)
     active = np.ones(n_vertices, dtype=bool) if mask is None else mask
     total_runs = len(files)
     included_runs = []
-    skipped_runs = []
     for run_index, path in enumerate(files, start=1):
         data = load_run(path)
-        if len(data) < minimum_trs:
-            skipped_runs.append(SkippedRun(path, len(data)))
-            LOG.warning(
-                "Skipping functional run with %d TRs (minimum %d): %s",
-                len(data),
-                minimum_trs,
-                ", ".join(str(item) for item in path),
+        if len(data) < 2:
+            raise ValueError(
+                "Sidecar-qualified functional run has fewer than two retained "
+                f"frames after masking: {path}"
             )
-            _log_run_progress(progress_label, run_index, total_runs)
-            continue
         if data.shape[1] != n_vertices:
             raise ValueError(f"Spatial node count mismatch in {path}")
         included_runs.append(path)
@@ -400,8 +587,8 @@ def local_edge_correlations(
         else:
             quality = np.ones(n_vertices, dtype=np.float32)
         quality[~valid_active] = 0.0
-        edge_cross = np.zeros(len(edges), dtype=np.float32)
-        vertex_ss = np.zeros(n_vertices, dtype=np.float32)
+        edge_cross = np.zeros(len(edges), dtype=np.float64)
+        vertex_ss = np.zeros(n_vertices, dtype=np.float64)
         for start in range(0, len(data), block_size):
             stop = min(start + block_size, len(data))
             standardized = _standardized_block(
@@ -412,9 +599,9 @@ def local_edge_correlations(
                 inv_sd,
             )
             edge_cross += np.einsum(
-                "te,te->e", standardized[:, edges[:, 0]], standardized[:, edges[:, 1]]
+                "te,te->e", standardized[:, edges[:, 0]], standardized[:, edges[:, 1]], dtype=np.float64
             )
-            vertex_ss += np.einsum("tv,tv->v", standardized, standardized)
+            vertex_ss += np.einsum("tv,tv->v", standardized, standardized, dtype=np.float64)
         root_quality = np.sqrt(quality)
         edge_gram += (
             root_quality[edges[:, 0]] * root_quality[edges[:, 1]] * edge_cross
@@ -425,16 +612,15 @@ def local_edge_correlations(
         vertex_diagonal[edges[:, 0]] * vertex_diagonal[edges[:, 1]]
     )
     if not included_runs:
-        raise ValueError(f"No functional runs met the minimum of {minimum_trs} TRs")
+        raise ValueError("No sidecar-qualified functional runs were supplied")
     if not np.any(denominator > 0):
         raise ValueError("No reliable mesh-edge variance was observed")
     correlations = np.divide(
         edge_gram, denominator, out=np.zeros_like(edge_gram), where=denominator > 0
     )
     return LocalCorrelationResult(
-        correlations=correlations,
+        correlations=correlations.astype(np.float32),
         included_runs=tuple(included_runs),
-        skipped_runs=tuple(skipped_runs),
     )
 
 
@@ -444,17 +630,41 @@ def parcel_correlations(
     mask: np.ndarray,
     block_size: int,
     *,
+    split_half_block_frames: int,
     global_signal_regression: bool,
     reliability_vertex_block_size: int,
     reliability_weighting: bool = True,
+    connectome_power_iterations: int = 20,
     load_run=None,
     null_partitions: tuple[np.ndarray, ...] = (),
 ) -> ParcelCorrelationResult:
-    """Stream parcel connectivity and source-resolution variance retention."""
+    """Stream connectivity and quality with an independent scientific split size.
+
+    Single-run split blocks count retained frames, capped at half the run.
+    Processing block sizes control memory use, not the split allocation.
+    """
+    if split_half_block_frames < 1:
+        raise ValueError("split_half_block_frames must be positive")
     load_run = load_functional if load_run is None else load_run
     active_labels = labels[mask]
     count = int(active_labels.max()) + 1
-    gram = np.zeros((count, count), dtype=np.float32)
+    half_grams = [
+        np.zeros((count, count), dtype=np.float32),
+        np.zeros((count, count), dtype=np.float32),
+    ]
+    half_frames = [0, 0]
+    half_sums = [
+        np.zeros(count, dtype=np.float64),
+        np.zeros(count, dtype=np.float64),
+    ]
+    half_runs: list[list[int]] = [[], []]
+    split_block_size_used: int | None = None
+    reliability_sum = np.zeros(count, dtype=np.float64)
+    reliability_square_sum = np.zeros(count, dtype=np.float64)
+    reliability_minimum = np.full(count, np.inf, dtype=np.float32)
+    reliability_maximum = np.zeros(count, dtype=np.float32)
+    supporting_runs = np.zeros(count, dtype=np.int32)
+    run_contributions: list[dict[str, float | int]] = []
     null_labels = tuple(np.asarray(value, dtype=np.int64) for value in null_partitions)
     if any(value.shape != active_labels.shape for value in null_labels):
         raise ValueError("Null partition size does not match the active source nodes")
@@ -523,9 +733,9 @@ def parcel_correlations(
                 (membership.T @ standardized.T).T, dtype=np.float32
             )
             parcel_timecourses[start:stop] = parcel_block
-            block_sum_squares = float(np.einsum("tv,tv->", standardized, standardized))
+            block_sum_squares = float(np.einsum("tv,tv->", standardized, standardized, dtype=np.float64))
             preserved_sum_squares = float(
-                np.einsum("tp,p,tp->", parcel_block, valid_counts, parcel_block)
+                np.einsum("tp,p,tp->", parcel_block, valid_counts, parcel_block, dtype=np.float64)
             )
             total_sum_squares += block_sum_squares
             residual_sum_squares += max(0.0, block_sum_squares - preserved_sum_squares)
@@ -542,6 +752,7 @@ def parcel_correlations(
                         null_block,
                         null_valid_counts,
                         null_block,
+                        dtype=np.float64,
                     )
                 )
                 null_residual_sum_squares[null_index] += max(
@@ -554,6 +765,14 @@ def parcel_correlations(
         )
         valid_parcel_variance = _valid_variance(parcel_ss, len(data))
         quality[~valid_parcel_variance] = 0.0
+        supported = valid_parcels & valid_parcel_variance
+        reliability_sum += quality
+        reliability_square_sum += np.square(quality, dtype=np.float64)
+        reliability_minimum[supported] = np.minimum(
+            reliability_minimum[supported], quality[supported]
+        )
+        reliability_maximum = np.maximum(reliability_maximum, quality)
+        supporting_runs += supported.astype(np.int32)
         parcel_scale = np.zeros(count, dtype=np.float32)
         parcel_scale[valid_parcel_variance] = np.sqrt(
             np.float32(len(data) - 1) / parcel_ss[valid_parcel_variance]
@@ -563,20 +782,87 @@ def parcel_correlations(
         parcel_timecourses[:, quality <= 0] = 0.0
         if not np.all(np.isfinite(parcel_timecourses)):
             raise ValueError(f"Non-finite weighted parcel timecourses in {path}")
-        gram += parcel_timecourses.T @ parcel_timecourses
+        run_gram = parcel_timecourses.T @ parcel_timecourses
+        run_trace = float(np.trace(run_gram, dtype=np.float64))
+        run_frobenius = float(np.linalg.norm(run_gram))
+        run_contributions.append(
+            {
+                "run": run_index,
+                "retained_frames": len(data),
+                "mean_parcel_reliability": float(quality.mean()),
+                "median_parcel_reliability": float(np.median(quality)),
+                "minimum_parcel_reliability": float(quality.min()),
+                "maximum_parcel_reliability": float(quality.max()),
+                "gram_trace": run_trace,
+                "gram_frobenius_norm": run_frobenius,
+            }
+        )
+        if total_runs > 1:
+            half = 0 if half_frames[0] <= half_frames[1] else 1
+            half_grams[half] += run_gram
+            half_sums[half] += parcel_timecourses.sum(axis=0, dtype=np.float64)
+            half_frames[half] += len(data)
+            half_runs[half].append(run_index)
+        else:
+            split_block_size = min(split_half_block_frames, max(1, len(data) // 2))
+            split_block_size_used = split_block_size
+            for split_index, start in enumerate(
+                range(0, len(data), split_block_size)
+            ):
+                stop = min(start + split_block_size, len(data))
+                half = split_index % 2
+                block = parcel_timecourses[start:stop]
+                half_grams[half] += block.T @ block
+                half_sums[half] += block.sum(axis=0, dtype=np.float64)
+                half_frames[half] += len(block)
+        del run_gram
         _log_run_progress(
             "Streaming pass 2 (connectivity and quality)", run_index, total_runs
         )
+    split_half = _split_half_connectome_summary(
+        *half_grams,
+        *half_sums,
+        *half_frames,
+    )
+    split_half.update(
+        {
+            "method": "whole runs" if total_runs > 1 else "alternating temporal blocks",
+            "allocation": (
+                "greedy retained-frame balance in input order"
+                if total_runs > 1
+                else "alternating contiguous retained-frame blocks"
+            ),
+            "temporal_block_size": split_block_size_used,
+            "first_half_runs": half_runs[0],
+            "second_half_runs": half_runs[1],
+            "first_half_retained_frames": half_frames[0],
+            "second_half_retained_frames": half_frames[1],
+        }
+    )
+    gram = half_grams[0]
+    second_gram = half_grams[1]
+    gram += second_gram
+    half_grams.clear()
+    del second_gram
     if not np.all(np.isfinite(gram)):
         raise ValueError("Non-finite values accumulated in the parcel Gram matrix")
     diagonal = np.maximum(np.diag(gram), 0.0)
-    denominator = np.sqrt(np.outer(diagonal, diagonal))
-    if not np.any(denominator > 0):
+    valid_diagonal = diagonal > 0
+    if not np.any(valid_diagonal):
         raise ValueError("No reliable parcel variance was observed")
-    correlations = np.divide(
-        gram, denominator, out=np.zeros_like(gram), where=denominator > 0
-    )
+    inverse_scale = np.zeros(count, dtype=np.float32)
+    inverse_scale[valid_diagonal] = 1.0 / np.sqrt(diagonal[valid_diagonal])
+    correlations = gram
+    for start in range(0, count, 512):
+        stop = min(start + 512, count)
+        correlations[start:stop] *= inverse_scale[start:stop, None]
+        correlations[start:stop] *= inverse_scale[None, :]
     np.fill_diagonal(correlations, 0.0)
+    connectome = _connectome_summary(
+        correlations,
+        valid_diagonal,
+        power_iterations=connectome_power_iterations,
+    )
     if not np.isfinite(total_sum_squares) or total_sum_squares <= 0:
         raise ValueError("No finite source-resolution variance was observed")
     variance_preserved = 1.0 - residual_sum_squares / total_sum_squares
@@ -587,6 +873,24 @@ def parcel_correlations(
     null_residuals = tuple(
         float(residual) for residual in null_residual_sum_squares
     )
+    parcel_reliability_mean = np.divide(
+        reliability_sum,
+        supporting_runs,
+        out=np.zeros(count, dtype=np.float64),
+        where=supporting_runs > 0,
+    ).astype(np.float32)
+    reliability_minimum[~np.isfinite(reliability_minimum)] = 0.0
+    parcel_effective_runs = np.divide(
+        np.square(reliability_sum),
+        reliability_square_sum,
+        out=np.zeros(count, dtype=np.float64),
+        where=reliability_square_sum > 0,
+    ).astype(np.float32)
+    total_trace = sum(float(record["gram_trace"]) for record in run_contributions)
+    for record in run_contributions:
+        record["diagonal_weight_fraction"] = (
+            float(record["gram_trace"]) / total_trace if total_trace > 0 else 0.0
+        )
     return ParcelCorrelationResult(
         correlations=correlations,
         variance_preserved=float(np.clip(variance_preserved, 0.0, 1.0)),
@@ -594,4 +898,12 @@ def parcel_correlations(
         total_sum_squares=total_sum_squares,
         null_variance_preserved=null_scores,
         null_residual_sum_squares=null_residuals,
+        parcel_reliability_mean=parcel_reliability_mean,
+        parcel_reliability_minimum=reliability_minimum,
+        parcel_reliability_maximum=reliability_maximum,
+        parcel_supporting_runs=supporting_runs,
+        parcel_effective_runs=parcel_effective_runs,
+        run_contributions=tuple(run_contributions),
+        split_half=split_half,
+        connectome=connectome,
     )

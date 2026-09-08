@@ -7,6 +7,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from nro.configuration.runtime import ConfigNode, configure
@@ -30,6 +31,18 @@ configure(
 from nro.func import module as func_module
 from nro.func import confounds as get_confounds_module
 from nro.orchestration.runner import Runner
+
+
+@pytest.mark.parametrize("chunk", [1, 2, 7, 128])
+def test_temporal_mean_chunk_size_does_not_amplify_cancellation(tmp_path, chunk):
+    data = np.tile(np.array([1e8, 1, -1e8], dtype=np.float32), 43).reshape(1, 1, 1, -1)
+    source, output = tmp_path / "bold.nii.gz", tmp_path / "mean.nii.gz"
+    nib.save(nib.Nifti1Image(data, np.eye(4)), source)
+    step = func_module._create_temporal_mean_step(
+        in_4d=source, out_3d=output, env={}, force=False, chunk_vols=chunk)
+    step.action()
+    np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj),
+                                  data.mean(axis=3, dtype=np.float64).astype(np.float32))
 
 
 class _NoSliceProxy:
@@ -162,14 +175,8 @@ def test_confounds_loads_epi_once(
     assert out_json.stat().st_size > 0
 
     confounds = pd.read_csv(out_tsv, sep="\t")
-    clean_config_path = (
-        Path(__file__).parents[1]
-        / "nro"
-        / "configuration"
-        / "files"
-        / "clean"
-        / "main_clean.yml"
-    )
+    from nro.configuration.store import ConfigStore
+    clean_config_path = ConfigStore().configuration_path('clean', 'main')
     clean_config = yaml.safe_load(clean_config_path.read_text(encoding="utf-8"))
     selected = confounds.filter(regex=str(clean_config["confounds_regex"]))
 

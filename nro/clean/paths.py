@@ -38,7 +38,8 @@ def clean_manifest_path(
         else clean_subject_dir(sub_id, project=project, clean_id=clean_id)
     )
     return directory / (
-        f"{run_stem}_space-{space}_scale-{smoothing_mm}mm_desc-clean_manifest.json"
+        f"{run_stem}_space-{space}_smoothing-{smoothing_mm}mm_"
+        "desc-clean_manifest.json"
     )
 
 

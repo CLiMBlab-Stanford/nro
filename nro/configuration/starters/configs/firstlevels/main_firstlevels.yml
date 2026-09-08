@@ -1,0 +1,9 @@
+confounds_regex: '^(csf|white_matter|trans_[xyz]|rot_[xyz])(?:_derivative1)?(?:_power2)?$'
+temporal_mask_regex: '.*outlier.*'
+nuisance_variance_explained: 0.99
+minimum_temporal_rank: 30
+minimum_temporal_rank_fraction: 0.5
+noise_model: ar1
+ar_grid: [-0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
+spatial_block_size: 2048
+wb_command: site:workbench

@@ -323,6 +323,41 @@ def test_directory_artifact_failure_leaves_no_completion_breadcrumb(
     assert not breadcrumb.exists()
 
 
+def test_directory_timeout_cannot_publish_or_reuse_partial_results(tmp_path: Path) -> None:
+    directory = tmp_path / "oslom"
+    result = directory / "tp"
+    breadcrumb = directory / ".nro_complete"
+    for timeout in (True, False):
+        runner = Runner(
+            module_name="Timeout Test", container=None, binds=(),
+            logger=logging.getLogger("test.runner.timeout"),
+            next_step=count(1).__next__,
+        )
+
+        def produce() -> None:
+            assert not directory.exists()
+            directory.mkdir()
+            result.write_text("partial" if timeout else "finished")
+            if timeout:
+                raise subprocess.TimeoutExpired("oslom", 1)
+
+        runner.add_step(Step.directory_step(
+            name="Fit", directory=directory, breadcrumb=breadcrumb,
+            outputs=(result,), action=produce,
+            validate=lambda: (result.is_file(), "result exists"),
+        ))
+        if timeout:
+            with pytest.raises(subprocess.TimeoutExpired), runner.run_context():
+                runner.execute()
+            assert result.exists()
+            assert not breadcrumb.exists()
+        else:
+            with runner.run_context():
+                runner.execute()
+            assert breadcrumb.exists()
+            assert result.read_text() == "finished"
+
+
 def test_standard_runner_success_report_uses_runner_start(monkeypatch, caplog) -> None:
     runner = Runner(
         module_name="Test Module",

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Clean one preprocessed BOLD run in one space at one smoothing level.
 
-Nuisance and Fourier stopband coefficients are estimated from temporally
-retained frames, then evaluated across the complete original time axis.
+The cleaner fits each run to the portion of its Fourier basis inside the
+requested passband after removing task and nuisance directions.  Censored
+frames never influence a fit, but the fitted basis is evaluated over the
+complete original time axis.
 """
 
 from __future__ import annotations
@@ -20,6 +22,11 @@ from typing import Any, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from nro.clean.contract import (
+    clean_output_contract,
+    validate_clean_manifest,
+    validate_clean_sidecar,
+)
 from nro.orchestration.runtime import selected_configuration_fingerprint
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import bids_entity, replace_bids_entity_token
@@ -158,11 +165,12 @@ def _filter_confounds(
     tr: float,
     start_time: float,
     regress_out_task: bool,
-) -> tuple[pd.DataFrame, dict[str, Any]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     confounds = pd.read_csv(confounds_tsv, sep="\t")
     sidecar = read_json(confounds_json) if confounds_json.exists() else {}
-    selected = confounds.filter(regex=regex)
+    selected = confounds.filter(regex=regex).fillna(0.0)
     selected_sidecar = {k: v for k, v in sidecar.items() if k in selected.columns}
+    task = pd.DataFrame(index=np.arange(n_scans))
     if regress_out_task:
         task_regs, task_sidecar = _build_task_regressors(
             events_path=events_path,
@@ -171,9 +179,9 @@ def _filter_confounds(
             start_time=start_time,
         )
         if task_regs:
-            selected = pd.concat(task_regs + [selected], axis=1)
+            task = pd.concat(task_regs, axis=1)
             selected_sidecar.update(task_sidecar)
-    return selected.fillna(0.0), selected_sidecar
+    return selected, task.fillna(0.0), selected_sidecar
 
 
 def _select_outlier_columns(
@@ -191,16 +199,16 @@ def _select_outlier_columns(
     return confounds.filter(regex=regex).fillna(0.0)
 
 
-def _fourier_stopband_basis(
+def _fourier_passband_basis(
     *,
     n_scans: int,
     tr: float,
     high_pass: Optional[float],
     low_pass: Optional[float],
-) -> tuple[np.ndarray, list[str]]:
-    """Build real Fourier regressors for frequencies outside the passband."""
+) -> tuple[np.ndarray, list[str], list[float]]:
+    """Build a real Fourier basis for frequencies inside the passband."""
     if n_scans < 2:
-        return np.empty((n_scans, 0), dtype=np.float64), []
+        return np.empty((n_scans, 0), dtype=np.float64), [], []
     nyquist = 0.5 / float(tr)
     if high_pass is not None and not 0.0 <= float(high_pass) < nyquist:
         raise ValueError(f"high_pass must be in [0, {nyquist:g}), got {high_pass}")
@@ -209,80 +217,167 @@ def _fourier_stopband_basis(
     if high_pass is not None and low_pass is not None and float(high_pass) >= float(low_pass):
         raise ValueError(f"high_pass must be below low_pass: {high_pass} >= {low_pass}")
     if high_pass is None and low_pass is None:
-        return np.empty((n_scans, 0), dtype=np.float64), []
+        return np.empty((n_scans, 0), dtype=np.float64), [], []
 
     times = np.arange(n_scans, dtype=np.float64) * float(tr)
     frequencies = np.fft.rfftfreq(n_scans, d=float(tr))
     columns: list[np.ndarray] = []
     names: list[str] = []
+    included_frequencies: list[float] = []
     for index, frequency in enumerate(frequencies):
-        if index == 0:
-            continue  # The intercept handles DC.
-        remove = (
-            (high_pass is not None and frequency < float(high_pass))
-            or (low_pass is not None and frequency > float(low_pass))
+        include = (
+            (high_pass is None or frequency >= float(high_pass))
+            and (low_pass is None or frequency <= float(low_pass))
         )
-        if not remove:
+        if not include:
+            continue
+        if index == 0:
+            columns.append(np.ones(n_scans, dtype=np.float64))
+            names.append("passband_dc")
+            included_frequencies.append(float(frequency))
             continue
         angle = 2.0 * np.pi * frequency * times
         cosine = np.cos(angle)
         columns.append(cosine)
-        names.append(f"stopband_cos_{frequency:.12g}Hz")
+        names.append(f"passband_cos_{frequency:.12g}Hz")
+        included_frequencies.append(float(frequency))
         sine = np.sin(angle)
         if np.linalg.norm(sine) > np.finfo(np.float64).eps * n_scans:
             columns.append(sine)
-            names.append(f"stopband_sin_{frequency:.12g}Hz")
+            names.append(f"passband_sin_{frequency:.12g}Hz")
     if not columns:
-        return np.empty((n_scans, 0), dtype=np.float64), []
-    return np.column_stack(columns), names
+        return np.empty((n_scans, 0), dtype=np.float64), [], []
+    return np.column_stack(columns), names, included_frequencies
 
 
 @dataclass(frozen=True)
 class _CleaningProjection:
-    design: np.ndarray
+    cleaning_defined: bool
+    undefined_reason: str | None
+    final_basis: np.ndarray | None
     retained: np.ndarray
-    pseudoinverse: np.ndarray
-    design_columns: tuple[str, ...]
-    rank: int
-    residual_dof: int
+    design: np.ndarray
+    design_pseudoinverse: np.ndarray
+    passband_dimension: int
+    passband_rank: int
+    passband_condition_number: float | None
+    exact_design_rank: int
+    post_exact_temporal_rank: int
+    regression_design_rank: int
+    nuisance_input_columns: int
+    nuisance_usable_columns: int
+    nuisance_pca_components: int
+    nuisance_variance_target: float
+    nuisance_variance_explained: float
+    nuisance_variance_target_reached: bool
+    nuisance_selection_limited_by_rank: bool
+    minimum_temporal_rank: int
+    minimum_temporal_rank_fraction: float
+    protected_temporal_rank: int
+    temporal_rank_floor_satisfied: bool
+    algebraic_temporal_rank: int
     standardize: bool
 
     def transform(self, data: np.ndarray, *, chunk_size: int = 4096) -> np.ndarray:
-        """Fit on retained rows and evaluate residuals at every original row."""
+        """Fit retained rows and evaluate the clean temporal model at all rows."""
         values = np.asarray(data)
-        if values.ndim != 2 or values.shape[0] != self.design.shape[0]:
+        n_scans = len(self.retained)
+        if values.ndim != 2 or values.shape[0] != n_scans:
             raise ValueError(
-                f"Expected time-by-feature data with {self.design.shape[0]} rows, "
+                f"Expected time-by-feature data with {n_scans} rows, "
                 f"got {values.shape}"
             )
         output = np.empty(values.shape, dtype=np.float32)
+        if not self.cleaning_defined:
+            output.fill(0.0)
+            return output
         for start in range(0, values.shape[1], int(chunk_size)):
             stop = min(start + int(chunk_size), values.shape[1])
             chunk = np.asarray(values[:, start:stop], dtype=np.float64)
             if not np.all(np.isfinite(chunk)):
                 raise ValueError("Functional samples contain non-finite values")
             retained_chunk = chunk[self.retained, :]
-            coefficients = self.pseudoinverse @ retained_chunk
-            residuals = chunk - self.design @ coefficients
+            if self.final_basis is None:
+                coefficients = self.design_pseudoinverse @ retained_chunk
+                cleaned = chunk - self.design @ coefficients
+            else:
+                retained_basis = self.final_basis[self.retained, :]
+                cleaned = self.final_basis @ (retained_basis.T @ retained_chunk)
             if self.standardize:
-                retained_residuals = residuals[self.retained, :]
-                means = retained_residuals.mean(axis=0)
-                scales = retained_residuals.std(axis=0, ddof=0)
+                retained_cleaned = cleaned[self.retained, :]
+                means = retained_cleaned.mean(axis=0)
+                scales = retained_cleaned.std(axis=0, ddof=0)
                 scales[scales <= np.finfo(np.float64).eps] = 1.0
-                residuals = (residuals - means) / scales
-            output[:, start:stop] = residuals.astype(np.float32)
+                cleaned = (cleaned - means) / scales
+            output[:, start:stop] = cleaned.astype(np.float32)
         return output
+
+    def metadata(self, *, tr: float, outlier_columns: int) -> dict[str, object]:
+        censored = ~self.retained
+        longest = 0
+        current = 0
+        for value in censored:
+            current = current + 1 if value else 0
+            longest = max(longest, current)
+        return {
+            "CleaningDefined": bool(self.cleaning_defined),
+            "CleaningUndefinedReason": self.undefined_reason,
+            "OutputDataStatus": (
+                "cleaned_time_series"
+                if self.cleaning_defined
+                else "all_zero_undefined_sentinel"
+            ),
+            "TotalFrames": int(len(self.retained)),
+            "RetainedFrames": int(self.retained.sum()),
+            "CensoredFrames": int(censored.sum()),
+            "CensoredFraction": float(censored.mean()),
+            "RetainedDurationSeconds": float(self.retained.sum() * tr),
+            "LongestCensoredIntervalFrames": int(longest),
+            "LongestCensoredIntervalSeconds": float(longest * tr),
+            "TemporalMaskColumnCount": int(outlier_columns),
+            "PassbandBasisDimension": int(self.passband_dimension),
+            "PassbandBasisRank": int(self.passband_rank),
+            "PassbandBasisConditionNumber": self.passband_condition_number,
+            "ExactDesignRank": int(self.exact_design_rank),
+            "PostExactTemporalRank": int(self.post_exact_temporal_rank),
+            "RegressionDesignRank": int(self.regression_design_rank),
+            "ResidualDesignDegreesOfFreedom": int(
+                self.retained.sum() - self.regression_design_rank
+            ),
+            "NuisanceInputColumnCount": int(self.nuisance_input_columns),
+            "NuisanceUsableColumnCount": int(self.nuisance_usable_columns),
+            "NuisancePCAComponentCount": int(self.nuisance_pca_components),
+            "NuisancePCAVarianceTarget": float(self.nuisance_variance_target),
+            "NuisancePCAVarianceExplained": float(self.nuisance_variance_explained),
+            "NuisancePCAVarianceTargetReached": bool(
+                self.nuisance_variance_target_reached
+            ),
+            "NuisanceSelectionLimitedByTemporalRank": bool(
+                self.nuisance_selection_limited_by_rank
+            ),
+            "MinimumTemporalRank": int(self.minimum_temporal_rank),
+            "MinimumTemporalRankFraction": float(
+                self.minimum_temporal_rank_fraction
+            ),
+            "ProtectedTemporalRank": int(self.protected_temporal_rank),
+            "TemporalRankFloorSatisfied": bool(self.temporal_rank_floor_satisfied),
+            "AlgebraicTemporalRank": int(self.algebraic_temporal_rank),
+        }
 
 
 def _build_cleaning_projection(
     *,
     confounds: pd.DataFrame,
+    task: pd.DataFrame | None = None,
     outliers: pd.DataFrame,
     tr: float,
     detrend: bool,
     standardize: bool,
     high_pass: Optional[float],
     low_pass: Optional[float],
+    nuisance_variance_explained: float = 0.99,
+    minimum_temporal_rank: int = 30,
+    minimum_temporal_rank_fraction: float = 0.5,
 ) -> _CleaningProjection:
     n_scans = len(confounds)
     if len(outliers) != n_scans:
@@ -294,62 +389,245 @@ def _build_cleaning_projection(
     n_retained = int(retained.sum())
     if n_retained == 0:
         raise ValueError("Temporal mask censors every frame")
+    target = float(nuisance_variance_explained)
+    if not 0.0 < target <= 1.0:
+        raise ValueError(
+            "nuisance_variance_explained must be in (0, 1], "
+            f"got {nuisance_variance_explained}"
+        )
+    minimum_rank = int(minimum_temporal_rank)
+    minimum_fraction = float(minimum_temporal_rank_fraction)
+    if minimum_rank < 0:
+        raise ValueError(f"minimum_temporal_rank must be nonnegative, got {minimum_rank}")
+    if not 0.0 <= minimum_fraction <= 1.0:
+        raise ValueError(
+            "minimum_temporal_rank_fraction must be in [0, 1], "
+            f"got {minimum_fraction}"
+        )
+    task = task if task is not None else pd.DataFrame(index=np.arange(n_scans))
+    if len(task) != n_scans:
+        raise ValueError(f"Task rows do not match confound rows: {len(task)} != {n_scans}")
 
-    candidates: list[np.ndarray] = [np.ones(n_scans, dtype=np.float64)]
-    names = ["intercept"]
+    exact_candidates: list[np.ndarray] = [np.ones(n_scans, dtype=np.float64)]
     if detrend:
-        candidates.append(np.linspace(-1.0, 1.0, n_scans, dtype=np.float64))
-        names.append("linear_trend")
-    for column in confounds.columns:
-        candidates.append(confounds[column].to_numpy(dtype=np.float64))
-        names.append(str(column))
-    stopband, stopband_names = _fourier_stopband_basis(
+        exact_candidates.append(np.linspace(-1.0, 1.0, n_scans, dtype=np.float64))
+    exact_candidates.extend(
+        task[column].to_numpy(dtype=np.float64) for column in task.columns
+    )
+
+    passband, _passband_names, _frequencies = _fourier_passband_basis(
         n_scans=n_scans,
         tr=tr,
         high_pass=high_pass,
         low_pass=low_pass,
     )
-    for index, name in enumerate(stopband_names):
-        candidates.append(stopband[:, index])
-        names.append(name)
 
-    normalized: list[np.ndarray] = []
-    retained_names: list[str] = []
-    for name, candidate in zip(names, candidates):
-        values = np.asarray(candidate, dtype=np.float64)
-        if not np.all(np.isfinite(values)):
-            raise ValueError(f"Cleaning design column contains non-finite values: {name}")
-        if name != "intercept":
-            values = values - values[retained].mean()
-        norm = float(np.linalg.norm(values[retained]))
-        if norm <= np.finfo(np.float64).eps * max(1, n_retained):
-            continue
-        normalized.append(values / norm)
-        retained_names.append(name)
-    design = np.column_stack(normalized)
-    retained_design = design[retained, :]
-    singular_values = np.linalg.svd(retained_design, compute_uv=False)
-    tolerance = (
-        max(retained_design.shape)
-        * np.finfo(np.float64).eps
-        * float(singular_values[0])
-    )
-    rank = int(np.sum(singular_values > tolerance))
-    residual_dof = n_retained - rank
-    if residual_dof <= 0:
-        raise ValueError(
-            "Cleaning design is saturated after temporal masking: "
-            f"{n_retained} retained frames, rank {rank}, residual DOF {residual_dof}. "
-            "The run cannot support the requested nuisance model and temporal passband."
+    def undefined_projection(
+        reason: str,
+        *,
+        passband_rank: int,
+        condition: float | None,
+        exact_rank: int = 0,
+    ) -> _CleaningProjection:
+        empty_design = np.empty((n_scans, 0), dtype=np.float64)
+        return _CleaningProjection(
+            cleaning_defined=False,
+            undefined_reason=reason,
+            final_basis=np.empty((n_scans, 0), dtype=np.float64),
+            retained=retained,
+            design=empty_design,
+            design_pseudoinverse=np.empty((0, n_retained), dtype=np.float64),
+            passband_dimension=(int(passband.shape[1]) if filtered else n_scans),
+            passband_rank=int(passband_rank),
+            passband_condition_number=condition,
+            exact_design_rank=int(exact_rank),
+            post_exact_temporal_rank=0,
+            regression_design_rank=int(exact_rank),
+            nuisance_input_columns=int(confounds.shape[1]),
+            nuisance_usable_columns=0,
+            nuisance_pca_components=0,
+            nuisance_variance_target=target,
+            nuisance_variance_explained=0.0,
+            nuisance_variance_target_reached=False,
+            nuisance_selection_limited_by_rank=False,
+            minimum_temporal_rank=minimum_rank,
+            minimum_temporal_rank_fraction=minimum_fraction,
+            protected_temporal_rank=minimum_rank,
+            temporal_rank_floor_satisfied=False,
+            algebraic_temporal_rank=0,
+            standardize=bool(standardize),
         )
-    pseudoinverse = np.linalg.pinv(retained_design, rcond=tolerance / singular_values[0])
+
+    # With no requested temporal filter, preserve the prior full-length residual
+    # behavior.  A censored full-frequency signal cannot be reconstructed at the
+    # omitted frames without imposing an interpolation model.
+    filtered = high_pass is not None or low_pass is not None
+    if filtered:
+        retained_passband = passband[retained, :]
+        if retained_passband.shape[1] == 0:
+            return undefined_projection(
+                "passband_contains_no_fourier_components",
+                passband_rank=0,
+                condition=None,
+            )
+        u, singular_values, vh = np.linalg.svd(retained_passband, full_matrices=False)
+        if singular_values.size == 0 or singular_values[0] == 0:
+            return undefined_projection(
+                "passband_basis_not_identifiable_from_retained_frames",
+                passband_rank=0,
+                condition=None,
+            )
+        tolerance = max(retained_passband.shape) * np.finfo(np.float64).eps * singular_values[0]
+        passband_rank = int(np.sum(singular_values > tolerance))
+        if passband_rank != retained_passband.shape[1]:
+            condition = (
+                float(singular_values[0] / singular_values[-1])
+                if singular_values[-1] > 0
+                else None
+            )
+            return undefined_projection(
+                "passband_basis_not_identifiable_from_retained_frames",
+                passband_rank=passband_rank,
+                condition=condition,
+            )
+        condition = float(singular_values[0] / singular_values[-1])
+        # U is an orthonormal passband basis on retained frames.  Transform the
+        # corresponding full-length basis so its retained rows are exactly U.
+        full_orthogonal_passband = passband @ (vh.T / singular_values)
+        bandpass_pseudoinverse = (vh.T / singular_values) @ u.T
+
+        def bandlimit(values: np.ndarray) -> np.ndarray:
+            return passband @ (bandpass_pseudoinverse @ values[retained, :])
+
+        exact = bandlimit(np.column_stack(exact_candidates))
+        nuisance = bandlimit(confounds.to_numpy(dtype=np.float64))
+    else:
+        passband_rank = n_retained
+        condition = 1.0
+        full_orthogonal_passband = np.empty((n_scans, 0), dtype=np.float64)
+        exact = np.column_stack(exact_candidates)
+        nuisance = confounds.to_numpy(dtype=np.float64)
+
+    def independent_columns(values: np.ndarray) -> tuple[np.ndarray, int]:
+        if values.shape[1] == 0:
+            return values, 0
+        retained_values = values[retained, :]
+        u_design, s_design, _vh_design = np.linalg.svd(retained_values, full_matrices=False)
+        if s_design.size == 0 or s_design[0] == 0:
+            return np.empty((n_scans, 0), dtype=np.float64), 0
+        tol = max(retained_values.shape) * np.finfo(np.float64).eps * s_design[0]
+        rank = int(np.sum(s_design > tol))
+        # Project the retained left-singular directions back through the same
+        # column combinations to obtain their full-length evaluations.
+        coefficients = np.linalg.pinv(retained_values, rcond=tol / s_design[0]) @ u_design[:, :rank]
+        return values @ coefficients, rank
+
+    exact, exact_rank = independent_columns(exact)
+    post_exact_rank = int((passband_rank if filtered else n_retained) - exact_rank)
+    if post_exact_rank <= 0:
+        return undefined_projection(
+            "exact_design_consumes_estimable_passband",
+            passband_rank=passband_rank,
+            condition=condition,
+            exact_rank=exact_rank,
+        )
+    protected_rank = max(
+        minimum_rank,
+        int(np.ceil(minimum_fraction * post_exact_rank)),
+    )
+    rank_floor_satisfied = post_exact_rank >= minimum_rank
+    maximum_nuisance_components = (
+        max(0, post_exact_rank - protected_rank)
+        if rank_floor_satisfied
+        else 0
+    )
+    if exact_rank:
+        nuisance = nuisance - exact @ (exact[retained, :].T @ nuisance[retained, :])
+
+    usable_nuisance: list[np.ndarray] = []
+    for column in nuisance.T:
+        # The exact design already removes the estimable intercept.  Subtracting
+        # a full-length constant here could move a censored-fit regressor outside
+        # the passband, so scale by retained RMS without recentering.
+        scale = float(np.sqrt(np.mean(np.square(column[retained]))))
+        if np.isfinite(scale) and scale > np.finfo(np.float64).eps:
+            usable_nuisance.append(column / scale)
+    nuisance_usable = len(usable_nuisance)
+    nuisance_components = np.empty((n_scans, 0), dtype=np.float64)
+    component_count = 0
+    explained = 0.0
+    target_reached = False
+    limited_by_rank = False
+    if usable_nuisance:
+        standardized = np.column_stack(usable_nuisance)
+        _u_x, s_x, vh_x = np.linalg.svd(standardized[retained, :], full_matrices=False)
+        variance = np.square(s_x)
+        positive = variance > np.finfo(np.float64).eps * variance[0]
+        variance = variance[positive]
+        vh_x = vh_x[positive, :]
+        if variance.size:
+            cumulative = np.cumsum(variance) / variance.sum()
+            target_count = int(np.searchsorted(cumulative, target, side="left") + 1)
+            component_count = min(target_count, maximum_nuisance_components)
+            limited_by_rank = component_count < target_count
+            if component_count:
+                explained = float(cumulative[component_count - 1])
+                target_reached = explained >= target
+                nuisance_components = standardized @ vh_x[:component_count, :].T
+                nuisance_components, component_count = independent_columns(nuisance_components)
+
+    design = np.column_stack((exact, nuisance_components))
+    design, design_rank = independent_columns(design)
+    retained_design = design[retained, :]
+    design_pseudoinverse = retained_design.T  # independent_columns makes it orthonormal on R
+
+    if filtered:
+        # Express the unwanted design inside the orthonormal passband coordinates,
+        # then retain its orthogonal complement as the final admissible basis.
+        coordinates = u.T @ retained_design
+        if design_rank:
+            _u_d, s_d, vh_d = np.linalg.svd(coordinates.T, full_matrices=True)
+            tol_d = max(coordinates.T.shape) * np.finfo(np.float64).eps * s_d[0]
+            coordinate_rank = int(np.sum(s_d > tol_d))
+            complement = vh_d[coordinate_rank:, :].T
+        else:
+            complement = np.eye(passband_rank, dtype=np.float64)
+        final_basis = full_orthogonal_passband @ complement
+        algebraic_rank = int(final_basis.shape[1])
+        if algebraic_rank <= 0:
+            raise ValueError(
+                "Task and nuisance regressors consume the complete estimable passband: "
+                f"passband rank {passband_rank}, design rank {design_rank}."
+            )
+    else:
+        final_basis = None
+        algebraic_rank = int(n_retained - design_rank)
+
     return _CleaningProjection(
-        design=design,
+        cleaning_defined=True,
+        undefined_reason=None,
+        final_basis=final_basis,
         retained=retained,
-        pseudoinverse=pseudoinverse,
-        design_columns=tuple(retained_names),
-        rank=rank,
-        residual_dof=residual_dof,
+        design=design,
+        design_pseudoinverse=design_pseudoinverse,
+        passband_dimension=int(passband.shape[1]) if filtered else n_scans,
+        passband_rank=passband_rank,
+        passband_condition_number=condition,
+        exact_design_rank=exact_rank,
+        post_exact_temporal_rank=post_exact_rank,
+        regression_design_rank=design_rank,
+        nuisance_input_columns=int(confounds.shape[1]),
+        nuisance_usable_columns=nuisance_usable,
+        nuisance_pca_components=component_count,
+        nuisance_variance_target=target,
+        nuisance_variance_explained=explained,
+        nuisance_variance_target_reached=target_reached,
+        nuisance_selection_limited_by_rank=limited_by_rank,
+        minimum_temporal_rank=minimum_rank,
+        minimum_temporal_rank_fraction=minimum_fraction,
+        protected_temporal_rank=protected_rank,
+        temporal_rank_floor_satisfied=rank_floor_satisfied,
+        algebraic_temporal_rank=algebraic_rank,
         standardize=bool(standardize),
     )
 
@@ -360,6 +638,7 @@ def _clean_volume_data(
     out_img: Path,
     mask_img: Path,
     projection: _CleaningProjection,
+    quality_path: Path,
 ) -> None:
     try:
         from nilearn import maskers
@@ -375,6 +654,7 @@ def _clean_volume_data(
     data = masker.fit_transform(str(in_img))
     cleaned = projection.transform(data)
     masker.inverse_transform(cleaned).to_filename(str(out_img))
+    write_json(quality_path, _cleaned_timecourse_quality(cleaned, projection=projection))
 
 
 def _clean_surface_data(
@@ -383,6 +663,7 @@ def _clean_surface_data(
     out_img: Path,
     projection: _CleaningProjection,
     n_scans: int,
+    quality_path: Path,
 ) -> None:
     data = load_gifti_timeseries(in_img)
     if int(data.shape[0]) != int(n_scans):
@@ -396,6 +677,88 @@ def _clean_surface_data(
         np.asarray(cleaned, dtype=np.float32),
         out_img,
     )
+    write_json(quality_path, _cleaned_timecourse_quality(cleaned, projection=projection))
+
+
+def _cleaned_timecourse_quality(
+    data: np.ndarray,
+    *,
+    projection: _CleaningProjection,
+    maximum_sampled_locations: int = 1024,
+) -> dict[str, object]:
+    """Summarize observed temporal dimensionality without another image read."""
+    source_dtype = np.asarray(data).dtype
+    retained_values = np.asarray(data[projection.retained, :], dtype=np.float64)
+    variances = retained_values.var(axis=0, ddof=0)
+    usable = np.flatnonzero(
+        np.isfinite(variances) & (variances > np.finfo(np.float32).eps)
+    )
+    if usable.size > maximum_sampled_locations:
+        positions = np.linspace(
+            0, usable.size - 1, maximum_sampled_locations, dtype=np.int64
+        )
+        sampled = usable[positions]
+    else:
+        sampled = usable
+    if sampled.size:
+        values = retained_values[:, sampled]
+        values = values - values.mean(axis=0, keepdims=True)
+        singular = np.linalg.svd(values, compute_uv=False)
+        if singular.size and singular[0] > 0:
+            precision = (
+                np.finfo(np.float32).eps
+                if np.issubdtype(source_dtype, np.floating) and source_dtype.itemsize <= 4
+                else np.finfo(np.float64).eps
+            )
+            tolerance = max(values.shape) * precision * singular[0]
+            observed_rank = int(np.sum(singular > tolerance))
+            spectrum = np.square(singular[singular > tolerance])
+            proportions = spectrum / spectrum.sum()
+            entropy_rank = float(np.exp(-np.sum(proportions * np.log(proportions))))
+            participation_rank = float(1.0 / np.sum(np.square(proportions)))
+            dominant_fraction = float(proportions[0])
+        else:
+            observed_rank = 0
+            entropy_rank = 0.0
+            participation_rank = 0.0
+            dominant_fraction = 0.0
+    else:
+        observed_rank = 0
+        entropy_rank = 0.0
+        participation_rank = 0.0
+        dominant_fraction = 0.0
+    return {
+        "AlgebraicTemporalRank": int(projection.algebraic_temporal_rank),
+        "ObservedTemporalRank": observed_rank,
+        "EntropyEffectiveTemporalRank": entropy_rank,
+        "ParticipationRatioEffectiveTemporalRank": participation_rank,
+        "DominantTemporalVarianceFraction": dominant_fraction,
+        "EffectiveRankLocationSampleCount": int(sampled.size),
+        "EffectiveRankLocationSampling": "evenly spaced among nonconstant locations",
+        "NonconstantLocationCount": int(usable.size),
+        "ConstantLocationCount": int(retained_values.shape[1] - usable.size),
+        "Definitions": {
+            "AlgebraicTemporalRank": (
+                "Dimension of the clean passband after exact task removal and "
+                "nuisance-PC removal."
+            ),
+            "ObservedTemporalRank": (
+                "Numerical matrix rank of retained, temporally centered cleaned "
+                "samples at the reported location sample."
+            ),
+            "EntropyEffectiveTemporalRank": (
+                "Exponential Shannon entropy of the normalized temporal variance "
+                "spectrum."
+            ),
+            "ParticipationRatioEffectiveTemporalRank": (
+                "Inverse sum of squared normalized temporal-variance eigenvalues."
+            ),
+            "DominantTemporalVarianceFraction": (
+                "Fraction of sampled cleaned temporal variance represented by the "
+                "largest singular component."
+            ),
+        },
+    }
 
 
 def _write_volume_gm_mask(
@@ -517,6 +880,24 @@ def build_module(
         default=float(cfg.gm_mask_threshold),
     )
     ap.add_argument("--confounds-regex", default=str(cfg.confounds_regex))
+    ap.add_argument(
+        "--nuisance-variance-explained",
+        type=float,
+        default=float(cfg.nuisance_variance_explained),
+        metavar="P",
+    )
+    ap.add_argument(
+        "--minimum-temporal-rank",
+        type=int,
+        default=int(cfg.minimum_temporal_rank),
+        metavar="N",
+    )
+    ap.add_argument(
+        "--minimum-temporal-rank-fraction",
+        type=float,
+        default=float(cfg.minimum_temporal_rank_fraction),
+        metavar="F",
+    )
     ap.add_argument("--temporal-mask-regex", default=str(cfg.temporal_mask_regex))
     ap.add_argument(
         "--standardize", action="store_true", default=bool(cfg.standardize)
@@ -559,6 +940,12 @@ def build_module(
 
     if args.smoothing < 0:
         raise SystemExit("--smoothing must be a nonnegative integer FWHM in mm")
+    if not 0.0 < args.nuisance_variance_explained <= 1.0:
+        raise SystemExit("--nuisance-variance-explained must be in (0, 1]")
+    if args.minimum_temporal_rank < 0:
+        raise SystemExit("--minimum-temporal-rank must be nonnegative")
+    if not 0.0 <= args.minimum_temporal_rank_fraction <= 1.0:
+        raise SystemExit("--minimum-temporal-rank-fraction must be in [0, 1]")
     smoothing_mm = int(args.smoothing)
     ses_id = str(args.ses_id).strip() if args.ses_id is not None else None
     if ses_id == "":
@@ -728,7 +1115,7 @@ def build_module(
         ses_id=ses_id,
     )
     confounds_basename = (
-        f"{args.run_stem}_space-{args.space}_scale-{smoothing_mm}mm_"
+        f"{args.run_stem}_space-{args.space}_smoothing-{smoothing_mm}mm_"
         "desc-confounds_timeseries"
     )
     confounds_out = clean_dir / f"{confounds_basename}.tsv"
@@ -791,6 +1178,11 @@ def build_module(
         "space": str(args.space),
         "smoothing_fwhm_mm": smoothing_mm,
         "confounds_regex": str(args.confounds_regex),
+        "nuisance_variance_explained": float(args.nuisance_variance_explained),
+        "minimum_temporal_rank": int(args.minimum_temporal_rank),
+        "minimum_temporal_rank_fraction": float(
+            args.minimum_temporal_rank_fraction
+        ),
         "temporal_mask_regex": str(args.temporal_mask_regex),
         "standardize": bool(args.standardize),
         "detrend": bool(args.detrend),
@@ -864,11 +1256,12 @@ def build_module(
         return replace(step, inputs=(configuration_snapshot, *step.inputs))
 
     selected_confounds_path = work_dir / "selected_confounds.tsv"
+    task_regressors_path = work_dir / "task_regressors.tsv"
     selected_confounds_json = work_dir / "selected_confounds.json"
     outlier_confounds_path = work_dir / "outlier_confounds.tsv"
 
     def prepare_confounds() -> None:
-        selected, sidecar = _filter_confounds(
+        selected, task, sidecar = _filter_confounds(
             confounds_tsv=confounds_tsv,
             confounds_json=confounds_json,
             regex=str(args.confounds_regex),
@@ -879,6 +1272,7 @@ def build_module(
             regress_out_task=bool(args.regress_out_task),
         )
         selected.to_csv(selected_confounds_path, sep="\t", index=False)
+        task.to_csv(task_regressors_path, sep="\t", index=False)
         outliers = _select_outlier_columns(
             confounds_tsv=confounds_tsv,
             regex=str(args.temporal_mask_regex),
@@ -892,6 +1286,7 @@ def build_module(
             name="Prepare Confounds",
             outputs=(
                 selected_confounds_path,
+                task_regressors_path,
                 selected_confounds_json,
                 outlier_confounds_path,
             ),
@@ -913,31 +1308,43 @@ def build_module(
             return projection_cache["projection"], projection_cache["metadata"]
         selected = pd.read_csv(selected_confounds_path, sep="\t").fillna(0.0)
         try:
+            task = pd.read_csv(task_regressors_path, sep="\t").fillna(0.0)
+        except pd.errors.EmptyDataError:
+            task = pd.DataFrame(index=np.arange(sample_count))
+        try:
             outliers = pd.read_csv(outlier_confounds_path, sep="\t").fillna(0.0)
         except pd.errors.EmptyDataError:
             outliers = pd.DataFrame(index=np.arange(sample_count))
         projection = _build_cleaning_projection(
             confounds=selected,
+            task=task,
             outliers=outliers,
             tr=tr,
             detrend=bool(args.detrend),
             standardize=bool(args.standardize),
             low_pass=args.low_pass,
             high_pass=args.high_pass,
+            nuisance_variance_explained=float(args.nuisance_variance_explained),
+            minimum_temporal_rank=int(args.minimum_temporal_rank),
+            minimum_temporal_rank_fraction=float(
+                args.minimum_temporal_rank_fraction
+            ),
         )
         metadata: dict[str, object] = {
             "TemporalMaskRegex": str(args.temporal_mask_regex),
-            "RetainedFrames": int(projection.retained.sum()),
-            "CensoredFrames": int((~projection.retained).sum()),
-            "ProjectionRank": int(projection.rank),
-            "ResidualDegreesOfFreedom": int(projection.residual_dof),
-            "TemporalFilterMethod": "masked-fit full-length Fourier projection",
+            "TemporalMaskFile": str(confounds_out),
+            **projection.metadata(tr=tr, outlier_columns=len(outliers.columns)),
+            "TemporalFilterMethod": "censored-fit clean-passband reconstruction",
         }
         projection_cache["projection"] = projection
         projection_cache["metadata"] = metadata
         return projection, metadata
 
-    projection_inputs = (selected_confounds_path, outlier_confounds_path)
+    projection_inputs = (
+        selected_confounds_path,
+        task_regressors_path,
+        outlier_confounds_path,
+    )
     expected_outputs: list[Path] = []
     cleaned_outputs: list[Path] = []
     masks_by_space: dict[str, Path] = {}
@@ -948,10 +1355,18 @@ def build_module(
         clean_input: Path,
         input_desc: str,
         gm_mask: Path | None,
+        quality_path: Path,
     ) -> dict[str, object]:
         sidecar = dict(read_json(sidecar_json_path(source)))
-        _projection, projection_metadata = projection_state()
-        sidecar["Description"] = "Cleaned BOLD timeseries for connectivity analysis."
+        projection, projection_metadata = projection_state()
+        sidecar["Description"] = (
+            "Cleaned BOLD timeseries for connectivity analysis."
+            if projection.cleaning_defined
+            else (
+                "All-zero sentinel: cleaning is mathematically undefined for this "
+                "run and configuration; see Cleaning.CleaningUndefinedReason."
+            )
+        )
         sidecar["Sources"] = [str(source), str(confounds_tsv)] + (
             [str(events_path)]
             if args.regress_out_task and events_path.exists()
@@ -983,8 +1398,21 @@ def build_module(
             "LowPassHz": args.low_pass,
             "HighPassHz": args.high_pass,
             "ConfigurationFingerprint": selected_configuration_fingerprint(),
+            "QualityControl": read_json(quality_path),
         }
+        validate_clean_sidecar(sidecar, volume=gm_mask is not None)
         return sidecar
+
+    def validate_cleaning_metadata(
+        path: Path,
+        *,
+        volume: bool,
+    ) -> tuple[bool, str]:
+        try:
+            validate_clean_sidecar(read_json(path), volume=volume)
+        except (OSError, TypeError, ValueError) as error:
+            return False, str(error)
+        return True, "Cleaned sidecar satisfies its artifact metadata contract."
 
     for variant in variants:
         input_desc = str(variant["input_desc"])
@@ -1052,18 +1480,25 @@ def build_module(
                                 )
                 ))
 
+            quality_path = work_dir / f"{out_path.name}.quality.json"
             runner.add_step(configured(
+                # The QC summary is written while the cleaned array is already
+                # resident, avoiding a second read of a potentially large image.
                 Step.python(
                     name=f"Clean Volume: {_space_name(volume)}",
-                    outputs=(out_path,),
+                    outputs=(
+                        out_path,
+                        quality_path,
+                    ),
                     inputs=(clean_input, gm_mask, *projection_inputs),
                     force=bool(args.force),
-                    action=lambda source=clean_input, output=out_path, mask_path=gm_mask: (
+                    action=lambda source=clean_input, output=out_path, mask_path=gm_mask, quality=quality_path: (
                         _clean_volume_data(
                             in_img=source,
                             out_img=output,
                             mask_img=mask_path,
                             projection=projection_state()[0],
+                            quality_path=quality,
                         )
                     ),
                         )
@@ -1075,20 +1510,25 @@ def build_module(
                     outputs=(metadata_path,),
                     inputs=(
                         out_path,
+                        quality_path,
                         sidecar_json_path(volume),
                         confounds_tsv,
                         *projection_inputs,
                         *((events_path,) if events_path.exists() else ()),
                     ),
                     force=bool(args.force),
-                    action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask: write_json(
+                    action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask, quality=quality_path: write_json(
                         path,
                         cleaning_metadata(
                             source=source,
                             clean_input=cleaned,
                             input_desc=desc,
                             gm_mask=mask_path,
+                            quality_path=quality,
                         ),
+                    ),
+                    validate=lambda path=metadata_path: validate_cleaning_metadata(
+                        path, volume=True
                     ),
                         )
             ))
@@ -1142,18 +1582,23 @@ def build_module(
                     replace_bids_entity_token(surface, input_desc, output_desc),
                     smoothing_mm,
                 ).name
+                quality_path = work_dir / f"{out_path.name}.quality.json"
                 runner.add_step(configured(
                     Step.python(
                         name=f"Clean Surface: {_space_name(surface)}",
-                        outputs=(out_path,),
+                        outputs=(
+                            out_path,
+                            quality_path,
+                        ),
                         inputs=(clean_input, *projection_inputs),
                         force=bool(args.force),
-                        action=lambda source=clean_input, output=out_path, scans=counts[surface]: (
+                        action=lambda source=clean_input, output=out_path, scans=counts[surface], quality=quality_path: (
                             _clean_surface_data(
                                 in_img=source,
                                 out_img=output,
                                 projection=projection_state()[0],
                                 n_scans=scans,
+                                quality_path=quality,
                             )
                         ),
                                 )
@@ -1165,20 +1610,25 @@ def build_module(
                         outputs=(metadata_path,),
                         inputs=(
                             out_path,
+                            quality_path,
                             sidecar_json_path(surface),
                             confounds_tsv,
                             *projection_inputs,
                             *((events_path,) if events_path.exists() else ()),
                         ),
                         force=bool(args.force),
-                        action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc: write_json(
+                        action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc, quality=quality_path: write_json(
                             path,
                             cleaning_metadata(
                                 source=source,
                                 clean_input=cleaned,
                                 input_desc=desc,
                                 gm_mask=None,
+                                quality_path=quality,
                             ),
+                        ),
+                        validate=lambda path=metadata_path: validate_cleaning_metadata(
+                            path, volume=False
                         ),
                                 )
                 ))
@@ -1188,10 +1638,14 @@ def build_module(
     def finalize_confounds() -> None:
         selected = pd.read_csv(selected_confounds_path, sep="\t").fillna(0.0)
         try:
+            task = pd.read_csv(task_regressors_path, sep="\t").fillna(0.0)
+        except pd.errors.EmptyDataError:
+            task = pd.DataFrame(index=np.arange(sample_count))
+        try:
             outliers = pd.read_csv(outlier_confounds_path, sep="\t").fillna(0.0)
         except pd.errors.EmptyDataError:
             outliers = pd.DataFrame(index=np.arange(sample_count))
-        published = pd.concat([selected, outliers], axis=1)
+        published = pd.concat([task, selected, outliers], axis=1)
         published.to_csv(confounds_out, sep="\t", index=False)
         sidecar = read_json(selected_confounds_json)
         sidecar["TemporalMask"] = projection_state()[1]
@@ -1204,6 +1658,7 @@ def build_module(
             outputs=(confounds_out, confounds_out_json),
             inputs=(
                 selected_confounds_path,
+                task_regressors_path,
                 selected_confounds_json,
                 outlier_confounds_path,
             ),
@@ -1266,6 +1721,7 @@ def build_module(
         ),
         "targets": clean_targets,
         "public_outputs": [str(path) for path in expected_outputs],
+        "output_metadata_contract": clean_output_contract(),
         "configuration": configuration,
         "configuration_fingerprint": selected_configuration_fingerprint(),
         "complete": True,
@@ -1274,6 +1730,7 @@ def build_module(
     def validate_publication() -> tuple[bool, str]:
         try:
             actual = read_json(publication_manifest)
+            validate_clean_manifest(actual)
         except (OSError, ValueError, TypeError):
             return False, f"Cleaning publication manifest is unreadable: {publication_manifest}"
         if actual != clean_contract:
@@ -1287,13 +1744,17 @@ def build_module(
             return False, "Cleaning publication is missing outputs: " + ", ".join(missing_public)
         return True, "Cleaning publication is complete and current."
 
+    def publish_clean_manifest() -> None:
+        validate_clean_manifest(clean_contract)
+        write_json(publication_manifest, clean_contract)
+
     runner.add_step(configured(
         Step.python(
             name="Write Cleaning Publication Manifest",
             outputs=(publication_manifest,),
             inputs=tuple(expected_outputs) + tuple(source_inputs),
             force=bool(args.force),
-            action=lambda: write_json(publication_manifest, clean_contract),
+            action=publish_clean_manifest,
             validate=validate_publication,
             completion_boundary=True,
         )

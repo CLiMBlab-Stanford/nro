@@ -11,6 +11,7 @@ import yaml
 
 @dataclass(frozen=True)
 class MicroparcellationTarget:
+    """CIFTI labels, connectivity, and provenance for one network input target."""
     domain: str
     space: str
     smoothing_mm: int
@@ -18,8 +19,6 @@ class MicroparcellationTarget:
     microparcels: Path
     connectivity: Path
     source_surfaces: tuple[Path, ...]
-    scene_surfaces: tuple[Path, ...]
-    label_volume: Path | None
 
 
 def _output_path(value: str, manifest_path: Path) -> Path:
@@ -63,23 +62,6 @@ def discover_microparcellation_targets(
             _output_path(value, manifest_path)
             for value in manifest.get("source_surfaces", ())
         )
-        scene_surfaces = tuple(
-            _output_path(value, manifest_path)
-            for value in outputs.get("scene_surfaces", ())
-        )
-        label_volume = (
-            _output_path(outputs["microparcels_volume"], manifest_path)
-            if outputs.get("microparcels_volume")
-            else None
-        )
-        if manifest_domain == "surface" and len(scene_surfaces) != 8:
-            raise ValueError(
-                f"Surface microparcellation manifest must publish eight scene surfaces: {manifest_path}"
-            )
-        if manifest_domain == "volume" and label_volume is None:
-            raise ValueError(
-                f"Volumetric microparcellation manifest lacks outputs.microparcels_volume: {manifest_path}"
-            )
         resolved_microparcels = _output_path(outputs["microparcels"], manifest_path)
         resolved_connectivity = _output_path(outputs["connectivity"], manifest_path)
         if not resolved_microparcels.name.endswith(".dlabel.nii"):
@@ -90,8 +72,6 @@ def discover_microparcellation_targets(
             resolved_microparcels,
             resolved_connectivity,
             *source_surfaces,
-            *scene_surfaces,
-            *((label_volume,) if label_volume is not None else ()),
         )
         absent = [str(path) for path in required_paths if not path.is_file()]
         if absent:
@@ -107,8 +87,6 @@ def discover_microparcellation_targets(
                 microparcels=resolved_microparcels,
                 connectivity=resolved_connectivity,
                 source_surfaces=source_surfaces,
-                scene_surfaces=scene_surfaces,
-                label_volume=label_volume,
             )
         )
     if not targets:

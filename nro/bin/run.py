@@ -1,4 +1,4 @@
-"""Plan a terminal module request and supply a shared Slurm worker pool."""
+"""Request workflow endpoints and supply a shared Slurm worker pool."""
 
 from __future__ import annotations
 
@@ -11,19 +11,19 @@ import sys
 from pathlib import Path
 
 from nro.configuration.paths import BIDS_PATH
-from nro.orchestration.catalog import MODULES, normalize_module
+from nro.configuration.store import ConfigStore
+from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.engine.io import atomic_write_text
+from nro.orchestration.catalog import MODULES, normalize_module, terminal_modules
+from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.planner import Planner, PlanningResult
 from nro.orchestration.registry import Registry
+from nro.orchestration.selection import discover_bids_inventory
 from nro.orchestration.worker import Worker
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
-from nro.configuration.store import ConfigStore
-from nro.engine.io import atomic_write_text
-from nro.engine.cli import add_core_selection_arguments, core_selection
-from nro.orchestration.selection import discover_bids_inventory
 
 
-DEFAULT_MODULE = "networks"
 DEFAULT_CONCURRENCY = 50
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
 
@@ -70,107 +70,23 @@ def _report_unavailable(plan: PlanningResult) -> None:
             file=sys.stderr,
         )
 
-
-def _worker_source_root() -> Path:
-    """Return the repository root that workers import."""
-    return Path(__file__).resolve().parents[2]
-
-
-def _write_worker_script(
-    registry: Registry,
-    *,
-    bids_root: Path,
-    partition: str,
-    account: str | None,
-    hours: int,
-    memory_gb: int,
-    cpus: int,
-    idle_timeout: int = DEFAULT_WORKER_IDLE_TIMEOUT,
-    drain_seconds: int = 15 * 60,
-) -> Path:
-    profile_payload = json.dumps(
-        {
-            "bids_root": str(bids_root),
-            "partition": partition,
-            "account": account,
-            "hours": hours,
-            "cpus": cpus,
-            "idle_timeout": idle_timeout,
-            "drain_seconds": drain_seconds,
-        },
-        sort_keys=True,
-    )
-    profile = hashlib.sha256(profile_payload.encode("utf-8")).hexdigest()[:12]
-    path = registry.paths.workers / f"worker-large-{memory_gb}gb-{profile}.sbatch"
-    command = [
-        sys.executable, "-m", "nro.orchestration.worker",
-        "--bids-root", str(bids_root), "--resource-class", "large",
-        "--memory-gb", str(memory_gb),
-        "--idle-timeout", str(idle_timeout),
-        "--walltime-seconds", str(hours * 60 * 60),
-        "--drain-seconds", str(drain_seconds),
-        "--profile", profile,
-    ]
-    lines = [
-        "#!/usr/bin/env bash",
-        "#SBATCH --job-name=nro-worker",
-        f"#SBATCH --partition={partition}",
-        f"#SBATCH --time={hours}:00:00",
-        f"#SBATCH --mem={memory_gb}G",
-        f"#SBATCH --cpus-per-task={cpus}",
-        f"#SBATCH --output={registry.paths.workers}/slurm-%j.log",
-    ]
-    if account:
-        lines.append(f"#SBATCH --account={account}")
-    lines.extend((
-        "set -euo pipefail",
-        f"cd {shlex.quote(str(_worker_source_root()))}",
-        "exec " + shlex.join(command),
-    ))
-    atomic_write_text(path, "\n".join(lines) + "\n")
-    return path
-
-
-def _submit_workers(
-    registry: Registry,
-    request_id: str,
-    script: Path,
-    memory_gb: int,
-) -> list[str]:
-    submitted: list[str] = []
-    registry.reconcile_scheduler_submissions()
-    for submission_id, _token in registry.reserve_worker_submissions(
-        request_id=request_id, resource_class="large", memory_gb=memory_gb
-    ):
-        try:
-            result = subprocess.run(
-                ["sbatch", "--parsable", str(script)],
-                check=True,
-                text=True,
-                capture_output=True,
-            )
-            job_id = result.stdout.strip().split(";", 1)[0]
-            if not job_id:
-                raise RuntimeError(f"sbatch returned no job ID: {result.stdout!r}")
-            registry.update_submission(submission_id, state="submitted", slurm_job_id=job_id)
-            submitted.append(job_id)
-        except BaseException:
-            registry.update_submission(submission_id, state="error")
-            raise
-    return submitted
+from nro.orchestration.submission import _write_worker_script, _submit_workers
 
 
 def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
+    """Construct the run parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(
         parser,
         module_choices=MODULES,
         planner_defaults=True,
-        default_module=DEFAULT_MODULE,
+        default_modules=terminal_modules(),
     )
     parser.add_argument("--bids-root", default=BIDS_PATH)
-    parser.add_argument("--partition", default="sphinx")
-    parser.add_argument("--account", default="nlp")
+    from nro.configuration.site import settings
+    site, _ = settings()
+    parser.add_argument("--partition", default=site["partition"])
+    parser.add_argument("--account", default=site["account"] or None)
     parser.add_argument(
         "--concurrency", type=int, default=DEFAULT_CONCURRENCY,
         help=f"Maximum shared worker concurrency (default: {DEFAULT_CONCURRENCY})",
@@ -178,7 +94,7 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     parser.add_argument("--time", type=int, default=24, metavar="HOURS")
     parser.add_argument("--memory", type=int, default=32, metavar="GB")
     parser.add_argument("--max-memory", type=int, default=256, metavar="GB")
-    parser.add_argument("--cpus", type=int, default=8)
+    parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument(
         "--worker-idle-timeout", type=int, default=DEFAULT_WORKER_IDLE_TIMEOUT,
         metavar="SECONDS",
@@ -195,8 +111,8 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Stop the shared worker pool, destroy and rebuild the lab-wide private "
-            "registry, discover the source BIDS tree, and leave derivative work "
-            "unregistered; asks for confirmation when workers exist"
+            "registry, discover source data and existing nro artifacts, and create "
+            "no demand; asks for confirmation when workers exist"
         ),
     )
     parser.add_argument("--json", action="store_true")
@@ -204,7 +120,16 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
+    """Plan selected work, persist demand, and optionally supply workers.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
+    from nro.configuration.site import installation_record
+    record = installation_record()
+    if record.get("mode") == "shared" and not record.get("ready") and not args.repair:
+        raise SystemExit("The shared installation is undergoing setup or maintenance")
     try:
         selection = core_selection(args)
     except ValueError as error:
@@ -219,6 +144,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             "--run": args.run,
             "--space": args.space,
             "--smoothing": args.smoothing,
+            "--task": args.task,
+            "--model": args.model,
+            "--model-set": args.model_set,
         }
         supplied = [name for name, value in explicit_selections.items() if value is not None]
         if supplied:
@@ -250,12 +178,21 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         registry.reinitialize()
         inventory = discover_bids_inventory(bids_root)
         registry.replace_bids_inventory(inventory)
+        discovery = register_existing_artifacts(
+            registry,
+            bids_root=bids_root,
+            inventory=inventory,
+            memory_gb=args.memory,
+            max_memory_gb=args.max_memory,
+        )
         result = {
             "repaired": True,
             "registry": str(registry.paths.database),
             "projects": list(inventory),
             "participants": sum(len(values) for values in inventory.values()),
-            "instances": 0,
+            "artifacts": discovery.artifacts,
+            "instances": discovery.instances,
+            "unavailable_artifacts": list(discovery.unavailable),
             "requests": [],
             "submitted_workers": [],
         }
@@ -264,18 +201,27 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         else:
             print(
                 f"Repaired {registry.paths.database}; discovered {len(inventory)} "
-                f"project(s) and {result['participants']} participant(s). The "
-                "derivative registry is empty."
+                f"project(s), {result['participants']} participant(s), and "
+                f"{discovery.artifacts} existing artifact(s); registered "
+                f"{discovery.instances} instance(s) including dependencies."
             )
+            if discovery.unavailable:
+                print(
+                    f"Skipped {len(discovery.unavailable)} unavailable "
+                    "participant/workflow combination(s).",
+                    file=sys.stderr,
+                )
         return
 
     modules = tuple(normalize_module(value) for value in selection.modules)
+    if (selection.models or selection.model_sets) and "firstlevels" not in modules:
+        raise SystemExit("--model and --model-set require -m firstlevels")
     if set(modules).issubset({"anat", "func"}) and (
         args.space is not None or args.smoothing is not None
     ):
         raise SystemExit(
             "--space and --smoothing apply only when the terminal module is "
-            "clean, microparcellation, or networks"
+            "clean, microparcellation, networks, or firstlevels"
         )
     if set(modules) == {"anat"} and selection.runs:
         raise SystemExit("--run does not apply to the anatomical module")
@@ -303,7 +249,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         raise SystemExit(f"No BIDS projects were found under {bids_root}")
 
     registry = Registry.for_project(projects[0], bids_root=bids_root)
+    new_registry = not registry.existing_database_path().is_file()
     registry.replace_bids_inventory(inventory)
+    if new_registry:
+        register_existing_artifacts(
+            registry,
+            bids_root=bids_root,
+            inventory=inventory,
+            memory_gb=args.memory,
+            max_memory_gb=args.max_memory,
+        )
     store = ConfigStore()
     workflows = {
         workflow_id: store.resolve(workflow_id)
@@ -326,6 +281,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         smoothing_levels=selection.smoothing,
         memory_gb=args.memory,
         max_memory_gb=args.max_memory,
+        models=selection.models,
+        model_sets=selection.model_sets,
     )
     if selection.participants:
         absent = sorted(set(selection.participants) - plan.present_participants)
@@ -360,6 +317,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 "runs": selection.runs,
                 "spaces": list(selection.spaces),
                 "smoothing": list(selection.smoothing),
+                "models": list(selection.models),
+                "model_sets": list(selection.model_sets or (() if selection.models else ("main",))),
             },
             concurrency=args.concurrency,
             partition=args.partition,

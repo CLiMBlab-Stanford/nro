@@ -22,7 +22,7 @@ def find_fsaverage_directory(
     if local_subject.exists():
         return local_subject
     freesurfer_home = os.environ.get("FREESURFER_HOME", "").strip()
-    if freesurfer_home:
+    if freesurfer_home and not runner.using_container():
         installed = Path(freesurfer_home) / "subjects" / "fsaverage"
         if installed.exists():
             return installed

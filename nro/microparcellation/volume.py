@@ -14,6 +14,7 @@ from nibabel.processing import resample_from_to
 
 @dataclass(frozen=True)
 class VolumeSpace:
+    """Masked volume grid, affine, spatial neighborhoods, and CIFTI structure information."""
     shape: tuple[int, int, int]
     affine: np.ndarray
     mask: np.ndarray

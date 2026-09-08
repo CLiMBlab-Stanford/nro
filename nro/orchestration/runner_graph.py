@@ -24,11 +24,13 @@ from nro.engine.io import atomic_write_json
 
 
 class NodeState(str, Enum):
+    """Freshness outcome of a declared step in the current execution."""
     FRESH = "fresh"
     DIRTY = "dirty"
 
 
 class StepKind(str, Enum):
+    """Execution mechanism for a Python action, command, or directory-producing tool."""
     PYTHON = "python"
     COMMAND = "command"
     DIRECTORY = "directory"
@@ -140,6 +142,12 @@ class Step:
         after: Sequence[str] = (),
         completion_boundary: bool = False,
     ) -> "Step":
+        """Declare a Python action without executing it.
+
+        Inputs determine producer edges; after adds explicit predecessor IDs.
+        Outputs must be durable files. An optional validator returns validity and
+        a diagnostic reason; completion_boundary marks a public recovery boundary.
+        """
         return cls(
             id=id,
             name=name,
@@ -171,6 +179,11 @@ class Step:
         prepare: Optional[Action] = None,
         finalize: Optional[Action] = None,
     ) -> "Step":
+        """Declare an external command and its file boundary.
+
+        prepare and finalize run around execution. direct bypasses the container;
+        env and cwd apply to the command. No command runs in this factory.
+        """
         return cls(
             id=id,
             name=name,
@@ -206,6 +219,12 @@ class Step:
         reset_directory: bool = True,
         completion_boundary: bool = False,
     ) -> "Step":
+        """Declare a tool-owned directory with validated completion.
+
+        The breadcrumb is published only after action and validation succeed.
+        reset_directory permits removal of an incomplete directory on execution;
+        additional outputs remain part of the declared file boundary.
+        """
         additional = tuple(Path(path) for path in outputs)
         marker = Path(breadcrumb)
         return cls(
@@ -252,6 +271,7 @@ class RunnerGraph:
     """A Runner-owned module DAG, populated and frozen before execution."""
 
     def __init__(self, module_name: str) -> None:
+        """Create an empty mutable graph with no execution results."""
         self.module_name = str(module_name)
         self._steps: list[Step] = []
         self._by_id: dict[str, Step] = {}
@@ -263,14 +283,17 @@ class RunnerGraph:
 
     @property
     def steps(self) -> tuple[Step, ...]:
+        """Return declarations in insertion order as an immutable tuple."""
         return tuple(self._steps)
 
     @property
     def frozen(self) -> bool:
+        """Return whether topology has been finalized for traversal."""
         return self._frozen
 
     @property
     def results(self) -> Mapping[str, StepResult]:
+        """Expose step execution records indexed by declared step ID."""
         return dict(self._results)
 
     @staticmethod
@@ -361,17 +384,23 @@ class RunnerGraph:
         return self
 
     def ordered_steps(self) -> tuple[Step, ...]:
+        """Return topologically ordered declarations; raise RuntimeError before freeze."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before traversal.")
         return tuple(self._by_id[key] for key in self._order)
 
     def dependencies(self, step: Step | str) -> tuple[str, ...]:
+        """Return predecessor IDs for a step in a frozen graph."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before reading dependencies.")
         key = step if isinstance(step, str) else step.id
         return self._dependencies[key]
 
     def record_decision(self, step: Step, *, should_run: bool, reason: str) -> None:
+        """Record the first freshness decision for a step.
+
+        Raise RuntimeError if the graph is mutable or a decision already exists.
+        """
         if not self._frozen:
             raise RuntimeError("Cannot record execution state for an unfrozen graph.")
         if step.id in self._results:
@@ -379,6 +408,7 @@ class RunnerGraph:
         self._results[step.id] = StepResult(bool(should_run), str(reason))
 
     def revise_decision(self, step: Step, *, should_run: bool, reason: str) -> None:
+        """Update an existing decision during recovery; reject steps with no decision."""
         result = self._results.get(step.id)
         if result is None:
             raise RuntimeError(f"Step {step.id!r} has no freshness decision to revise.")
@@ -386,6 +416,7 @@ class RunnerGraph:
         result.reason = str(reason)
 
     def state(self, step: Step | str) -> Optional[NodeState]:
+        """Return the recorded freshness state, or None before a result is available."""
         key = step if isinstance(step, str) else step.id
         result = self._results.get(key)
         return None if result is None else result.state
@@ -399,6 +430,10 @@ class RunnerGraph:
         status: str,
         reason: Optional[str] = None,
     ) -> None:
+        """Attach a displayed execution event to its declared step or logged operation.
+
+        Reject ambiguous output matches and execution before a freshness decision.
+        """
         displayed = tuple(Path(value) for value in outputs if str(value).strip())
         displayed_paths = {path.resolve(strict=False) for path in displayed}
         for operation in reversed(self.operations):
@@ -461,6 +496,7 @@ class RunnerGraph:
         status: str,
         reason: Optional[str] = None,
     ) -> None:
+        """Append an aggregate or non-resumable operation to execution history."""
         self.operations.append(
             RunnerOperation(
                 step=int(step),
@@ -472,6 +508,7 @@ class RunnerGraph:
         )
 
     def canonical_outputs(self, outputs: Iterable[Path | str]) -> tuple[Path, ...]:
+        """Return declared output ordering when the supplied paths identify a step."""
         displayed = tuple(Path(value) for value in outputs if str(value).strip())
         displayed_paths = {path.resolve(strict=False) for path in displayed}
         for step in self._steps:
@@ -490,6 +527,10 @@ class RunnerGraph:
         }
 
     def contract_payload(self, *, signature: str) -> dict[str, object]:
+        """Serialize frozen topology and the supplied substantive signature.
+
+        Runtime decisions are excluded; calling before freeze raises RuntimeError.
+        """
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before serialization.")
         return {
@@ -517,12 +558,17 @@ class RunnerGraph:
             )
 
     def reconcile_contract(self, path: Path, *, signature: str) -> dict[str, object]:
+        """Validate prior topology, atomically save the contract, and return its payload."""
         contract = self.contract_payload(signature=signature)
         self.bind_contract(path, signature=signature)
         atomic_write_json(path, contract, sort_keys=True)
         return contract
 
     def validate_execution_contract(self) -> None:
+        """Require one complete execution decision for every declared step.
+
+        Raise RuntimeError when execution records violate the frozen graph.
+        """
         failures: list[str] = []
         for step in self.ordered_steps():
             result = self._results.get(step.id)
@@ -548,6 +594,7 @@ class RunnerGraph:
             )
 
     def payload(self) -> dict[str, object]:
+        """Serialize topology and execution records for the runner report."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before serialization.")
         nodes: list[dict[str, object]] = []
@@ -582,4 +629,5 @@ class RunnerGraph:
         }
 
     def write(self, path: Path) -> None:
+        """Write the graph report to the supplied path."""
         atomic_write_json(path, self.payload(), sort_keys=True)

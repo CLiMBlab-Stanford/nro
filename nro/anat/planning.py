@@ -53,7 +53,9 @@ def plan_instances(
             key=instance_key(
                 context.project,
                 descriptor.name,
-                lineage,
+                context.registered.lineage_fingerprints[
+                    descriptor.configuration_class
+                ],
                 context.participant,
                 entities,
             ),
@@ -65,7 +67,7 @@ def plan_instances(
             configuration_lineage_id=lineage,
             config_fingerprint=context.workflow.configuration(
                 descriptor.configuration_class
-            ).fingerprint,
+            ).scientific_fingerprint,
             directory_label=directory_label,
             runtime_config=context.runtime_config(descriptor.configuration_class),
             command=(
@@ -99,5 +101,6 @@ def plan_instances(
                     preprocessing_id=directory_label,
                 ),
             ),
+            processing=descriptor.processing_contract(),
         ),
     )

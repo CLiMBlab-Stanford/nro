@@ -1,0 +1,10 @@
+description: Sentences and nonwords, with within-participant summaries.
+model_set: main
+conditions: trial_type
+hrf: spm
+contrasts:
+  S: {S: 1}
+  N: {N: 1}
+  SvN: {S: 0.5, N: -0.5}
+aggregation:
+  weighting: equal

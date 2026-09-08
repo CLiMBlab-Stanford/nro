@@ -33,12 +33,16 @@ InstanceSpec
 Identity allows several requests to refer to the same logical work. It does not
 say whether that work is currently needed or fresh.
 
+The stable key hashes the configuration lineage fingerprint, not the registry's
+integer lineage row ID. The same logical instance therefore receives the same
+key after registry repair.
+
 ### InstanceContract
 
 `InstanceContract` is the freshness-relevant promise made by the instance. It
 contains:
 
-- the resolved configuration fingerprint;
+- the resolved scientific configuration fingerprint;
 - direct source inputs;
 - upstream instance dependencies;
 - the public output root and target-specific prefix;
@@ -51,6 +55,23 @@ the existing instance output stale. Code that changes scientific behavior is
 responsible for changing an appropriate configuration, dependency, output, or
 explicit processing field; a source-code version is not a substitute for a
 semantic contract.
+
+Modules can normalize their processing specification before comparison.
+Firstlevels uses a [canonical compiled task definition](task-models.md#model-edits-and-freshness)
+so equivalent authoring forms share a contract. The same normalization applies
+to recorded contracts and completion certificates. It does not suppress changes
+to dependencies, output requirements, or resolved scientific configuration.
+The [configuration compiler](configuration.md#scientific-settings-and-execution-snapshots)
+separates explicitly declared execution settings from scientific settings.
+Full execution snapshots remain available as provenance.
+
+Every built-in scientific module includes its public metadata schema in the
+explicit processing portion of this contract. The schema names required fields
+and their JSON-compatible types, including conditional schemas for distinct
+output domains. Module writers and freshness validators consume the same
+declaration. Adding, removing, or changing a promised metadata field therefore
+changes the artifact contract; formatting, key order, optional descriptive
+metadata, and values that legitimately depend on the input do not.
 
 `InstanceContract` describes the output boundary of the whole instance. An
 artifact is merely one concrete file or directory participating in that
@@ -93,6 +114,7 @@ The distinction permits operational changes without spurious invalidation.
 | Change a direct input | Yes | Yes | Yes |
 | Change dependency topology | Yes | Yes | Yes |
 | Change output format | Yes | Yes | Yes |
+| Change required public metadata schema | Yes | Yes | Yes |
 | Change substantive processing policy | Yes | Yes | Yes |
 
 ## From request to completion

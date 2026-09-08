@@ -385,7 +385,6 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 edges,
                 4,
                 3,
-                minimum_trs=8,
                 global_signal_regression=False,
                 reliability_vertex_block_size=2,
             )
@@ -394,7 +393,6 @@ class ScientificAlgorithmTests(unittest.TestCase):
             result.included_runs,
             ((Path("run1"),), (Path("run2"),)),
         )
-        self.assertFalse(result.skipped_runs)
 
         gram = np.zeros((4, 4))
         for data, quality in zip(runs.values(), qualities):
@@ -431,7 +429,6 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 edges,
                 4,
                 3,
-                minimum_trs=2,
                 global_signal_regression=False,
                 reliability_vertex_block_size=2,
                 reliability_weighting=False,
@@ -441,6 +438,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 labels,
                 mask,
                 3,
+                split_half_block_frames=128,
                 global_signal_regression=False,
                 reliability_vertex_block_size=2,
                 reliability_weighting=False,
@@ -466,34 +464,6 @@ class ScientificAlgorithmTests(unittest.TestCase):
         )
         np.testing.assert_allclose(parcels, parcel_expected, atol=2e-6)
 
-    def test_local_correlations_skip_runs_below_minimum_trs(self):
-        rng = np.random.default_rng(39)
-        runs = {
-            "short": rng.normal(size=(7, 3)).astype(np.float32),
-            "included": rng.normal(size=(8, 3)).astype(np.float32),
-        }
-        files = ((Path("short"),), (Path("included"),))
-        with patch(
-            "nro.microparcellation.statistics.load_functional",
-            side_effect=lambda path: runs[str(path[0])],
-        ), patch(
-            "nro.microparcellation.statistics._vertex_reliability",
-            return_value=np.ones(3, dtype=np.float32),
-        ):
-            result = local_edge_correlations(
-                files,
-                np.array([[0, 1]], dtype=np.int64),
-                3,
-                4,
-                minimum_trs=8,
-                global_signal_regression=False,
-                reliability_vertex_block_size=2,
-            )
-
-        self.assertEqual(result.included_runs, (files[1],))
-        self.assertEqual(result.skipped_runs[0].files, files[0])
-        self.assertEqual(result.skipped_runs[0].timepoints, 7)
-
     def test_parcel_correlations_use_reliability_weighted_gram(self):
         rng = np.random.default_rng(47)
         runs = {
@@ -514,14 +484,16 @@ class ScientificAlgorithmTests(unittest.TestCase):
             "nro.microparcellation.statistics._parcel_reliability",
             side_effect=qualities,
         ):
-            got = parcel_correlations(
+            result = parcel_correlations(
                 ((Path("run1"),), (Path("run2"),)),
                 labels,
                 mask,
                 4,
+                split_half_block_frames=128,
                 global_signal_regression=False,
                 reliability_vertex_block_size=2,
-            ).correlations
+            )
+            got = result.correlations
 
         gram = np.zeros((3, 3))
         for data, quality in zip(runs.values(), qualities):
@@ -539,6 +511,27 @@ class ScientificAlgorithmTests(unittest.TestCase):
         expected = gram / denominator
         np.fill_diagonal(expected, 0.0)
         np.testing.assert_allclose(got, expected, atol=2e-6)
+        np.testing.assert_allclose(
+            result.parcel_reliability_mean,
+            np.mean(qualities, axis=0),
+        )
+        np.testing.assert_allclose(
+            result.parcel_effective_runs,
+            np.square(np.sum(qualities, axis=0))
+            / np.sum(np.square(qualities), axis=0),
+            atol=1e-6,
+        )
+        np.testing.assert_array_equal(result.parcel_supporting_runs, [2, 2, 2])
+        self.assertEqual(result.split_half["method"], "whole runs")
+        self.assertEqual(result.split_half["first_half_runs"], [1])
+        self.assertEqual(result.split_half["second_half_runs"], [2])
+        self.assertAlmostEqual(
+            sum(item["diagonal_weight_fraction"] for item in result.run_contributions),
+            1.0,
+        )
+        self.assertEqual(result.connectome["unique_edges"], 3)
+        self.assertIn("participation_ratio_rank", result.connectome)
+        self.assertIn("dominant_eigenvalue_fraction", result.connectome)
 
     def test_parcel_quality_scores_variance_preserved_and_spatial_null(self):
         time = np.linspace(-1.0, 1.0, 12, dtype=np.float32)
@@ -555,6 +548,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 labels,
                 np.ones(6, dtype=bool),
                 4,
+                split_half_block_frames=128,
                 global_signal_regression=False,
                 reliability_vertex_block_size=2,
                 reliability_weighting=False,
@@ -564,6 +558,9 @@ class ScientificAlgorithmTests(unittest.TestCase):
         self.assertAlmostEqual(result.variance_preserved, 1.0, places=6)
         self.assertEqual(len(result.null_variance_preserved), 1)
         self.assertLess(result.null_variance_preserved[0], result.variance_preserved)
+        self.assertEqual(result.split_half["method"], "alternating temporal blocks")
+        self.assertGreater(result.split_half["first_half_retained_frames"], 0)
+        self.assertGreater(result.split_half["second_half_retained_frames"], 0)
 
     def test_spatial_nulls_are_connected_and_retain_fitted_granularity(self):
         labels = np.array([0, 0, 0, 1, 1, 2, 2, 2, 2], dtype=np.int64)

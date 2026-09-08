@@ -143,13 +143,13 @@ def test_private_runtime_environment_rejects_external_paths(
 
 def test_store_reads_only_organized_configuration_files(tmp_path: Path) -> None:
     (tmp_path / "workflows").mkdir()
-    (tmp_path / "preprocessing").mkdir()
+    (tmp_path / "configs" / "preprocessing").mkdir(parents=True)
     _write_yaml(
         tmp_path / "workflows" / "experiment_workflow.yml",
         {"preprocessing": "experiment"},
     )
     _write_yaml(
-        tmp_path / "preprocessing" / "experiment_preprocessing.yml",
+        tmp_path / "configs" / "preprocessing" / "experiment_preprocessing.yml",
         {"anat": {"nthreads": 7}},
     )
     resolved = _test_store(tmp_path).resolve("experiment")
@@ -160,7 +160,7 @@ def test_store_reads_only_organized_configuration_files(tmp_path: Path) -> None:
 
 def test_workflow_defaults_omitted_classes_and_rejects_upstream_keys(tmp_path: Path) -> None:
     _write_yaml(tmp_path / "workflows" / "experiment_workflow.yml", {"preprocessing": "experiment"})
-    _write_yaml(tmp_path / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(tmp_path / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
     store = _test_store(tmp_path)
     resolved = store.resolve("experiment")
 
@@ -172,7 +172,7 @@ def test_workflow_defaults_omitted_classes_and_rejects_upstream_keys(tmp_path: P
 
     _write_yaml(tmp_path / "workflows" / "bad_workflow.yml", {"clean": "bad"})
     _write_yaml(
-        tmp_path / "clean" / "bad_clean.yml",
+        tmp_path / "configs" / "clean" / "bad_clean.yml",
         {"preprocessing_directory": "not-allowed"},
     )
     with pytest.raises(WorkflowError, match="belong in a workflow"):
@@ -191,12 +191,12 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     configs.mkdir()
     bids = tmp_path / "bids"
     _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"preprocessing": "experiment"})
-    _write_yaml(configs / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(configs / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
     _write_yaml(
         configs / "workflows" / "experiment_nogsr_workflow.yml",
         {"preprocessing": "experiment", "clean": "nogsr"},
     )
-    _write_yaml(configs / "clean" / "nogsr_clean.yml", {"standardize": False})
+    _write_yaml(configs / "configs" / "clean" / "nogsr_clean.yml", {"standardize": False})
 
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
@@ -221,8 +221,8 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     bids = tmp_path / "bids"
     workflow_path = configs / "workflows" / "experiment_workflow.yml"
     _write_yaml(workflow_path, {"preprocessing": "experiment"})
-    _write_yaml(configs / "preprocessing" / "experiment_preprocessing.yml", {})
-    _write_yaml(configs / "clean" / "nogsr_clean.yml", {"standardize": False})
+    _write_yaml(configs / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(configs / "configs" / "clean" / "nogsr_clean.yml", {"standardize": False})
 
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
@@ -278,7 +278,7 @@ def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     first = registry.register_workflow(store.resolve("main"))
 
-    main_path = configs / "microparcellation" / "main_microparcellation.yml"
+    main_path = configs / "configs" / "microparcellation" / "main_microparcellation.yml"
     changed_main = yaml.safe_load(main_path.read_text(encoding="utf-8"))
     changed_main["coarsening"]["target_vertices"] = 30000
     _write_yaml(main_path, changed_main)
@@ -295,13 +295,13 @@ def test_changed_named_config_gets_new_lineage_reused_by_contents(tmp_path: Path
     configs = tmp_path / "configs"
     _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"preprocessing": "alternate"})
     _write_yaml(configs / "workflows" / "same_content_workflow.yml", {"preprocessing": "alternate"})
-    _write_yaml(configs / "preprocessing" / "alternate_preprocessing.yml", {})
+    _write_yaml(configs / "configs" / "preprocessing" / "alternate_preprocessing.yml", {})
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     first = registry.register_workflow(store.resolve("experiment"))
 
     _write_yaml(
-        configs / "preprocessing" / "alternate_preprocessing.yml",
+        configs / "configs" / "preprocessing" / "alternate_preprocessing.yml",
         {"anat": {"nthreads": 7}},
     )
     changed = registry.register_workflow(store.resolve("experiment"))
@@ -332,11 +332,11 @@ def test_numeric_directory_names_skip_existing_workflow_name(tmp_path: Path) -> 
     configs.mkdir()
     bids = tmp_path / "bids"
     _write_yaml(configs / "workflows" / "experiment-2_workflow.yml", {"preprocessing": "alternate"})
-    _write_yaml(configs / "preprocessing" / "alternate_preprocessing.yml", {})
+    _write_yaml(configs / "configs" / "preprocessing" / "alternate_preprocessing.yml", {})
     workflow_path = configs / "workflows" / "experiment_workflow.yml"
     _write_yaml(workflow_path, {"preprocessing": "first"})
-    _write_yaml(configs / "preprocessing" / "first_preprocessing.yml", {})
-    _write_yaml(configs / "preprocessing" / "second_preprocessing.yml", {"anat": {"nthreads": 7}})
+    _write_yaml(configs / "configs" / "preprocessing" / "first_preprocessing.yml", {})
+    _write_yaml(configs / "configs" / "preprocessing" / "second_preprocessing.yml", {"anat": {"nthreads": 7}})
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
 

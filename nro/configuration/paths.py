@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from nro.configuration.site import settings
 
 
 LAB_PATH = Path("/juice6/u/nlp/climblab")
-CONFIG_PATH = Path(__file__).parent / "files"
-BIDS_PATH = Path(os.environ.get("NRO_BIDS_PATH", LAB_PATH / "BIDS"))
-WORK_PATH = Path(os.environ.get("NRO_WORK_PATH", LAB_PATH / "WORK"))
-REGISTRY_PATH = LAB_PATH / ".nro"
+_SITE, _ = settings()
+BIDS_PATH = Path(_SITE["bids"])
+WORK_PATH = Path(_SITE["work"])
+REGISTRY_PATH = Path(_SITE["registry"])
+WB_COMMAND_PATH = Path(_SITE["workbench"])

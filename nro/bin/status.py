@@ -9,9 +9,10 @@ import sys
 from collections import deque
 from pathlib import Path
 
-from nro.engine.bids import matches_selectors
+from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.configuration.paths import BIDS_PATH
+from nro.orchestration.manifests import assess_registry, preview_registry
 from nro.orchestration.registry import Registry
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.selection import selected_projects
@@ -34,7 +35,10 @@ _STATUS_COLORS = {
     "Queued": _BLUE,
     "Blocked": _YELLOW,
     "Error": _RED + _BOLD,
+    "Missing": _MAGENTA,
+    "Stale": _YELLOW,
     "Unsubmitted": _GRAY,
+    "Unavailable": _GRAY,
 }
 
 
@@ -170,9 +174,21 @@ def _matches_request(
 
 
 def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
+    """Construct the status parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
+    freshness = parser.add_mutually_exclusive_group()
+    freshness.add_argument(
+        "--cached",
+        action="store_true",
+        help="Report only the registry's saved state without checking the filesystem",
+    )
+    freshness.add_argument(
+        "--verify",
+        action="store_true",
+        help="Thoroughly reassess artifacts, update the registry, and report its new state",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--no-pager", action="store_true",
@@ -182,6 +198,11 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None:
+    """Report saved or reassessed instance status for the selected scope.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     try:
         selection = core_selection(args)
@@ -195,19 +216,32 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     output: list[dict] = []
     critical_errors: dict[tuple[str, int], dict] = {}
     registry = Registry.for_project("", bids_root=bids_root)
+    from nro.bidsify.status import selected_records, render as render_ingestion
+    ingestion = selected_records(registry, selection)
     if not registry.existing_database_path().is_file():
+        if args.json:
+            print(json.dumps({'instances': [], 'errors': [], 'blocked_instances': [], 'bidsification': ingestion}))
+            return
         page_text(
-            _render_report(output, color=_terminal_colors_enabled()),
+            _render_report(output, color=_terminal_colors_enabled()) + render_ingestion(ingestion, color=_terminal_colors_enabled()),
             use_pager=not args.no_pager,
             header_lines=1,
         )
         return
     projects = selected_projects(bids_root, selection.projects)
     selected_project_set = set(projects)
-    # Status is a strictly observational projection of the scheduler's current
-    # lab-wide registry state. Freshness assessment, cancellation, and request
-    # reconciliation belong to ``run`` and workers.
-    rows = registry.instance_status_snapshot(read_only=True)
+    if args.verify:
+        assess_registry(registry, projects=projects)
+        rows = registry.instance_status_snapshot(read_only=True)
+    elif args.cached:
+        rows = registry.instance_status_snapshot(read_only=True)
+    else:
+        projected = preview_registry(registry, projects=projects)
+        rows = registry.instance_status_snapshot(
+            read_only=True,
+            artifact_states=projected,
+            expose_nonfresh=True,
+        )
     by_id = {int(row["id"]): row for row in rows}
     for row in rows:
         project = str(row["project"])
@@ -235,7 +269,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 if row.get("workflow_ids")
                 else [],
                 "status": row["status"],
-                "reason": row.get("error_message") or row.get("artifact_reason"),
+                "reason": (
+                    "No current workflow selects this configuration lineage"
+                    if row["status"] == "Unavailable"
+                    else row.get("error_message") or row.get("artifact_reason")
+                ),
+                "recomputable": bool(row.get("recomputable")),
                 "root_ids": root_ids,
                 "instance_id": row["id"],
                 "generation": row["current_generation"],
@@ -263,7 +302,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     ]
     if args.json:
         print(json.dumps(
-            {"instances": output, "errors": error_details, "blocked_instances": blocked_details},
+            {"instances": output, "errors": error_details, "blocked_instances": blocked_details, "bidsification": ingestion},
             indent=2,
             sort_keys=True,
         ))
@@ -274,7 +313,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             errors=error_details,
             blocked_instances=blocked_details,
             color=_terminal_colors_enabled(),
-        ),
+        ) + render_ingestion(ingestion, color=_terminal_colors_enabled()),
         use_pager=not args.no_pager,
         header_lines=1,
     )

@@ -1,0 +1,13 @@
+{
+  "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_label-GM_probseg.nii.gz": ["66e5d662e1dbafc52099b4aadc608454", "i1IcwQvVoa1ZjpH0ww66LXBDOiaRT6xb"],
+  "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-02_label-GM_probseg.nii.gz": ["9e38c9dbb352625abc89e23449114705", "6bKxZYLIrAQwNW6PjLnlr.46CZq.uOeP"],
+  "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz": ["6c64ebf985fe30d93e49a4baa41b9278", "TRRzRhgxEMxpNQDW_CZbInvRiTIUPlV5"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_midthickness.surf.gii": ["83b5c62111e850fe8c6b51cae6115a54", "MDNeHzqbS_XO0bm0Bl8BLjdOMlmId8NX"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_pial.surf.gii": ["98e85e9c4e2c2cff9bf52118d431f311", "UkH6Ywz3GOCh77m_dKLO80byn3_AFfRV"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_white.surf.gii": ["e5d71290333498558020ec3b2bf0cdf2", "qDtvWTVD0_lZHptP3y8qCRCl_tlyeRSU"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_sphere.surf.gii": ["576153844fb020fcf0865873b53f9085", "GqKLAoMvyfXC5wuoJlErKEw_zuqJwmBN"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_midthickness.surf.gii": ["7877e68f5b1394c25a92e24762674a1a", "gnoZ6MbZqP8LBOmcYR5LwG8uSHc4y_Kf"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_pial.surf.gii": ["b1ac435b7deb2301c97ee76b726cb879", "JJ_hfUdHggrAyn1MA5m4zFzVfNheprPG"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_white.surf.gii": ["3fff96d869764dcadf4f8ee8cf8e10ad", "DGntHXwq1Jz6T_Q0I2ORTJH_M_NyUvJJ"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_sphere.surf.gii": ["7fdd2d156df4264b47cc706462d2c5be", "NaNYRBTh1jr4DwcOu5s6.GAvAg7sOu5x"]
+}

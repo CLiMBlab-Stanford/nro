@@ -11,6 +11,7 @@ from nro.orchestration.registry import Registry
 
 
 def build_parser(*, prog: str = "nro.bin.publish") -> argparse.ArgumentParser:
+    """Construct the publish parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("request")
     parser.add_argument("destination")
@@ -21,6 +22,11 @@ def build_parser(*, prog: str = "nro.bin.publish") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.publish") -> None:
+    """Copy a completed request into a validated standalone destination.
+
+    argv excludes the executable name; None reads the process arguments.
+    prog controls help/error labels. Invalid arguments raise SystemExit.
+    """
     args = build_parser(prog=prog).parse_args(argv)
     registry = Registry.for_project(args.project, bids_root=args.bids_root)
     destination = publish(

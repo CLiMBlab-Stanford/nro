@@ -3,6 +3,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from nro.func import resolver as func_resolver
 
@@ -121,3 +122,35 @@ def test_sidecarless_sbref_inheritance_fails_closed_when_ambiguous(tmp_path: Pat
     assert resolved.sbref is None
     assert resolved.selection_warning is not None
     assert "multiple sidecarless SBRefs" in resolved.selection_warning
+
+
+@pytest.mark.parametrize('use_references', [False, True])
+def test_bidsification_associations_override_heuristics(tmp_path, monkeypatch, use_references):
+    root = tmp_path / 'sub-01/ses-a'
+    stem = 'sub-01_ses-a_task-rest_run-1'
+    bold = root / 'func' / f'{stem}_bold.nii.gz'
+    sbref = root / 'func' / f'{stem}_sbref.nii.gz'
+    _image(bold)
+    _image(sbref)
+    metadata = {'PhaseEncodingDirection': 'j', 'TotalReadoutTime': .05, 'SeriesNumber': 20,
+                'NROReferencePolicy': 'explicit', 'NROSBRef': sbref.name if use_references else None,
+                'B0FieldSource': ['nrotest'] if use_references else []}
+    bold.with_name(f'{stem}_bold.json').write_text(json.dumps(metadata))
+    for direction in ('j', 'j-'):
+        name = 'sub-01_ses-a_dir-' + ('AP' if direction == 'j' else 'PA')
+        fmap = root / 'fmap' / f'{name}_epi.nii.gz'
+        _image(fmap)
+        fmap.with_name(f'{name}_epi.json').write_text(json.dumps({
+            'PhaseEncodingDirection': direction, 'TotalReadoutTime': .05, 'SeriesNumber': 10,
+            'B0FieldIdentifier': 'nrotest', 'IntendedFor': 'bids::sub-01/ses-a/func/' + bold.name}))
+    monkeypatch.setattr(func_resolver, 'project_data_root', lambda _: tmp_path)
+    def resolve():
+        return func_resolver.resolve_func_run_request(project='test', sub_id='sub-01', ses_id='ses-a',
+                                                     run_stem=stem, sdc_from_sbref_pair=True)
+    result = resolve()
+    assert (result.sbref is not None) == use_references
+    assert (result.pair is not None) == use_references
+    if use_references:
+        sbref.unlink()
+        with pytest.raises(ValueError, match='explicitly assigned SBRef'):
+            resolve()

@@ -57,6 +57,11 @@ def _parse_bind_spec(bind_spec: str) -> tuple[Path, str, str | None] | None:
 
 @dataclass(frozen=True)
 class ContainerSpec:
+    """Container image and execution policy for one runner.
+
+    The image is a host path; bind mappings, clean environment, container home,
+    and inner setup determine how host commands execute inside it.
+    """
     image: Path
     engine: str = "singularity"
     cleanenv: bool = True
@@ -108,6 +113,12 @@ class Runner:
         next_step: Callable[[], int],
         step_log_separator: str = "=" * 50,
     ) -> None:
+        """Create an empty owned graph and validate container availability.
+
+        The logger receives execution events; next_step supplies display numbers.
+        No scientific step runs during construction. Missing container resources
+        raise SystemExit before execution.
+        """
         self._container = container
         self._binds = tuple(binds)
         self._declared_paths: list[Path] = []
@@ -127,9 +138,11 @@ class Runner:
             raise SystemExit(f"Container image not found: {self._container.image}")
 
     def using_container(self) -> bool:
+        """Return whether commands use the configured container."""
         return self._container is not None
 
     def container_engine(self) -> Optional[str]:
+        """Return the runtime executable name, or None for host execution."""
         return None if self._container is None else self._container.engine
 
     def add_step(self, step: Step) -> Step:
@@ -166,7 +179,8 @@ class Runner:
         Graph construction is deliberately outside this method. Freshness,
         semantic validation, dirty propagation, logging, and execution all
         begin only after :meth:`RunnerGraph.freeze` has validated the complete
-        topology.
+        topology. Call inside :meth:`run_context`; otherwise RuntimeError is
+        raised before any step runs. Return a mapping from step IDs to states.
         """
         state = _RUNNER_EXECUTION.get()
         if state is None:
@@ -874,6 +888,7 @@ class Runner:
         outputs: Optional[Sequence[Path | str]] = None,
         reason: Optional[str] = None,
     ) -> None:
+        """Record a skipped step with its outputs and freshness reason."""
         step = self._next_step()
         human_name = str(step_name or self._guess_step_name(cmd)).strip()
         inferred_outputs = self._canonical_step_outputs(
@@ -907,6 +922,7 @@ class Runner:
         running: bool,
         reason: Optional[str] = None,
     ) -> int:
+        """Start a numbered Python-operation log record and return its timing token."""
         step = self._next_step()
         canonical_outputs = self._canonical_step_outputs(outputs)
         self._logger.info(self._step_log_separator)
@@ -933,9 +949,11 @@ class Runner:
         return step
 
     def log_python_success(self, *, step: int, step_name: str, started_at: float) -> None:
+        """Record elapsed time for a completed Python operation."""
         self._log_command_success("Step", started_at, step, step_name=step_name)
 
     def log_python_failure(self, *, step: int, step_name: str, error: BaseException) -> None:
+        """Record a Python operation failure without suppressing the caller's exception."""
         self._log_command_failure("Step", step, step_name=step_name, output=str(error))
 
     def log_runner_success(self, *, module_name: str, started_at: float) -> None:
@@ -1214,6 +1232,11 @@ class Runner:
         prepare: Optional[Callable[[], None]] = None,
         finalize: Optional[Callable[[], None]] = None,
     ) -> None:
+        """Execute a command with the runner's container and logging policy.
+
+        Declared outputs are checked after success. Nonzero command status raises
+        CalledProcessError; use the enclosing Step for freshness and resumption.
+        """
         human_name = str(step_name or self._guess_step_name(cmd)).strip()
         if self._container is None:
             cmd_str, started_at, step = self._log_command_start("Step", cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason)
@@ -1367,6 +1390,11 @@ class Runner:
         # ``quiet`` is retained as a caller-facing logging hint, but unified
         # execution always records a numbered operation.  There is no hidden
         # subprocess path.
+        """Execute a command and return captured stdout with host paths restored.
+
+        Command failure raises CalledProcessError. Container setup and logging
+        follow the same policy as other runner commands.
+        """
         _ = quiet
         if self._container is None:
             _, started_at, step = self._log_command_start(
@@ -1421,6 +1449,7 @@ class Runner:
         prepare: Optional[Callable[[], None]] = None,
         finalize: Optional[Callable[[], None]] = None,
     ) -> None:
+        """Execute a host command without container translation and validate its outputs."""
         cmd_str, started_at, step = self._log_command_start("Step", args, cwd=cwd, step_name=step_name, outputs=outputs, reason=reason)
         try:
             if prepare is not None:
@@ -1446,6 +1475,10 @@ class Runner:
         self._log_command_success("Step", started_at, step, cwd=cwd, step_name=step_name)
 
     def require_cmds(self, cmds: Sequence[str]) -> None:
+        """Check required executables in the configured execution environment.
+
+        Missing commands stop execution before scientific processing begins.
+        """
         requested = tuple(dict.fromkeys(str(command) for command in cmds))
         with self.python_step(
             step_name="Dependency Preflight",

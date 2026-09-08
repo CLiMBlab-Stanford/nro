@@ -1,0 +1,65 @@
+# Python environments, bytecode, and package builds
+/.venv/
+/venv/
+/env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+
+# Local installation settings, downloaded dependencies, and registry state
+/.nro-installation.json
+/.nro-install.lock
+/.nro-site.toml
+/.nro-env/
+/.nro-bootstrap/
+/.nro-python/
+/.nro-cache/
+/.nro-runtime/
+/.nro-runtime.install.lock
+/.nro/
+*.sif
+*.simg
+
+# Test, analysis, and documentation build output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+/coverage.xml
+/htmlcov/
+/docs/_build/
+/docs/autoapi/
+.ipynb_checkpoints/
+
+# Local plans and agent workspace state; repository policy files remain tracked
+/plans/
+/.agents/
+/.codex/
+/.diagnostics/
+
+# Local data, working directories, and scheduler output
+/BIDS/
+/WORK/
+/slurm-*.out
+/slurm-*.err
+/*.log
+
+# Environment secrets; keep example files available for version control
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Editor and operating-system files
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

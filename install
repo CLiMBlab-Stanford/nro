@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Set up this checkout or connect a user to its shared installation."""
+
+import os
+from pathlib import Path
+import runpy
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit("The installer needs Python 3.11 or newer; it installs Python 3.12 for nro.")
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+sys.dont_write_bytecode = True
+runpy.run_path(str(Path(__file__).resolve().parent / "nro/engine/bootstrap.py"), run_name="__main__")

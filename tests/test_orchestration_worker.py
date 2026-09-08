@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -10,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from nro.orchestration.manifests import assess_registry, file_record
-from nro.orchestration.registry import Registry, discover_registry_projects
+from nro.orchestration.catalog import module_descriptor
+from nro.orchestration.registry import Registry, RegistryLock, discover_registry_projects
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.publish import publish
 from nro.bin.status import main as status_main
@@ -53,6 +55,7 @@ def _spec(
         output_prefix=None,
         resource_class="large",
         expected_outputs=(output,),
+        processing=module_descriptor(module).processing_contract(),
     )
 
 
@@ -187,6 +190,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         output=anat_output,
         inputs=(raw,),
     )
+    anat = anat.evolve(config_fingerprint=workflow.configuration("preprocessing").scientific_fingerprint)
     network = _spec(
         key="networks:" + "b" * 64,
         module="networks",
@@ -196,6 +200,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         output=network_output,
         dependencies=(anat.key,),
     )
+    network = network.evolve(config_fingerprint=workflow.configuration("networks").scientific_fingerprint)
     registry.create_request(
         registered=registered,
         target_module="networks",
@@ -382,17 +387,29 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     derivative.write_text("derivative")
     native_manifest = output_root / "sub-01_desc-preprocessAnat_manifest.json"
     native_manifest.write_text(
-        json.dumps({"complete": True, "outputs": {"subject_t1w": str(derivative)}})
+        json.dumps(
+            {
+                "complete": True,
+                "public_outputs": [str(derivative)],
+                "output_metadata_contract": module_descriptor(
+                    "anat"
+                ).processing_contract()["output_metadata"],
+            }
+        )
     )
     instance = _spec(
-                key="anat:" + "0" * 64,
-                module="anat",
-                lineage=registered.lineages["preprocessing"],
-                config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-                runtime_config=registry.runtime_config_path(registered, "preprocessing"),
-                output=derivative,
-                inputs=(raw,),
-            ).evolve(output_root=output_root, output_prefix="sub-01")
+        key="anat:" + "0" * 64,
+        module="anat",
+        lineage=registered.lineages["preprocessing"],
+        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        output=derivative,
+        inputs=(raw,),
+    ).evolve(
+        output_root=output_root,
+        output_prefix="sub-01",
+        expected_outputs=(native_manifest,),
+    )
     instance_ids = registry.register_instances((instance,))
     row = registry.instance_rows()[0]
     private_manifest = Path(row["manifest_path"])
@@ -401,10 +418,21 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
 
     states = assess_registry(registry, instance_ids=instance_ids.values())
 
-    assert states[row["id"]][0] == "fresh"
+    assert states[row["id"]][0] == "fresh", states[row["id"]]
     assert "private orchestration provenance is unavailable" in states[row["id"]][1]
     assert private_manifest.read_text() == "not valid JSON"
 
+    native_payload = json.loads(native_manifest.read_text())
+    native_payload["output_metadata_contract"] = {"layout": "superseded"}
+    native_manifest.write_text(json.dumps(native_payload))
+    states = assess_registry(registry, instance_ids=instance_ids.values())
+    assert states[row["id"]][0] == "stale"
+    assert "current contract" in states[row["id"]][1]
+
+    native_payload["output_metadata_contract"] = module_descriptor(
+        "anat"
+    ).processing_contract()["output_metadata"]
+    native_manifest.write_text(json.dumps(native_payload))
     future_ns = native_manifest.stat().st_mtime_ns + 10_000_000_000
     os.utime(raw, ns=(future_ns, future_ns))
     states = assess_registry(registry, instance_ids=instance_ids.values())
@@ -823,6 +851,92 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
         request_id=second, resource_class="large", memory_gb=32
     )
     assert len(reservations) == 1
+
+
+@pytest.mark.parametrize("returncode,stdout,stderr,expected", [
+    (0, "RUNNING\n", "", False),
+    (0, "PENDING\n", "", False),
+    (0, "", "", True),
+    (1, "", "slurm_load_jobs error: Invalid job id specified\n", True),
+    (1, "", "slurm_load_jobs error: Unable to contact slurm controller", None),
+    (1, "", "slurm_load_jobs error: Access denied", None),
+    (1, "", "", None),
+    (1, "RUNNING\n", "slurm_load_jobs error: Invalid job id specified", None),
+    (1, "", "slurm_load_jobs error: Invalid job id specified\nConnection failure", None),
+])
+def test_slurm_terminal_distinguishes_absence_from_query_failure(
+    monkeypatch, returncode, stdout, stderr, expected,
+):
+    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+
+    def query(command, **kwargs):
+        assert command == ["squeue", "--noheader", "--jobs", "123", "--format", "%T"]
+        assert kwargs["env"]["LC_ALL"] == "C"
+        assert kwargs["timeout"] == 15
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
+    assert RegistryLock._slurm_terminal("123") is expected
+
+
+@pytest.mark.parametrize("error", [OSError("unavailable"), subprocess.TimeoutExpired("squeue", 15)])
+def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
+    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+
+    def query(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
+    assert RegistryLock._slurm_terminal("123") is None
+    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: None)
+    assert RegistryLock._slurm_terminal("123") is None
+
+
+@pytest.mark.parametrize("diagnostic,replacements", [
+    ("slurm_load_jobs error: Invalid job id specified\n", 3),
+    ("slurm_load_jobs error: Unable to contact slurm controller\n", 0),
+])
+def test_reconciliation_releases_only_confirmed_expired_worker_slots(
+    tmp_path, monkeypatch, diagnostic, replacements,
+):
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    instances = tuple(_spec(
+        key=f"networks:{index}" + "8" * 63, module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / f"result-{index}.txt",
+    ) for index in range(4))
+    request = registry.create_request(
+        registered=registered, target_module="networks", selectors={},
+        instances=instances, terminal_instance_keys=tuple(item.key for item in instances),
+        concurrency=50, partition=None,
+    )
+    submissions = registry.reserve_worker_submissions(request_id=request, resource_class="large")
+    assert len(submissions) == 4
+    for index, (submission_id, _) in enumerate(submissions):
+        registry.update_submission(submission_id, state="submitted", slurm_job_id=str(index))
+    registry.register_worker("live", resource_class="large", slurm_job_id="3")
+    registry.mark_submission_running("3")
+    assert registry.reserve_worker_submissions(request_id=request, resource_class="large") == []
+    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+
+    def query(command, **kwargs):
+        if command[command.index("--jobs") + 1] == "3":
+            return subprocess.CompletedProcess(command, 0, "RUNNING\n", "")
+        return subprocess.CompletedProcess(command, 1, "", diagnostic)
+
+    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
+    assert registry.reconcile_scheduler_submissions() == replacements
+    assert registry.reconcile_scheduler_submissions() == 0
+    reserved = registry.reserve_worker_submissions(request_id=request, resource_class="large")
+    assert len(reserved) == replacements
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='live'").fetchone()[0] == "idle"
+        assert db.execute("SELECT state FROM scheduler_submissions WHERE slurm_job_id='3'").fetchone()[0] == "running"
 
 
 def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
