@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 from nro.orchestration.branch_store import BranchStore
-from nro.orchestration.releases import ReleaseStore
+from nro.orchestration.releases import ReleaseStore, tagged_source
 from nro.versioning import parse_release_version, require_release_advance
 
 
@@ -38,6 +38,11 @@ def commit_version(root, version):
     git(root, "commit", "-m", "Synthetic version change")
 
 
+def tag_current(root, version):
+    git(root, "tag", "-a", f"v{version}", "-m", f"Synthetic release {version}")
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+
 def test_release_versions_are_plain_semantic_versions():
     assert parse_release_version("0.0.1") == (0, 0, 1)
     assert parse_release_version("12.3.45") == (12, 3, 45)
@@ -55,6 +60,31 @@ def test_release_versions_must_advance():
         require_release_advance(None, "0.1.0")
     with pytest.raises(ValueError, match="patch"):
         require_release_advance("0.1.0", "0.1.0")
+
+
+def test_tagged_release_can_initialize_current_site_without_historical_records(release):
+    root, store = release
+    commit_version(root, "2.3.4")
+    tag_current(root, "2.3.4")
+
+    commit, tree, version, tag, tagger = tagged_source(root)
+    row = store.record_tagged(root)
+
+    assert (row["commit"], row["tree"], row["version"]) == (commit, tree, version)
+    assert row["pr"] == f"tag:{tag}"
+    assert row["attested_by"] == tagger
+    assert store.record_tagged(root) == row
+    assert store.history() == (row,)
+
+
+def test_tagged_release_rejects_lightweight_tag(release):
+    root, store = release
+    git(root, "tag", "v0.0.1")
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    with pytest.raises(ValueError, match="annotated"):
+        store.record_tagged(root)
+    assert store.history() == ()
 
 
 def test_attestation_does_not_tag_deploy_or_change_science(release):
@@ -143,11 +173,11 @@ def test_patch_increment_and_package_version_are_required(release):
 
 def test_unapproved_commit_and_switched_branch_are_rejected(release):
     root, store = release
-    with pytest.raises(ValueError, match="attestation"):
+    with pytest.raises(ValueError, match="installed release record"):
         store.require_approved(root)
     store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
     commit_version(root, "0.1.0")
-    with pytest.raises(ValueError, match="attestation"):
+    with pytest.raises(ValueError, match="installed release record"):
         store.require_approved(root)
     git(root, "switch", "-c", "dev")
     with pytest.raises(ValueError, match="authorized"):

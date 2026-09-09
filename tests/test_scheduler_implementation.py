@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -118,6 +119,30 @@ def test_activation_requires_quiescence_and_changed_source_never_falls_back(cent
     with pytest.raises(ValueError, match="clean"):
         implementation.capture_worker_implementation(
             registry.paths.control, registry.paths.bids_root
+        )
+
+
+def test_installation_activation_preserves_demand_and_clears_barrier(central):
+    registry, root, _ = central
+    registry.initialize()
+    with sqlite3.connect(registry.paths.database) as db:
+        db.execute(
+            "INSERT INTO requests VALUES "
+            "('request','user','demo',1,'anat','{}',2,NULL,'active','now','now')"
+        )
+        db.execute("INSERT INTO metadata VALUES ('maintenance_mode','installation')")
+        db.execute("INSERT INTO metadata VALUES ('installation_checkout',?)", (str(root),))
+
+    implementation.activate(registry, root, installation_maintenance=True)
+
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM requests WHERE id='request'").fetchone()[0] == "active"
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone() is None
+        )
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='installation_checkout'").fetchone()
+            is None
         )
 
 

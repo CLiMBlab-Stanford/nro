@@ -1,62 +1,37 @@
-# Release attestation
+# Installed releases
 
-`nro release` records a maintainer's approval of a `main` release. Normal approval
-attests that a PR was approved and merged. The initial bootstrap is recorded
-separately because 0.0.1 created the `main` branch directly. The command does not
-query a hosting service or supply a cryptographic signature. This policy assumes
-trusted maintainers.
+A successful shared installation registers and activates the exact release checked
+out on `main`. The installer requires a clean tree, an annotated tag matching the
+package version, and a tagged commit on `origin/main`. It records the tag, commit,
+tree, tagger, installation user, and main registry identity. A new site can begin
+with the current release; it does not need records for earlier versions.
 
-Prepare the version change in the reviewed PR. After merging it, use a clean,
-registered `main` checkout:
-
-```bash
-nro release 0.0.2 --pr https://HOST/OWNER/REPO/pull/NUMBER --attest-merged
-```
-
-The directly created first `main` branch has no preceding PR. Record that one-time
-bootstrap explicitly:
-
-```bash
-nro release 0.0.1 --bootstrap
-```
-
-Bootstrap approval is accepted only for 0.0.1 when the release history is empty.
-It reads the `v0.0.1` tag and verifies that commit is an ancestor of the current
-clean `main` checkout. The checkout may therefore already contain a later release.
-Bootstrap cannot be combined with `--pr` or `--attest-merged`. All later approvals
-require the merged PR reference and explicit merge attestation.
-
-The version must match the committed `pyproject.toml`. The first release must be
-`0.0.1`. Each later release must advance the version by at least one patch and
-descend from the previous approved commit. Duplicate approvals and dirty checkouts
-are rejected. Configure the human maintainer's Git `user.name` and `user.email`
-first; nro records those values and the executing Unix UID.
-
-Omit the version to list approvals:
+Omit the version from `nro release` to inspect the recorded history:
 
 ```bash
 nro release
 ```
 
-`--checkout PATH` selects the source checkout. `--bids-root PATH` selects the
-shared control context. Records are stored in `CONTROL/shared/releases.json`,
-under the same edit lock as branch registrations. Approval does not tag,
-push, deploy code, change the package version, or modify derivatives. Version
-metadata is separate from scientific freshness.
+Records are stored in `CONTROL/shared/releases.json` under the same edit lock as
+branch registrations. The older explicit attestation options remain available for
+installations created before automated release binding. Routine installation and
+upgrades should use `./install`, which infers the release from Git and does not ask
+the maintainer to repeat pull-request metadata.
 
 ## Scheduler activation
 
-After approving a release and installing its checkout in shared mode, designate
-that installation for future workers:
+The shared installer designates its verified installation for future workers. No
+separate activation command is needed. After updating a shared checkout to a new
+release, run:
 
 ```bash
-nro release 0.0.1 --activate
+./install --maintain
 ```
 
-Activation requires no outstanding demand, workers, allocations, or running or
-queued ingestion. It records the central checkout, interpreter, site settings
-path, and approved release in `CONTROL/shared/scheduler/implementation.json`.
-It does not change the user's command launcher, Git refs, or derivatives.
+If work is active, the installer asks to drain it. The drain preserves demand and
+queued ingestion while running work finishes. Activation records the central
+checkout, interpreter, site settings path, source fingerprint, and installed
+release in `CONTROL/shared/scheduler/implementation.json`.
 
 Once activated, Slurm submissions and `run --local` use this orchestration
 installation. Job subprocesses use their separately registered scientific code
@@ -65,9 +40,10 @@ the requesting branch's implementation. Before activation, a standalone
 installation uses its own worker code; a development installation cannot use
 that fallback.
 
-Approval and activation are separate operations. An approval alone does not
-change the worker implementation. Activation enables registered checkouts to use
-the central execution service with their own scientific code and output paths.
+Runtime validation checks the recorded commit, tree, version, environment, site,
+and source fingerprint before starting workers. Registered development checkouts
+then use the central execution service with their own scientific code and output
+paths.
 
 ## Git release policy
 
@@ -116,4 +92,4 @@ Main artifacts are rediscovered from disk without creating demand. Other branche
 register their outputs against current compiled contracts when work is next
 requested. The operation does not migrate an obsolete schema. It requires the
 old worker-control tables to remain readable so shutdown can be confirmed.
-After a release update, activate the approved implementation separately.
+After a release update, run `./install --maintain` to install and activate it.

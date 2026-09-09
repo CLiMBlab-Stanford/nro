@@ -129,11 +129,22 @@ def _candidates(control: Path) -> tuple[Path, ...]:
     return tuple(sorted(paths))
 
 
-def _busy(registry: Registry, db, *, ignore_service: str | None = None) -> str | None:
+def _busy(
+    registry: Registry,
+    db,
+    *,
+    ignore_service: str | None = None,
+    preserve_demand: bool = False,
+    allowed_maintenance: str | None = None,
+) -> str | None:
     if _active_service(registry.paths.control, ignore=ignore_service):
         return "active scheduler service calls"
     checks = (
-        ("SELECT 1 FROM requests WHERE state='active' LIMIT 1", "outstanding demand"),
+        *(
+            ()
+            if preserve_demand
+            else (("SELECT 1 FROM requests WHERE state='active' LIMIT 1", "outstanding demand"),)
+        ),
         (
             "SELECT 1 FROM attempts WHERE state IN ('queued','running','cancel_requested') LIMIT 1",
             "active attempts",
@@ -148,14 +159,23 @@ def _busy(registry: Registry, db, *, ignore_service: str | None = None) -> str |
             "worker submissions",
         ),
         (
-            "SELECT 1 FROM metadata WHERE key='maintenance_mode' OR key LIKE 'branch_maintenance:%' LIMIT 1",
+            "SELECT 1 FROM metadata WHERE "
+            + (
+                "(key='maintenance_mode' AND value!=?) OR key LIKE 'branch_maintenance:%' LIMIT 1"
+                if allowed_maintenance is not None
+                else "key='maintenance_mode' OR key LIKE 'branch_maintenance:%' LIMIT 1"
+            ),
             "registry maintenance",
+            *((allowed_maintenance,) if allowed_maintenance is not None else ()),
         ),
     )
-    for query, reason in checks:
-        if db.execute(query).fetchone():
+    for query, reason, *parameters in checks:
+        if db.execute(query, parameters).fetchone():
             return reason
-    if IngestionIndex(registry).execution_records():
+    ingestion = IngestionIndex(registry).execution_records()
+    if preserve_demand:
+        ingestion = [row for row in ingestion if row["state"] == "running"]
+    if ingestion:
         return "queued or running ingestion"
     return None
 
