@@ -41,6 +41,7 @@ The arrows show dependencies:
 
 Version 0.0.1 is the first release. nro follows
 [Semantic Versioning](https://semver.org/), and `main` contains released code.
+Each published version has an annotated Git tag and a corresponding GitHub Release.
 During the 0.x series, public interfaces may still change. The project retains
 older behavior when the benefit is clear and the implementation remains small,
 readable, and inexpensive to run. See the

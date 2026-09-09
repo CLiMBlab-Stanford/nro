@@ -46,6 +46,11 @@ mechanism only with authorization. Add `Signed-off-by:` only when the human has
 authorized the certification it represents. Follow the complete policy in
 `CONTRIBUTING.md`.
 
+When the user explicitly authorizes publication of a release, publication is
+complete only after its annotated version tag and corresponding GitHub Release
+exist. Verify the automated release workflow after pushing the tag. Do not treat
+a Git tag alone as a published GitHub Release.
+
 ## Writing
 
 Before creating or revising documentation, docstrings, or explanatory code

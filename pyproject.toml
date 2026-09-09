@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.0.2"
+version = "0.0.3"
 description = "Climblab fMRI derivative orchestration"
 requires-python = ">=3.12"
 dependencies = [
