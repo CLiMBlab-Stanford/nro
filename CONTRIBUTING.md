@@ -69,3 +69,22 @@ does not need to be rewritten.
 Review technical claims against the code and supplied source material. Keep AI
 disclosure in `AI_PROVENANCE.md`, commit trailers, and pull-request metadata
 rather than inserting it into ordinary technical documentation.
+
+## Releases and compatibility
+
+`main` contains released code. Prepare changes on `dev` or a feature branch and merge
+them into `main` through a reviewed pull request. Every pull request to `main` must
+change the version in `pyproject.toml` to a later `MAJOR.MINOR.PATCH` value. The
+smallest permitted increment is one patch version. A repository check rejects a pull
+request that does not advance the version.
+
+Use patch releases for compatible fixes. During the 0.x series, use minor releases
+for new features and intentional interface changes. Compatibility support is welcome
+when it helps current users without materially increasing complexity, runtime,
+maintenance cost, or ambiguity. Document intentional incompatibilities and migration
+steps in the pull request.
+
+After merge and maintainer attestation, tag the release as `vMAJOR.MINOR.PATCH` and
+push the tag without moving or replacing an existing release. Git versions record
+source releases; they do not participate in scientific artifact freshness. See the
+[release guide](docs/commands/releases.md) for attestation and deployment.

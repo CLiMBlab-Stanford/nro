@@ -335,9 +335,7 @@ def test_candidate_labels_rank_each_reference_independently() -> None:
 def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> None:
     mask = np.ones((2, 2, 2), dtype=bool)
     labels = np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int64)
-    dlabel, _ = write_volume_dlabel(
-        tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4)
-    )
+    dlabel, _ = write_volume_dlabel(tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4))
     _other, wrong_axis = write_volume_dlabel(
         tmp_path / "wrong.dlabel.nii",
         np.array([0, 1, 0, 1, 2, 1, 2, 0], dtype=np.int64),
@@ -392,9 +390,7 @@ def test_native_reference_projection_loads_ants_composite_transform(
 ) -> None:
     mask = np.ones((2, 2, 2), dtype=bool)
     labels = np.arange(8, dtype=np.int64)
-    dlabel, _ = write_volume_dlabel(
-        tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4)
-    )
+    dlabel, _ = write_volume_dlabel(tmp_path / "microparcels.dlabel.nii", labels, mask, np.eye(4))
     reference_data = np.arange(8, dtype=np.float32).reshape(mask.shape)
     reference_path = tmp_path / "reference.nii.gz"
     nib.save(nib.Nifti1Image(reference_data, np.eye(4)), reference_path)
@@ -416,9 +412,7 @@ def test_native_reference_projection_loads_ants_composite_transform(
         "nitransforms",
         SimpleNamespace(
             manip=SimpleNamespace(load=load_transform),
-            resampling=SimpleNamespace(
-                apply=lambda _transform, moving, _reference: moving
-            ),
+            resampling=SimpleNamespace(apply=lambda _transform, moving, _reference: moving),
         ),
     )
 

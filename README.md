@@ -39,8 +39,13 @@ The arrows show dependencies:
 [anat] ── "direct anatomical inputs" ──► {dynconn, networks, firstlevels}
 ```
 
-This is still an early project. It intentionally supports a small, current set
-of workflows instead of preserving old commands and formats.
+Version 0.0.1 is the first release. nro follows
+[Semantic Versioning](https://semver.org/), and `main` contains released code.
+During the 0.x series, public interfaces may still change. The project retains
+older behavior when the benefit is clear and the implementation remains small,
+readable, and inexpensive to run. See the
+[development guide](docs/development.md#release-and-compatibility-policy) for
+the release policy.
 
 ## Installation
 

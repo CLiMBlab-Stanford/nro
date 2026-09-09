@@ -1,9 +1,25 @@
 # Development and documentation
 
-This is an editable, early-development codebase. Public signatures are not
-version-stable. Shared execution requires an approved main installation and
-registered development checkouts. Release approval and deployment are explicit
-operator actions.
+This is an early-development codebase. Shared execution requires an approved main
+installation and registered development checkouts. Release approval and deployment
+are explicit operator actions.
+
+## Release and compatibility policy
+
+The project follows [Semantic Versioning](https://semver.org/) beginning with
+version 0.0.1. `main` is the released production branch; `dev` is the integration
+branch. Changes reach `main` through pull requests, and every merge advances the
+version by at least one patch. The repository check on pull requests verifies that
+the proposed version is later than the version at the target commit.
+
+Patch releases preserve supported behavior. Minor releases add functionality and may
+change interfaces while the major version remains zero. Prefer migration notes and
+small compatibility paths when they help current users. Do not retain compatibility
+code that materially harms readability, maintenance, runtime, or correctness.
+
+Release tags use `vMAJOR.MINOR.PATCH` and do not determine derivative freshness.
+Artifact contracts and scientific inputs remain the source of freshness decisions.
+See [release attestation](commands/releases.md) for approval and scheduler activation.
 
 ## Branch isolation work
 
@@ -11,7 +27,7 @@ The development spine is `main -> dev -> feature branches`. Main owns production
 outputs. Development branches inherit compatible outputs through their registered
 parents and write beneath the site's `development` path. Scientific inputs always
 come from shared raw BIDS. Branch identity governs ownership, not freshness.
-The first release is `0.0.1`; implementation and tests do not create a live release.
+The first release is `0.0.1`.
 
 [Branch registration](commands/branches.md) creates one central scientific database
 per branch. All authorized checkouts of a branch share that database. Catalog and

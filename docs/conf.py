@@ -1,9 +1,14 @@
 """Build documentation from source without importing neuroimaging dependencies."""
 
+import tomllib
 from pathlib import Path
 
 project = "nro"
 author = "nro contributors"
+release = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())[
+    "project"
+]["version"]
+version = release
 extensions = ["myst_parser", "autoapi.extension", "sphinx.ext.napoleon", "sphinx.ext.mathjax"]
 html_theme = "sphinx_rtd_theme"
 exclude_patterns = ["_build", "requirements.txt"]

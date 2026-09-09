@@ -1,0 +1,23 @@
+name: Main release version
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  version-advance:
+    name: Version advances
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the proposed release
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare package versions
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: python .github/workflows/check_main_version.py "$BASE_COMMIT"

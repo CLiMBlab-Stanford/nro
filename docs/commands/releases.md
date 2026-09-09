@@ -12,10 +12,10 @@ nro release 0.0.1 --pr https://HOST/OWNER/REPO/pull/NUMBER --attest-merged
 ```
 
 The version must match the committed `pyproject.toml`. The first release must be
-`0.0.1`. Later releases must advance at least the minor version, or the major
-version, and descend from the previous approved commit. Duplicate approvals and
-dirty checkouts are rejected. Configure the human maintainer's Git `user.name`
-and `user.email` first; nro records those values and the executing Unix UID.
+`0.0.1`. Each later release must advance the version by at least one patch and
+descend from the previous approved commit. Duplicate approvals and dirty checkouts
+are rejected. Configure the human maintainer's Git `user.name` and `user.email`
+first; nro records those values and the executing Unix UID.
 
 Omit the version to list approvals:
 
@@ -53,6 +53,24 @@ that fallback.
 Approval and activation are separate operations. An approval alone does not
 change the worker implementation. Activation enables registered checkouts to use
 the central execution service with their own scientific code and output paths.
+
+## Git release policy
+
+`main` contains released code and is the repository's default branch. Changes enter
+it through pull requests. Every merge must update `pyproject.toml` to a later
+`MAJOR.MINOR.PATCH` version. The smallest permitted change is the next patch version.
+The main-version check runs on pull requests to enforce this rule.
+
+Use patch releases for compatible fixes and minor releases for new features or
+intentional interface changes during the 0.x series. Tag an approved release as
+`vMAJOR.MINOR.PATCH`; the package version omits the `v`. Do not move or replace a
+published release tag. Version changes and Git tags remain separate from scientific
+freshness, which is based on artifact contracts and inputs.
+
+nro follows [Semantic Versioning](https://semver.org/). Major version zero denotes
+initial development, so interfaces may change between minor releases. Compatibility
+code may be retained when it has a clear use and does not materially increase code
+complexity, runtime cost, or maintenance burden.
 
 ## Shared scheduler repair
 

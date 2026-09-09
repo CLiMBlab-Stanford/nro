@@ -12,23 +12,7 @@ from pathlib import Path
 
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
-
-
-def _version(value: str) -> tuple[int, int, int]:
-    if not isinstance(value, str) or not re.fullmatch(
-        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value
-    ):
-        raise ValueError("Release versions must have the form MAJOR.MINOR.PATCH")
-    return tuple(map(int, value.split(".")))
-
-
-def _next_version(previous: str | None, proposed: str) -> None:
-    version = _version(proposed)
-    if previous is None:
-        if version != (0, 0, 1):
-            raise ValueError("The first main release must be 0.0.1")
-    elif version[:2] <= _version(previous)[:2]:
-        raise ValueError("A main release must advance at least the minor version")
+from nro.versioning import parse_release_version, require_release_advance
 
 
 def _git(checkout: Path, *args: str) -> str:
@@ -45,7 +29,7 @@ def _source(checkout: Path) -> tuple[str, str, str]:
     tree = _git(checkout, "rev-parse", "HEAD^{tree}")
     metadata = tomllib.loads(_git(checkout, "show", "HEAD:pyproject.toml"))
     version = metadata.get("project", {}).get("version")
-    _version(version)
+    parse_release_version(version)
     return commit, tree, version
 
 
@@ -92,7 +76,7 @@ class ReleaseStore:
                 "approved_at",
             }:
                 raise ValueError("Invalid release record")
-            _next_version(previous, row["version"])
+            require_release_advance(previous, row["version"])
             if (
                 type(row["uid"]) is not int
                 or row["uid"] < 0
@@ -127,7 +111,7 @@ class ReleaseStore:
         The maintainer affirms that the referenced PR was approved and merged.
         Git configuration supplies their stated name and email; the record also
         retains the executing Unix identity. Subsequent commits must descend
-        from the prior approved commit and advance at least the minor version.
+        from the prior approved commit and advance by at least one patch version.
         """
         if attest_merged is not True:
             raise ValueError("Explicit attestation of PR approval and merge is required")
@@ -150,7 +134,7 @@ class ReleaseStore:
                 row["registry_id"] != snapshot.topology.records["main"].registry_id for row in rows
             ):
                 raise ValueError("Release history belongs to a different main registration")
-            _next_version(rows[-1]["version"] if rows else None, version)
+            require_release_advance(rows[-1]["version"] if rows else None, version)
             if rows:
                 _git(checkout, "merge-base", "--is-ancestor", rows[-1]["commit"], commit)
             row = dict(

@@ -431,7 +431,7 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.0.dev0"
+version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "nibabel" },

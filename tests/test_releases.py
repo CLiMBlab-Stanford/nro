@@ -7,6 +7,7 @@ import pytest
 
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.releases import ReleaseStore
+from nro.versioning import parse_release_version, require_release_advance
 
 
 def git(root, *args):
@@ -35,6 +36,25 @@ def commit_version(root, version):
     (root / "pyproject.toml").write_text(f'[project]\nname="example"\nversion="{version}"\n')
     git(root, "add", ".")
     git(root, "commit", "-m", "Synthetic version change")
+
+
+def test_release_versions_are_plain_semantic_versions():
+    assert parse_release_version("0.0.1") == (0, 0, 1)
+    assert parse_release_version("12.3.45") == (12, 3, 45)
+    for invalid in ("0.0.dev0", "v0.0.1", "01.0.0", "1.0", None):
+        with pytest.raises(ValueError, match="MAJOR.MINOR.PATCH"):
+            parse_release_version(invalid)
+
+
+def test_release_versions_must_advance():
+    require_release_advance(None, "0.0.1")
+    require_release_advance("0.0.1", "0.0.2")
+    require_release_advance("0.0.2", "0.1.0")
+    require_release_advance("0.1.0", "1.0.0")
+    with pytest.raises(ValueError, match="first"):
+        require_release_advance(None, "0.1.0")
+    with pytest.raises(ValueError, match="patch"):
+        require_release_advance("0.1.0", "0.1.0")
 
 
 def test_attestation_does_not_tag_deploy_or_change_science(release):
@@ -69,17 +89,16 @@ def test_dirty_source_cannot_be_approved_or_used(release, dirty):
         store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
 
 
-def test_minor_increment_and_package_version_are_required(release):
+def test_patch_increment_and_package_version_are_required(release):
     root, store = release
     with pytest.raises(ValueError, match="match"):
         store.approve(root, "0.1.0", pr="example#1", attest_merged=True)
     store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
     commit_version(root, "0.0.2")
-    with pytest.raises(ValueError, match="minor"):
-        store.approve(root, "0.0.2", pr="example#2", attest_merged=True)
+    store.approve(root, "0.0.2", pr="example#2", attest_merged=True)
     commit_version(root, "0.1.0")
-    store.approve(root, "0.1.0", pr="example#2", attest_merged=True)
-    assert len(store.history()) == 2
+    store.approve(root, "0.1.0", pr="example#3", attest_merged=True)
+    assert len(store.history()) == 3
 
 
 def test_unapproved_commit_and_switched_branch_are_rejected(release):
@@ -98,7 +117,7 @@ def test_unapproved_commit_and_switched_branch_are_rejected(release):
 def test_duplicate_approval_cannot_replace_earlier_attestation(release):
     root, store = release
     first = store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
-    with pytest.raises(ValueError, match="minor"):
+    with pytest.raises(ValueError, match="patch"):
         store.approve(root, "0.0.1", pr="different#2", attest_merged=True)
     assert store.history() == (first,)
 
