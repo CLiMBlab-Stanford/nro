@@ -11,7 +11,7 @@ from collections.abc import Callable
 import nro.bin
 
 COMMAND_HELP = {
-    "release": "Record or inspect maintainer attestations for main releases.",
+    "release": "Inspect installed releases or perform legacy release maintenance.",
     "cutover": "Convert the private-control layout during a maintenance window.",
     "branch": "Register branches and locate their shared scientific registries.",
     "bidsify": "Download, review, convert, and approve BIDS sessions.",

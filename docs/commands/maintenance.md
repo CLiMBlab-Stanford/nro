@@ -13,6 +13,7 @@ the caller's launcher unless `--maintain` is given. See the
 | --- | --- |
 | `--mode personal/shared/branch` | Declare the first installation's role; branch mode reuses an existing site read-only. |
 | `--maintain` | Permit shared environment/resource maintenance. |
+| `--drain` | Permit noninteractive shared maintenance to drain the worker pool while preserving demand. |
 | `--site PATH` | Choose the site settings file during first setup. |
 | `--bin-dir PATH` | Place the user's launcher in this directory. |
 | `--default` | Make this checkout the user's default outside registered checkouts. |

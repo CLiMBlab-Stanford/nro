@@ -84,10 +84,10 @@ when it helps current users without materially increasing complexity, runtime,
 maintenance cost, or ambiguity. Document intentional incompatibilities and migration
 steps in the pull request.
 
-After merge and maintainer attestation, tag the release as `vMAJOR.MINOR.PATCH` and
-push the tag without moving or replacing an existing release. The tag workflow checks
+After merge, tag the release as `vMAJOR.MINOR.PATCH` and push the tag without moving
+or replacing an existing release. The tag workflow checks
 the package version and main ancestry, then creates the corresponding GitHub Release.
 Verify that the workflow succeeded before considering publication complete. Git
 versions record source releases; they do not participate in scientific artifact
-freshness. See the [release guide](docs/commands/releases.md) for attestation and
+freshness. See the [release guide](docs/commands/releases.md) for publication and
 deployment.

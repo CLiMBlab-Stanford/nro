@@ -61,7 +61,7 @@ authoritative for output existence and validity. Several requests can share an
 instance; cancelling one request need not stop work still demanded by another.
 Concurrency limits apply across projects and development branches.
 
-An approved `main` installation runs the scheduler. Registered development
+An installed `main` release runs the scheduler. Registered development
 checkouts submit compiled work through that scheduler, inherit compatible
 ancestor artifacts, and write new outputs to branch-owned directories. Each
 attempt runs from captured source selected at submission, so workers can serve

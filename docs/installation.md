@@ -62,7 +62,7 @@ or an activated environment's own `nro` command can bypass it; use `type -a nro`
 to inspect shell resolution. Launcher checkout bindings live in
 `.nro-launchers.json` beside the user launcher, not in the shared registry.
 
-Branch processing requires [an approved, activated main scheduler](commands/releases.md).
+Branch processing requires an [installed, active main scheduler](commands/releases.md).
 The normal commands then use branch-owned outputs, compatible ancestor inputs,
 and the shared worker pool. Shared definition/site editing remains blocked from
 development installations. Use `nro branch`, `nro doctor`, and `nro paths show`
@@ -71,11 +71,18 @@ execution and maintenance boundaries.
 
 ## Shared installations
 
-The first maintainer selects shared mode:
+The shared checkout must be on a clean `main` commit with an annotated release
+tag that matches `pyproject.toml` and belongs to `origin/main`. The first
+maintainer selects shared mode:
 
 ```bash
 ./install --mode shared
 ```
+
+The installer registers or attaches the checkout as `main`, records the checked-out
+release, and activates its environment for future workers. These actions use local
+Git state and require no separate `nro branch` or `nro release` commands. A new site
+can start at the current release without recording every earlier release.
 
 Subsequent users run the same `./install`. It reads the installation record
 and creates their launcher. It does not synchronize Python dependencies or
@@ -87,13 +94,18 @@ Maintenance is explicit:
 ./install --maintain
 ```
 
-Stop or drain the worker pool first, and coordinate with users so nobody
-submits work during maintenance. The installer refuses maintenance when the
-registry records active workers or pending allocations, unless a successful
-Slurm query confirms those allocations are no longer in the queue. Scheduler
-errors block maintenance. Records without a Slurm job ID must be resolved
-through the normal worker controls. The installer never
-silently repairs or resets the registry.
+When shared work is active, the installer reports it and asks permission to drain
+the pool. Confirmation places the registry in installation maintenance, prevents
+new claims, lets running derivative and ingestion stages finish, stops workers and
+allocations, and preserves demand. Installation continues when the pool is quiet.
+Ctrl-C leaves the maintenance barrier in place; repeat `./install --maintain` to
+resume. `--drain` provides the same authorization for noninteractive maintenance.
+Without that option, noninteractive maintenance refuses an active pool.
+
+After updating `main` to a newer tagged release, `./install --maintain` records and
+activates that release automatically. Runtime checks compare the installation's
+commit, tree, package version, environment, site, and source fingerprint with the
+active release record. The installer never repairs or resets the registry silently.
 
 The shared checkout, environment, and site file must be readable and traversable
 by users. Restrict write access to maintainers using filesystem ownership or
@@ -101,7 +113,7 @@ ACLs. Shared setup creates new files with a readable umask; it does not rewrite
 permissions on existing trees. BIDS derivatives, WORK, and the registry need
 the site's shared write permissions independently of the software tree.
 
-The shared checkout supplies the approved scheduler implementation. New work
+The shared checkout supplies the installed scheduler implementation. New work
 captures its selected source before submission; editing the checkout does not
 change already launched attempts. Use registered development checkouts for
 feature work instead of editing the shared installation.
@@ -123,8 +135,8 @@ After the replacement shared installation is ready, connect it as your default:
 
 The replacement flag is needed only for the earlier fixed-path launcher.
 Each user connects their own default; one user's installation does not change
-another user's shell resolution. This does not authorize a main release or
-establish its version. Approve and activate the main release separately.
+another user's shell resolution. The successfully installed tagged checkout is
+already the active main release.
 
 To convert the old shared checkout to development mode, coordinate a maintenance
 window with all clients, finish or cancel demand, and stop workers and pending

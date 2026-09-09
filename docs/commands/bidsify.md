@@ -13,9 +13,9 @@ preprocessing. After publication, use `nro run` to request derivatives.
 
 Install the Python dependencies with `./install --with-bidsify`. For an existing
 shared installation, its maintainer runs `./install --maintain --with-bidsify`
-after stopping the workers. The extra includes the Flywheel SDK, dcm2bids, and
-pydicom. Existing processing installations without the extra can still report
-ingestion state with `nro status`.
+and confirms an interactive drain if work is active. The extra includes the
+Flywheel SDK, dcm2bids, and pydicom. Existing processing installations without
+the extra can still report ingestion state with `nro status`.
 
 The default conversion commands use the installation's QuNex image for
 dcm2niix and its SynthStrip image for skull stripping. Supply a BIDS validator

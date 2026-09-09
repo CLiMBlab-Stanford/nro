@@ -54,7 +54,7 @@ checked. The shared runner then executes or skips each declared step and writes
 the completion record.
 
 Development requests send their compiled graph and execution recipe to the
-approved central scheduler. The scheduler resolves compatible ancestor
+installed central scheduler. The scheduler resolves compatible ancestor
 artifacts and branch-owned output paths. The attempt runs from captured source
 and site settings chosen at submission; a worker can therefore serve different
 branches in succession without retaining a branch's imports. See

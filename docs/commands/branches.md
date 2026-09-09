@@ -5,7 +5,7 @@ installation. Each registered branch has one scientific registry. Every
 attached checkout of that branch resolves to the same database, regardless of
 where the checkout lives.
 
-After an approved main scheduler is activated, `run`, `status`, `log`, and
+After a main scheduler release is installed and activated, `run`, `status`, `log`, and
 `stop` use the same selectors in development checkouts. The branch compiles its
 scientific graph; a separate process using the central installation admits and
 schedules it. Registration alone does not activate a scheduler. See

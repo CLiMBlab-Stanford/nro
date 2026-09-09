@@ -14,7 +14,7 @@ import pytest
 
 from nro.configuration import site
 from nro.configuration.store import ConfigStore
-from nro.engine import bootstrap, dependencies, site_setup
+from nro.engine import bootstrap, dependencies, shared_installation, site_setup
 from nro.engine.site_setup import edit_settings, save_settings
 
 
@@ -172,6 +172,47 @@ def test_shared_onboarding_never_syncs_or_mutates_checkout(tmp_path, monkeypatch
     assert not (root / ".nro-install.lock").exists()
     assert "nro directory-aware launcher" in (bin_dir / "nro").read_text()
     assert json.loads((bin_dir / ".nro-launchers.json").read_text())["default"] == str(root)
+
+
+def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, monkeypatch):
+    root = tmp_path / "shared"
+    (root / ".nro-bootstrap/bin").mkdir(parents=True)
+    (root / ".nro-bootstrap/bin/uv").write_text("uv")
+    environment = root / ".nro-env"
+    site = root / "site.toml"
+    site.write_text(f'registry = "{tmp_path / "registry"}"\n')
+    record = {
+        "mode": "shared",
+        "checkout": str(root),
+        "environment": str(environment),
+        "site": str(site),
+        "ready": True,
+        "with_oslom": True,
+        "with_bidsify": False,
+        "dev": False,
+        "local": False,
+    }
+    (root / bootstrap.RECORD).write_text(json.dumps(record))
+    monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
+    events = []
+    monkeypatch.setattr(
+        shared_installation,
+        "prepare_pool",
+        lambda registry, **options: events.append(("drain", options["checkout"])),
+    )
+    monkeypatch.setattr(
+        shared_installation,
+        "publish",
+        lambda checkout, registry: events.append(("publish", checkout)),
+    )
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda command, **options: None)
+    monkeypatch.setattr(bootstrap, "connect_user", lambda *args, **options: None)
+
+    bootstrap.main(["--maintain", "--offline"])
+
+    assert events == [("drain", root), ("publish", root)]
+    assert json.loads((root / bootstrap.RECORD).read_text())["ready"] is True
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])

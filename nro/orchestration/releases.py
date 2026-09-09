@@ -1,4 +1,4 @@
-"""Record maintainer approval of clean main commits without changing Git refs."""
+"""Record installed main releases without changing Git refs."""
 
 from __future__ import annotations
 
@@ -34,20 +34,52 @@ def _source_at(checkout: Path, ref: str) -> tuple[str, str, str]:
 
 def _source(checkout: Path) -> tuple[str, str, str]:
     if _git(checkout, "status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("Main release approval requires a clean checkout")
+        raise ValueError("Main release requires a clean checkout")
     return _source_at(checkout, "HEAD")
 
 
-class ReleaseStore:
-    """Serialize release attestations beside the shared branch catalog.
+def tagged_source(checkout: Path) -> tuple[str, str, str, str, str]:
+    """Return the exact annotated release at a clean main checkout."""
+    checkout = Path(checkout).expanduser().resolve()
+    if _git(checkout, "symbolic-ref", "--short", "HEAD") != "main":
+        raise ValueError("A shared installation must use the main Git branch")
+    commit, tree, version = _source(checkout)
+    tag = f"v{version}"
+    try:
+        tag_type = _git(checkout, "cat-file", "-t", f"refs/tags/{tag}")
+    except ValueError as error:
+        raise ValueError(
+            f"Shared installation requires annotated release tag {tag} at HEAD"
+        ) from error
+    if tag_type != "tag":
+        raise ValueError(f"Shared installation requires annotated release tag {tag} at HEAD")
+    if _git(checkout, "rev-parse", f"refs/tags/{tag}^{{commit}}") != commit:
+        raise ValueError(f"Release tag {tag} does not identify HEAD")
+    try:
+        _git(checkout, "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main")
+    except ValueError as error:
+        raise ValueError(f"Release tag {tag} is not on origin/main") from error
+    tagger = _git(
+        checkout,
+        "for-each-ref",
+        "--format=%(taggername) %(taggeremail)",
+        f"refs/tags/{tag}",
+    )
+    if not tagger or tagger == "<>":
+        raise ValueError(f"Release tag {tag} has no tagger identity")
+    return commit, tree, version, tag, tagger
 
-    Attestations are explicit maintainer statements, not hosting-service
-    verification or cryptographic signatures. Approval neither creates a Git
-    tag nor deploys code. Release versions do not enter scientific contracts.
+
+class ReleaseStore:
+    """Serialize installed releases beside the shared branch catalog.
+
+    Shared installation infers records from annotated Git tags. Older explicit
+    maintainer attestations remain readable. Records do not create tags, change
+    Git state, or enter scientific artifact contracts.
     """
 
     def __init__(self, branches: BranchStore):
-        """Bind the site's approval ledger without creating or changing records."""
+        """Bind the site's release ledger without creating or changing records."""
         self.branches = branches
         self.path = branches.root / "releases.json"
 
@@ -81,7 +113,10 @@ class ReleaseStore:
                 "approved_at",
             }:
                 raise ValueError("Invalid release record")
-            require_release_advance(previous, row["version"])
+            if previous is None:
+                parse_release_version(row["version"])
+            else:
+                require_release_advance(previous, row["version"])
             bootstrap = previous is None and row["version"] == "0.0.1" and row["pr"] is None
             if (
                 type(row["uid"]) is not int
@@ -109,8 +144,49 @@ class ReleaseStore:
         return rows
 
     def history(self) -> tuple[dict, ...]:
-        """Read approved versions without creating a store or contacting Git hosting."""
+        """Read installed versions without creating a store or contacting Git hosting."""
         return tuple(self._read())
+
+    def record_tagged(self, checkout: Path) -> dict:
+        """Record the checkout's exact annotated release, returning an existing match."""
+        checkout = Path(checkout).expanduser().resolve()
+        with self.branches._lock():
+            snapshot = self.branches.read()
+            if snapshot.topology.require_checkout(checkout) != "main":
+                raise ValueError("Only an authorized main checkout can record a release")
+            commit, tree, version, tag, tagger = tagged_source(checkout)
+            rows = self._read()
+            matches = [
+                row
+                for row in rows
+                if (row["commit"], row["tree"], row["version"]) == (commit, tree, version)
+                and row["registry_id"] == snapshot.topology.records["main"].registry_id
+            ]
+            if matches:
+                if len(matches) != 1:
+                    raise ValueError("Release history contains duplicate source records")
+                return matches[0]
+            if any(row["commit"] == commit for row in rows):
+                raise ValueError("The release commit is already recorded with another identity")
+            if rows:
+                require_release_advance(rows[-1]["version"], version)
+                _git(checkout, "merge-base", "--is-ancestor", rows[-1]["commit"], commit)
+            row = dict(
+                version=version,
+                commit=commit,
+                tree=tree,
+                registry_id=snapshot.topology.records["main"].registry_id,
+                pr=f"tag:{tag}",
+                attested_by=tagger,
+                uid=os.getuid(),
+                approved_at=datetime.now(timezone.utc).isoformat(),
+            )
+            if tagged_source(checkout) != (commit, tree, version, tag, tagger):
+                raise ValueError("Main source changed while recording its release")
+            atomic_write_json(
+                self.path, {"schema": 1, "releases": [*rows, row]}, mode=0o664, durable=True
+            )
+            return row
 
     def approve(
         self,
@@ -190,7 +266,7 @@ class ReleaseStore:
             return row
 
     def require_approved(self, checkout: Path) -> dict:
-        """Reject dirty, unregistered, or unapproved main source before production use."""
+        """Return the installed release matching a clean, registered main checkout."""
         checkout = Path(checkout).expanduser().resolve()
         with self.branches._lock():
             snapshot = self.branches.read()
@@ -205,5 +281,5 @@ class ReleaseStore:
                 and row["registry_id"] == snapshot.topology.records["main"].registry_id
             ]
             if len(matches) != 1:
-                raise ValueError("Main source has no matching release attestation")
+                raise ValueError("Main source has no matching installed release record")
             return matches[0]

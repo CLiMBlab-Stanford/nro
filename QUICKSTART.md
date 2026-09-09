@@ -83,7 +83,8 @@ installs a launcher in `~/.local/bin`. If setup is interrupted or a check fails,
 correct the reported problem and repeat the same `./install` command.
 
 For a multiuser deployment, one maintainer should create a shared installation
-and other users should connect to it. Read the
+from a clean, tagged `main` checkout. Installation records and activates that
+release automatically; other users then connect to it. Read the
 [installation guide](docs/installation.md#shared-installations) before choosing
 `--mode shared`.
 

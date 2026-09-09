@@ -1,8 +1,8 @@
 # Development and documentation
 
-This is an early-development codebase. Shared execution requires an approved main
-installation and registered development checkouts. Release approval and deployment
-are explicit operator actions.
+This is an early-development codebase. Shared execution requires an installed main
+release and registered development checkouts. Installing or maintaining the shared
+checkout records and activates its tagged release.
 
 ## Release and compatibility policy
 
@@ -19,7 +19,7 @@ code that materially harms readability, maintenance, runtime, or correctness.
 
 Release tags use `vMAJOR.MINOR.PATCH` and do not determine derivative freshness.
 Artifact contracts and scientific inputs remain the source of freshness decisions.
-See [release attestation](commands/releases.md) for approval and scheduler activation.
+See [installed releases](commands/releases.md) for publication and scheduler activation.
 
 ## Branch isolation work
 
@@ -44,7 +44,7 @@ are storage-format checks, not scientific freshness inputs.
 
 ### Requests and execution
 
-Once [an approved main scheduler is activated](commands/releases.md), branch
+Once [a main scheduler is installed and active](commands/releases.md), branch
 `run`, `status`, `log`, `stop`, and `set` use the central implementation.
 The branch's planner compiles its complete graph and records scientific revisions.
 It sends that graph, workflow records, and execution recipes as JSON to a separate
@@ -130,7 +130,7 @@ Debug bidsification has separate record, staging, and receipt paths and can publ
 only into branch-local BIDS. Those files never supply scientific inputs. Its
 reviewer and stages use captured branch code; stages share the central pool's
 capacity, shutdown recovery, and cache retention. Production publication requires
-an approved main release. Debug ingestion tests patches before release; it does
+an installed main release. Debug ingestion tests patches before release; it does
 not create an alternate source dataset for scientific development. A captured
 development stage receives only its branch-local path context; it does not open
 the shared scheduler database.
@@ -149,8 +149,8 @@ with their original provenance. Do not attribute them to release 0.0.1 after the
 The test suite exercises different source catalogs through a persistent worker and
 through the actual central JSON service. It checks output isolation, global capacity,
 inherited reads, local fallback, cancellation, obsolete-completion rejection, and
-scientific assessment after source-cache removal. Deployment, release approval, and
-live registry repair remain explicit operator actions.
+scientific assessment after source-cache removal. Release publication, shared
+installation, and live registry repair remain explicit operator actions.
 
 ## Tests
 

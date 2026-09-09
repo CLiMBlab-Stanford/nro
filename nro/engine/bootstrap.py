@@ -273,6 +273,11 @@ def _main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="./install", description=__doc__)
     parser.add_argument("--mode", choices=("personal", "shared", "branch"))
     parser.add_argument("--maintain", action="store_true")
+    parser.add_argument(
+        "--drain",
+        action="store_true",
+        help="Authorize a noninteractive shared setup to drain active workers",
+    )
     parser.add_argument("--site", type=Path)
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument(
@@ -383,11 +388,57 @@ def _main(argv=None) -> None:
         paths.require_current_layout()
         if existing and existing.get("branch") != branch_name:
             parser.error("Checkout branch changed; return to its installed branch")
-    else:
-        check_workers(site)
+    if args.drain and mode != "shared":
+        parser.error("--drain applies only to shared installation maintenance")
+    shared_registry = None
+    prepare_shared = None
+    if mode == "shared":
+
+        def prepare_shared() -> None:
+            nonlocal shared_registry
+            from nro.engine.shared_installation import prepare_pool
+            from nro.engine.site_setup import edit_settings, save_settings
+            from nro.orchestration.registry import Registry
+            from nro.orchestration.releases import tagged_source
+
+            tagged_source(ROOT)
+            if not site.exists():
+                if args.non_interactive:
+                    save_settings(site, {})
+                else:
+                    edit_settings(path=site, maintain=True)
+                    if not site.exists():
+                        raise RuntimeError("Path setup was cancelled")
+            values = settings(path=site)[0]
+            shared_registry = Registry.for_project(
+                "", bids_root=values["bids"], registry_path=values["registry"]
+            )
+
+            def confirm_drain(activity: dict) -> bool:
+                if args.drain:
+                    return True
+                if args.non_interactive or not sys.stdin.isatty():
+                    return False
+                print(
+                    "Shared work is active: "
+                    f"{activity['workers']} worker(s), "
+                    f"{activity['submissions']} allocation(s), "
+                    f"{activity['attempts']} derivative attempt(s), and "
+                    f"{activity['ingestion']} ingestion stage(s)."
+                )
+                return input(
+                    "Drain the pool, preserve demand, and continue after running work finishes? [y/N]: "
+                ).strip().lower() in {"y", "yes"}
+
+            prepare_pool(shared_registry, checkout=ROOT, confirm=confirm_drain)
+
     with maintenance_lock(ROOT, mode):
+        if prepare_shared is not None:
+            prepare_shared()
+        elif mode != "branch":
+            check_workers(site)
         environment = Path(existing["environment"]) if existing else ROOT / ".nro-env"
-        if mode in {"branch", "shared"} and existing:
+        if mode == "branch" and existing:
             check_branch_environment(site, environment)
         record = {
             "mode": mode,
@@ -470,6 +521,16 @@ def _main(argv=None) -> None:
             record.update(registry_id=binding["registry_id"], branch_catalog=str(paths.catalog))
         record["ready"] = True
         write_record(record_path, record)
+        if mode == "shared":
+            from nro.engine.shared_installation import publish
+
+            try:
+                publish(ROOT, shared_registry)
+                record = json.loads(record_path.read_text())
+            except BaseException:
+                record["ready"] = False
+                write_record(record_path, record)
+                raise
         connect_user(
             record,
             bin_dir=args.bin_dir,
@@ -497,7 +558,11 @@ def main(argv=None) -> None:
     except subprocess.CalledProcessError as error:
         if error.returncode in {-2, 130}:
             cancel_setup()
-        raise
+        print(f"Setup incomplete: command exited with status {error.returncode}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f"Setup incomplete: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

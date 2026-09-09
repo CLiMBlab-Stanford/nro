@@ -20,11 +20,12 @@ def implementation_path(control: Path) -> Path:
     return ControlPaths(control).scheduler / "implementation.json"
 
 
-def activate(registry, checkout: Path) -> dict:
-    """Designate an approved main installation while all site work is quiescent.
+def activate(registry, checkout: Path, *, installation_maintenance: bool = False) -> dict:
+    """Designate a recorded main installation while site execution is quiescent.
 
-    This changes neither Git refs nor the user's command launcher. Future workers
-    use this installation's interpreter and a per-submission source snapshot.
+    Installation maintenance may preserve inactive demand behind its global
+    barrier. This changes neither Git refs nor the user's command launcher.
+    Future workers use this interpreter and a per-submission source snapshot.
     """
     from nro.orchestration.execution_cache import _busy, cache_lock
 
@@ -44,8 +45,19 @@ def activate(registry, checkout: Path) -> dict:
         raise ValueError("Scheduler interpreter is unavailable")
     with cache_lock(registry.paths.control):
         release = ReleaseStore(BranchStore(registry.paths.control)).require_approved(checkout)
-        with registry.connection() as db:
-            busy = _busy(registry, db)
+        with registry.connection(write=installation_maintenance) as db:
+            if installation_maintenance:
+                owner = db.execute(
+                    "SELECT value FROM metadata WHERE key='installation_checkout'"
+                ).fetchone()
+                if owner is None or owner["value"] != str(checkout):
+                    raise ValueError("Scheduler activation does not own installation maintenance")
+            busy = _busy(
+                registry,
+                db,
+                preserve_demand=installation_maintenance,
+                allowed_maintenance="installation" if installation_maintenance else None,
+            )
             if busy:
                 raise ValueError(f"Cannot activate the scheduler during {busy}")
             record = dict(
@@ -60,6 +72,12 @@ def activate(registry, checkout: Path) -> dict:
             if path.is_symlink():
                 raise ValueError("Scheduler binding cannot be a symlink")
             atomic_write_json(path, record, mode=0o664, durable=True)
+            if installation_maintenance:
+                db.execute(
+                    "DELETE FROM metadata WHERE "
+                    "(key='maintenance_mode' AND value='installation') "
+                    "OR key='installation_checkout'"
+                )
     return record
 
 
@@ -99,6 +117,7 @@ def capture_worker_implementation(control: Path, bids_root: Path):
         or str(Path(installed["environment"]) / "bin/python") != record["python"]
         or installed["site"] != record["site"]
         or not Path(record["python"]).is_file()
+        or (installed.get("release") is not None and installed.get("release") != record["release"])
     ):
         raise ValueError("The designated scheduler installation changed or is unavailable")
     releases = ReleaseStore(BranchStore(control))
