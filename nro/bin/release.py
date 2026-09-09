@@ -23,6 +23,11 @@ def main(argv=None, *, prog="nro release"):
         action="store_true",
         help="Affirm that the referenced PR was approved and merged into main",
     )
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Approve the tagged initial 0.0.1 main commit without a PR",
+    )
     parser.add_argument("--bids-root", type=Path, default=BIDS_PATH)
     parser.add_argument(
         "--activate",
@@ -35,11 +40,18 @@ def main(argv=None, *, prog="nro release"):
         help="Stop the global pool and rebuild shared scheduling state, retaining branch databases and a backup",
     )
     args = parser.parse_args(argv)
-    if args.repair_scheduler and (args.version or args.activate or args.pr or args.attest_merged):
+    if args.repair_scheduler and (
+        args.version or args.activate or args.pr or args.attest_merged or args.bootstrap
+    ):
         parser.error("--repair-scheduler is a separate maintenance operation")
-    if args.version and not args.activate and (not args.pr or not args.attest_merged):
-        parser.error("Approval requires --pr and --attest-merged")
-    if not args.version and (args.pr or args.attest_merged):
+    if args.activate and (args.pr or args.attest_merged or args.bootstrap):
+        parser.error("Approve first, then activate separately without attestation flags")
+    if args.version and not args.activate:
+        if args.bootstrap and (args.pr or args.attest_merged):
+            parser.error("--bootstrap cannot be combined with PR attestation options")
+        if not args.bootstrap and (not args.pr or not args.attest_merged):
+            parser.error("Approval requires --pr and --attest-merged, or --bootstrap for 0.0.1")
+    if not args.version and (args.pr or args.attest_merged or args.bootstrap):
         parser.error("Attestation requires a version")
     try:
         paths = RegistryPaths.for_project("", bids_root=args.bids_root)
@@ -57,8 +69,6 @@ def main(argv=None, *, prog="nro release"):
 
             result = repair(Registry(paths), checkout=args.checkout, confirm=confirm)
         elif args.activate:
-            if args.pr or args.attest_merged:
-                parser.error("Approve first, then activate separately without attestation flags")
             approved = store.require_approved(args.checkout)
             if args.version and approved["version"] != args.version:
                 parser.error("Activation version does not match the approved checkout")
@@ -68,7 +78,13 @@ def main(argv=None, *, prog="nro release"):
             result = activate(Registry(paths), args.checkout)
         else:
             result = (
-                store.approve(args.checkout, args.version, pr=args.pr, attest_merged=True)
+                store.approve(
+                    args.checkout,
+                    args.version,
+                    pr=args.pr,
+                    attest_merged=args.attest_merged,
+                    bootstrap=args.bootstrap,
+                )
                 if args.version
                 else store.history()
             )

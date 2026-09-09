@@ -22,15 +22,20 @@ def _git(checkout: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _source(checkout: Path) -> tuple[str, str, str]:
-    if _git(checkout, "status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("Main release approval requires a clean checkout")
-    commit = _git(checkout, "rev-parse", "HEAD")
-    tree = _git(checkout, "rev-parse", "HEAD^{tree}")
-    metadata = tomllib.loads(_git(checkout, "show", "HEAD:pyproject.toml"))
+def _source_at(checkout: Path, ref: str) -> tuple[str, str, str]:
+    """Read source identity and package version at a Git revision."""
+    commit = _git(checkout, "rev-parse", f"{ref}^{{commit}}")
+    tree = _git(checkout, "rev-parse", f"{commit}^{{tree}}")
+    metadata = tomllib.loads(_git(checkout, "show", f"{commit}:pyproject.toml"))
     version = metadata.get("project", {}).get("version")
     parse_release_version(version)
     return commit, tree, version
+
+
+def _source(checkout: Path) -> tuple[str, str, str]:
+    if _git(checkout, "status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("Main release approval requires a clean checkout")
+    return _source_at(checkout, "HEAD")
 
 
 class ReleaseStore:
@@ -77,6 +82,7 @@ class ReleaseStore:
             }:
                 raise ValueError("Invalid release record")
             require_release_advance(previous, row["version"])
+            bootstrap = previous is None and row["version"] == "0.0.1" and row["pr"] is None
             if (
                 type(row["uid"]) is not int
                 or row["uid"] < 0
@@ -84,8 +90,9 @@ class ReleaseStore:
                 or not re.fullmatch(r"[0-9a-f]{32}", row["registry_id"])
                 or any(
                     not isinstance(row[key], str) or not row[key].strip()
-                    for key in ("pr", "attested_by", "approved_at")
+                    for key in ("attested_by", "approved_at")
                 )
+                or (not bootstrap and (not isinstance(row["pr"], str) or not row["pr"].strip()))
             ):
                 raise ValueError("Invalid release attestation identity")
             datetime.fromisoformat(row["approved_at"])
@@ -105,24 +112,46 @@ class ReleaseStore:
         """Read approved versions without creating a store or contacting Git hosting."""
         return tuple(self._read())
 
-    def approve(self, checkout: Path, version: str, *, pr: str, attest_merged: bool) -> dict:
-        """Approve a registered clean main commit after explicit human attestation.
+    def approve(
+        self,
+        checkout: Path,
+        version: str,
+        *,
+        pr: str | None = None,
+        attest_merged: bool = False,
+        bootstrap: bool = False,
+    ) -> dict:
+        """Approve a registered clean main commit after human attestation.
 
-        The maintainer affirms that the referenced PR was approved and merged.
-        Git configuration supplies their stated name and email; the record also
-        retains the executing Unix identity. Subsequent commits must descend
+        Normal approval affirms that the referenced PR was approved and merged.
+        Bootstrap approval records the tagged initial 0.0.1 commit that created
+        main and is unavailable after any release exists. It may be called from a
+        later main release when v0.0.1 remains in that branch's ancestry. Git
+        configuration supplies the maintainer's stated name and email; the record
+        also retains the executing Unix identity. Subsequent commits must descend
         from the prior approved commit and advance by at least one patch version.
         """
-        if attest_merged is not True:
-            raise ValueError("Explicit attestation of PR approval and merge is required")
-        if not isinstance(pr, str) or not pr.strip() or any(ord(c) < 32 for c in pr):
-            raise ValueError("Supply the approved and merged PR reference")
+        if bootstrap:
+            if version != "0.0.1":
+                raise ValueError("Bootstrap approval is limited to release 0.0.1")
+            if pr is not None or attest_merged:
+                raise ValueError("Bootstrap approval does not accept PR attestation options")
+        else:
+            if attest_merged is not True:
+                raise ValueError("Explicit attestation of PR approval and merge is required")
+            if not isinstance(pr, str) or not pr.strip() or any(ord(c) < 32 for c in pr):
+                raise ValueError("Supply the approved and merged PR reference")
         checkout = Path(checkout).expanduser().resolve()
         with self.branches._lock():
             snapshot = self.branches.read()
             if snapshot.topology.require_checkout(checkout) != "main":
                 raise ValueError("Only an authorized main checkout can approve a release")
-            commit, tree, packaged_version = _source(checkout)
+            current_source = _source(checkout)
+            if bootstrap:
+                commit, tree, packaged_version = _source_at(checkout, "refs/tags/v0.0.1")
+                _git(checkout, "merge-base", "--is-ancestor", commit, current_source[0])
+            else:
+                commit, tree, packaged_version = current_source
             if packaged_version != version:
                 raise ValueError("Release version must match the committed pyproject.toml")
             name = _git(checkout, "config", "user.name")
@@ -130,6 +159,8 @@ class ReleaseStore:
             if not name or not email:
                 raise ValueError("Configure the human maintainer Git name and email first")
             rows = self._read()
+            if bootstrap and rows:
+                raise ValueError("Bootstrap approval is unavailable after the first release")
             if any(
                 row["registry_id"] != snapshot.topology.records["main"].registry_id for row in rows
             ):
@@ -142,12 +173,15 @@ class ReleaseStore:
                 commit=commit,
                 tree=tree,
                 registry_id=snapshot.topology.records["main"].registry_id,
-                pr=pr.strip(),
+                pr=None if bootstrap else pr.strip(),
                 attested_by=f"{name} <{email}>",
                 uid=os.getuid(),
                 approved_at=datetime.now(timezone.utc).isoformat(),
             )
-            if _source(checkout) != (commit, tree, packaged_version):
+            if _source(checkout) != current_source or (
+                bootstrap
+                and _source_at(checkout, "refs/tags/v0.0.1") != (commit, tree, packaged_version)
+            ):
                 raise ValueError("Main source changed during approval")
             snapshot.topology.require_checkout(checkout)
             atomic_write_json(

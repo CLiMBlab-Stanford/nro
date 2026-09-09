@@ -10,7 +10,7 @@ registry, definitions, and Slurm worker pool are already configured.
 On a lab server, run:
 
 ```bash
-cd /juice6/u/nlp/climblab/code/nro
+cd /juice6/u/nlp/climblab/nro
 ./install --default
 ```
 

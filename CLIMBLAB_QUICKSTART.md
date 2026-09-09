@@ -11,7 +11,7 @@ member only needs to connect their account to the shared installation.
 Log in to a lab server and run the installer from the shared checkout:
 
 ```bash
-cd /juice6/u/nlp/climblab/code/nro
+cd /juice6/u/nlp/climblab/nro
 ./install --default
 ```
 
