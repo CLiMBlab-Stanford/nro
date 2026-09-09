@@ -1,7 +1,5 @@
 # Orchestration design
 
-Status: implemented and audited on 2026-09-08.
-
 ## Scope and vocabulary
 
 The normative vocabulary and its relationships are defined in
@@ -56,15 +54,16 @@ is currently recorded in the registry and completion manifest under the field
 name `artifact_contract`.
 
 The current command is part of the execution recipe and may be reformatted
-without making a derivative stale. Replanning an unchanged contract does not
-replace a recipe attached to active demand.
+without making a derivative stale. Replanning an unchanged contract updates
+the recipe used by future attempts. An attempt that has already been claimed
+keeps the immutable recipe captured when it started.
 
 ## Registries and scheduler
 
-The lab has one private control store shared by every project and branch:
+A shared deployment has one private control store for every project and branch:
 
 ```text
-/juice6/u/nlp/climblab/.nro/
+CONTROL/
     shared/
         branches.json
         scheduler/registry.sqlite3
@@ -77,10 +76,10 @@ The lab has one private control store shared by every project and branch:
         <branch-id>/registry.sqlite3
 ```
 
-The scheduler schema is 17 and the scientific branch-registry schema is 2.
-These numbers validate private storage layouts; neither contributes to
-scientific freshness. There is no migration ladder. Rebuild an incompatible
-development registry with the documented repair command.
+Independent schema markers validate the private scheduler and scientific
+registry layouts. They do not contribute to scientific freshness. There is no
+migration ladder; rebuild an incompatible development registry with the
+documented repair command.
 
 Source project and participant directories are discovered independently of
 derivative planning. Branch registries hold compiled scientific contracts,
@@ -216,7 +215,8 @@ Tests enforce these boundaries:
 - no public configuration paths or alternate stores;
 - a closed explicit catalog with module-local instance planning;
 - typed instance specifications and worker execution envelopes;
-- no replacement of execution recipes attached to active demand;
+- immutable execution recipes for claimed attempts, with current recipes used
+  by later attempts;
 - one schema with no implicit migration;
 - request sharing, cancellation, lease recovery, OOM escalation, freshness,
   multirun expansion, and atomic publication behavior.

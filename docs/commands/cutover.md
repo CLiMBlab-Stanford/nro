@@ -66,12 +66,13 @@ not an execution cache and automatic cache cleanup will not delete it. No
 backup or staging files are silently removed by this utility.
 
 The resulting layout is described under
-[branch registration](branches.md#storage-and-safeguards). This change does not
-enable multi-branch scientific execution. Historical worker scripts and public
-ownership receipts retain their original recorded commands; create new demand
-through the current planner rather than replaying archived scripts. If an older
-development installation recorded the previous branch-catalog path, reconnect
-it before use; cutover does not edit checkout-local installation records.
+[branch registration](branches.md#storage-and-safeguards). Cutover changes only
+the private storage layout. Branch registration and scheduler activation govern
+multi-branch execution. Historical worker scripts and public ownership receipts
+retain their original recorded commands; create new demand through the current
+planner rather than replaying archived scripts. If an older development
+installation recorded the previous branch-catalog path, reconnect it before
+use; cutover does not edit checkout-local installation records.
 
 ## Recover an interruption
 

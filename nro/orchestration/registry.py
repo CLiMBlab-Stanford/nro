@@ -994,30 +994,6 @@ class Registry(WorkflowRegistry):
                 except (ValueError, TypeError, KeyError):
                     artifact_changed = True
                 replace_dependencies[instance_id] = artifact_changed
-                recipe_locked = not artifact_changed and bool(
-                    db.execute(
-                        """
-                        SELECT 1
-                        FROM request_instances demanded
-                        JOIN requests request ON request.id=demanded.request_id
-                        WHERE demanded.instance_id=?
-                          AND demanded.demand_state='active'
-                          AND request.state='active'
-                        UNION ALL
-                        SELECT 1 FROM attempts
-                        WHERE instance_id=?
-                          AND state IN ('queued', 'running', 'cancel_requested')
-                        LIMIT 1
-                        """,
-                        (instance_id, instance_id),
-                    ).fetchone()
-                )
-                command_json = existing["command_json"] if recipe_locked else record["command_json"]
-                runtime_config_path = (
-                    existing["runtime_config_path"]
-                    if recipe_locked
-                    else record["runtime_config_path"]
-                )
                 db.execute(
                     """
                     UPDATE instances SET scope=?, resource_class=?,
@@ -1037,8 +1013,8 @@ class Registry(WorkflowRegistry):
                         record["revision_fingerprint"],
                         record["artifact_contract_json"],
                         record["artifact_fingerprint"],
-                        command_json,
-                        runtime_config_path,
+                        record["command_json"],
+                        record["runtime_config_path"],
                         record["memory_gb"],
                         record["max_memory_gb"],
                         record["input_paths_json"],
@@ -1453,6 +1429,7 @@ class Registry(WorkflowRegistry):
                        EXISTS(SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
                               WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
                        (SELECT a.state FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
+                       (SELECT a.error_type FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_type,
                        (SELECT a.error_message FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_message,
                        (SELECT a.log_path FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
                        (SELECT COUNT(*) FROM attempts a WHERE a.instance_id=t.id AND a.oom_detected=1) AS oom_count,
@@ -1552,7 +1529,9 @@ class Registry(WorkflowRegistry):
                 state = "Error"
             elif roots and item.get("demanded"):
                 state = "Blocked"
-            elif attempt in {"running", "cancel_requested"}:
+            elif attempt == "cancel_requested":
+                state = "Stopping"
+            elif attempt == "running":
                 state = "Running"
             elif attempt == "queued" or item.get("retry_requested"):
                 state = "Queued"
@@ -1560,6 +1539,8 @@ class Registry(WorkflowRegistry):
                 state = "Error"
             elif item.get("demanded"):
                 state = "Queued"
+            elif attempt == "cancelled" and item.get("error_type") == "UserCancelled":
+                state = "Stopped"
             elif item["artifact_state"] == "missing":
                 state = "Missing"
             else:

@@ -31,6 +31,8 @@ _GRAY = "\x1b[90m"
 _STATUS_COLORS = {
     "Success": _GREEN,
     "Running": _CYAN,
+    "Stopping": _YELLOW,
+    "Stopped": _GRAY,
     "Queued": _BLUE,
     "Blocked": _YELLOW,
     "Error": _RED + _BOLD,

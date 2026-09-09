@@ -5,11 +5,11 @@ compatible artifacts, and runs ready instances through one shared worker pool.
 It supports `anat`, `func`, `clean`, `dynconn`, `microparcellation`, `networks`,
 and `firstlevels`.
 
-The lab default keeps scheduler state and branch scientific records beneath one
-private control root:
+The configured private control root keeps scheduler state and branch scientific
+records in this layout:
 
 ```text
-/juice6/u/nlp/climblab/.nro/
+CONTROL/
   shared/scheduler/registry.sqlite3
   branches/<branch-id>/registry.sqlite3
 ```

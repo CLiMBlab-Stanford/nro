@@ -1,7 +1,7 @@
 # Create, edit, and delete definitions
 
 `nro create`, `nro edit`, and `nro delete` manage task models, scientific configs, and workflows
-in the [central configuration store](../configuration.md). They validate and
+in the selected [definitions store](../definitions.md). They validate and
 save drafts or remove definitions without opening the registry or requesting
 work. Deletion does not require a valid definition.
 

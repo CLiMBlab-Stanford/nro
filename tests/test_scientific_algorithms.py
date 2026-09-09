@@ -16,8 +16,11 @@ from nro.modules.microparcellation.config import CoarseningConfig
 from nro.modules.microparcellation.module import _coarsening_targets, _region_edges
 from nro.modules.microparcellation.quality import spatial_null_partitions
 from nro.modules.microparcellation.statistics import (
+    _accumulate_gram_rows,
+    _normalize_symmetric_gram,
     _profile_reliability,
     _quarter_standardized,
+    _run_gram_statistics,
     local_edge_correlations,
     make_parcel_mean_loader,
     parcel_correlations,
@@ -31,6 +34,28 @@ from nro.orchestration.runner import Runner
 
 
 class ScientificAlgorithmTests(unittest.TestCase):
+    def test_tiled_gram_and_temporal_dual_statistics_match_dense_form(self):
+        rng = np.random.default_rng(18)
+        timecourses = rng.normal(size=(17, 23)).astype(np.float32)
+        expected = timecourses.T @ timecourses
+        accumulated = np.zeros_like(expected)
+
+        _accumulate_gram_rows(accumulated, timecourses, block_size=5)
+        trace, frobenius = _run_gram_statistics(timecourses)
+
+        np.testing.assert_allclose(accumulated, expected, rtol=2e-6, atol=2e-6)
+        np.testing.assert_array_equal(accumulated, accumulated.T)
+        self.assertAlmostEqual(trace, float(np.trace(expected, dtype=np.float64)), places=4)
+        self.assertAlmostEqual(frobenius, float(np.linalg.norm(expected)), places=4)
+
+        diagonal = np.sqrt(np.maximum(np.diag(expected), 0.0))
+        inverse_scale = np.divide(1.0, diagonal, out=np.zeros_like(diagonal), where=diagonal > 0)
+        expected_correlations = expected / np.outer(diagonal, diagonal)
+        np.fill_diagonal(expected_correlations, 0.0)
+        correlations = _normalize_symmetric_gram(accumulated, inverse_scale, block_size=5)
+        np.testing.assert_allclose(correlations, expected_correlations, rtol=2e-6, atol=2e-6)
+        np.testing.assert_array_equal(correlations, correlations.T)
+
     def test_network_defaults_come_from_central_defaults(self):
         store = ConfigStore()
         micro_defaults = store.load_configuration("microparcellation", "main").values

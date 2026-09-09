@@ -15,9 +15,13 @@ the caller's launcher unless `--maintain` is given. See the
 | `--maintain` | Permit shared environment/resource maintenance. |
 | `--site PATH` | Choose the site settings file during first setup. |
 | `--bin-dir PATH` | Place the user's launcher in this directory. |
+| `--default` | Make this checkout the user's default outside registered checkouts. |
+| `--replace-launcher` | Back up and replace a recognized older fixed-path launcher. |
+| `--convert-to-branch` | Convert a quiescent shared checkout to branch mode. |
 | `--non-interactive` | Use supplied settings without prompts. |
 | `--offline` | Forbid new resource downloads; require cached/installed dependencies. |
 | `--without-oslom` | Omit OSLOM and its Python dependencies for this invocation. |
+| `--with-bidsify` | Include Flywheel, dcm2bids, and DICOM dependencies. |
 | `--dev` | Include locked test dependencies. |
 | `--accept-qunex-license` | Acknowledge terms for unattended image acquisition. |
 | `--local` | Do not require Slurm. |

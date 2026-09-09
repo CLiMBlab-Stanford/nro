@@ -61,8 +61,8 @@ Values within a selector are alternatives; different selectors intersect.
 the default set restriction; an explicit `--model-set` still intersects it.
 `--task` and `--run task=...` constrain the same task entity.
 
-Registration creates no demand. Bare `nro run` requests both `networks` and
-`firstlevels`, using model set `main` for matching tasks. Use `-m firstlevels`
+Registration creates no demand. Bare `nro run` requests `dynconn`, `networks`,
+and `firstlevels`, using model set `main` for matching tasks. Use `-m firstlevels`
 to request only the modeling branch and its upstream dependencies. Existing
 registered work remains independent of later changes to model-set membership.
 

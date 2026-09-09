@@ -328,7 +328,7 @@ def test_existing_instance_adopts_execution_recipe_and_output_contract(
     assert row["artifact_reason"] == "Instance contract changed"
 
 
-def test_active_demand_pins_its_execution_recipe(tmp_path: Path) -> None:
+def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     _write(source)
     workflow = ConfigStore().resolve("main")
@@ -366,7 +366,7 @@ def test_active_demand_pins_its_execution_recipe(tmp_path: Path) -> None:
     registry.register_instances((instance.evolve(command=(*instance.command, "--verbose")),))
 
     row = registry.instance_rows()[0]
-    assert tuple(json.loads(row["command_json"])) == instance.command
+    assert tuple(json.loads(row["command_json"])) == (*instance.command, "--verbose")
 
 
 def test_existing_instance_adopts_changed_dependency_topology(tmp_path: Path) -> None:

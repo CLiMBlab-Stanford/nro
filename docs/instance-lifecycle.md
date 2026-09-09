@@ -84,10 +84,11 @@ boundary.
 - argument vector;
 - immutable runtime configuration path.
 
-Equivalent command spelling does not change derivative freshness. Once a
-recipe is attached to active demand, replanning the same unchanged contract
-must not silently replace it. A substantive contract change may cancel active
-work and establish a new recipe for the changed work.
+Equivalent command spelling does not change derivative freshness. Replanning
+an unchanged contract may update the current recipe for future attempts. An
+attempt that a worker has already claimed keeps the immutable recipe captured
+at claim time. A substantive contract change may cancel active work and
+establish a new recipe for the changed work.
 
 ### ResourceRequest
 
@@ -211,9 +212,9 @@ again under the publication lock before writing its manifest and advancing its
 generation. A late completion cannot override cancellation. Nro does not retain
 old derivative generations to let invalidated attempts run to completion.
 
-The current scheduler applies these rules to registered dependencies. Branch input
-resolution and branch scientific registries still need integration before this
-policy can govern actual cross-branch workloads.
+These rules apply to dependencies resolved across branch boundaries as well as
+within one branch. The selected producer location affects input routing, not
+invalidation semantics.
 
 ## Freshness boundary
 
@@ -248,11 +249,11 @@ retry. Unrelated work, heartbeats, and memory-limit changes do not force retries
 The snapshot's comparison token coordinates publication and is not part of an
 artifact's scientific contract.
 
-The scientific evaluator can return its report from a separately selected
-implementation without opening the scheduler database. The report can update
-scientific normalization and artifact state, but cannot redirect output paths,
-change instance identity, or rewire dependencies. Branch authorization and
-automatic validator selection are separate, unfinished integration work.
+During branch verification, the invoking checkout recompiles registered
+selections. The central scheduler evaluates its detached snapshot against
+those contracts and filesystem evidence, then records accepted observations
+in the branch scientific registry. The evaluator never opens the branch
+registry or imports branch modules.
 
 ## Module planning boundary
 
@@ -261,7 +262,7 @@ The central planner owns dependency traversal. The closed catalog in
 classes, scopes, resource defaults, output formats, dependencies, and planning
 functions.
 
-Each `nro/<module>/planning.py` function constructs only instances of its own
+Each `nro/modules/<module>/planning.py` function constructs only instances of its own
 module from a resolved `SubjectPlanningContext` and already constructed
 upstream specifications. It returns new `InstanceSpec` objects and does not
 mutate the registry or planner as a side effect.

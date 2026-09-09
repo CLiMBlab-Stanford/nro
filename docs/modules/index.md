@@ -2,7 +2,7 @@
 
 Each guide describes the default method, configuration-controlled branches,
 public artifacts, and dependencies. Default values are included from the
-packaged starter YAML files. A lab's active [definitions store](../definitions.md)
+packaged starter YAML files. A site's active [definitions store](../definitions.md)
 may override those values.
 
 All seven scientific packages live under `nro.modules`. Their direct module

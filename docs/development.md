@@ -23,8 +23,8 @@ Branch databases contain compiled scientific contracts, workflow lineages, and
 revision-matched validator observations. They contain no worker pool. The shared
 scheduler is the sole authority for demand, attempts, concurrency, and physical
 input dependencies.
-The scientific schema is 2 and scheduler schema is 17. These are storage format
-checks, not scientific freshness inputs.
+The scientific and scheduler databases have independent schema markers. These
+are storage-format checks, not scientific freshness inputs.
 
 ### Requests and execution
 
@@ -86,7 +86,7 @@ are not copied; coordinate maintenance of those resources.
 Execution snapshots are temporary. Cleanup waits until there is no outstanding
 demand, active attempt, worker, submission, or queued/running ingestion. This preserves
 retries and replacement workers. Collection retains the collecting process's own
-source and site until a later invocation. Manual `purge --cache` is lab-wide and
+source and site until a later invocation. Manual `purge --cache` is site-wide and
 does not change scientific freshness.
 
 ### Installation and maintenance
@@ -197,9 +197,9 @@ step, update its method page, configuration meaning, artifact contract, and test
 
 Follow the repository's
 [writing policy](https://github.com/CLiMBlab-Stanford/nro/blob/dev/WRITING_POLICY.md)
-for prose, its
+for prose. Follow its
 [contribution policy](https://github.com/CLiMBlab-Stanford/nro/blob/dev/CONTRIBUTING.md)
-for attribution and publication, and its
+for attribution and publication. The
 [agent instructions](https://github.com/CLiMBlab-Stanford/nro/blob/dev/AGENTS.md)
-for agent behavior. No documentation build should modify a live registry or
+govern agent behavior. No documentation build should modify a live registry or
 download scientific images.

@@ -28,9 +28,9 @@ For connectivity, the temporal mask is the row-wise union of
 DVARS columns are retained for provenance and quality control. This mask is
 logically identical to the row-wise union of every `*_outlierNN` column; the
 reason-specific columns cannot add a frame that is absent from
-`motion_outlierNN`. A GLM should use the union columns, rather than all three
-motion families together, to avoid duplicating scan-nulling regressors when a
-frame meets both criteria.
+`motion_outlierNN`. First-level modeling uses the same union to select retained
+rows. It does not fit the reason-specific and union columns as duplicate
+scan-nulling regressors.
 
 ## Confound regression
 
@@ -89,8 +89,12 @@ A run is usable for connectivity only if it retains at least 100 frames, at
 least 70% of its original frames, and at least 50 residual design degrees of
 freedom reported by the clean model. The clean sidecar must also report
 participation effective rank of at least 10, with no single component
-accounting for more than 50% of the variance. Aggregated connectivity requires
-at least 1,100 retained frames and at least two usable runs.
+accounting for more than 50% of the variance.
+
+The `main` microparcellation configuration additionally requires at least two
+usable runs and 1,100 retained frames in aggregate. The `main` dynconn
+configuration requires one usable run and 100 retained frames in aggregate.
+Module configuration is the authority for these thresholds.
 
 ## References
 

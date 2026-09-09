@@ -73,6 +73,10 @@ $$G=\sum_r A_r^T A_r,\qquad
 
 Local coarsening computes this only for spatial-neighbor edges. Final parcel
 connectivity computes the full Gram matrix in a fixed number of accumulators.
+Row-blocked matrix products avoid materializing a separate connectome for each
+run. Only one triangle is computed, and its values are mirrored so the
+accumulator is exactly symmetric. The two split-half accumulators remain in
+memory at float32 precision.
 Runs are standardized independently and contribute according to their retained
 lengths and spatial reliability. This is not an unweighted mean of run-wise
 Pearson or Fisher-z correlations. Undefined variance receives zero support;
@@ -112,6 +116,9 @@ minimum, maximum, and effective number of supporting runs. Histogram summaries
 describe unique off-diagonal weights, while power iteration approximates the
 dominant eigenvalue fraction. Participation rank is based on trace squared
 over squared Frobenius norm, accounting for valid self-correlations.
+Per-run Gram trace and Frobenius norm are computed through the temporal dual
+matrix. This gives the same quantities without retaining a run-level parcel
+matrix.
 
 For split-half comparison, assign complete runs greedily to balance retained
 frame counts in input order. A single run uses alternating contiguous temporal

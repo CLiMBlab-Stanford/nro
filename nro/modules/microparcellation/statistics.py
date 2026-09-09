@@ -15,6 +15,7 @@ from nro.engine.images import load_surface_timeseries as load_functional
 LOG = logging.getLogger(__name__)
 FLOAT32_TINY = np.finfo(np.float32).tiny
 CONNECTOME_POWER_INITIALIZATION_SEED = 0
+CONNECTOME_ACCUMULATION_BLOCK_SIZE = 512
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,63 @@ def _valid_variance(m2: np.ndarray, sample_count: int) -> np.ndarray:
     """Reject zero, non-finite, and subnormal float32 sample variances."""
     threshold = np.float32(sample_count - 1) * FLOAT32_TINY
     return np.isfinite(m2) & (m2 > threshold)
+
+
+def _accumulate_gram_rows(
+    target: np.ndarray,
+    timecourses: np.ndarray,
+    *,
+    block_size: int = CONNECTOME_ACCUMULATION_BLOCK_SIZE,
+) -> None:
+    """Add a symmetric Gram matrix without materializing its full product."""
+    if block_size < 1:
+        raise ValueError("Gram accumulation block size must be positive")
+    if target.shape != (timecourses.shape[1], timecourses.shape[1]):
+        raise ValueError("Gram accumulator does not match the timecourse width")
+    for row_start in range(0, timecourses.shape[1], block_size):
+        row_stop = min(row_start + block_size, timecourses.shape[1])
+        row_data = timecourses[:, row_start:row_stop]
+        for column_start in range(0, row_start + 1, block_size):
+            column_stop = min(column_start + block_size, timecourses.shape[1])
+            product = row_data.T @ timecourses[:, column_start:column_stop]
+            if row_start == column_start:
+                upper = np.triu_indices(len(product), 1)
+                product[upper] = product.T[upper]
+                target[row_start:row_stop, column_start:column_stop] += product
+            else:
+                target[row_start:row_stop, column_start:column_stop] += product
+                target[column_start:column_stop, row_start:row_stop] += product.T
+
+
+def _run_gram_statistics(timecourses: np.ndarray) -> tuple[float, float]:
+    """Return Gram trace and Frobenius norm through the temporal dual matrix."""
+    trace = float(np.einsum("tp,tp->", timecourses, timecourses, dtype=np.float64))
+    temporal_gram = timecourses @ timecourses.T
+    frobenius = float(np.linalg.norm(temporal_gram))
+    return trace, frobenius
+
+
+def _normalize_symmetric_gram(
+    gram: np.ndarray,
+    inverse_scale: np.ndarray,
+    *,
+    block_size: int = CONNECTOME_ACCUMULATION_BLOCK_SIZE,
+) -> np.ndarray:
+    """Convert a symmetric Gram matrix to an exactly symmetric correlation matrix."""
+    for row_start in range(0, len(gram), block_size):
+        row_stop = min(row_start + block_size, len(gram))
+        for column_start in range(0, row_start + 1, block_size):
+            column_stop = min(column_start + block_size, len(gram))
+            block = gram[row_start:row_stop, column_start:column_stop]
+            block *= inverse_scale[row_start:row_stop, None]
+            block *= inverse_scale[None, column_start:column_stop]
+            if row_start == column_start:
+                upper = np.triu_indices(len(block), 1)
+                block[upper] = block.T[upper]
+            else:
+                gram[column_start:column_stop, row_start:row_stop] = block.T
+    np.fill_diagonal(gram, 0.0)
+    return gram
 
 
 def _split_half_connectome_summary(
@@ -739,9 +797,12 @@ def parcel_correlations(
         parcel_timecourses[:, quality <= 0] = 0.0
         if not np.all(np.isfinite(parcel_timecourses)):
             raise ValueError(f"Non-finite weighted parcel timecourses in {path}")
-        run_gram = parcel_timecourses.T @ parcel_timecourses
-        run_trace = float(np.trace(run_gram, dtype=np.float64))
-        run_frobenius = float(np.linalg.norm(run_gram))
+        LOG.info(
+            "Streaming pass 2 run %d/%d: accumulating parcel connectivity",
+            run_index,
+            total_runs,
+        )
+        run_trace, run_frobenius = _run_gram_statistics(parcel_timecourses)
         run_contributions.append(
             {
                 "run": run_index,
@@ -756,7 +817,7 @@ def parcel_correlations(
         )
         if total_runs > 1:
             half = 0 if half_frames[0] <= half_frames[1] else 1
-            half_grams[half] += run_gram
+            _accumulate_gram_rows(half_grams[half], parcel_timecourses)
             half_sums[half] += parcel_timecourses.sum(axis=0, dtype=np.float64)
             half_frames[half] += len(data)
             half_runs[half].append(run_index)
@@ -767,10 +828,9 @@ def parcel_correlations(
                 stop = min(start + split_block_size, len(data))
                 half = split_index % 2
                 block = parcel_timecourses[start:stop]
-                half_grams[half] += block.T @ block
+                _accumulate_gram_rows(half_grams[half], block)
                 half_sums[half] += block.sum(axis=0, dtype=np.float64)
                 half_frames[half] += len(block)
-        del run_gram
         _log_run_progress("Streaming pass 2 (connectivity and quality)", run_index, total_runs)
     split_half = _split_half_connectome_summary(
         *half_grams,
@@ -794,7 +854,9 @@ def parcel_correlations(
     )
     gram = half_grams[0]
     second_gram = half_grams[1]
-    gram += second_gram
+    for start in range(0, count, CONNECTOME_ACCUMULATION_BLOCK_SIZE):
+        stop = min(start + CONNECTOME_ACCUMULATION_BLOCK_SIZE, count)
+        gram[start:stop] += second_gram[start:stop]
     half_grams.clear()
     del second_gram
     if not np.all(np.isfinite(gram)):
@@ -805,12 +867,7 @@ def parcel_correlations(
         raise ValueError("No reliable parcel variance was observed")
     inverse_scale = np.zeros(count, dtype=np.float32)
     inverse_scale[valid_diagonal] = 1.0 / np.sqrt(diagonal[valid_diagonal])
-    correlations = gram
-    for start in range(0, count, 512):
-        stop = min(start + 512, count)
-        correlations[start:stop] *= inverse_scale[start:stop, None]
-        correlations[start:stop] *= inverse_scale[None, :]
-    np.fill_diagonal(correlations, 0.0)
+    correlations = _normalize_symmetric_gram(gram, inverse_scale)
     connectome = _connectome_summary(
         correlations,
         valid_diagonal,

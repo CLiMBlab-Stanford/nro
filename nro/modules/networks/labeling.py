@@ -144,7 +144,9 @@ def project_references_to_cifti(
             raise RuntimeError(
                 "nitransforms is required to project network-labeling atlases to native space"
             ) from error
-        transform = manip.load(str(mni_to_t1_transform))
+        # ANTs composite HDF5 and X5 are different formats despite sharing the
+        # same container type. Let nitransforms dispatch from the filename.
+        transform = manip.load(str(mni_to_t1_transform), fmt=None)
 
     projected: dict[str, np.ndarray] = {}
     for atlas in REFERENCE_ATLASES:

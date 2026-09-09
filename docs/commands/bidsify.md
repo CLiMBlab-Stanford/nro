@@ -23,7 +23,9 @@ on the workers' PATH, or configure an absolute command in the ingestion profile.
 The default is `bids-validator`; this external program is not installed by the
 Python extra. Worker nodes need network access to Flywheel and shared staging.
 
-Configure credentials outside the repository and command arguments:
+Each site defines its Flywheel servers and remote project scopes in the
+definitions store. Configure credentials outside the repository and command
+arguments. For example, the CLIMBLAB definitions store contains:
 
 | Server | Host | Remote project scope | Credential environment variable |
 | --- | --- | --- | --- |
@@ -41,8 +43,8 @@ scripts. Use the cluster's approved credential-management procedure.
 ## Select, review, and publish
 
 ```bash
-nro bidsify --server cni -P nptl
-nro status -P nptl
+nro bidsify --server mysite --flywheel-project group/study -P example
+nro status -P example
 nro bidsify --request REQUEST_ID
 ```
 
@@ -276,7 +278,7 @@ an exam identifier. The proposed destination appears before the user
 confirms the request.
 
 Configure rules for other server naming conventions explicitly, then run
-`nro definitions validate`. New stores supply no naming assumptions. The lab's
+`nro definitions validate`. New stores supply no naming assumptions. CLIMBLAB's
 CNI rules do not apply to Lucas. Publication always uses a subject/session
 hierarchy.
 

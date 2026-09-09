@@ -1,7 +1,7 @@
 # Definitions stores
 
 nro reads scientific definitions from a directory outside its installation.
-The lab owns this directory and can track it in a separate Git repository.
+The site owns this directory and can track it in a separate Git repository.
 Code upgrades do not replace its contents.
 
 `nro paths show` displays the selected `definitions` path. Its default is

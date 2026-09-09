@@ -3,8 +3,8 @@
 `nro` processes anatomical and functional MRI from BIDS datasets. It produces
 preprocessed images, cleaned time courses, dynamic-connectivity scenes, small
 brain parcels, and individualized functional networks. Users request results;
-a lab-wide orchestration layer finds their dependencies and distributes ready
-work across a shared Slurm worker pool.
+the orchestration layer finds their dependencies and distributes ready work
+across a site-wide Slurm worker pool.
 
 The design separates scientific computation from scheduling. Modules declare
 their complete steps before execution; a common runner handles freshness,
@@ -17,64 +17,61 @@ configured modules are organized into _workflows_.
 
 The main processing graph contains these modules:
 
-1. `anat` prepares anatomical images.
-2. `func` prepares each functional run.
-3. `clean` removes unwanted signal from functional data.
-4. `dynconn` packages cleaned vertex- or voxel-level signals for interactive
-   dynamic-connectivity viewing.
-5. `microparcellation` divides the brain into small regions and measures their
-   connectivity.
-6. `networks` groups those regions into individualized functional networks.
+- `anat` prepares anatomical images.
+- `func` prepares each functional run.
+- `clean` removes unwanted signal from functional data.
+- `dynconn` packages cleaned vertex- or voxel-level signals for interactive
+  dynamic-connectivity viewing.
+- `microparcellation` divides the brain into small regions and measures their
+  connectivity.
+- `networks` groups those regions into individualized functional networks.
+- `firstlevels` estimates task effects from `func` outputs. Registered task
+  models specify run, session, and subject contrasts; volume and surface
+  results include effect, variance, t, and degrees-of-freedom maps.
 
-A separate `firstlevels` branch estimates task effects from `func` outputs.
-Registered task models specify run, session, and subject contrasts; volume and
-surface results include effect, variance, t, and degrees-of-freedom maps.
+The arrows show dependencies:
+
+```text
+[anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn]
+                    │              └──► [microparcellation] ──► [networks]
+                    └──► [firstlevels]
+
+[anat] ── "direct anatomical inputs" ──► {dynconn, networks, firstlevels}
+```
 
 This is still an early project. It intentionally supports a small, current set
 of workflows instead of preserving old commands and formats.
 
 ## Installation
 
-From a Linux checkout, run:
+Choose the guide for your site:
 
-```bash
-./install
-```
+- [New installation quickstart](QUICKSTART.md) for outside users configuring
+  `nro`, its storage, and its processing dependencies.
+- [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md) for lab members connecting to
+  the existing internal installation.
 
-First setup asks whether this is a personal or shared installation and walks
-through the default paths. It installs a locked Python environment in editable
-mode, reuses or obtains processing resources, and creates a user command
-launcher. The bootstrap needs Python 3.11 or newer with `venv` support.
-Provide an existing FreeSurfer license when prompted. Some cluster hosts need
-an administrator to install or enable the container runtime.
+From a Linux checkout, run `./install`. First setup creates an editable,
+locked Python environment and asks where data, work files, private state, and
+processing resources belong. It can use Slurm or run workers locally.
 
-For an existing shared installation, `./install` only connects your account to
-the shared environment. Maintainers use `./install --maintain` after stopping
-the worker pool. Source edits remain immediately visible to new commands.
-
-Inspect or update paths with `nro paths`; check dependencies with `nro doctor`.
-The lab paths remain the defaults. See [installation details](docs/installation.md)
-for unattended setup, permissions, and dependency acquisition. OSLOM is included
-by default; use `--without-oslom` to omit it.
-
-The launcher is installed in `~/.local/bin`. Add that **directory**, not the
-launcher file, to PATH:
+The user launcher is installed in `~/.local/bin`; no environment activation is
+needed. The bootstrap requires Python 3.11 or newer with `venv` support and an
+existing FreeSurfer license. Some managed hosts need an administrator to enable
+the container runtime. See [installation details](docs/installation.md) for
+shared deployments, unattended setup, permissions, and dependency acquisition.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 nro doctor
 ```
 
-Activation is unnecessary for `nro` commands. The environment lives in
-`.nro-env`; explicit `python -m ...` commands must use that interpreter or an
-activated environment containing nro.
-
 ## Basic usage
 
 Run the complete workflow for one participant:
 
 ```bash
-nro run -p t20 -P nptl
+nro run -p 01 -P example
 ```
 
 With no `--module`, requests reach every workflow endpoint: currently `dynconn`,
@@ -84,7 +81,7 @@ matching tasks. Shared upstream work runs once.
 Run through a particular module, or select several participants:
 
 ```bash
-nro run -p t12 t20 -P nptl -m microparcellation
+nro run -p 01 02 -P example -m microparcellation
 ```
 
 `clean` and downstream modules default to `fsnative` at 2 mm smoothing.
@@ -92,7 +89,7 @@ Request only the space/smoothing combinations you need; multiple values
 produce their cross-product:
 
 ```bash
-nro run -p t20 -P nptl -m networks \
+nro run -p 01 -P example -m networks \
   --space fsnative T1w --smoothing 0 2
 ```
 
@@ -103,11 +100,11 @@ Request task-effect maps separately:
 
 ```bash
 nro models list
-nro run -p t20 -P nptl -m firstlevels -s fsnative -S 2
+nro run -p 01 -P example -m firstlevels -s fsnative -S 2
 ```
 
-The lab's `langlocSN/main` model belongs to model set `main`. New definitions
-stores start without task models; create models for your experiments. See
+New definitions stores start without task models. Add reviewed models to set
+`main` when they should run by default. See
 [first-level models](docs/modules/firstlevels.md) for model registration,
 supported BIDS Stats Models features, and inference limitations.
 
@@ -125,16 +122,16 @@ and shared-store safeguards.
 Check progress and inspect a failed task:
 
 ```bash
-nro status -P nptl
-nro log -p t20 -P nptl -m func -i
+nro status -P example
+nro log -p 01 -P example -m func -i
 ```
 
 Open the Workbench scene stored with a completed subject-level derivative:
 
 ```bash
-nro wb_view microparcellation -p t20 -P nptl
-nro wb_view dynconn -p t20 -P nptl -s fsnative -S 2
-nro wb_view networks -p t20 -P nptl -s fsnative -S 2
+nro wb_view microparcellation -p 01 -P example
+nro wb_view dynconn -p 01 -P example -s fsnative -S 2
+nro wb_view networks -p 01 -P example -s fsnative -S 2
 ```
 
 Microparcellation and network artifacts are grouped first by space and
@@ -144,9 +141,9 @@ scientific outputs and a relocatable Workbench scene.
 Common controls are:
 
 ```bash
-nro stop -p t20 -P nptl
+nro stop -p 01 -P example
 nro set concurrency=100
-nro purge -p t20 -P nptl
+nro purge -p 01 -P example
 ```
 
 `purge` previews and confirms destructive cleanup. A bare purge selects all
@@ -156,17 +153,17 @@ eligible logs.
 The direct module form remains equivalent, for example:
 
 ```bash
-python -m nro.bin.run -p t20 -P nptl
+.nro-env/bin/python -m nro.bin.run -p 01 -P example
 ```
 
 Registration quality-control images can be generated separately:
 
 ```bash
-nro qc registration t20 -p nptl
+nro qc registration 01 -p example
 ```
 
 The equivalent engine entry point is
-`python -m nro.qc registration t20 -p nptl`.
+`.nro-env/bin/python -m nro.qc registration 01 -p example`.
 
 Workflow settings are selected with `-w`; the default is `main`. Configuration
 files live in a separate [definitions store](docs/definitions.md). Use
@@ -179,8 +176,8 @@ Sphinx site compatible with Read the Docs.
 
 | Topic | Guide |
 | --- | --- |
-| First use | [Quickstart](docs/quickstart.md), [installation](docs/installation.md) |
-| Work structure | [Design](docs/design.md), [definitions](docs/concepts.md), [instance lifecycle](docs/instance-lifecycle.md) |
+| First use | [New installation quickstart](QUICKSTART.md), [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md), [installation](docs/installation.md) |
+| Work structure | [Design](docs/design.md), [concepts](docs/concepts.md), [instance lifecycle](docs/instance-lifecycle.md) |
 | Scientific processing | [Module guides](docs/modules/index.md), [denoising](docs/methods/denoising.md), [software and methods sources](docs/methods/software.md) |
 | Configuration | [Workflows and parameters](docs/configuration.md) |
 | Command-line interface | [Command reference](docs/commands/index.md) |

@@ -23,7 +23,6 @@ documentation they publish.
 
 ## Agent registration
 
-
 An AI agent making a material contribution must read this manifest before
 changing the repository. If its provider, tool, and exposed model identifier
 are not already represented above, it must add a row. If they are represented,

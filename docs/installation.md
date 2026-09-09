@@ -60,7 +60,7 @@ paths when selecting an interpreter.
 The managed launcher must be the `nro` command selected by PATH. A shell alias
 or an activated environment's own `nro` command can bypass it; use `type -a nro`
 to inspect shell resolution. Launcher checkout bindings live in
-`.nro-launchers.json` beside the user launcher, not in the lab registry.
+`.nro-launchers.json` beside the user launcher, not in the shared registry.
 
 Branch processing requires [an approved, activated main scheduler](commands/releases.md).
 The normal commands then use branch-owned outputs, compatible ancestor inputs,
@@ -99,7 +99,7 @@ The shared checkout, environment, and site file must be readable and traversable
 by users. Restrict write access to maintainers using filesystem ownership or
 ACLs. Shared setup creates new files with a readable umask; it does not rewrite
 permissions on existing trees. BIDS derivatives, WORK, and the registry need
-the lab's usual shared write permissions independently of the software tree.
+the site's shared write permissions independently of the software tree.
 
 The shared checkout supplies the approved scheduler implementation. New work
 captures its selected source before submission; editing the checkout does not
@@ -171,7 +171,7 @@ These are suggestions, not directories created by the editor. Previously
 configured paths and environment overrides are retained even if unavailable.
 Interactive and noninteractive setup use the same resolved defaults.
 
-The `definitions` path selects a separate, lab-owned
+The `definitions` path selects a separate, site-owned
 [definitions store](definitions.md). It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic
@@ -204,7 +204,7 @@ The site file accepts `definitions`, `bids`, `work`, `registry`, `images`, `temp
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
 `synthstrip`, `synbold`, and `mni_template` can override individual resources
 otherwise derived from their parent directories. `binds` is a TOML list.
-Generic defaults omit the lab's `/juice6` bind.
+Generic defaults omit CLIMBLAB's `/juice6` bind.
 
 Personal installations also honor `NRO_BIDS_PATH`, `NRO_WORK_PATH`,
 `NRO_WB_COMMAND`, `TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Shared installations
@@ -213,9 +213,10 @@ source. The engine supplies the FreeSurfer license and thread settings to
 processing commands.
 
 Scientific YAML uses explicit `site:KEY` resource references. Resolution with
-the unmodified lab defaults preserves existing workflow fingerprints. Changing
-a resolved resource path can still change a configuration fingerprint; this
-release does not infer scientific equivalence after resource relocation.
+the unmodified CLIMBLAB defaults preserves existing workflow fingerprints.
+Changing a resolved resource path can still change a configuration
+fingerprint; this release does not infer scientific equivalence after resource
+relocation.
 
 ## Dependencies and downloads
 

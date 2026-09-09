@@ -1,83 +1,128 @@
-# Quickstart
+# Quickstart for a new installation
 
-## Install or join a shared installation
+This guide is for people setting up `nro` at a new site or on a personal Linux
+system. CLIMBLAB members should use the
+[internal installation quickstart](climblab-quickstart.md).
 
-Use Linux, Python 3.11 or newer with `venv`, access to your BIDS projects,
-and a FreeSurfer license. From the checkout:
+## Prepare the host
+
+`nro` needs Linux on x86-64, Git, and Python 3.11 or newer with `venv` and pip
+support. Acquire a
+[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html)
+before setup. The default OSLOM installation also needs a C++ compiler.
+
+Cluster installations need Slurm commands on `PATH`. Their data, work,
+registry, installation, and processing resources must be visible at the same
+paths on login and compute nodes. A local installation can omit Slurm. The host
+must provide Singularity or Apptainer or support the installer's unprivileged
+Apptainer setup.
+
+## Install
+
+Clone the repository and enter the checkout:
 
 ```bash
-./install
+git clone https://github.com/CLiMBlab-Stanford/nro.git
+cd nro
 ```
 
-On first setup, choose personal or shared mode and review the paths. OSLOM,
-the container images, Workbench, templates, and Python dependencies are obtained
-or reused. A host administrator may need to provide a container runtime or C++
-compiler. Subsequent users of an initialized shared checkout run the same
-command to create their launcher without changing shared dependencies.
+Create a personal installation on a Slurm system:
 
-Add the **directory** containing that launcher to PATH:
+```bash
+./install --mode personal
+```
+
+Use `--local` on a machine without Slurm:
+
+```bash
+./install --mode personal --local
+```
+
+Outside CLIMBLAB, the path editor proposes directories under `~/nro`. Review
+every setting. In particular:
+
+- `bids` contains project directories with source BIDS data.
+- `work` contains temporary and resumable processing files.
+- `registry` contains private scheduler state, logs, and source snapshots.
+- `definitions` contains workflows, configurations, models, and event files.
+- `images`, `templates`, `workbench`, and `oslom` contain processing resources.
+- `license` must name an existing FreeSurfer license.
+- `runtime` selects Singularity or Apptainer.
+- `partition` and `account` must match the Slurm site. Enter `-` for no account.
+
+The Slurm fields are unused with `--local`. Review the linked QuNex terms before
+approving downloads. Setup creates an editable `.nro-env`, obtains missing
+resources, checks them, and installs `~/.local/bin/nro`. Repeat the same command
+after correcting any reported failure.
+
+Read [installation](installation.md) before creating a multiuser shared
+installation, using offline setup, or changing resource acquisition.
+
+## Check the installation
+
+For Bash, add the launcher directory to `~/.bashrc`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-nro doctor
 ```
 
-Put the export in your shell startup file to keep it. The launcher uses the
-checkout's `.nro-env/bin/python`; activation is unnecessary. Installation is
-editable: new commands read the checkout, not a frozen copy. Do not edit shared
-code or update dependencies beneath running workers. See [installation](installation.md)
-for maintenance, licenses, offline use, and path configuration.
-
-## Check paths and request work
+Then run:
 
 ```bash
+source ~/.bashrc
+hash -r
+type -a nro
+nro doctor                 # Slurm installation
+nro doctor --local         # installation without Slurm
 nro paths show
-nro run -P nptl -p t20 -m microparcellation --no-submit
-nro run -P nptl -p t20 -m microparcellation
 ```
 
-Replace project and participant IDs with your data. `--no-submit` registers and
-assesses demand but does not launch workers; it is not a read-only preview.
-Omit `-m` to request every workflow endpoint, currently `networks` and
-`firstlevels`. Firstlevels uses model set `main` for matching tasks. Missing
-projects or participants mean all matches, so review selectors before running
-a bare command.
+No environment activation is needed. Run `nro doctor --deep` inside a compute
+allocation when compute nodes have different mounts or container policies. Use
+`nro doctor --deep --local` when Slurm is not part of the installation.
 
-Defaults are workflow `main`, space `fsnative`, and smoothing 2 mm FWHM.
-Select additional independent combinations on demand:
+## Add data and request work
+
+Place each BIDS dataset in its own project directory beneath the configured
+`bids` root:
+
+```text
+BIDS_ROOT/
+    example/
+        dataset_description.json
+        sub-01/
+```
+
+Validate the source dataset through your site's BIDS procedure. Then request a
+small, explicitly selected target:
 
 ```bash
-nro run -P nptl -p t20 -s fsnative T1w -S 0 2
+nro run -P example -p 01 -m anat
 ```
 
-This requests four space/smoothing combinations from `clean` onward. The
-`anat` and `func` prerequisites are shared. Run selection matches BIDS entities:
+Use a local worker when the installation does not use Slurm:
 
 ```bash
-nro run -P nptl -p t20 -r task=rest,langlocSN run=01,02
+nro run -P example -p 01 -m anat --local
 ```
 
-Values within an entity are alternatives; different entities must all match.
-
-## Inspect, view, and stop
+Inspect progress and logs:
 
 ```bash
-nro status -P nptl
-nro status -P nptl --verify
-nro log -P nptl -p t20 -m func -i
-nro wb_view microparcellation -P nptl -p t20
-nro stop -P nptl -p t20
+nro status -P example -p 01
+nro log -P example -p 01 -m anat -i
 ```
 
-Default status predicts freshness using inexpensive checks. `--cached` reports
-saved state; `--verify` performs a full reassessment and updates the registry.
-Stopping demand does not delete completed results. `nro stop --workers` stops
-the current user's worker pool without cancelling demand.
+Requesting a downstream endpoint automatically adds its dependencies. For
+example:
 
-`nro purge` deletes results and logs after a preview and confirmation. A bare
-purge selects every nro-controlled derivative across projects. Read its
-[reference](commands/maintenance.md) before using it.
+```bash
+nro run -P example -p 01 -m microparcellation
+```
 
-The [module guides](modules/index.md) describe where to find outputs. All
-commands also support `python -m nro.bin.COMMAND` when using the installation's
-Python interpreter. Plain `python` may select a different environment.
+Add `--local` to each request when Slurm is unavailable. Omitted selectors
+usually mean all matches, so avoid bare `nro run` and `nro purge` commands until
+you understand their scope.
+
+Continue with the [command reference](commands/index.md),
+[module guides](modules/index.md), and [configuration guide](configuration.md).

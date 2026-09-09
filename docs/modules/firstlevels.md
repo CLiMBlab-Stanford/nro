@@ -15,13 +15,13 @@ so AROMA-denoised inputs are not supported.
 ## Requesting fits
 
 Requests without a model selector use model set `main`. The following example
-assumes the lab has registered a `langlocSN/main` model in that set. New
+assumes the site has registered a `mytask/main` model in that set. New
 definitions stores start without models:
 
 ```bash
 nro models list
-nro models show langlocSN/main
-nro run -P nptl -p t20 -m firstlevels -s fsnative -S 2
+nro models show mytask/main
+nro run -P example -p 01 -m firstlevels -s fsnative -S 2
 ```
 
 A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including GLMs for

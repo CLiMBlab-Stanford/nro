@@ -156,7 +156,7 @@ module-local planning functions.
 ### Registry
 
 The registry has two coordinated parts. The shared scheduler registry stores
-requests, attempts, workers, Slurm submissions, and the lab-wide concurrency
+requests, attempts, workers, Slurm submissions, and the site-wide concurrency
 limit. Each development branch has a scientific registry that stores its
 discovered source tree, compiled workflows, instances, dependencies, and
 artifact observations. This separation lets the scheduler coordinate all
@@ -177,7 +177,7 @@ Each owned derivative configuration root contains `.nro/lineage.json` and one
 receipt under `.nro/instances/` for every instance it owns. These records keep
 the configuration lineage, instance identity, dependencies, and artifact
 contract with the derivative. Registry repair reads them before resolving the
-workflows in the current configuration store. Removing or renaming a workflow
+workflows in the current definitions store. Removing or renaming a workflow
 therefore does not make its existing derivatives invisible.
 
 Ownership does not imply that an instance can be recomputed. A current workflow

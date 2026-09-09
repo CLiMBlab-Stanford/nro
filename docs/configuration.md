@@ -4,7 +4,7 @@ Scientific defaults live in `DEFINITIONS/configs`, grouped by derivative class.
 `DEFINITIONS` is the external root selected through `nro paths`; see
 [definitions stores](definitions.md). A workflow selects configuration IDs;
 `main` is the default workflow. Module pages show the starter configurations
-and explain which steps consume their keys. A lab's active values may differ.
+and explain which steps consume their keys. A site's active values may differ.
 
 Use `nro create config CLASS/ID`, `nro create workflow ID`, or the corresponding
 `nro edit` commands to review and validate changes before saving. See
@@ -22,7 +22,7 @@ The `clustering` and `oslom` workflows change the networks strategy while
 sharing upstream lineages. Named configurations are merged over their class's
 `main` configuration. Unknown override keys are rejected rather than silently
 creating misspelled settings. Config IDs are validated filename identifiers;
-use the configuration store instead of assembling paths in scientific code.
+use the definitions store instead of assembling paths in scientific code.
 
 ## Validation and compilation
 

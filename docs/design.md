@@ -9,7 +9,7 @@ or a second system of dependency tracking.
 
 The planner builds a graph of **instances**: one participant's anatomy, one
 functional run, or one subject-level connectivity result. Workers claim ready
-instances from the lab-wide registry. Within each instance, a shared `Runner`
+instances from the site-wide registry. Within each instance, a shared `Runner`
 owns a graph of `Step` declarations and executes them in dependency order.
 
 ```text

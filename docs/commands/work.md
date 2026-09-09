@@ -70,7 +70,7 @@ scheduler database or recompute derivatives.
 Shared scheduler replacement is a separate
 [main-maintainer operation](releases.md#shared-scheduler-repair).
 
-Before central activation, `--repair` is lab-wide even when selectors name one project. It asks before
+Before central activation, `--repair` is site-wide even when selectors name one project. It asks before
 stopping active workers, rebuilds private orchestration state, discovers BIDS
 sources and existing owned derivatives, and creates no new demand. It does
 not rebuild scientific outputs merely to repair registry state. Historical
@@ -114,6 +114,10 @@ field gives the specific cause; `Stale` does not guarantee all files still exist
 All three reporting modes use the same status labels. `Queued` indicates pending
 demanded work, while `Blocked` indicates work waiting on upstream errors.
 `Running` and `Error` describe current execution or an unresolved failed attempt.
+`Stopping` means cancellation is awaiting worker confirmation. `Stopped` means
+the latest attempt ended because a user cancelled its demand; it is not an
+execution failure. A new matching `nro run` request returns that work to the
+queue.
 `Unavailable` can describe historical lineages no current workflow can request.
 Inspect the reason field and upstream/downstream error summaries rather than
 inferring filesystem state from submission state alone.
@@ -132,7 +136,7 @@ demand can keep shared work alive. `--only` limits cancellation to the selected
 derivative. `-f`/`--force` cancels matching demand from all users and stops the
 shared attempt; it does not delete outputs or history.
 
-`-W`/`--workers` shuts down the current user's lab-wide worker pool without
+`-W`/`--workers` shuts down the current user's site-wide worker pool without
 cancelling instance demand. Worker shutdown and demand cancellation are distinct
 operations. Coordinate with other users before installation maintenance.
 

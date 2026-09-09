@@ -272,17 +272,6 @@ def _admit_resolved(
                         instance_id,
                     ),
                 )
-            pinned = json.loads(
-                db.execute(
-                    "SELECT command_json FROM instances WHERE id=?", (instance_id,)
-                ).fetchone()[0]
-            )
-            if not science_changed and pinned != list(
-                source.command((str(python), *item.spec.command[1:]), site=site)
-            ):
-                # An equivalent request retains the active recipe and its
-                # provenance together.
-                continue
         sources = []
         for key in dict.fromkeys(item.spec.dependencies):
             upstream = ids[keys[key]]

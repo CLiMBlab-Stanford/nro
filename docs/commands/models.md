@@ -1,6 +1,6 @@
 # Task model registration
 
-`nro models` manages YAML task models in the configuration store. It does not
+`nro models` manages YAML task models in the selected definitions store. It does not
 open the registry, request fits, or modify source BIDS data.
 
 Use [create and edit](authoring.md) for event-based initialization and reviewed
@@ -28,7 +28,7 @@ execution omits session nodes for data without sessions and saves run-specific
 documents with the observed nuisance columns and resolved event HRFs. Variable
 availability and numerical estimability are checked when the data are available.
 
-The user must have write permission to the configuration store. Coordinate
+The user must have write permission to the definitions store. Coordinate
 model changes with maintainers of a shared installation. Registration alone
 does not request work. Select models with `--task`, `--model`, or `--model-set`;
 firstlevels requests default to set `main`. See [task models](../task-models.md)

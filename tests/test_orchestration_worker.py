@@ -361,12 +361,13 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
     registry.register_worker("first", resource_class="large")
     first = registry.claim_ready_instance("first", ("large",))
     assert first is not None
-    with registry.connection(write=True) as db:
-        db.execute(
-            "UPDATE attempts SET state='cancel_requested', error_type='UserCancelled' WHERE id=?",
-            (first.attempt_id,),
-        )
+    cancellation = registry.request_cancellation(modules=("networks",))
+    assert cancellation["attempts"] == 1
+    assert registry.instance_status_snapshot()[0]["status"] == "Stopping"
     registry.finish_attempt(first.attempt_id, state="cancelled")
+    stopped = registry.instance_status_snapshot()[0]
+    assert stopped["status"] == "Stopped"
+    assert stopped["error_type"] == "UserCancelled"
 
     registry.register_worker("before-new-run", resource_class="large")
     assert registry.claim_ready_instance("before-new-run", ("large",)) is None
@@ -380,6 +381,7 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
         concurrency=1,
         partition=None,
     )
+    assert registry.instance_status_snapshot()[0]["status"] == "Queued"
     registry.register_worker("after-new-run", resource_class="large")
     assert registry.claim_ready_instance("after-new-run", ("large",)) is not None
 

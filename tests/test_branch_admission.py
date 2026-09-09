@@ -505,12 +505,21 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
     assert reconcile_branch_requests(registry) == 0
 
 
-def test_equivalent_demand_retains_active_recipe_provenance(setup, tmp_path):
+def test_equivalent_demand_updates_next_recipe_without_rewriting_attempt(setup, tmp_path):
     registry, branches, site, prepare = setup
     checkout, _, _, plan, registered, source, _ = prepare("one")
+    worker = Worker(registry, resource_class="large", poll_interval=0.01)
+    registry.register_worker(worker.worker_id, resource_class="large")
+    attempt = registry.claim_ready_instance(worker.worker_id, ("small",))
+    assert attempt is not None
     with registry.connection() as db:
         previous = dict(db.execute("SELECT * FROM instance_execution").fetchone())
         command = db.execute("SELECT command_json FROM instances").fetchone()[0]
+        captured_attempt = dict(
+            db.execute(
+                "SELECT * FROM attempt_execution WHERE attempt_id=?", (attempt.attempt_id,)
+            ).fetchone()
+        )
     (checkout / "nro/__init__.py").write_text("RUNTIME_CHANGE = True\n")
     changed = SourceStore(tmp_path / "cache").capture(checkout)
     assert changed.digest != source.digest
@@ -528,8 +537,20 @@ def test_equivalent_demand_retains_active_recipe_provenance(setup, tmp_path):
         selectors={},
     )
     with registry.connection() as db:
-        assert dict(db.execute("SELECT * FROM instance_execution").fetchone()) == previous
-        assert db.execute("SELECT command_json FROM instances").fetchone()[0] == command
+        current = dict(db.execute("SELECT * FROM instance_execution").fetchone())
+        current_command = db.execute("SELECT command_json FROM instances").fetchone()[0]
+        assert current != previous
+        assert json.loads(current["provenance_json"])["source_digest"] == changed.digest
+        assert current_command != command
+        assert json.loads(current_command)[2] == changed.digest
+        assert (
+            dict(
+                db.execute(
+                    "SELECT * FROM attempt_execution WHERE attempt_id=?", (attempt.attempt_id,)
+                ).fetchone()
+            )
+            == captured_attempt
+        )
 
 
 def test_detached_service_rejects_late_science_without_opening_branch_code(setup, monkeypatch):

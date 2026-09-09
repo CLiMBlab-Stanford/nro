@@ -20,7 +20,7 @@ promotion
 cutover
 ```
 
-`nro definitions create [PATH]` initializes a lab-owned definitions store.
+`nro definitions create [PATH]` initializes a site-owned definitions store.
 `nro definitions validate [PATH]` checks every definition and reference without
 changing files. See [definitions stores](../definitions.md) for their layout,
 validation scope, and version-control policy.
@@ -35,7 +35,7 @@ engine. Their remaining options are command-specific.
 | `-p`, `--participant ID ...` | Participant labels, with or without `sub-`. |
 | `-P`, `--project PROJECT ...` | Projects beneath the configured BIDS root. |
 | `-m`, `--module MODULE ...` | One or more scientific modules. |
-| `-w`, `--workflow WORKFLOW ...` | Workflow IDs from the configuration store. |
+| `-w`, `--workflow WORKFLOW ...` | Workflow IDs from the definitions store. |
 | `-r`, `--run KEY=VALUE[,VALUE...] ...` | Joint BIDS run-entity matching. |
 | `-s`, `--space SPACE ...` | Target spaces from clean onward. |
 | `-S`, `--smoothing MM ...` | Nonnegative integer FWHM in mm. |

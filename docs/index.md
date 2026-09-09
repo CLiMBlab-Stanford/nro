@@ -6,16 +6,20 @@ and within-participant task-effect maps.
 Users request results; nro finds their dependencies, shares work between
 requests, and runs ready work through a reusable cluster worker pool.
 
-Start with the [quickstart](quickstart.md). The [design guide](design.md)
-explains how work and outputs are organized. The module guides describe
-processing, branch selection, output files, and configuration. The command
-reference covers the user interface; the API guide covers Python extension.
+Outside users should start with the [new-installation quickstart](quickstart.md).
+CLIMBLAB members should use the
+[internal installation quickstart](climblab-quickstart.md). The
+[design guide](design.md) explains how work and outputs are organized. The
+module guides describe processing, branch selection, output files, and
+configuration. The command reference covers the user interface; the API guide
+covers Python extension.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Using nro
 
 quickstart
+climblab-quickstart
 installation
 commands/index
 configuration
@@ -26,24 +30,24 @@ event-files
 
 ```{toctree}
 :maxdepth: 2
-:caption: Design and methods
+:caption: Processing and system model
 
 design
 concepts
-instance-lifecycle
+orchestration
 modules/index
 methods/denoising
 methods/estimation
 methods/firstlevels
 methods/software
-orchestration
-orchestration-design
 ```
 
 ```{toctree}
 :maxdepth: 2
 :caption: Development
 
+instance-lifecycle
+orchestration-design
 api
 development
 autoapi/nro/index
