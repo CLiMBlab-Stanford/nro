@@ -1,6 +1,7 @@
 """View and edit default site paths."""
 
 import argparse
+
 from nro.configuration.site import settings, site_file
 from nro.engine.site_setup import edit_settings
 

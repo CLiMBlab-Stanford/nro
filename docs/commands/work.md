@@ -8,10 +8,10 @@ Plan requested terminal instances, register upstream demand, assess outputs,
 and supply workers. Fresh intermediates can be skipped even when the instance
 needs execution. No upfront catalog of all space/smoothing combinations is needed.
 
-Omitting `--module` requests every workflow endpoint, currently `networks` and
-`firstlevels`, with shared dependencies registered once. Firstlevels selects
+Omitting `--module` requests every workflow endpoint, currently `dynconn`,
+`networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
 model set `main` unless a model or set is specified. Participants without a
-matching task model can still run the networks branch. Explicit `--module`
+matching task model can still run the connectivity branches. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
 
 Selecting an endpoint together with its dependencies creates no extra upstream
@@ -34,6 +34,13 @@ nro run -m firstlevels --task langlocSN --model-set main
 Model sets affect request selection, not artifact freshness. Existing demand
 is not cancelled when a model leaves a set. See [task models](../task-models.md).
 
+New requests capture source code and resolved site settings for execution.
+Editing the checkout after submission does not change that captured source;
+editing it during planning rejects the request so it can be retried. Source
+capture does not freeze Python environments or container images. See the
+[development limits](../development.md#branch-isolation-work) before maintaining
+dependencies or using a separate checkout with the shared pool.
+
 | Additional option | Behavior/default |
 | --- | --- |
 | `--concurrency N` | Shared limit, default 50. |
@@ -46,15 +53,39 @@ is not cancelled when a model leaves a set. See [task models](../task-models.md)
 | `--drain-minutes N` | Stop claiming work before allocation expiry, default 15. |
 | `--local` | Execute a worker locally, without submitting a Slurm allocation. |
 | `--no-submit` | Register/assess demand without launching workers. |
+| `--no-inherit` | In a development branch, compute matching work locally instead of reusing ancestor artifacts. |
 | `--json` | Structured planning result. |
-| `--repair` | Rebuild the whole private registry; see maintenance warning below. |
+| `--repair` | Rebuild this branch's scientific registry after central activation; see below. |
 
-`--repair` is lab-wide even when selectors name one project. It asks before
+Inheritance is enabled by default. `--no-inherit` affects only the new request;
+it does not delete ancestor outputs or change the registered branch tree. The
+option is unavailable before branch execution is activated.
+
+With an activated central scheduler, `--repair` covers the current branch across
+all projects. It restores scientific records from the admitted graph history,
+cancels that branch's demand, and asks before stopping its active attempts. Other
+branches and the shared worker pool are retained. The old scientific database is
+copied to `registry-before-repair.sqlite3`. This does not replace the shared
+scheduler database or recompute derivatives.
+Shared scheduler replacement is a separate
+[main-maintainer operation](releases.md#shared-scheduler-repair).
+
+Before central activation, `--repair` is lab-wide even when selectors name one project. It asks before
 stopping active workers, rebuilds private orchestration state, discovers BIDS
 sources and existing owned derivatives, and creates no new demand. It does
 not rebuild scientific outputs merely to repair registry state. Historical
 attempt/request information in the replaced registry is not retained as active
-state. Do not use repair as routine error recovery or in unattended scripts.
+state. Branch registrations, captured execution source and site settings, and
+ingestion records are retained. Do not use repair as routine error recovery or
+in unattended scripts.
+
+That pre-activation recovery starts from derivatives on disk. Ownership records restore their
+instances directly, including instances whose original workflow no longer exists.
+For unrecorded files in a current workflow's output directories, repair plans only
+the matching module, participant, run, model, space, and smoothing, plus required
+upstream instances. It does not plan unrelated source participants or unused
+combinations of spaces and smoothing levels. Source discovery still catalogs all
+projects and participants; it does not create demand.
 
 ## `nro status`
 
@@ -68,9 +99,21 @@ updates the registry, and reports the result. `--cached` and `--verify` are
 mutually exclusive. Use `--json` for structured output or `--no-pager` to bypass
 `less`. The pager uses colors and pinned headers when supported.
 
-`Success` describes fresh artifacts. `Stale` describes invalidated existing
-results; `Unsubmitted` describes work without an active submission. `Queued`
-indicates pending demanded work, while `Blocked` indicates upstream errors.
+After central activation, verification first recompiles registered selections
+using the invoking checkout's scientific code, without creating demand. Central
+code then verifies the resulting contracts and filesystem evidence. Default
+status previews processing-policy changes locally without publishing them.
+Historical lineages no longer represented by current workflows retain their
+registered contracts.
+
+`Success` describes fresh artifacts. For registered work without active demand
+or an active or unresolved failed attempt, `Missing` means required outputs or
+completion evidence are absent. `Stale` means the result needs updating, for
+example because its contract or an upstream dependency changed. The JSON `reason`
+field gives the specific cause; `Stale` does not guarantee all files still exist.
+All three reporting modes use the same status labels. `Queued` indicates pending
+demanded work, while `Blocked` indicates work waiting on upstream errors.
+`Running` and `Error` describe current execution or an unresolved failed attempt.
 `Unavailable` can describe historical lineages no current workflow can request.
 Inspect the reason field and upstream/downstream error summaries rather than
 inferring filesystem state from submission state alone.

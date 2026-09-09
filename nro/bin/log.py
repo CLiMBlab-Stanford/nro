@@ -9,11 +9,11 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from nro.engine.cli import matches_instance_selectors as matches_selectors
-from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.configuration.paths import BIDS_PATH
-from nro.orchestration.registry import Registry
+from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
+from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
 
 
@@ -36,9 +36,7 @@ def _matching_instance_ids(
             continue
         if modules and str(row["module"]) not in modules:
             continue
-        if workflows and not workflows.intersection(
-            str(row.get("workflow_ids") or "").split(",")
-        ):
+        if workflows and not workflows.intersection(str(row.get("workflow_ids") or "").split(",")):
             continue
         entities = json.loads(row["entities_json"])
         if selectors and not matches_selectors(entities, selectors):
@@ -73,12 +71,11 @@ def collect_log_paths(
         return _existing(
             Path(str(row["log_path"]))
             for row in rows
-            if row.get("log_path")
-            and (not instance_filtered or int(row["id"]) in instance_ids)
+            if row.get("log_path") and (not instance_filtered or int(row["id"]) in instance_ids)
         )
 
     if not instance_filtered:
-        return _existing(registry.existing_control_path().joinpath("workers").glob("slurm-*.log"))
+        return _existing(registry.paths.workers.glob("slurm-*.log"))
 
     placeholders = ",".join("?" for _ in instance_ids)
     job_ids: set[str] = set()
@@ -101,7 +98,9 @@ def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument(
-        "-i", "--instance-level", action="store_true",
+        "-i",
+        "--instance-level",
+        action="store_true",
         help="Browse current derivative-instance logs instead of Slurm worker logs",
     )
     return parser
@@ -124,6 +123,34 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
     projects = selected_projects(bids_root, selection.projects)
     if not projects:
         raise SystemExit("No nro projects found in the central registry")
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    branch_execution = (
+        installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    )
+    if branch_execution:
+        from nro.orchestration.scheduler_client import logs
+
+        if bids_root != Path(values["bids"]).resolve():
+            raise SystemExit("Branch logs use the shared site BIDS root")
+        result = logs(
+            Path(values["registry"]),
+            bids_root,
+            checkout=CHECKOUT,
+            selection=dict(
+                projects=projects,
+                participants=selection.participants,
+                modules=selection.modules,
+                workflows=selection.workflows,
+                selectors=selectors,
+            ),
+            instance_level=args.instance_level,
+        )
+        _page_logs([Path(path) for path in result["paths"]], instance_level=args.instance_level)
+        return
     registry = Registry.for_project(projects[0], bids_root=bids_root)
     if not registry.existing_database_path().is_file():
         raise SystemExit("No central nro registry found")
@@ -148,9 +175,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         instance_level=args.instance_level,
         instance_filtered=instance_filtered,
     )
+    _page_logs(paths, instance_level=args.instance_level)
+
+
+def _page_logs(paths: Iterable[Path], *, instance_level: bool) -> None:
     paths = _existing(paths)
     if not paths:
-        level = "instance" if args.instance_level else "worker"
+        level = "instance" if instance_level else "worker"
         print(f"No matching {level}-level logs.")
         return
     less = shutil.which("less")

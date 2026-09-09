@@ -28,6 +28,30 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.publish") -> Non
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
     args = build_parser(prog=prog).parse_args(argv)
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    if (
+        installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    ):
+        from nro.orchestration.scheduler_client import maintenance
+
+        if Path(args.bids_root).resolve() != Path(values["bids"]).resolve():
+            raise SystemExit("Branch publication uses the shared site BIDS root")
+        result = maintenance(
+            Path(values["registry"]),
+            Path(values["bids"]),
+            checkout=CHECKOUT,
+            operation="publish",
+            project=args.project,
+            request=args.request,
+            destination=str(Path(args.destination).absolute()),
+            validate=not args.no_validate,
+        )
+        print(f"Published immutable derivative snapshot: {result['destination']}")
+        return
     registry = Registry.for_project(args.project, bids_root=args.bids_root)
     destination = publish(
         registry,

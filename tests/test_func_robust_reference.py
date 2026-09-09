@@ -9,8 +9,8 @@ from nro.configuration.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
-from nro.func import module as func_module
-from nro.func.confounds import _nonsteady_spikes
+from nro.modules.func import steps as func_steps
+from nro.modules.func.confounds import _nonsteady_spikes
 
 
 def _reference_detection(
@@ -54,7 +54,7 @@ def test_bulk_nonsteady_detection_matches_reference_loop(tmp_path: Path) -> None
     parameters = {"max_vols": 20, "rel_thresh": 0.05, "stable_run": 3}
 
     reference_signal, reference_dropped = _reference_detection(image_path, **parameters)
-    bulk = func_module._detect_initial_nonsteady_volumes(image_path, **parameters)
+    bulk = func_steps._detect_initial_nonsteady_volumes(image_path, **parameters)
 
     np.testing.assert_array_equal(
         np.asarray(bulk["PerVolumeNonzeroMedianSignal"]),

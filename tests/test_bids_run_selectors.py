@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from nro.engine.bids import (
+    acquisition_order_key,
+    acquisition_time_seconds,
     discover_raw_runs,
     matches_selectors,
     minimal_selectors,
@@ -26,9 +28,7 @@ def test_dir_entity_disambiguates_hcp_style_runs(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="ambiguous"):
         resolve_run(runs, parse_selectors(("task=rest", "run=1")))
-    selected = resolve_run(
-        runs, parse_selectors(("task=rest", "run=1", "dir=RL"))
-    )
+    selected = resolve_run(runs, parse_selectors(("task=rest", "run=1", "dir=RL")))
 
     assert selected.stem == "sub-01_task-rest_run-1_dir-RL"
 
@@ -69,3 +69,25 @@ def test_repeated_run_entities_merge_alternatives() -> None:
     assert parse_selectors(("task=rest", "task=language,spatial")) == {
         "task": ("rest", "language", "spatial")
     }
+
+
+def test_acquisition_time_accepts_fractional_seconds() -> None:
+    assert acquisition_time_seconds("01:02:03.25") == 3723.25
+    with pytest.raises(ValueError, match="Unrecognized AcquisitionTime"):
+        acquisition_time_seconds("not-a-time")
+
+
+def test_acquisition_datetime_precedes_time_of_day(tmp_path: Path) -> None:
+    path = tmp_path / "image.nii.gz"
+    path.touch()
+
+    kind, value = acquisition_order_key(
+        {
+            "AcquisitionDateTime": "2026-09-08T10:30:00",
+            "AcquisitionTime": "09:00:00",
+        },
+        path,
+    )
+
+    assert kind == "acqdt"
+    assert value > 0

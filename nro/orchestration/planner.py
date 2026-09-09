@@ -16,8 +16,9 @@ from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
     SubjectPlanningContext,
 )
-from nro.orchestration.registry import RegisteredWorkflow, Registry
+from nro.orchestration.registry import Registry
 from nro.orchestration.selection import discover_bids_participants
+from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,6 @@ class RequestPlan:
     """One project/workflow/terminal-module request ready for registration."""
 
     project: str
-    registry: Registry
     workflow_id: str
     registered: RegisteredWorkflow
     module: str
@@ -41,11 +41,7 @@ def _minimal_requests(requests: Sequence[RequestPlan]) -> tuple[RequestPlan, ...
     may consume only some runs or participants. Remaining requests retain only
     their terminal instances and the dependencies needed to produce them.
     """
-    instances = {
-        instance.key: instance
-        for request in requests
-        for instance in request.instances
-    }
+    instances = {instance.key: instance for request in requests for instance in request.instances}
 
     def closure(keys: Sequence[str]) -> set[str]:
         required: set[str] = set()
@@ -58,11 +54,7 @@ def _minimal_requests(requests: Sequence[RequestPlan]) -> tuple[RequestPlan, ...
         return required
 
     reachable = closure([key for request in requests for key in request.terminal_keys])
-    covered = {
-        dependency
-        for key in reachable
-        for dependency in instances[key].dependencies
-    }
+    covered = {dependency for key in reachable for dependency in instances[key].dependencies}
     result = []
     for request in requests:
         terminal_keys = tuple(key for key in request.terminal_keys if key not in covered)
@@ -70,12 +62,16 @@ def _minimal_requests(requests: Sequence[RequestPlan]) -> tuple[RequestPlan, ...
             continue
         required = closure(terminal_keys)
         participants = {instances[key].participant for key in terminal_keys}
-        result.append(replace(
-            request,
-            terminal_keys=terminal_keys,
-            instances=tuple(item for item in request.instances if item.key in required),
-            participants=tuple(value for value in request.participants if value in participants),
-        ))
+        result.append(
+            replace(
+                request,
+                terminal_keys=terminal_keys,
+                instances=tuple(item for item in request.instances if item.key in required),
+                participants=tuple(
+                    value for value in request.participants if value in participants
+                ),
+            )
+        )
     return tuple(result)
 
 
@@ -98,6 +94,8 @@ class PlanningResult:
     matched_participants: Mapping[str, tuple[str, ...]]
     present_participants: frozenset[str]
     unavailable: tuple[UnavailableSelection, ...]
+    source_digest: str
+    site_settings: Mapping[str, Any]
 
     @property
     def projects(self) -> tuple[str, ...]:
@@ -119,8 +117,8 @@ class PlanningResult:
 class Planner:
     """Construct complete instance DAGs using the closed module catalog."""
 
-    def __init__(self, registry: Registry, *, bids_root: str | Path) -> None:
-        """Bind a registry and resolved BIDS root for subsequent planning requests."""
+    def __init__(self, registry: WorkflowRegistry, *, bids_root: str | Path) -> None:
+        """Bind scientific workflow records and raw BIDS without opening a scheduler."""
         self.registry = registry
         self.bids_root = Path(bids_root).expanduser().resolve()
 
@@ -128,9 +126,7 @@ class Planner:
     def participants(project_root: Path, requested: Sequence[str]) -> tuple[str, ...]:
         """Return matching source-BIDS participants for one project."""
         available = set(discover_bids_participants(project_root))
-        return tuple(
-            sorted(available.intersection(requested) if requested else available)
-        )
+        return tuple(sorted(available.intersection(requested) if requested else available))
 
     def plan(
         self,
@@ -149,17 +145,18 @@ class Planner:
         model_sets: Sequence[str] | None = None,
     ) -> PlanningResult:
         """Construct requests, dropping targets covered within each workflow."""
+        from nro.configuration.site import definitions_root, settings
+        from nro.orchestration.source_snapshots import source_fingerprint
+
+        source_digest = source_fingerprint(Path(__file__).resolve().parents[2])
+        site_settings = {**settings()[0], "definitions": str(definitions_root())}
         request_plans: list[RequestPlan] = []
         present: set[str] = set()
         unavailable: list[UnavailableSelection] = []
         normalized_modules = tuple(dict.fromkeys(normalize_module(module) for module in modules))
 
         for project in projects:
-            project_registry = Registry.for_project(project, bids_root=self.bids_root)
-            project_planner = Planner(project_registry, bids_root=self.bids_root)
-            participants = self.participants(
-                self.bids_root / project, requested_participants
-            )
+            participants = self.participants(self.bids_root / project, requested_participants)
             if not participants:
                 continue
             present.update(participants)
@@ -172,7 +169,7 @@ class Planner:
                     group_participants: list[str] = []
                     for participant in participants:
                         try:
-                            planned = project_planner.plan_subject(
+                            planned = self.plan_subject(
                                 project=project,
                                 participant=participant,
                                 module=module,
@@ -207,7 +204,6 @@ class Planner:
                     workflow_requests.append(
                         RequestPlan(
                             project=project,
-                            registry=project_registry,
                             workflow_id=workflow_id,
                             registered=registered,
                             module=module,
@@ -222,18 +218,19 @@ class Planner:
         for request in request_plans:
             all_instances.update((instance.key, instance) for instance in request.instances)
             matched.setdefault(request.project, [])
-            matched[request.project] = list(dict.fromkeys(
-                (*matched[request.project], *request.participants)
-            ))
+            matched[request.project] = list(
+                dict.fromkeys((*matched[request.project], *request.participants))
+            )
         return PlanningResult(
             requests=tuple(request_plans),
             instances=all_instances,
             matched_participants={
-                project: tuple(participants)
-                for project, participants in matched.items()
+                project: tuple(participants) for project, participants in matched.items()
             },
             present_participants=frozenset(present),
             unavailable=tuple(unavailable),
+            source_digest=source_digest,
+            site_settings=site_settings,
         )
 
     def register_requests(
@@ -244,19 +241,43 @@ class Planner:
         concurrency: int,
         partition: str | None,
     ) -> tuple[str, ...]:
-        """Create durable demand for every request group in a plan."""
-        return tuple(
-            request.registry.create_request(
-                registered=request.registered,
-                target_module=request.module,
-                selectors={**selectors, "participants": list(request.participants)},
-                instances=request.instances,
-                terminal_instance_keys=request.terminal_keys,
-                concurrency=concurrency,
-                partition=partition,
+        """Create demand with captured source and site paths for each request group."""
+        from nro.orchestration.execution_cache import cache_lock, cleanup_cache
+        from nro.orchestration.execution_pins import capture_execution
+
+        if not isinstance(self.registry, Registry):
+            raise ValueError(
+                "Branch scientific planning is available, but branch scheduler submission is not enabled yet"
             )
-            for request in plan.requests
-        )
+        cleanup_cache(self.registry)
+        if not plan.requests:
+            return ()
+        with cache_lock(self.registry.paths.control):
+            source, site = capture_execution(
+                self.registry.paths.control,
+                self.bids_root,
+                expected_source=plan.source_digest,
+                site_values=dict(plan.site_settings),
+            )
+            return tuple(
+                Registry.for_project(
+                    request.project,
+                    bids_root=self.bids_root,
+                    registry_path=self.registry.paths.control,
+                ).create_request(
+                    registered=request.registered,
+                    target_module=request.module,
+                    selectors={**selectors, "participants": list(request.participants)},
+                    instances=tuple(
+                        instance.evolve(command=source.command(instance.command, site=site))
+                        for instance in request.instances
+                    ),
+                    terminal_instance_keys=request.terminal_keys,
+                    concurrency=concurrency,
+                    partition=partition,
+                )
+                for request in plan.requests
+            )
 
     def plan_subject(
         self,
@@ -276,7 +297,7 @@ class Planner:
     ) -> tuple[InstanceSpec, ...]:
         """Build the requested logical instance graph for one participant."""
         target = normalize_module(module)
-        if (target in {"microparcellation", "networks"} and selectors) or (
+        if (target in {"dynconn", "microparcellation", "networks"} and selectors) or (
             target == "firstlevels" and set(selectors or {}) - {"task"}
         ):
             raise ValueError(
@@ -288,37 +309,32 @@ class Planner:
         sub_id = f"sub-{participant}"
         project_root = self.bids_root / project
         subject_dir = project_root / sub_id
-        runs = discover_raw_runs(subject_dir)
+        runs = () if target == "anat" else discover_raw_runs(subject_dir)
         target_descriptor = module_descriptor(target)
         task_models = None
         if target_descriptor.select_models is not None:
-            task_models = target_descriptor.select_models(tasks=(selectors or {}).get("task", ()), models=models, model_sets=model_sets)
+            task_models = target_descriptor.select_models(
+                tasks=(selectors or {}).get("task", ()), models=models, model_sets=model_sets
+            )
             tasks = {identifier.split("/")[0] for identifier in task_models}
             runs = tuple(run for run in runs if run.entities.get("task") in tasks)
         elif target_descriptor.select_runs is not None:
             runs = target_descriptor.select_runs(
-                runs, workflow.configuration(target_descriptor.configuration_class).values, participant,
+                runs,
+                workflow.configuration(target_descriptor.configuration_class).values,
+                participant,
             )
         if selectors:
-            runs = tuple(
-                run for run in runs if matches_selectors(run.entities, selectors)
-            )
-        if target in {"microparcellation", "networks"}:
-            aggregate_filter = workflow.configuration("microparcellation").values.get(
-                "input_filter", {}
-            )
-            runs = tuple(
-                run for run in runs if matches_filter(run.entities, aggregate_filter)
-            )
+            runs = tuple(run for run in runs if matches_selectors(run.entities, selectors))
+        if target in {"dynconn", "microparcellation", "networks"}:
+            filter_class = "dynconn" if target == "dynconn" else "microparcellation"
+            aggregate_filter = workflow.configuration(filter_class).values.get("input_filter", {})
+            runs = tuple(run for run in runs if matches_filter(run.entities, aggregate_filter))
         if target != "anat" and not runs:
-            raise ParticipantUnavailableError(
-                f"No raw BOLD runs matched under {subject_dir}"
-            )
+            raise ParticipantUnavailableError(f"No raw BOLD runs matched under {subject_dir}")
 
         requested_spaces = tuple(dict.fromkeys(spaces or (DEFAULT_SPACE,)))
-        requested_smoothing = tuple(
-            dict.fromkeys(smoothing_levels or (DEFAULT_SMOOTHING_MM,))
-        )
+        requested_smoothing = tuple(dict.fromkeys(smoothing_levels or (DEFAULT_SMOOTHING_MM,)))
         target_pairs: tuple[tuple[str, int], ...] = ()
         if target not in {"anat", "func"}:
             if not requested_spaces:
@@ -327,9 +343,7 @@ class Planner:
                 raise ValueError("Smoothing levels must be nonnegative integers")
             published_spaces = tuple(
                 str(value)
-                for value in workflow.configuration("preprocessing").values["func"][
-                    "output_spaces"
-                ]
+                for value in workflow.configuration("preprocessing").values["func"]["output_spaces"]
             )
             unavailable = tuple(
                 space for space in requested_spaces if space not in published_spaces
@@ -357,9 +371,7 @@ class Planner:
             registry=self.registry,
             runs=runs,
             aggregate_source_inputs=tuple(
-                dict.fromkeys(
-                    path for run in runs for path in image_source_paths(run.path)
-                )
+                dict.fromkeys(path for run in runs for path in image_source_paths(run.path))
             ),
             target_pairs=target_pairs,
             memory_gb=memory_gb,
@@ -371,9 +383,7 @@ class Planner:
         for descriptor in descriptors:
             planned[descriptor.name] = descriptor.plan(context, planned, descriptor)
         return tuple(
-            instance
-            for descriptor in descriptors
-            for instance in planned[descriptor.name]
+            instance for descriptor in descriptors for instance in planned[descriptor.name]
         )
 
 
@@ -384,7 +394,7 @@ def build_subject_instances(
     module: str,
     workflow: ResolvedWorkflow,
     registered: RegisteredWorkflow,
-    registry: Registry,
+    registry: WorkflowRegistry,
     selectors: Mapping[str, tuple[str, ...] | None] | None = None,
     spaces: tuple[str, ...] | None = None,
     smoothing_levels: tuple[int, ...] | None = None,

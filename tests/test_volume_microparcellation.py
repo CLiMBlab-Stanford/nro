@@ -1,27 +1,26 @@
+import json
+import time
 from pathlib import Path
 
-import json
 import nibabel as nib
 import numpy as np
-import time
 import yaml
 
-from nro.microparcellation.cifti import (
-    load_dlabel,
-    load_pconn,
+from nro.configuration.store import ConfigStore
+from nro.engine.cifti import load_dlabel, load_pconn
+from nro.engine.images import sidecar_json_path
+from nro.modules.microparcellation.cifti import (
     write_volume_dlabel,
 )
-from nro.microparcellation.config import (
+from nro.modules.microparcellation.config import (
     CoarseningConfig,
     ConnectivityConfig,
     InputsConfig,
-    OutputConfig,
     ModuleConfig,
+    OutputConfig,
 )
-from nro.configuration.store import ConfigStore
-from nro.engine.images import sidecar_json_path
-from nro.microparcellation.module import run
-from nro.microparcellation.volume import (
+from nro.modules.microparcellation.module import run
+from nro.modules.microparcellation.volume import (
     VolumeSpace,
     load_volume_functional,
     load_volume_space,
@@ -148,7 +147,7 @@ def test_volume_loader_materializes_4d_proxy_once(monkeypatch, tmp_path: Path) -
         affine = np.eye(4)
         dataobj = proxy
 
-    monkeypatch.setattr("nro.microparcellation.volume.nib.load", lambda _path: FakeImage())
+    monkeypatch.setattr("nro.modules.microparcellation.volume.nib.load", lambda _path: FakeImage())
     mask = np.zeros((2, 2, 2), dtype=bool)
     mask[0, 0, 0] = True
     mask[1, 1, 1] = True
@@ -190,10 +189,8 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
             data,
             cleaning_defined=index != 2,
             undefined_reason=(
-                "passband_basis_not_identifiable_from_retained_frames"
-                if index == 2
-                else None
-            )
+                "passband_basis_not_identifiable_from_retained_frames" if index == 2 else None
+            ),
         )
         runs.append((path,))
 
@@ -202,9 +199,7 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
         inputs=InputsConfig(
             functional=tuple(runs),
             temporal_masks=tuple(
-                path[0].with_name(
-                    path[0].name.removesuffix(".nii.gz") + "_confounds.tsv"
-                )
+                path[0].with_name(path[0].name.removesuffix(".nii.gz") + "_confounds.tsv")
                 for path in runs
             ),
             domain="volume",
@@ -237,12 +232,8 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
     )
     outputs = run(cfg)
 
-    assert outputs["microparcels"].name.endswith(
-        "_desc-microparcellation_dseg.dlabel.nii"
-    )
-    assert outputs["connectivity"].name.endswith(
-        "_connectivity.pconn.nii"
-    )
+    assert outputs["microparcels"].name.endswith("_desc-microparcellation_dseg.dlabel.nii")
+    assert outputs["connectivity"].name.endswith("_connectivity.pconn.nii")
     label_volume = np.asarray(nib.load(outputs["microparcels_volume"]).dataobj)
     label_image = nib.load(outputs["microparcels_volume"])
     assert np.all(label_volume[mask == 0] == 0)
@@ -319,16 +310,16 @@ def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
             inputs=InputsConfig(
                 functional=((run,),),
                 temporal_masks=(
-                    run.with_name(
-                        run.name.removesuffix(".nii.gz") + "_confounds.tsv"
-                    ),
+                    run.with_name(run.name.removesuffix(".nii.gz") + "_confounds.tsv"),
                 ),
                 domain="volume",
                 mask=mask_path,
                 mask_threshold=0.5,
                 volume_connectivity=6,
             ),
-            output=OutputConfig(directory=output, work_directory=tmp_path / "work", prefix="sub-resume"),
+            output=OutputConfig(
+                directory=output, work_directory=tmp_path / "work", prefix="sub-resume"
+            ),
             coarsening=CoarseningConfig(
                 target_vertices=3,
                 iterations=3,
@@ -368,8 +359,8 @@ def test_module_resumes_at_missing_connectivity_without_recoarsening(
     def forbidden(*_args, **_kwargs):
         raise AssertionError("completed coarsening was unexpectedly recomputed")
 
-    monkeypatch.setattr("nro.microparcellation.module.local_edge_correlations", forbidden)
-    monkeypatch.setattr("nro.microparcellation.module.loukas_variation_edges", forbidden)
+    monkeypatch.setattr("nro.modules.microparcellation.module.local_edge_correlations", forbidden)
+    monkeypatch.setattr("nro.modules.microparcellation.module.loukas_variation_edges", forbidden)
     resumed = run(cfg)
 
     assert resumed["connectivity"].is_file()

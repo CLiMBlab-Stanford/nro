@@ -5,21 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from nro.anat.contract import anatomical_output_contract
-from nro.anat.planning import plan_instances as plan_anat_instances
-from nro.clean.contract import clean_output_contract
-from nro.clean.planning import plan_instances as plan_clean_instances
-from nro.func.contracts import final_resampling_contract, functional_output_contract
-from nro.func.planning import plan_instances as plan_func_instances
-from nro.firstlevels.contract import firstlevels_output_contract, validate_public_definition
-from nro.firstlevels.planning import plan_instances as plan_firstlevels_instances
-from nro.firstlevels.planning import direct_inputs as firstlevels_direct_inputs, select_model_runs
-from nro.firstlevels.task_models import canonical_processing, model_contract, select_models
-from nro.firstlevels.planning import refresh_command as refresh_firstlevels_command
-from nro.microparcellation.contract import microparcellation_output_contract
-from nro.microparcellation.planning import plan_instances as plan_microparcellation_instances
-from nro.networks.contract import networks_output_contract
-from nro.networks.planning import plan_instances as plan_networks_instances
+from nro.modules.anat.contract import anatomical_output_contract
+from nro.modules.anat.planning import plan_instances as plan_anat_instances
+from nro.modules.clean.contract import clean_output_contract
+from nro.modules.clean.planning import plan_instances as plan_clean_instances
+from nro.modules.dynconn.contract import dynconn_output_contract
+from nro.modules.dynconn.planning import plan_instances as plan_dynconn_instances
+from nro.modules.firstlevels.contract import firstlevels_output_contract, validate_public_definition
+from nro.modules.firstlevels.planning import direct_inputs as firstlevels_direct_inputs
+from nro.modules.firstlevels.planning import plan_instances as plan_firstlevels_instances
+from nro.modules.firstlevels.planning import refresh_command as refresh_firstlevels_command
+from nro.modules.firstlevels.planning import select_model_runs
+from nro.modules.firstlevels.task_models import canonical_processing, model_contract, select_models
+from nro.modules.func.contracts import final_resampling_contract, functional_output_contract
+from nro.modules.func.planning import plan_instances as plan_func_instances
+from nro.modules.microparcellation.contract import microparcellation_output_contract
+from nro.modules.microparcellation.planning import (
+    plan_instances as plan_microparcellation_instances,
+)
+from nro.modules.networks.contract import networks_output_contract
+from nro.modules.networks.planning import plan_instances as plan_networks_instances
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import InstanceSpec
@@ -46,6 +51,10 @@ def _func_processing_contract() -> Mapping[str, object]:
 
 def _clean_processing_contract() -> Mapping[str, object]:
     return {"output_metadata": clean_output_contract()}
+
+
+def _dynconn_processing_contract() -> Mapping[str, object]:
+    return {"output_metadata": dynconn_output_contract()}
 
 
 def _microparcellation_processing_contract() -> Mapping[str, object]:
@@ -82,7 +91,10 @@ class ModuleDescriptor:
 
     def processing_for(self, entities: dict) -> dict:
         """Combine module policy with any instance-specific scientific definition."""
-        return {**self.processing_contract(), **(self.instance_processing(entities) if self.instance_processing else {})}
+        return {
+            **self.processing_contract(),
+            **(self.instance_processing(entities) if self.instance_processing else {}),
+        }
 
 
 BUILTIN_MODULES = (
@@ -127,6 +139,16 @@ BUILTIN_MODULES = (
         processing_contract=_microparcellation_processing_contract,
     ),
     ModuleDescriptor(
+        name="dynconn",
+        configuration_class="dynconn",
+        scope="subject",
+        output_format="Concatenated cleaned time series and a Workbench dynamic-connectivity scene",
+        resource_class="large",
+        upstream_modules=("clean", "anat"),
+        plan=plan_dynconn_instances,
+        processing_contract=_dynconn_processing_contract,
+    ),
+    ModuleDescriptor(
         name="networks",
         configuration_class="networks",
         scope="subject",
@@ -140,10 +162,14 @@ BUILTIN_MODULES = (
 
 BUILTIN_MODULES += (
     ModuleDescriptor(
-        name="firstlevels", configuration_class="firstlevels", scope="subject",
+        name="firstlevels",
+        configuration_class="firstlevels",
+        scope="subject",
         output_format="Task/model run, session and subject GLM maps and compact covariance",
-        resource_class="medium", upstream_modules=("func", "anat"),
-        plan=plan_firstlevels_instances, processing_contract=_firstlevels_processing_contract,
+        resource_class="medium",
+        upstream_modules=("func", "anat"),
+        plan=plan_firstlevels_instances,
+        processing_contract=_firstlevels_processing_contract,
         select_runs=select_model_runs,
         direct_inputs=firstlevels_direct_inputs,
         instance_processing=model_contract,
@@ -163,13 +189,20 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
     from nro.configuration.store import configuration_fingerprint
 
     descriptor = module_descriptor(contract["module"])
-    if isinstance(configuration, dict) and contract.get("configuration") == configuration.get("fingerprint"):
+    if isinstance(configuration, dict) and contract.get("configuration") == configuration.get(
+        "fingerprint"
+    ):
         kind = descriptor.configuration_class
         values = configuration.get("resolved")
         identifier = configuration.get("id")
         if isinstance(values, dict) and isinstance(identifier, str):
             if configuration_fingerprint(kind, identifier, values) == configuration["fingerprint"]:
-                contract = {**contract, "configuration": configuration_fingerprint(kind, identifier, values, scientific=True)}
+                contract = {
+                    **contract,
+                    "configuration": configuration_fingerprint(
+                        kind, identifier, values, scientific=True
+                    ),
+                }
     normalize = descriptor.canonical_processing
     if normalize is None or "processing" not in contract:
         return contract
@@ -183,9 +216,7 @@ def terminal_modules() -> tuple[str, ...]:
     its topology. Requesting these endpoints covers every branch.
     """
     upstream = {
-        name
-        for descriptor in MODULE_CATALOG.values()
-        for name in descriptor.upstream_modules
+        name for descriptor in MODULE_CATALOG.values() for name in descriptor.upstream_modules
     }
     return tuple(name for name in MODULE_CATALOG if name not in upstream)
 
@@ -201,6 +232,7 @@ def module_descriptor(name: str) -> ModuleDescriptor:
 
 
 def normalize_module(value: str) -> str:
+    """Validate and return a built-in module name."""
     return module_descriptor(value).name
 
 

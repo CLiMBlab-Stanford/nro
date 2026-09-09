@@ -21,29 +21,35 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
 
 import yaml
 
 from nro.configuration.paths import BIDS_PATH, REGISTRY_PATH
 from nro.configuration.store import (
     DERIVATIVE_CLASSES,
-    UPSTREAM_CLASS,
-    ResolvedWorkflow,
     fingerprint,
 )
-from nro.engine.io import atomic_write_text
 from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.io import atomic_write_text
+from nro.orchestration import dependency_state
+from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.workflow_registry import (
+    WORKFLOW_SCHEMA,
+    RegisteredWorkflow,
+    WorkflowRegistry,
+)
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import ExecutionEnvelope, InstanceSpec
 
 
 APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 17
 
 
 def utcnow() -> str:
+    """Return the current UTC time in ISO 8601 form."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -62,16 +68,20 @@ def discover_registry_projects(bids_root: str | Path) -> list[str]:
 
 
 def ensure_shared_directory(path: str | Path) -> Path:
-    """Create a private-control directory and enforce group/setgid access."""
+    """Set group/setgid access on this directory and parents created for it.
+
+    Existing ancestors belong to their owners and are not changed. The control
+    directory need not have a particular name or reside under a .nro directory.
+    """
     directory = Path(path)
-    directory.mkdir(parents=True, exist_ok=True, mode=0o2775)
-    candidates: list[Path] = []
-    current = directory
-    while True:
+    if directory.resolve().parent == directory.resolve():
+        raise ValueError("The filesystem root cannot be a private-control directory")
+    candidates = [directory]
+    current = directory.parent
+    while not current.exists():
         candidates.append(current)
-        if current.name == ".nro" or current.parent == current:
-            break
         current = current.parent
+    directory.mkdir(parents=True, exist_ok=True, mode=0o2775)
     for candidate in candidates:
         try:
             candidate.chmod(0o2775)
@@ -88,7 +98,11 @@ def _atomic_text(path: Path, text: str) -> None:
 def _instance_relative_directory(instance: dict) -> Path:
     project = str(instance["project"])
     participant = str(instance["participant"]).removeprefix("sub-")
-    entities = json.loads(instance["entities_json"]) if isinstance(instance["entities_json"], str) else instance["entities_json"]
+    entities = (
+        json.loads(instance["entities_json"])
+        if isinstance(instance["entities_json"], str)
+        else instance["entities_json"]
+    )
     preferred = ("ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk")
     ordered = [key for key in preferred if key in entities]
     ordered.extend(sorted(set(entities) - set(ordered)))
@@ -100,6 +114,7 @@ def _instance_relative_directory(instance: dict) -> Path:
 @dataclass(frozen=True)
 class RegistryPaths:
     """Resolved project context and paths into the shared orchestration store."""
+
     project: str
     bids_root: Path
     project_root: Path
@@ -137,26 +152,30 @@ class RegistryPaths:
             )
         else:
             control = Path(registry_path).expanduser().resolve()
+        paths = ControlPaths(control)
+        paths.require_current_layout()
+        science = paths.branch("main")
         return cls(
             project=project,
             bids_root=resolved_bids_root,
             project_root=project_root,
             control=control,
-            database=control / "registry.sqlite3",
-            lock=control / "registry.lock",
-            recovery_lock=control / "registry.lock.recovery",
-            manifests=control / "manifests",
-            requests=control / "requests",
-            events=control / "events",
-            workers=control / "workers",
-            snapshots=control / "snapshots",
-            workflows=control / "workflows",
+            database=paths.database,
+            lock=paths.scheduler / "registry.lock",
+            recovery_lock=paths.scheduler / "registry.lock.recovery",
+            manifests=science / "manifests",
+            requests=paths.scheduler / "requests",
+            events=science / "events",
+            workers=paths.scheduler / "workers",
+            snapshots=science / "snapshots",
+            workflows=science / "workflows",
         )
 
 
 @dataclass(frozen=True)
 class LockOwner:
     """Process and scheduler identity recorded by a registry lock holder."""
+
     token: str
     hostname: str
     pid: int
@@ -168,11 +187,13 @@ class LockOwner:
 
 class RegistryLockTimeout(TimeoutError):
     """Raised when the registry lock cannot be acquired within its timeout."""
+
     pass
 
 
 class RegistryLock:
     """Filesystem lock with owner metadata and conservative abandoned-lock recovery."""
+
     def __init__(
         self,
         path: Path,
@@ -365,7 +386,8 @@ class RegistryLock:
         self.release()
 
 
-SCHEMA_SQL = """
+SCHEMA_SQL = (
+    """
 CREATE TABLE metadata (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -385,43 +407,9 @@ CREATE TABLE bids_participants (
     PRIMARY KEY(project, participant)
 );
 
-CREATE TABLE workflow_revisions (
-    id INTEGER PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    definition_fingerprint TEXT NOT NULL,
-    source_path TEXT NOT NULL,
-    resolved_yaml TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(workflow_id, revision),
-    UNIQUE(workflow_id, definition_fingerprint)
-);
-
-CREATE TABLE configuration_lineages (
-    id INTEGER PRIMARY KEY,
-    derivative_class TEXT NOT NULL,
-    config_id TEXT NOT NULL,
-    config_fingerprint TEXT NOT NULL,
-    lineage_fingerprint TEXT NOT NULL,
-    resolved_yaml TEXT NOT NULL,
-    directory_label TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(derivative_class, lineage_fingerprint)
-);
-
-CREATE TABLE configuration_lineage_dependencies (
-    configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
-    upstream_configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
-    role TEXT NOT NULL,
-    PRIMARY KEY(configuration_lineage_id, upstream_configuration_lineage_id, role)
-);
-
-CREATE TABLE workflow_bindings (
-    workflow_revision_id INTEGER NOT NULL REFERENCES workflow_revisions(id),
-    derivative_class TEXT NOT NULL,
-    configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
-    PRIMARY KEY(workflow_revision_id, derivative_class)
-);
+"""
+    + WORKFLOW_SCHEMA
+    + """
 
 CREATE TABLE requests (
     id TEXT PRIMARY KEY,
@@ -505,6 +493,7 @@ CREATE TABLE attempts (
     revision_fingerprint TEXT NOT NULL,
     memory_gb INTEGER NOT NULL DEFAULT 32,
     oom_detected INTEGER NOT NULL DEFAULT 0,
+    process_group_id INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     completed_at TEXT,
     error_type TEXT,
@@ -546,42 +535,75 @@ CREATE TABLE scheduler_submissions (
 CREATE INDEX instance_module_participant ON instances(module, participant);
 CREATE INDEX attempt_state ON attempts(state);
 CREATE INDEX request_state ON requests(state);
+
+CREATE TABLE attempt_dependencies (
+    attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+    upstream_instance_id INTEGER NOT NULL REFERENCES instances(id),
+    generation INTEGER NOT NULL,
+    PRIMARY KEY(attempt_id, upstream_instance_id)
+);
+CREATE INDEX dependency_readers ON attempt_dependencies(upstream_instance_id);
+CREATE TABLE artifact_mutations (
+    instance_id INTEGER PRIMARY KEY REFERENCES instances(id),
+    token TEXT NOT NULL
+);
+
+CREATE TABLE instance_execution (
+    instance_id INTEGER PRIMARY KEY REFERENCES instances(id),
+    branch TEXT NOT NULL,
+    registry_id TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    binding_sources_json TEXT NOT NULL,
+    provenance_json TEXT NOT NULL,
+    scientific_contract_json TEXT NOT NULL,
+    UNIQUE(registry_id, logical_key)
+);
+CREATE TABLE request_owners (
+    request_id TEXT PRIMARY KEY REFERENCES requests(id),
+    branch TEXT NOT NULL,
+    registry_id TEXT NOT NULL
+);
+CREATE TABLE request_plans (
+    request_id TEXT PRIMARY KEY REFERENCES requests(id),
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE compiled_revisions (
+    registry_id TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    PRIMARY KEY(registry_id,logical_key)
+);
+CREATE TABLE branch_instances (
+    registry_id TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    instance_id INTEGER NOT NULL REFERENCES instances(id),
+    scientific_contract_json TEXT NOT NULL,
+    PRIMARY KEY(registry_id, logical_key)
+);
+CREATE TABLE request_artifacts (
+    request_id TEXT NOT NULL REFERENCES requests(id),
+    instance_id INTEGER NOT NULL REFERENCES instances(id),
+    PRIMARY KEY(request_id,instance_id)
+);
+CREATE TABLE attempt_execution (
+    attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id),
+    context_json TEXT NOT NULL,
+    provenance_json TEXT NOT NULL,
+    command_json TEXT NOT NULL
+);
 """
+)
 
 
-@dataclass(frozen=True)
-class RegisteredWorkflow:
-    """Registered revision, configuration lineages, and assigned output directories."""
-    workflow_id: str
-    revision: int
-    revision_id: int
-    fingerprint: str
-    lineages: dict[str, int]
-    lineage_fingerprints: dict[str, str]
-    directories: dict[str, str]
-    created: bool
-
-    @property
-    def selector(self) -> str:
-        """Return the workflow ID qualified by its registered revision."""
-        return f"{self.workflow_id}@{self.revision}"
-
-
-CONFIGURATION_FILE_SUFFIX = {
-    "preprocessing": "preprocess",
-    "clean": "clean",
-    "microparcellation": "microparcellation",
-    "networks": "networks",
-    "firstlevels": "firstlevels",
-}
-
-
-class Registry:
+class Registry(WorkflowRegistry):
     """Transactional authority for instances, demand, attempts, and worker state.
 
     Construction does not initialize storage. Mutating methods acquire the
     registry lock; callers should not alter the database directly.
     """
+
     def __init__(
         self,
         paths: RegistryPaths,
@@ -590,6 +612,9 @@ class Registry:
         stale_lock_after: float = 300.0,
     ) -> None:
         """Bind resolved paths and lock timings without opening the database."""
+        from nro.configuration.site import require_execution_support
+
+        require_execution_support()
         self.paths = paths
         self.lock_timeout = lock_timeout
         self.stale_lock_after = stale_lock_after
@@ -624,11 +649,6 @@ class Registry:
     def existing_database_path(self) -> Path:
         """Return the registry path without mutating shared state."""
         return self.paths.database
-
-    def existing_control_path(self) -> Path:
-        """Return the control directory without creating or repairing it."""
-        database = self.existing_database_path()
-        return database.parent if database.is_file() else self.paths.control
 
     def _prepare_directories(self) -> None:
         ensure_shared_directory(self.paths.control)
@@ -688,7 +708,9 @@ class Registry:
             with temporary.open("rb") as stream:
                 os.fsync(stream.fileno())
             if self.paths.database.exists():
-                raise RuntimeError(f"Registry appeared unexpectedly during initialization: {self.paths.database}")
+                raise RuntimeError(
+                    f"Registry appeared unexpectedly during initialization: {self.paths.database}"
+                )
             os.replace(temporary, self.paths.database)
         finally:
             temporary.unlink(missing_ok=True)
@@ -795,317 +817,113 @@ class Registry:
         with self.connection():
             pass
 
-    def reinitialize(self) -> None:
-        """Rebuild derivative control state while preserving ingestion records.
+    def reinitialize(
+        self, *, preserve_branch_runtime: bool = False, retain_backup: bool = False
+    ) -> Path | None:
+        """Rebuild work state, preserving ingestion, registrations, and execution sources.
 
         Existing state is treated as opaque and is never migrated. The active
         registry lock remains in place throughout replacement so another
         registry client cannot observe a partially rebuilt control directory.
         If initialization fails, the original control state is restored.
         Running ingestion leases must be resolved before replacement.
+
+        preserve_branch_runtime retains scientific databases and configurations,
+        archiving only their registry-bound completion certificates. retain_backup
+        keeps the replaced state and returns its directory with an original-path
+        index; otherwise the replaced state is removed and None is returned.
         """
         self._prepare_directories()
-        quarantine = self.paths.control / f".repair-{uuid.uuid4().hex}"
-        with self._lock():
-            from nro.bidsify.store import IngestionStore
-            if any(r['state'] == 'running' for r in IngestionStore(self).rows()):
-                raise ValueError('Resolve active ingestion worker leases before registry repair')
+        scheduler = ControlPaths(self.paths.control).scheduler
+        quarantine = scheduler / f".repair-{uuid.uuid4().hex}"
+        retained = {
+            self.paths.lock,
+            self.paths.recovery_lock,
+            quarantine,
+            scheduler / "artifact-mutation.lock",
+            scheduler / "artifact-mutation.recovery-lock",
+        }
+        science = (
+            self.paths.manifests,
+            self.paths.events,
+            self.paths.snapshots,
+            self.paths.workflows,
+        )
+        if preserve_branch_runtime:
+            from nro.orchestration.branch_store import BranchStore
+
+            catalog = BranchStore(self.paths.control)
+            names = catalog.read().topology.records if catalog.path.exists() else {"main": None}
+            science = tuple(
+                ControlPaths(self.paths.control).branch(name) / "manifests" for name in names
+            )
+            retained.add(scheduler / "implementation.json")
+        retained.update(scheduler.glob(".repair-*"))
+
+        def replaceable():
+            return tuple(
+                path
+                for path in (*scheduler.iterdir(), *science)
+                if path not in retained and path.exists()
+            )
+
+        from nro.orchestration.execution_cache import cache_lock
+
+        with cache_lock(self.paths.control), self._lock():
+            if self.paths.database.exists():
+                connection = sqlite3.connect(self.paths.database)
+                try:
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifact_mutations'"
+                        ).fetchone()
+                        and connection.execute(
+                            "SELECT 1 FROM artifact_mutations LIMIT 1"
+                        ).fetchone()
+                    ):
+                        raise ValueError(
+                            "Resolve the active or interrupted artifact mutation before registry repair"
+                        )
+                finally:
+                    connection.close()
+            from nro.bidsify.index import IngestionIndex
+
+            if any(r["state"] == "running" for r in IngestionIndex(self).rows()):
+                raise ValueError("Resolve active ingestion worker leases before registry repair")
             quarantine.mkdir(mode=0o2775)
             moved: list[tuple[Path, Path]] = []
             try:
-                for source in tuple(self.paths.control.iterdir()):
-                    if source in (self.paths.lock, quarantine, self.paths.control / "ingestion"):
-                        continue
-                    destination = quarantine / source.name
+                for index, source in enumerate(replaceable()):
+                    destination = quarantine / str(index)
                     source.rename(destination)
                     moved.append((source, destination))
+                if retain_backup:
+                    from nro.engine.io import atomic_write_json
+
+                    atomic_write_json(
+                        quarantine / "index.json",
+                        {str(destination.name): str(source) for source, destination in moved},
+                        durable=True,
+                    )
                 self._prepare_directories()
                 self._initialize_locked()
                 connection = self._connect_locked()
                 connection.close()
             except BaseException:
-                for path in tuple(self.paths.control.iterdir()):
-                    if path in (self.paths.lock, quarantine, self.paths.control / "ingestion"):
-                        continue
+                for path in replaceable():
                     if path.is_dir():
                         shutil.rmtree(path)
                     else:
                         path.unlink()
                 for source, destination in moved:
                     destination.rename(source)
+                (quarantine / "index.json").unlink(missing_ok=True)
                 quarantine.rmdir()
                 raise
+        if retain_backup:
+            return quarantine
         shutil.rmtree(quarantine)
-
-    def _snapshot_workflow(
-        self,
-        workflow: ResolvedWorkflow,
-        revision: int,
-        directories: dict[str, str],
-    ) -> None:
-        destination = self.paths.workflows / workflow.workflow_id / f"{revision}_workflow.yml"
-        data = {
-            "workflow_id": workflow.workflow_id,
-            "revision": revision,
-            "definition_fingerprint": workflow.fingerprint,
-            "selections": workflow.selections,
-            "configurations": {
-                derivative_class: {
-                    "config_id": workflow.configurations[derivative_class].config_id,
-                    "config_fingerprint": workflow.configurations[derivative_class].fingerprint,
-                    "source": str(workflow.configurations[derivative_class].path),
-                    "resolved": workflow.configurations[derivative_class].values,
-                    "directory": directories[derivative_class],
-                }
-                for derivative_class in DERIVATIVE_CLASSES
-            },
-        }
-        _atomic_text(destination, yaml.safe_dump(data, sort_keys=False))
-
-        runtime_directory = destination.parent / f"{revision}_runtime"
-        ensure_shared_directory(runtime_directory)
-        for derivative_class in DERIVATIVE_CLASSES:
-            values = dict(workflow.configurations[derivative_class].values)
-            if derivative_class in {"clean", "firstlevels"}:
-                values["preprocessing_directory"] = directories["preprocessing"]
-                if derivative_class == "firstlevels":
-                    values["preprocessing_aroma"] = workflow.configuration("preprocessing").values["func"]["clean_ica_aroma"]
-            elif derivative_class == "microparcellation":
-                values["preprocessing_directory"] = directories["preprocessing"]
-                values["clean_directory"] = directories["clean"]
-            elif derivative_class == "networks":
-                values["microparcellation_directory"] = directories["microparcellation"]
-            suffix = CONFIGURATION_FILE_SUFFIX[derivative_class]
-            runtime_path = runtime_directory / f"{directories[derivative_class]}_{suffix}.yml"
-            _atomic_text(runtime_path, yaml.safe_dump(values, sort_keys=False))
-
-    def runtime_config_path(
-        self, registered: RegisteredWorkflow, derivative_class: str
-    ) -> Path:
-        """Return the stored runtime configuration path for a registered lineage."""
-        if derivative_class not in DERIVATIVE_CLASSES:
-            raise ValueError(f"Unknown derivative class: {derivative_class}")
-        suffix = CONFIGURATION_FILE_SUFFIX[derivative_class]
-        return (
-            self.paths.workflows
-            / registered.workflow_id
-            / f"{registered.revision}_runtime"
-            / f"{registered.directories[derivative_class]}_{suffix}.yml"
-        )
-
-    def register_workflow(self, workflow: ResolvedWorkflow) -> RegisteredWorkflow:
-        """Register resolved workflow configurations and return their lineage assignments."""
-        created = False
-        with self.connection(write=True) as db:
-            row = db.execute(
-                "SELECT id, revision FROM workflow_revisions WHERE workflow_id=? AND definition_fingerprint=?",
-                (workflow.workflow_id, workflow.fingerprint),
-            ).fetchone()
-            if row:
-                revision_id = int(row["id"])
-                revision = int(row["revision"])
-            else:
-                latest = db.execute(
-                    "SELECT COALESCE(MAX(revision), 0) FROM workflow_revisions WHERE workflow_id=?",
-                    (workflow.workflow_id,),
-                ).fetchone()[0]
-                revision = int(latest) + 1
-                resolved_yaml = yaml.safe_dump(
-                    {
-                        "selections": workflow.selections,
-                        "configurations": {
-                            derivative_class: workflow.configurations[derivative_class].values
-                            for derivative_class in DERIVATIVE_CLASSES
-                        },
-                    },
-                    sort_keys=False,
-                )
-                cursor = db.execute(
-                    """
-                    INSERT INTO workflow_revisions(
-                        workflow_id, revision, definition_fingerprint, source_path,
-                        resolved_yaml, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        workflow.workflow_id,
-                        revision,
-                        workflow.fingerprint,
-                        str(workflow.path),
-                        resolved_yaml,
-                        utcnow(),
-                    ),
-                )
-                revision_id = int(cursor.lastrowid)
-                created = True
-
-            existing_bindings = db.execute(
-                """
-                SELECT wb.derivative_class, wb.configuration_lineage_id,
-                       ci.lineage_fingerprint, ci.directory_label
-                FROM workflow_bindings wb
-                JOIN configuration_lineages ci ON ci.id=wb.configuration_lineage_id
-                WHERE wb.workflow_revision_id=?
-                """,
-                (revision_id,),
-            ).fetchall()
-            if existing_bindings:
-                lineages = {
-                    str(item["derivative_class"]): int(item["configuration_lineage_id"])
-                    for item in existing_bindings
-                }
-                directories = {
-                    str(item["derivative_class"]): str(item["directory_label"])
-                    for item in existing_bindings
-                }
-                lineage_fingerprints = {
-                    str(item["derivative_class"]): str(item["lineage_fingerprint"])
-                    for item in existing_bindings
-                }
-                # A workflow revision can become current again after a config
-                # file is changed back. Refresh the mutable configuration-lineage
-                # slot
-                # so filesystem freshness checks always use the config that
-                # was actually resolved for this invocation.
-                for derivative_class, lineage_id in lineages.items():
-                    resolved = workflow.configurations[derivative_class]
-                    db.execute(
-                        """UPDATE configuration_lineages
-                           SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
-                        (
-                            resolved.fingerprint,
-                            yaml.safe_dump(resolved.values, sort_keys=False),
-                            lineage_id,
-                        ),
-                    )
-            else:
-                lineages: dict[str, int] = {}
-                directories: dict[str, str] = {}
-                lineage_fingerprints: dict[str, str] = {}
-                all_default_so_far = True
-                allocated_new_label: str | None = None
-
-                def allocate_new_label() -> str:
-                    """Allocate one stable label for this new workflow suffix."""
-                    nonlocal allocated_new_label
-                    if allocated_new_label is None:
-                        base = workflow.workflow_id
-                        number = revision if revision > 1 else None
-                        while True:
-                            candidate = base if number is None else f"{base}-{number}"
-                            occupied = db.execute(
-                                "SELECT 1 FROM configuration_lineages WHERE directory_label=? LIMIT 1",
-                                (candidate,),
-                            ).fetchone()
-                            if not occupied:
-                                allocated_new_label = candidate
-                                break
-                            number = 2 if number is None else number + 1
-                    return allocated_new_label
-
-                for derivative_class in DERIVATIVE_CLASSES:
-                    resolved = workflow.configurations[derivative_class]
-                    upstream_class = UPSTREAM_CLASS[derivative_class]
-                    upstream_id = lineages.get(upstream_class) if upstream_class else None
-                    upstream_lineage = (
-                        lineage_fingerprints[upstream_class] if upstream_class else None
-                    )
-                    all_default_so_far = all_default_so_far and resolved.config_id == "main"
-                    # A module-level configuration ID is a stable, mutable
-                    # namespace.  Its contents are deliberately excluded from
-                    # this identity: changing ``main_clean.yml`` must rebuild
-                    # clean outputs in place, rather than create a second
-                    # namespace.  Workflow IDs supply the first directory
-                    # label assigned to a newly selected configuration path.
-                    lineage = fingerprint(
-                        {
-                            "derivative_class": derivative_class,
-                            "config_id": resolved.config_id,
-                            "upstream": upstream_lineage,
-                        }
-                    )
-                    existing_lineage = db.execute(
-                        "SELECT id, directory_label FROM configuration_lineages WHERE derivative_class=? AND lineage_fingerprint=?",
-                        (derivative_class, lineage),
-                    ).fetchone()
-                    if existing_lineage:
-                        lineage_id = int(existing_lineage["id"])
-                        directory = str(existing_lineage["directory_label"])
-                        db.execute(
-                            """UPDATE configuration_lineages
-                               SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
-                            (
-                                resolved.fingerprint,
-                                yaml.safe_dump(resolved.values, sort_keys=False),
-                                lineage_id,
-                            ),
-                        )
-                    else:
-                        if all_default_so_far:
-                            directory = "main"
-                        else:
-                            directory = allocate_new_label()
-                        collision = db.execute(
-                            "SELECT lineage_fingerprint FROM configuration_lineages WHERE derivative_class=? AND directory_label=?",
-                            (derivative_class, directory),
-                        ).fetchone()
-                        if collision:
-                            if all_default_so_far:
-                                # A changed repository default is a new path,
-                                # just like a changed named workflow.  The old
-                                # default derivatives remain addressable at
-                                # ``main``; the new content receives a numeric
-                                # revision label.
-                                directory = allocate_new_label()
-                            else:
-                                raise RuntimeError(
-                                    f"Derivative directory {derivative_class}/{directory} is already assigned "
-                                    "to an incompatible configuration lineage"
-                                )
-                        cursor = db.execute(
-                            """
-                            INSERT INTO configuration_lineages(
-                                derivative_class, config_id, config_fingerprint, lineage_fingerprint,
-                                resolved_yaml, directory_label, created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                derivative_class,
-                                resolved.config_id,
-                                resolved.fingerprint,
-                                lineage,
-                                yaml.safe_dump(resolved.values, sort_keys=False),
-                                directory,
-                                utcnow(),
-                            ),
-                        )
-                        lineage_id = int(cursor.lastrowid)
-                        if upstream_id is not None:
-                            db.execute(
-                                "INSERT INTO configuration_lineage_dependencies("
-                                "configuration_lineage_id, upstream_configuration_lineage_id, role"
-                                ") VALUES (?, ?, ?)",
-                                (lineage_id, upstream_id, upstream_class),
-                            )
-                    lineages[derivative_class] = lineage_id
-                    directories[derivative_class] = directory
-                    lineage_fingerprints[derivative_class] = lineage
-                    db.execute(
-                        "INSERT INTO workflow_bindings(workflow_revision_id, derivative_class, configuration_lineage_id) VALUES (?, ?, ?)",
-                        (revision_id, derivative_class, lineage_id),
-                    )
-
-        self._snapshot_workflow(workflow, revision, directories)
-        return RegisteredWorkflow(
-            workflow_id=workflow.workflow_id,
-            revision=revision,
-            revision_id=revision_id,
-            fingerprint=workflow.fingerprint,
-            lineages=lineages,
-            lineage_fingerprints=lineage_fingerprints,
-            directories=directories,
-            created=created,
-        )
+        return None
 
     def workflow_history(self, workflow_id: str) -> list[dict]:
         """Return recorded revisions for a workflow in history order."""
@@ -1127,15 +945,25 @@ class Registry:
         instance_records: Sequence[tuple["InstanceSpec", dict]],
         *,
         now: str,
+        external_ids: Mapping[str, int] | None = None,
+        owner_branch: str | None = None,
     ) -> dict[str, int]:
         """Merge logical instances and dependency edges without creating demand."""
-        from nro.orchestration.catalog import canonical_contract
         from nro.orchestration.manifests import _read_manifest
 
-        instance_ids: dict[str, int] = {}
+        instance_ids: dict[str, int] = dict(external_ids or {})
         replace_dependencies: dict[int, bool] = {}
         for spec, record in instance_records:
-            manifest = self.paths.manifests / _instance_relative_directory(record) / "completion.json"
+            manifest = (
+                self.paths.manifests / _instance_relative_directory(record) / "completion.json"
+            )
+            if owner_branch is not None:
+                manifest = (
+                    ControlPaths(self.paths.control).branch(owner_branch)
+                    / "manifests"
+                    / _instance_relative_directory(record)
+                    / "completion.json"
+                )
             existing = db.execute(
                 """SELECT id, scope, resource_class, revision_fingerprint,
                           artifact_contract_json, artifact_fingerprint,
@@ -1152,9 +980,17 @@ class Registry:
                 # rather than command spelling or resource settings, makes an
                 # existing derivative stale.
                 try:
-                    recorded_contract = canonical_contract(json.loads(existing["artifact_contract_json"]),
-                        certificate.get("configuration") if certificate else None)
-                    artifact_changed = fingerprint(recorded_contract) != record["artifact_fingerprint"]
+                    recorded_contract = json.loads(existing["artifact_contract_json"])
+                    if owner_branch is None:
+                        from nro.orchestration.catalog import canonical_contract
+
+                        recorded_contract = canonical_contract(
+                            recorded_contract,
+                            certificate.get("configuration") if certificate else None,
+                        )
+                    artifact_changed = (
+                        fingerprint(recorded_contract) != record["artifact_fingerprint"]
+                    )
                 except (ValueError, TypeError, KeyError):
                     artifact_changed = True
                 replace_dependencies[instance_id] = artifact_changed
@@ -1176,11 +1012,7 @@ class Registry:
                         (instance_id, instance_id),
                     ).fetchone()
                 )
-                command_json = (
-                    existing["command_json"]
-                    if recipe_locked
-                    else record["command_json"]
-                )
+                command_json = existing["command_json"] if recipe_locked else record["command_json"]
                 runtime_config_path = (
                     existing["runtime_config_path"]
                     if recipe_locked
@@ -1200,17 +1032,32 @@ class Registry:
                     WHERE id=?
                     """,
                     (
-                        record["scope"], record["resource_class"],
+                        record["scope"],
+                        record["resource_class"],
                         record["revision_fingerprint"],
-                        record["artifact_contract_json"], record["artifact_fingerprint"],
-                        command_json, runtime_config_path,
-                        record["memory_gb"], record["max_memory_gb"],
-                        record["input_paths_json"], record["output_root"],
-                        record["output_prefix"], record["expected_outputs_json"],
-                        artifact_changed, artifact_changed, now, instance_id,
+                        record["artifact_contract_json"],
+                        record["artifact_fingerprint"],
+                        command_json,
+                        runtime_config_path,
+                        record["memory_gb"],
+                        record["max_memory_gb"],
+                        record["input_paths_json"],
+                        record["output_root"],
+                        record["output_prefix"],
+                        record["expected_outputs_json"],
+                        artifact_changed,
+                        artifact_changed,
+                        now,
+                        instance_id,
                     ),
                 )
                 if artifact_changed:
+                    dependency_state.invalidate(
+                        db,
+                        [instance_id],
+                        now=now,
+                        reason="Resolved upstream instance contract changed",
+                    )
                     db.execute(
                         """UPDATE attempts SET state='cancel_requested',
                                   error_type='InstanceGraphChanged',
@@ -1232,14 +1079,28 @@ class Registry:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'missing', 'Not yet assessed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        spec.key, spec.module, spec.configuration_lineage_id, spec.project,
-                        spec.participant, record["entities_json"], spec.scope, str(manifest),
-                        spec.resource_class, record["revision_fingerprint"],
-                        record["artifact_contract_json"], record["artifact_fingerprint"],
-                        record["memory_gb"], record["max_memory_gb"],
-                        record["command_json"], record["runtime_config_path"], record["input_paths_json"],
-                        record["output_root"], record["output_prefix"],
-                        record["expected_outputs_json"], now, now,
+                        spec.key,
+                        spec.module,
+                        spec.configuration_lineage_id,
+                        spec.project,
+                        spec.participant,
+                        record["entities_json"],
+                        spec.scope,
+                        str(manifest),
+                        spec.resource_class,
+                        record["revision_fingerprint"],
+                        record["artifact_contract_json"],
+                        record["artifact_fingerprint"],
+                        record["memory_gb"],
+                        record["max_memory_gb"],
+                        record["command_json"],
+                        record["runtime_config_path"],
+                        record["input_paths_json"],
+                        record["output_root"],
+                        record["output_prefix"],
+                        record["expected_outputs_json"],
+                        now,
+                        now,
                     ),
                 )
                 instance_id = int(cursor.lastrowid)
@@ -1256,21 +1117,26 @@ class Registry:
                 db.execute(
                     """
                     INSERT INTO instance_dependencies(instance_id, upstream_instance_id, role, required_generation)
-                    VALUES (?, ?, 'input', NULL)
+                    VALUES (?, ?, ?, NULL)
                     """,
-                    (instance_id, instance_ids[dependency]),
+                    (
+                        instance_id,
+                        instance_ids[dependency],
+                        "inherited" if dependency in (external_ids or {}) else "input",
+                    ),
                 )
+        dependency_state.synchronize(db, now=now)
         return instance_ids
 
     @staticmethod
     def _normalize_active_request_graph_locked(db: sqlite3.Connection) -> None:
         """Reconcile existing active demand with the current global DAG."""
         parents: dict[int, list[int]] = {}
-        for row in db.execute("SELECT instance_id, upstream_instance_id FROM instance_dependencies"):
+        for row in db.execute(
+            "SELECT instance_id, upstream_instance_id FROM instance_dependencies WHERE role != 'inherited'"
+        ):
             parents.setdefault(int(row["instance_id"]), []).append(int(row["upstream_instance_id"]))
-        for active_request in db.execute(
-            "SELECT id FROM requests WHERE state='active'"
-        ).fetchall():
+        for active_request in db.execute("SELECT id FROM requests WHERE state='active'").fetchall():
             active_request_id = str(active_request["id"])
             targets = {
                 int(row["instance_id"])
@@ -1334,9 +1200,7 @@ class Registry:
             self._normalize_active_request_graph_locked(db)
             return instance_ids
 
-    def register_owned_lineages(
-        self, records: Sequence[Mapping[str, object]]
-    ) -> dict[str, int]:
+    def register_owned_lineages(self, records: Sequence[Mapping[str, object]]) -> dict[str, int]:
         """Restore configuration lineages from derivative ownership records."""
         ordered = sorted(
             records,
@@ -1434,9 +1298,7 @@ class Registry:
                     )
         return lineage_ids
 
-    def replace_bids_inventory(
-        self, inventory: Mapping[str, Sequence[str]]
-    ) -> None:
+    def replace_bids_inventory(self, inventory: Mapping[str, Sequence[str]]) -> None:
         """Replace the discovered source project and participant catalog."""
         now = utcnow()
         with self.connection(write=True) as db:
@@ -1573,15 +1435,9 @@ class Registry:
                 "UPDATE requests SET concurrency=? WHERE state='active'",
                 (concurrency,),
             )
-            from nro.bidsify.store import IngestionStore, ACTIVE
-            store = IngestionStore(self)
-            changed = int(cursor.rowcount)
-            for row in store.rows():
-                if row["state"] in ACTIVE:
-                    row["config"]["concurrency"] = concurrency
-                    store.write_locked(row)
-                    changed += 1
-            return changed
+            from nro.bidsify.index import IngestionIndex
+
+            return int(cursor.rowcount) + IngestionIndex(self).set_concurrency_locked(concurrency)
 
     def instance_rows(self, *, read_only: bool = False) -> list[dict]:
         """Read instance records with their current orchestration and artifact state."""
@@ -1589,7 +1445,7 @@ class Registry:
         with manager as db:
             rows = db.execute(
                 """
-                SELECT t.*, ci.directory_label, ci.lineage_fingerprint,
+                SELECT t.*, ci.directory_label, ci.lineage_fingerprint, ci.derivative_class,
                        EXISTS(
                          SELECT 1 FROM workflow_bindings binding
                          WHERE binding.configuration_lineage_id=t.configuration_lineage_id
@@ -1631,8 +1487,7 @@ class Registry:
             return [
                 (int(row["instance_id"]), int(row["upstream_instance_id"]))
                 for row in db.execute(
-                    "SELECT instance_id, upstream_instance_id "
-                    "FROM instance_dependencies"
+                    "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
                 )
             ]
 
@@ -1641,7 +1496,6 @@ class Registry:
         *,
         read_only: bool = False,
         artifact_states: Mapping[int, tuple[str, str]] | None = None,
-        expose_nonfresh: bool = False,
     ) -> list[dict]:
         """Return the registry's canonical current state for every instance.
 
@@ -1706,10 +1560,10 @@ class Registry:
                 state = "Error"
             elif item.get("demanded"):
                 state = "Queued"
-            elif expose_nonfresh and item["artifact_state"] in {"missing", "stale"}:
-                state = str(item["artifact_state"]).title()
+            elif item["artifact_state"] == "missing":
+                state = "Missing"
             else:
-                state = "Unsubmitted"
+                state = "Stale"
             item["status"] = state
             item["root_failure_ids"] = roots
             snapshot.append(item)
@@ -1742,8 +1596,19 @@ class Registry:
                 ON CONFLICT(id) DO UPDATE SET state=excluded.state, lease_expires_at=excluded.lease_expires_at,
                     slurm_job_id=excluded.slurm_job_id, updated_at=excluded.updated_at
                 """,
-                (worker_id, getpass.getuser(), resource_class, memory_gb, slurm_job_id, state,
-                 socket.gethostname(), os.getpid(), time.time() + lease_seconds, now, now),
+                (
+                    worker_id,
+                    getpass.getuser(),
+                    resource_class,
+                    memory_gb,
+                    slurm_job_id,
+                    state,
+                    socket.gethostname(),
+                    os.getpid(),
+                    time.time() + lease_seconds,
+                    now,
+                    now,
+                ),
             )
 
     def heartbeat_worker(self, worker_id: str, *, state: str, lease_seconds: float = 120.0) -> None:
@@ -1862,10 +1727,7 @@ class Registry:
                            AND (r.user_name=? OR predecessor.user_name=? OR allocation.user_name=?)))
                 """
                 submission_parameters = (owner, owner, owner, owner)
-            submissions = [
-                dict(row)
-                for row in db.execute(submission_query, submission_parameters)
-            ]
+            submissions = [dict(row) for row in db.execute(submission_query, submission_parameters)]
             submission_ids = [int(row["id"]) for row in submissions]
             if submission_ids:
                 placeholders = ",".join("?" for _ in submission_ids)
@@ -1878,9 +1740,7 @@ class Registry:
                 )
 
         jobs = {
-            str(row["slurm_job_id"])
-            for row in (*workers, *submissions)
-            if row.get("slurm_job_id")
+            str(row["slurm_job_id"]) for row in (*workers, *submissions) if row.get("slurm_job_id")
         }
         return {
             "workers": len(workers),
@@ -1933,6 +1793,7 @@ class Registry:
                         return None
                 except (TypeError, ValueError):
                     pass
+            dependency_state.synchronize(db, now=now)
             concurrency = int(
                 db.execute(
                     "SELECT COALESCE(MAX(concurrency), 0) FROM requests WHERE state='active'"
@@ -1943,8 +1804,9 @@ class Registry:
                     "SELECT COUNT(*) FROM attempts WHERE state IN ('queued', 'running', 'cancel_requested')"
                 ).fetchone()[0]
             )
-            from nro.bidsify.store import IngestionStore
-            ingestion_active, _, ingestion_limit = IngestionStore(self).summary(memory_gb)
+            from nro.bidsify.index import IngestionIndex
+
+            ingestion_active, _, ingestion_limit = IngestionIndex(self).summary(memory_gb)
             concurrency = max(concurrency, ingestion_limit)
             active += ingestion_active
             if concurrency < 1 or active >= concurrency:
@@ -1956,9 +1818,10 @@ class Registry:
                 JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
                 WHERE t.resource_class IN ({placeholders})
                   AND t.memory_gb <= ?
+                  AND {dependency_state.WRITE_READY}
                   AND t.artifact_state != 'fresh'
                   AND NOT (
-                      t.module='microparcellation'
+                      t.module IN ('dynconn', 'microparcellation')
                       AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
                   )
                   AND EXISTS (
@@ -1991,7 +1854,7 @@ class Registry:
                       )
                   )
                 ORDER BY CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
-                                      WHEN 'microparcellation' THEN 4 ELSE 5 END,
+                                      WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
                          t.participant, t.instance_key
                 LIMIT 1
                 """,
@@ -2001,6 +1864,22 @@ class Registry:
                 return None
             instance = dict(row)
             log_dir = self.paths.events / _instance_relative_directory(instance)
+            execution = db.execute(
+                "SELECT * FROM instance_execution WHERE instance_id=?", (instance["id"],)
+            ).fetchone()
+            if execution is not None:
+                from nro.orchestration.branch_admission import prepare_attempt
+
+                log_dir = (
+                    ControlPaths(self.paths.control).branch(execution["branch"])
+                    / "events"
+                    / _instance_relative_directory(instance)
+                )
+                ensure_shared_directory(log_dir)
+                command = prepare_attempt(self, db, instance, dict(execution), log_dir)
+                if command is None:
+                    return None
+                instance["command_json"] = json.dumps(command)
             ensure_shared_directory(log_dir)
             cursor = db.execute(
                 """
@@ -2008,10 +1887,29 @@ class Registry:
                                      memory_gb, started_at, log_path, created_at)
                 VALUES (?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
-                (instance["id"], worker_id, instance["revision_fingerprint"], memory_gb, now,
-                 str(log_dir / "instance.log"), now),
+                (
+                    instance["id"],
+                    worker_id,
+                    instance["revision_fingerprint"],
+                    memory_gb,
+                    now,
+                    str(log_dir / "instance.log"),
+                    now,
+                ),
             )
             attempt_id = int(cursor.lastrowid)
+            if execution is not None:
+                payload = json.loads(Path(command[-3]).read_text())
+                db.execute(
+                    "INSERT INTO attempt_execution VALUES (?,?,?,?)",
+                    (
+                        attempt_id,
+                        json.dumps(payload["context"]),
+                        execution["provenance_json"],
+                        instance["command_json"],
+                    ),
+                )
+            dependency_state.capture_inputs(db, attempt_id, int(instance["id"]))
             # An instance has one current log, deliberately replaced by the next
             # attempt. Attempt history remains in the registry/events tables.
             log_path = log_dir / "instance.log"
@@ -2030,6 +1928,13 @@ class Registry:
         with self.connection() as db:
             row = db.execute("SELECT state FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             return bool(row and row["state"] == "cancel_requested")
+
+    def record_attempt_process(self, attempt_id: int, process_group_id: int) -> None:
+        """Record launch-in-progress (-1) or the supervised process group before polling."""
+        with self.connection(write=True) as db:
+            db.execute(
+                "UPDATE attempts SET process_group_id=? WHERE id=?", (process_group_id, attempt_id)
+            )
 
     def demanded_instance_ids(self) -> tuple[int, ...]:
         """Return instances currently required by at least one active request."""
@@ -2104,46 +2009,8 @@ class Registry:
         entire worker.  The worker observes ``cancel_requested`` promptly and
         terminates just its child process before returning to the shared pool.
         """
-        now = utcnow()
         with self.connection(write=True) as db:
-            rows = [
-                dict(row)
-                for row in db.execute(
-                    """
-                    SELECT a.id AS attempt_id, a.instance_id, a.worker_id, t.instance_key,
-                           t.module, GROUP_CONCAT(up.instance_key, ', ') AS stale_upstreams
-                    FROM attempts a
-                    JOIN instances t ON t.id=a.instance_id
-                    JOIN instance_dependencies td ON td.instance_id=t.id
-                    JOIN instances up ON up.id=td.upstream_instance_id
-                    WHERE a.state IN ('queued', 'running')
-                      AND up.artifact_state != 'fresh'
-                    GROUP BY a.id
-                    """
-                )
-            ]
-            if rows:
-                db.executemany(
-                    """UPDATE attempts
-                       SET state='cancel_requested', error_type='UpstreamStale',
-                           error_message=?, completed_at=NULL
-                       WHERE id=? AND state IN ('queued', 'running')""",
-                    [
-                        (
-                            "Cancelled because upstream instance(s) are stale or incomplete: "
-                            + str(row["stale_upstreams"]),
-                            int(row["attempt_id"]),
-                        )
-                        for row in rows
-                    ],
-                )
-                db.execute(
-                    "UPDATE workers SET updated_at=? WHERE id IN ("
-                    + ",".join("?" for _ in rows)
-                    + ")",
-                    (now, *(str(row["worker_id"]) for row in rows)),
-                )
-            return rows
+            return dependency_state.synchronize(db, now=utcnow())
 
     def cancel_attempts_downstream_of_failure(self, instance_id: int) -> list[dict]:
         """Stop active descendant attempts after ``instance_id`` has fatally failed.
@@ -2154,42 +2021,81 @@ class Registry:
         be active when an ancestor fails.
         """
         with self.connection(write=True) as db:
-            children: dict[int, set[int]] = {}
-            for edge in db.execute("SELECT instance_id, upstream_instance_id FROM instance_dependencies"):
-                children.setdefault(int(edge["upstream_instance_id"]), set()).add(int(edge["instance_id"]))
-            descendants: set[int] = set()
-            pending = list(children.get(int(instance_id), ()))
-            while pending:
-                candidate = pending.pop()
-                if candidate in descendants:
-                    continue
-                descendants.add(candidate)
-                pending.extend(children.get(candidate, ()))
-            if not descendants:
-                return []
-            placeholders = ",".join("?" for _ in descendants)
-            rows = [
-                dict(row)
-                for row in db.execute(
-                    f"""SELECT a.id AS attempt_id, a.instance_id, a.worker_id, t.instance_key, t.module
-                        FROM attempts a JOIN instances t ON t.id=a.instance_id
-                        WHERE a.instance_id IN ({placeholders})
-                          AND a.state IN ('queued', 'running')""",
-                    tuple(sorted(descendants)),
-                )
-            ]
-            if rows:
-                failed = db.execute("SELECT instance_key FROM instances WHERE id=?", (instance_id,)).fetchone()
-                cause = str(failed["instance_key"]) if failed else str(instance_id)
+            return dependency_state.invalidate(
+                db,
+                [instance_id],
+                now=utcnow(),
+                reason=f"Resolved upstream instance failed: {instance_id}",
+                error_type="UpstreamFailed",
+            )
+
+    @contextlib.contextmanager
+    def artifact_mutation(
+        self, instance_ids: Iterable[int], *, timeout: float = 30.0
+    ) -> Iterator[None]:
+        """Reserve outputs for deletion or replacement after cancelling their consumers.
+
+        Target attempts must already be stopped. Other claims remain available
+        while consumers shut down. A timeout performs no caller writes, leaves
+        invalidation in place, and releases the reservation. After a hard crash,
+        a later mutation recovers the filesystem lock before clearing old tokens.
+        """
+        ids = tuple(sorted(set(instance_ids)))
+        if not ids:
+            yield
+            return
+        self._prepare_directories()
+        scheduler = ControlPaths(self.paths.control).scheduler
+        placeholders = ",".join("?" for _ in ids)
+        token = uuid.uuid4().hex
+        with RegistryLock(
+            scheduler / "artifact-mutation.lock", scheduler / "artifact-mutation.recovery-lock"
+        ):
+            with self.connection(write=True) as db:
+                if db.execute(
+                    f"SELECT 1 FROM attempts WHERE instance_id IN ({placeholders}) AND state IN {dependency_state.ACTIVE}",
+                    ids,
+                ).fetchone():
+                    raise RuntimeError(
+                        "Stop target attempts before replacing or purging their outputs"
+                    )
+                db.execute("DELETE FROM artifact_mutations")
                 db.executemany(
-                    """UPDATE attempts SET state='cancel_requested', error_type='UpstreamFailed',
-                               error_message=? WHERE id=? AND state IN ('queued', 'running')""",
-                    [
-                        (f"Cancelled because upstream instance failed: {cause}", int(row["attempt_id"]))
-                        for row in rows
-                    ],
+                    "INSERT INTO artifact_mutations VALUES (?,?)", [(item, token) for item in ids]
                 )
-            return rows
+                db.execute(
+                    f"UPDATE instances SET artifact_state='stale', artifact_reason='Outputs reserved for mutation', updated_at=? WHERE id IN ({placeholders})",
+                    (utcnow(), *ids),
+                )
+                dependency_state.invalidate(
+                    db,
+                    ids,
+                    now=utcnow(),
+                    reason="A resolved upstream output is being replaced or purged",
+                )
+            try:
+                deadline = time.monotonic() + timeout
+                while True:
+                    with self.connection() as db:
+                        active = db.execute(
+                            f"""SELECT 1 FROM attempt_dependencies pinned
+                            JOIN attempts reader ON reader.id=pinned.attempt_id
+                            WHERE pinned.upstream_instance_id IN ({placeholders})
+                              AND reader.state IN {dependency_state.ACTIVE} LIMIT 1""",
+                            ids,
+                        ).fetchone()
+                    if not active:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "Dependent attempts have not confirmed shutdown; no outputs were removed. Retry after they stop."
+                        )
+                    self.recover_orphaned_attempts()
+                    time.sleep(0.1)
+                yield
+            finally:
+                with self.connection(write=True) as db:
+                    db.execute("DELETE FROM artifact_mutations WHERE token=?", (token,))
 
     def finish_attempt(
         self,
@@ -2203,7 +2109,11 @@ class Registry:
         if state not in {"success", "error", "cancelled"}:
             raise ValueError(f"Invalid terminal attempt state: {state}")
         with self.connection(write=True) as db:
-            row = db.execute("SELECT worker_id FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+            row = db.execute(
+                "SELECT worker_id, state FROM attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            if state == "success" and row and row["state"] == "cancel_requested":
+                state = "cancelled"
             db.execute(
                 """
                 UPDATE attempts SET state=?, completed_at=?,
@@ -2307,6 +2217,7 @@ class Registry:
         include_dependents: bool = True,
         user_name: str | None = None,
         force: bool = False,
+        branch_registry_id: str | None = None,
     ) -> dict[str, int]:
         """Cancel matching demand and signal attempts no longer needed by any request.
 
@@ -2319,6 +2230,28 @@ class Registry:
         selectors = selectors or {}
         owner = user_name or getpass.getuser()
         with self.connection(write=True) as db:
+            branch_requests = (
+                None
+                if branch_registry_id is None
+                else {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT request_id FROM request_owners WHERE registry_id=?",
+                        (branch_registry_id,),
+                    )
+                }
+            )
+            branch_instances = (
+                None
+                if branch_registry_id is None
+                else {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT instance_id FROM branch_instances WHERE registry_id=?",
+                        (branch_registry_id,),
+                    )
+                }
+            )
             eligible_requests = {
                 str(row["id"])
                 for row in db.execute(
@@ -2330,7 +2263,12 @@ class Registry:
                     (self.paths.project,),
                 )
                 if (force or str(row["user_name"]) == owner)
-                and (not workflow_set or str(row["workflow_id"]) in workflow_set)
+                and (branch_requests is None or row["id"] in branch_requests)
+                and (
+                    not workflow_set
+                    or str(row["workflow_id"]).removeprefix((branch_registry_id or "") + ":")
+                    in workflow_set
+                )
             }
             if not eligible_requests:
                 return {"instances": 0, "requests": 0, "attempts": 0}
@@ -2343,12 +2281,15 @@ class Registry:
                 if (not participant_set or row["participant"] in participant_set)
                 and (not module_set or row["module"] in module_set)
                 and matches_selectors(json.loads(row["entities_json"]), selectors)
+                and (branch_instances is None or row["id"] in branch_instances)
             }
             if include_dependents:
                 changed = True
                 while changed:
                     before = len(selected)
-                    for edge in db.execute("SELECT instance_id, upstream_instance_id FROM instance_dependencies"):
+                    for edge in db.execute(
+                        "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
+                    ):
                         if int(edge["upstream_instance_id"]) in selected:
                             selected.add(int(edge["instance_id"]))
                     changed = len(selected) != before
@@ -2380,7 +2321,9 @@ class Registry:
             cancelled_requests: list[str] = []
             edges = [
                 (int(row["instance_id"]), int(row["upstream_instance_id"]))
-                for row in db.execute("SELECT instance_id, upstream_instance_id FROM instance_dependencies")
+                for row in db.execute(
+                    "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
+                )
             ]
             for request_id in affected_requests:
                 active_targets = {
@@ -2439,7 +2382,11 @@ class Registry:
                   )
                 """
             )
-            return {"instances": demand_count, "requests": len(cancelled_requests), "attempts": cursor.rowcount}
+            return {
+                "instances": demand_count,
+                "requests": len(cancelled_requests),
+                "attempts": cursor.rowcount,
+            }
 
     def reconcile_requests(self) -> None:
         """Update request states from their demanded instances' current outcomes."""
@@ -2473,8 +2420,12 @@ class Registry:
         with self.connection(write=True) as db:
             if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
                 return []
-            from nro.bidsify.store import IngestionStore
-            ingestion_active, ingestion_ready, ingestion_limit = IngestionStore(self).summary(memory_gb)
+            dependency_state.synchronize(db, now=utcnow())
+            from nro.bidsify.index import IngestionIndex
+
+            ingestion_active, ingestion_ready, ingestion_limit = IngestionIndex(self).summary(
+                memory_gb
+            )
             if request_id is None:
                 request = db.execute(
                     "SELECT id FROM requests WHERE state='active' ORDER BY created_at LIMIT 1"
@@ -2504,9 +2455,10 @@ class Registry:
                     SELECT COUNT(*) FROM instances t
                     WHERE t.resource_class IN ({placeholders})
                       AND t.memory_gb<=?
+                      AND {dependency_state.WRITE_READY}
                       AND t.artifact_state!='fresh'
                       AND NOT (
-                          t.module='microparcellation'
+                          t.module IN ('dynconn', 'microparcellation')
                           AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
                       )
                       AND EXISTS (
@@ -2542,7 +2494,10 @@ class Registry:
                     (*compatible, memory_gb),
                 ).fetchone()[0]
             )
-            desired = min(max(desired, ingestion_limit), active_instances + ready_instances + ingestion_active + ingestion_ready)
+            desired = min(
+                max(desired, ingestion_limit),
+                active_instances + ready_instances + ingestion_active + ingestion_ready,
+            )
             live_workers = int(
                 db.execute(
                     """SELECT COUNT(*) FROM workers
@@ -2563,9 +2518,24 @@ class Registry:
             if ingestion_ready:
                 # Cloud credentials belong to the submitting user. Idle
                 # workers belonging to someone else cannot fulfill this demand.
-                own_idle = db.execute("SELECT COUNT(*) FROM workers WHERE state='idle' AND user_name=? AND lease_expires_at>? AND memory_gb>=?",
-                                      (getpass.getuser(), time.time(), memory_gb)).fetchone()[0]
-                count = max(count, min(ingestion_ready, max(0, max(desired, ingestion_limit) - active_instances - ingestion_active - pending)) - own_idle)
+                own_idle = db.execute(
+                    "SELECT COUNT(*) FROM workers WHERE state='idle' AND user_name=? AND lease_expires_at>? AND memory_gb>=?",
+                    (getpass.getuser(), time.time(), memory_gb),
+                ).fetchone()[0]
+                count = max(
+                    count,
+                    min(
+                        ingestion_ready,
+                        max(
+                            0,
+                            max(desired, ingestion_limit)
+                            - active_instances
+                            - ingestion_active
+                            - pending,
+                        ),
+                    )
+                    - own_idle,
+                )
             reservations: list[tuple[int, str]] = []
             for _ in range(count):
                 token = uuid.uuid4().hex
@@ -2579,8 +2549,10 @@ class Registry:
                 )
                 reservations.append((int(cursor.lastrowid), token))
                 if ingestion_ready:
-                    db.execute("INSERT INTO metadata(key,value) VALUES (?,?)",
-                               (f'ingestion_submission_owner:{cursor.lastrowid}', getpass.getuser()))
+                    db.execute(
+                        "INSERT INTO metadata(key,value) VALUES (?,?)",
+                        (f"ingestion_submission_owner:{cursor.lastrowid}", getpass.getuser()),
+                    )
             return reservations
 
     def reconcile_scheduler_submissions(self, *, prepared_timeout: float = 300.0) -> int:
@@ -2602,7 +2574,10 @@ class Registry:
                     age = prepared_timeout + 1
                 if age > prepared_timeout:
                     changes.append(("error", int(row["id"])))
-            elif row.get("slurm_job_id") and RegistryLock._slurm_terminal(str(row["slurm_job_id"])) is True:
+            elif (
+                row.get("slurm_job_id")
+                and RegistryLock._slurm_terminal(str(row["slurm_job_id"])) is True
+            ):
                 changes.append(("complete", int(row["id"])))
         if changes:
             with self.connection(write=True) as db:
@@ -2630,8 +2605,9 @@ class Registry:
             request = db.execute(
                 "SELECT id FROM requests WHERE state='active' ORDER BY created_at LIMIT 1"
             ).fetchone()
-            from nro.bidsify.store import IngestionStore
-            ingestion_active, ingestion_ready, _ = IngestionStore(self).summary(memory_gb)
+            from nro.bidsify.index import IngestionIndex
+
+            ingestion_active, ingestion_ready, _ = IngestionIndex(self).summary(memory_gb)
             if request is None and not (ingestion_active or ingestion_ready):
                 return None
             token = uuid.uuid4().hex
@@ -2642,7 +2618,14 @@ class Registry:
                     memory_gb, state, created_at
                 ) VALUES (?, ?, ?, ?, ?, 'prepared', ?)
                 """,
-                (token, request["id"] if request else None, worker_id, resource_class, memory_gb, utcnow()),
+                (
+                    token,
+                    request["id"] if request else None,
+                    worker_id,
+                    resource_class,
+                    memory_gb,
+                    utcnow(),
+                ),
             )
             submission_id = int(cursor.lastrowid)
             db.execute(
@@ -2655,9 +2638,10 @@ class Registry:
         """Return the smallest ready instance tier that this worker cannot satisfy."""
         with self.connection() as db:
             row = db.execute(
-                """
+                f"""
                 SELECT MIN(t.memory_gb) AS memory_gb FROM instances t
                 WHERE t.memory_gb> ? AND t.artifact_state!='fresh'
+                  AND {dependency_state.WRITE_READY}
                   AND EXISTS (
                       SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
                       WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
@@ -2723,8 +2707,11 @@ class Registry:
                 for row in db.execute(
                     """
                     SELECT * FROM workers
-                    WHERE state IN ('idle', 'running', 'draining')
-                      AND lease_expires_at IS NOT NULL AND lease_expires_at<?
+                    WHERE (state IN ('idle', 'running', 'draining')
+                      AND lease_expires_at IS NOT NULL AND lease_expires_at<?)
+                      OR (state IN ('exited','terminated','lost') AND EXISTS (
+                          SELECT 1 FROM attempts WHERE worker_id=workers.id
+                          AND state IN ('queued','running','cancel_requested')))
                     """,
                     (time.time(),),
                 )
@@ -2744,19 +2731,48 @@ class Registry:
             if not is_dead and worker.get("slurm_job_id"):
                 is_dead = RegistryLock._slurm_terminal(str(worker["slurm_job_id"])) is True
             if is_dead:
+                with self.connection() as db:
+                    groups = [
+                        int(row[0])
+                        for row in db.execute(
+                            f"SELECT process_group_id FROM attempts WHERE worker_id=? AND state IN {dependency_state.ACTIVE}",
+                            (worker["id"],),
+                        )
+                    ]
+                from nro.orchestration.execution import ShutdownUnconfirmed, process_group_alive
+
+                allocation_ended = (
+                    bool(worker.get("slurm_job_id"))
+                    and RegistryLock._slurm_terminal(str(worker["slurm_job_id"])) is True
+                )
+                try:
+                    if not allocation_ended and any(
+                        group == -1
+                        or (
+                            group > 0
+                            and (worker["hostname"] != local_host or process_group_alive(group))
+                        )
+                        for group in groups
+                    ):
+                        continue
+                except ShutdownUnconfirmed:
+                    continue
+            if is_dead:
                 worker_id = str(worker["id"])
                 dead.append(worker_id)
-                if worker.get("slurm_job_id") and RegistryLock._slurm_out_of_memory(
-                    str(worker["slurm_job_id"])
-                ) is True:
+                if (
+                    worker.get("slurm_job_id")
+                    and RegistryLock._slurm_out_of_memory(str(worker["slurm_job_id"])) is True
+                ):
                     oom_workers.add(worker_id)
         if not dead:
             return 0
         recovered = 0
         with self.connection(write=True) as db:
             for worker_id in dead:
-                from nro.bidsify.store import IngestionStore
-                recovered += IngestionStore(self).recover_locked({worker_id})
+                from nro.bidsify.index import IngestionIndex
+
+                recovered += IngestionIndex(self).recover_locked({worker_id})
                 attempts = db.execute(
                     "SELECT id, instance_id FROM attempts WHERE worker_id=? AND state IN ('queued', 'running', 'cancel_requested')",
                     (worker_id,),
@@ -2851,11 +2867,28 @@ class Registry:
                 raise KeyError(f"Unknown nro request: {request_id}")
             instances = db.execute(
                 """
-                SELECT t.* FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
+                SELECT t.*,ci.derivative_class FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
+                JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
                 WHERE rt.request_id=? AND rt.role='target' ORDER BY t.participant, t.instance_key
                 """,
                 (request_id,),
             ).fetchall()
+            plan = db.execute(
+                "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if plan is not None:
+                terminals = set(json.loads(plan[0])["terminals"])
+                instances = [
+                    row
+                    for row in db.execute(
+                        """SELECT t.*,ci.derivative_class,
+                    COALESCE(e.logical_key,t.instance_key) AS logical_key FROM request_artifacts rt
+                    JOIN instances t ON t.id=rt.instance_id JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
+                    LEFT JOIN instance_execution e ON e.instance_id=t.id WHERE rt.request_id=?""",
+                        (request_id,),
+                    )
+                    if row["logical_key"] in terminals
+                ]
             return dict(request), [dict(row) for row in instances]
 
     def unused_queued_worker_jobs(self) -> list[tuple[int, str]]:

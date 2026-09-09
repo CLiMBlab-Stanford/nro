@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from nro.orchestration.manifests import assess_registry, file_record
-from nro.orchestration.catalog import module_descriptor
-from nro.orchestration.registry import Registry, RegistryLock, discover_registry_projects
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.publish import publish
 from nro.bin.status import main as status_main
-from nro.orchestration.worker import Worker
 from nro.configuration.store import ConfigStore
+from nro.orchestration.catalog import module_descriptor
+from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.manifests import assess_registry, file_record
+from nro.orchestration.publish import publish
+from nro.orchestration.registry import Registry, RegistryLock, discover_registry_projects
+from nro.orchestration.worker import Worker
 
 
 def _spec(
@@ -144,29 +144,35 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
     assert alpha_registry.paths.control == tmp_path / ".nro"
     assert discover_registry_projects(bids) == ["alpha", "beta"]
     rows = {row["project"]: row for row in alpha_registry.instance_rows()}
-    assert Path(rows["alpha"]["manifest_path"]).relative_to(
-        alpha_registry.paths.manifests
-    ).parts[0] == "alpha"
-    assert Path(rows["beta"]["manifest_path"]).relative_to(
-        alpha_registry.paths.manifests
-    ).parts[0] == "beta"
+    assert (
+        Path(rows["alpha"]["manifest_path"]).relative_to(alpha_registry.paths.manifests).parts[0]
+        == "alpha"
+    )
+    assert (
+        Path(rows["beta"]["manifest_path"]).relative_to(alpha_registry.paths.manifests).parts[0]
+        == "beta"
+    )
     with pytest.raises(ValueError, match="only its selected project"):
         beta_registry.register_instances((alpha,))
-    assert len(
-        alpha_registry.reserve_worker_submissions(
-            request_id=alpha_request,
+    assert (
+        len(
+            alpha_registry.reserve_worker_submissions(
+                request_id=alpha_request,
+                resource_class="large",
+            )
+        )
+        == 1
+    )
+    assert (
+        beta_registry.reserve_worker_submissions(
+            request_id=beta_request,
             resource_class="large",
         )
-    ) == 1
-    assert beta_registry.reserve_worker_submissions(
-        request_id=beta_request,
-        resource_class="large",
-    ) == []
+        == []
+    )
 
     alpha_registry.request_cancellation(modules=("networks",), force=True)
-    request_states = {
-        row["project"]: row["state"] for row in alpha_registry.request_rows()
-    }
+    request_states = {row["project"]: row["state"] for row in alpha_registry.request_rows()}
     assert request_states == {"alpha": "cancelled", "beta": "active"}
 
 
@@ -190,7 +196,9 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         output=anat_output,
         inputs=(raw,),
     )
-    anat = anat.evolve(config_fingerprint=workflow.configuration("preprocessing").scientific_fingerprint)
+    anat = anat.evolve(
+        config_fingerprint=workflow.configuration("preprocessing").scientific_fingerprint
+    )
     network = _spec(
         key="networks:" + "b" * 64,
         module="networks",
@@ -200,7 +208,9 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         output=network_output,
         dependencies=(anat.key,),
     )
-    network = network.evolve(config_fingerprint=workflow.configuration("networks").scientific_fingerprint)
+    network = network.evolve(
+        config_fingerprint=workflow.configuration("networks").scientific_fingerprint
+    )
     registry.create_request(
         registered=registered,
         target_module="networks",
@@ -230,9 +240,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     assert manifest["runtime_config"]["sha256"]
     assert manifest["software"]["name"] == "nro"
     assert manifest["public_outputs"]
-    assert manifest["artifact_contract"] == json.loads(
-        rows["anat"]["artifact_contract_json"]
-    )
+    assert manifest["artifact_contract"] == json.loads(rows["anat"]["artifact_contract_json"])
     assert manifest["artifact_fingerprint"] == rows["anat"]["artifact_fingerprint"]
     manifest_path = Path(rows["anat"]["manifest_path"])
     manifest["private_artifacts"].append(file_record(manifest_path))
@@ -253,9 +261,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
             (manifest["artifact_fingerprint"], rows["anat"]["id"]),
         )
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
-    steps = json.loads(
-        (Path(rows["anat"]["log_path"]).parent / "current-steps.json").read_text()
-    )
+    steps = json.loads((Path(rows["anat"]["log_path"]).parent / "current-steps.json").read_text())
     assert steps["orchestration:completion-manifest"]["status"] == "success"
     assert stat.S_IMODE(Path(rows["anat"]["log_path"]).parent.stat().st_mode) == 0o2775
     assert stat.S_IMODE(Path(rows["anat"]["manifest_path"]).parent.stat().st_mode) == 0o2775
@@ -268,9 +274,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     )
     assert (publication / "sub-01" / "network.txt").read_text() == "ok"
     assert (publication / "dataset_description.json").is_file()
-    provenance = json.loads(
-        (publication / ".nro-publication.json").read_text()
-    )
+    provenance = json.loads((publication / ".nro-publication.json").read_text())
     assert "workflow_snapshot" not in provenance
     assert "request_id" not in provenance
     assert "configuration" in provenance["instances"][0]
@@ -323,9 +327,7 @@ def test_resumed_instance_reuses_one_fixed_instance_log(tmp_path: Path) -> None:
     registry.register_worker("first", resource_class="large")
     first = registry.claim_ready_instance("first", ("large",))
     assert first is not None
-    registry.finish_attempt(
-        first.attempt_id, state="cancelled", error_type="UpstreamStale"
-    )
+    registry.finish_attempt(first.attempt_id, state="cancelled", error_type="UpstreamStale")
 
     registry.register_worker("second", resource_class="large")
     second = registry.claim_ready_instance("second", ("large",))
@@ -348,8 +350,13 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
         output=tmp_path / "outputs" / "network.txt",
     )
     registry.create_request(
-        registered=registered, target_module="networks", selectors={}, instances=(instance,),
-        terminal_instance_keys=(instance.key,), concurrency=1, partition=None,
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(instance,),
+        terminal_instance_keys=(instance.key,),
+        concurrency=1,
+        partition=None,
     )
     registry.register_worker("first", resource_class="large")
     first = registry.claim_ready_instance("first", ("large",))
@@ -365,8 +372,13 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
     assert registry.claim_ready_instance("before-new-run", ("large",)) is None
 
     registry.create_request(
-        registered=registered, target_module="networks", selectors={}, instances=(instance,),
-        terminal_instance_keys=(instance.key,), concurrency=1, partition=None,
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(instance,),
+        terminal_instance_keys=(instance.key,),
+        concurrency=1,
+        partition=None,
     )
     registry.register_worker("after-new-run", resource_class="large")
     assert registry.claim_ready_instance("after-new-run", ("large",)) is not None
@@ -379,9 +391,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     registered = registry.register_workflow(workflow)
     raw = tmp_path / "raw_T1w.nii.gz"
     raw.write_text("raw")
-    output_root = (
-        bids / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "anat"
-    )
+    output_root = bids / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "anat"
     derivative = output_root / "sub-01_desc-preproc_T1w.nii.gz"
     derivative.parent.mkdir(parents=True, exist_ok=True)
     derivative.write_text("derivative")
@@ -391,9 +401,9 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
             {
                 "complete": True,
                 "public_outputs": [str(derivative)],
-                "output_metadata_contract": module_descriptor(
-                    "anat"
-                ).processing_contract()["output_metadata"],
+                "output_metadata_contract": module_descriptor("anat").processing_contract()[
+                    "output_metadata"
+                ],
             }
         )
     )
@@ -429,9 +439,9 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     assert states[row["id"]][0] == "stale"
     assert "current contract" in states[row["id"]][1]
 
-    native_payload["output_metadata_contract"] = module_descriptor(
-        "anat"
-    ).processing_contract()["output_metadata"]
+    native_payload["output_metadata_contract"] = module_descriptor("anat").processing_contract()[
+        "output_metadata"
+    ]
     native_manifest.write_text(json.dumps(native_payload))
     future_ns = native_manifest.stat().st_mtime_ns + 10_000_000_000
     os.utime(raw, ns=(future_ns, future_ns))
@@ -577,9 +587,7 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
             (upstream.key,),
         )
 
-    snapshot = {
-        row["instance_key"]: row for row in registry.instance_status_snapshot()
-    }
+    snapshot = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
     assert snapshot[upstream.key]["attempt_state"] == "error"
     assert snapshot[upstream.key]["status"] == "Success"
     assert snapshot[upstream.key]["root_failure_ids"] == ()
@@ -622,13 +630,17 @@ def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
         partition=None,
     )
 
-    Worker(registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01).run()
+    Worker(
+        registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01
+    ).run()
     row = registry.instance_rows()[0]
     assert row["memory_gb"] == 64
     assert row["oom_count"] == 1
     assert registry.request_rows()[0]["state"] == "active"
 
-    Worker(registry, resource_class="large", memory_gb=64, idle_timeout=0.1, poll_interval=0.01).run()
+    Worker(
+        registry, resource_class="large", memory_gb=64, idle_timeout=0.1, poll_interval=0.01
+    ).run()
     row = registry.instance_rows()[0]
     assert row["artifact_state"] == "fresh"
     assert row["oom_count"] == 1
@@ -663,7 +675,9 @@ def test_oom_at_memory_ceiling_is_terminal_error(tmp_path: Path) -> None:
         partition=None,
     )
 
-    Worker(registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01).run()
+    Worker(
+        registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01
+    ).run()
     row = registry.instance_rows()[0]
     assert row["oom_count"] == 1
     assert row["memory_gb"] == 32
@@ -733,9 +747,7 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(tmp_path: Pat
     assert registry.claim_ready_instance("busy", ("large",)) is not None
 
     started = time.monotonic()
-    Worker(
-        registry, resource_class="large", idle_timeout=0.05, poll_interval=0.01
-    ).run()
+    Worker(registry, resource_class="large", idle_timeout=0.05, poll_interval=0.01).run()
 
     assert time.monotonic() - started < 0.5
 
@@ -749,22 +761,22 @@ def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> N
     terminals = []
     for participant, marker in (("01", "2"), ("02", "3")):
         anat = _spec(
-                    key="anat:" + marker * 64,
-                    module="anat",
-                    lineage=registered.lineages["preprocessing"],
-                    config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-                    runtime_config=registry.runtime_config_path(registered, "preprocessing"),
-                    output=tmp_path / participant / "anat.txt",
-                ).evolve(participant=participant)
+            key="anat:" + marker * 64,
+            module="anat",
+            lineage=registered.lineages["preprocessing"],
+            config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+            runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+            output=tmp_path / participant / "anat.txt",
+        ).evolve(participant=participant)
         network = _spec(
-                    key="networks:" + marker * 64,
-                    module="networks",
-                    lineage=registered.lineages["networks"],
-                    config_fingerprint=workflow.configuration("networks").fingerprint,
-                    runtime_config=registry.runtime_config_path(registered, "networks"),
-                    output=tmp_path / participant / "network.txt",
-                    dependencies=(anat.key,),
-                ).evolve(participant=participant)
+            key="networks:" + marker * 64,
+            module="networks",
+            lineage=registered.lineages["networks"],
+            config_fingerprint=workflow.configuration("networks").fingerprint,
+            runtime_config=registry.runtime_config_path(registered, "networks"),
+            output=tmp_path / participant / "network.txt",
+            dependencies=(anat.key,),
+        ).evolve(participant=participant)
         specs.extend((anat, network))
         terminals.append(network.key)
     registry.create_request(
@@ -824,9 +836,10 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
         partition=None,
     )
     registry.register_worker("live", resource_class="large")
-    assert registry.reserve_worker_successor(
-        worker_id="live", resource_class="large", memory_gb=32
-    ) is not None
+    assert (
+        registry.reserve_worker_successor(worker_id="live", resource_class="large", memory_gb=32)
+        is not None
+    )
     second = registry.create_request(
         registered=registered,
         target_module="networks",
@@ -853,19 +866,26 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
     assert len(reservations) == 1
 
 
-@pytest.mark.parametrize("returncode,stdout,stderr,expected", [
-    (0, "RUNNING\n", "", False),
-    (0, "PENDING\n", "", False),
-    (0, "", "", True),
-    (1, "", "slurm_load_jobs error: Invalid job id specified\n", True),
-    (1, "", "slurm_load_jobs error: Unable to contact slurm controller", None),
-    (1, "", "slurm_load_jobs error: Access denied", None),
-    (1, "", "", None),
-    (1, "RUNNING\n", "slurm_load_jobs error: Invalid job id specified", None),
-    (1, "", "slurm_load_jobs error: Invalid job id specified\nConnection failure", None),
-])
+@pytest.mark.parametrize(
+    "returncode,stdout,stderr,expected",
+    [
+        (0, "RUNNING\n", "", False),
+        (0, "PENDING\n", "", False),
+        (0, "", "", True),
+        (1, "", "slurm_load_jobs error: Invalid job id specified\n", True),
+        (1, "", "slurm_load_jobs error: Unable to contact slurm controller", None),
+        (1, "", "slurm_load_jobs error: Access denied", None),
+        (1, "", "", None),
+        (1, "RUNNING\n", "slurm_load_jobs error: Invalid job id specified", None),
+        (1, "", "slurm_load_jobs error: Invalid job id specified\nConnection failure", None),
+    ],
+)
 def test_slurm_terminal_distinguishes_absence_from_query_failure(
-    monkeypatch, returncode, stdout, stderr, expected,
+    monkeypatch,
+    returncode,
+    stdout,
+    stderr,
+    expected,
 ):
     monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
 
@@ -893,27 +913,41 @@ def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
     assert RegistryLock._slurm_terminal("123") is None
 
 
-@pytest.mark.parametrize("diagnostic,replacements", [
-    ("slurm_load_jobs error: Invalid job id specified\n", 3),
-    ("slurm_load_jobs error: Unable to contact slurm controller\n", 0),
-])
+@pytest.mark.parametrize(
+    "diagnostic,replacements",
+    [
+        ("slurm_load_jobs error: Invalid job id specified\n", 3),
+        ("slurm_load_jobs error: Unable to contact slurm controller\n", 0),
+    ],
+)
 def test_reconciliation_releases_only_confirmed_expired_worker_slots(
-    tmp_path, monkeypatch, diagnostic, replacements,
+    tmp_path,
+    monkeypatch,
+    diagnostic,
+    replacements,
 ):
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instances = tuple(_spec(
-        key=f"networks:{index}" + "8" * 63, module="networks",
-        lineage=registered.lineages["networks"],
-        config_fingerprint=workflow.configuration("networks").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "networks"),
-        output=tmp_path / f"result-{index}.txt",
-    ) for index in range(4))
+    instances = tuple(
+        _spec(
+            key=f"networks:{index}" + "8" * 63,
+            module="networks",
+            lineage=registered.lineages["networks"],
+            config_fingerprint=workflow.configuration("networks").fingerprint,
+            runtime_config=registry.runtime_config_path(registered, "networks"),
+            output=tmp_path / f"result-{index}.txt",
+        )
+        for index in range(4)
+    )
     request = registry.create_request(
-        registered=registered, target_module="networks", selectors={},
-        instances=instances, terminal_instance_keys=tuple(item.key for item in instances),
-        concurrency=50, partition=None,
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=instances,
+        terminal_instance_keys=tuple(item.key for item in instances),
+        concurrency=50,
+        partition=None,
     )
     submissions = registry.reserve_worker_submissions(request_id=request, resource_class="large")
     assert len(submissions) == 4
@@ -936,7 +970,12 @@ def test_reconciliation_releases_only_confirmed_expired_worker_slots(
     assert len(reserved) == replacements
     with registry.connection() as db:
         assert db.execute("SELECT state FROM workers WHERE id='live'").fetchone()[0] == "idle"
-        assert db.execute("SELECT state FROM scheduler_submissions WHERE slurm_job_id='3'").fetchone()[0] == "running"
+        assert (
+            db.execute("SELECT state FROM scheduler_submissions WHERE slurm_job_id='3'").fetchone()[
+                0
+            ]
+            == "running"
+        )
 
 
 def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
@@ -1081,8 +1120,13 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
         output=tmp_path / "result.txt",
     )
     request = registry.create_request(
-        registered=registered, target_module="networks", selectors={}, instances=(instance,),
-        terminal_instance_keys=(instance.key,), concurrency=1, partition=None,
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(instance,),
+        terminal_instance_keys=(instance.key,),
+        concurrency=1,
+        partition=None,
     )
     submission_id, _token = registry.reserve_worker_submissions(
         request_id=request, resource_class="large", memory_gb=32
@@ -1105,8 +1149,7 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
     assert shutdown["submissions"] == [(submission_id, "101")]
     with registry.connection() as db:
         workers = {
-            str(row["id"]): str(row["state"])
-            for row in db.execute("SELECT id, state FROM workers")
+            str(row["id"]): str(row["state"]) for row in db.execute("SELECT id, state FROM workers")
         }
         attempt = db.execute(
             "SELECT state, error_type FROM attempts WHERE id=?", (claimed.attempt_id,)
@@ -1135,8 +1178,7 @@ def test_repair_shutdown_covers_all_users_and_blocks_late_workers(tmp_path: Path
             "SELECT value FROM metadata WHERE key='maintenance_mode'"
         ).fetchone()
         workers = {
-            str(row["id"]): str(row["state"])
-            for row in db.execute("SELECT id, state FROM workers")
+            str(row["id"]): str(row["state"]) for row in db.execute("SELECT id, state FROM workers")
         }
     assert maintenance["value"] == "repair"
     assert workers == {
@@ -1196,7 +1238,7 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
         dependencies=(parent_a.key, parent_b.key),
         input_paths=(raw_a, raw_b),
     )
-    second = registry.create_request(
+    registry.create_request(
         registered=registered,
         target_module="microparcellation",
         selectors={},
@@ -1215,9 +1257,7 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
         ).fetchone()
     assert first_b is not None and first_b["demand_state"] == "active"
 
-    registry.request_cancellation(
-        modules=("microparcellation",), user_name="second-owner"
-    )
+    registry.request_cancellation(modules=("microparcellation",), user_name="second-owner")
     with registry.connection() as db:
         first_b_after = db.execute(
             """SELECT rt.demand_state FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
@@ -1232,9 +1272,10 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
 ) -> None:
     bids = tmp_path / "bids"
     raw_dir = bids / "demo" / "sub-01" / "func"
-    _write_raw = lambda run: (
-        (raw_dir / f"sub-01_task-rest_run-{run}_bold.nii.gz").write_text("raw")
-    )
+
+    def _write_raw(run):
+        return (raw_dir / f"sub-01_task-rest_run-{run}_bold.nii.gz").write_text("raw")
+
     raw_dir.mkdir(parents=True)
     _write_raw("1")
     (raw_dir / "sub-01_task-rest_run-1_bold.json").write_text("{}")
@@ -1251,7 +1292,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     )
     clean = clean_base.evolve(
         entities={"task": "rest", "run": "1"},
-        command=(*clean_base.command, "nro.clean"),
+        command=(*clean_base.command, "nro.modules.clean"),
     )
     micro = _spec(
         key="microparcellation:" + "a" * 64,
@@ -1271,9 +1312,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
         concurrency=1,
         partition=None,
     )
-    Worker(
-        registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01
-    ).run()
+    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
     assert {row["module"]: row["artifact_state"] for row in registry.instance_rows()} == {
         "clean": "fresh",
         "microparcellation": "fresh",
@@ -1292,7 +1331,9 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     _write_raw("2")
     (raw_dir / "sub-01_task-rest_run-2_bold.json").write_text("{}")
     states = assess_registry(registry)
-    micro_row = next(row for row in registry.instance_rows() if row["module"] == "microparcellation")
+    micro_row = next(
+        row for row in registry.instance_rows() if row["module"] == "microparcellation"
+    )
 
     assert states[micro_row["id"]][0] == "stale"
     assert "raw run universe changed" in states[micro_row["id"]][1]
@@ -1302,9 +1343,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     assert registry.claim_ready_instance("waiting-for-replan", ("large",)) is None
 
 
-def test_successor_reconciles_recovered_oom_at_memory_ceiling(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, monkeypatch) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -1327,16 +1366,16 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(
         concurrency=1,
         partition=None,
     )
-    registry.register_worker(
-        "oom-worker", resource_class="large", memory_gb=32, slurm_job_id="123"
-    )
+    registry.register_worker("oom-worker", resource_class="large", memory_gb=32, slurm_job_id="123")
     assert registry.claim_ready_instance("oom-worker", ("large",), memory_gb=32)
     with registry.connection(write=True) as db:
-        db.execute(
-            "UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='oom-worker'"
-        )
+        db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='oom-worker'")
     monkeypatch.setattr(
         "nro.orchestration.registry.RegistryLock._slurm_out_of_memory",
+        staticmethod(lambda _job: True),
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.registry.RegistryLock._slurm_terminal",
         staticmethod(lambda _job: True),
     )
 
@@ -1429,18 +1468,29 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
         dependencies=(upstream.key,),
     )
     registry.create_request(
-        registered=registered, target_module="networks", selectors={},
-        instances=(upstream, downstream), terminal_instance_keys=(downstream.key,), concurrency=2, partition=None,
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(upstream, downstream),
+        terminal_instance_keys=(downstream.key,),
+        concurrency=2,
+        partition=None,
     )
     rows = {row["instance_key"]: row for row in registry.instance_rows()}
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[upstream.key]["id"],))
-        db.execute("UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[downstream.key]["id"],))
+        db.execute(
+            "UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[upstream.key]["id"],)
+        )
+        db.execute(
+            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[downstream.key]["id"],)
+        )
     registry.register_worker("downstream-worker", resource_class="large")
     claimed = registry.claim_ready_instance("downstream-worker", ("large",))
     assert claimed is not None and claimed.instance_key == downstream.key
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[upstream.key]["id"],))
+        db.execute(
+            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[upstream.key]["id"],)
+        )
     status_main(["-p", "demo", "--bids-root", str(bids), "--json"])
     assert not registry.attempt_cancel_requested(claimed.attempt_id)
 
@@ -1462,19 +1512,35 @@ def test_fatal_instance_failure_cancels_active_transitive_descendants(tmp_path: 
             key=f"{module}:" + chr(ord("e") + index) * 64,
             module=module,
             lineage=registered.lineages["preprocessing" if module in {"anat", "func"} else "clean"],
-            config_fingerprint=workflow.configuration("preprocessing" if module in {"anat", "func"} else "clean").fingerprint,
-            runtime_config=registry.runtime_config_path(registered, "preprocessing" if module in {"anat", "func"} else "clean"),
+            config_fingerprint=workflow.configuration(
+                "preprocessing" if module in {"anat", "func"} else "clean"
+            ).fingerprint,
+            runtime_config=registry.runtime_config_path(
+                registered, "preprocessing" if module in {"anat", "func"} else "clean"
+            ),
             output=tmp_path / "outputs" / f"{module}.txt",
             dependencies=((previous.key,) if previous else ()),
         )
         specs.append(spec)
         previous = spec
-    registry.create_request(registered=registered, target_module="clean", selectors={}, instances=tuple(specs), terminal_instance_keys=(specs[-1].key,), concurrency=3, partition=None)
+    registry.create_request(
+        registered=registered,
+        target_module="clean",
+        selectors={},
+        instances=tuple(specs),
+        terminal_instance_keys=(specs[-1].key,),
+        concurrency=3,
+        partition=None,
+    )
     rows = {row["instance_key"]: row for row in registry.instance_rows()}
     with registry.connection(write=True) as db:
         for spec in specs:
-            db.execute("UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[spec.key]["id"],))
-        db.execute("UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[specs[-1].key]["id"],))
+            db.execute(
+                "UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[spec.key]["id"],)
+            )
+        db.execute(
+            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[specs[-1].key]["id"],)
+        )
     registry.register_worker("clean-worker", resource_class="large")
     claimed = registry.claim_ready_instance("clean-worker", ("large",))
     assert claimed is not None and claimed.instance_key == specs[-1].key

@@ -163,6 +163,63 @@ def load_gifti_timeseries(path: Path) -> np.ndarray:
     return data
 
 
+def load_surface_timeseries(paths: tuple[Path, ...]) -> np.ndarray:
+    """Load one unilateral or bilateral run as time by vertex data."""
+
+    import nibabel as nib
+
+    matrices = []
+    for path in paths:
+        image = nib.load(str(path))
+        if not image.darrays:
+            raise ValueError(f"Functional GIFTI run contains no data: {path}")
+        if len(image.darrays) == 1:
+            matrix = np.asarray(image.darrays[0].data, dtype=np.float32)
+            if matrix.ndim == 1:
+                matrix = matrix.reshape(1, -1)
+            elif matrix.ndim != 2:
+                raise ValueError(f"Functional GIFTI data must be one- or two-dimensional: {path}")
+            elif matrix.shape[0] >= matrix.shape[1]:
+                matrix = matrix.T
+        else:
+            matrix = np.stack(
+                [np.asarray(array.data, dtype=np.float32).reshape(-1) for array in image.darrays]
+            )
+        matrices.append(matrix)
+    if len({matrix.shape[0] for matrix in matrices}) != 1:
+        raise ValueError(f"Surface functional files have different frame counts: {paths}")
+    return np.concatenate(matrices, axis=1)
+
+
+def surface_timeseries_shape(paths: tuple[Path, ...]) -> tuple[int, tuple[int, ...]]:
+    """Return frame count and ordered vertex counts for surface time series."""
+
+    import nibabel as nib
+
+    shapes = []
+    for path in paths:
+        image = nib.load(str(path))
+        if not image.darrays:
+            raise ValueError(f"Functional GIFTI run contains no data: {path}")
+        if len(image.darrays) > 1:
+            shapes.append((len(image.darrays), int(np.asarray(image.darrays[0].data).size)))
+            continue
+        shape = np.asarray(image.darrays[0].data).shape
+        if len(shape) == 1:
+            shapes.append((1, int(shape[0])))
+        elif len(shape) == 2:
+            shapes.append(
+                (int(shape[1]), int(shape[0]))
+                if shape[0] >= shape[1]
+                else (int(shape[0]), int(shape[1]))
+            )
+        else:
+            raise ValueError(f"Functional GIFTI data must be one- or two-dimensional: {path}")
+    if len({shape[0] for shape in shapes}) != 1:
+        raise ValueError(f"Surface functional files have different frame counts: {paths}")
+    return shapes[0][0], tuple(shape[1] for shape in shapes)
+
+
 def gifti_vertex_count(path: Path) -> int:
     """Return the length of the first data array in a GIFTI file."""
     import nibabel as nib

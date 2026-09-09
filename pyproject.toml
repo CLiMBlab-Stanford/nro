@@ -18,7 +18,7 @@ bidsify = ["flywheel-sdk>=20,<21", "dcm2bids>=3.2,<4", "pydicom>=3,<4"]
 oslom = ["igraph>=0.11,<0.12", "leidenalg>=0.10,<0.11"]
 
 [dependency-groups]
-dev = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [project.scripts]
 nro = "nro.cli:main"
@@ -28,11 +28,26 @@ include = ["nro*"]
 
 [tool.setuptools.package-data]
 "nro.configuration" = ["starters/configs/*/*.yml", "starters/workflows/*.yml", "starters/bidsify/*.yml", "starters/README.md", "starters/gitignore", "template_resources.json"]
-"nro.func.resources.ica_aroma" = ["*.nii.gz"]
-"nro.func.resources.synbold_disco" = ["epi_reg"]
-"nro.microparcellation" = ["*.scene.in", "*.b85"]
-"nro.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
+"nro.modules.func.resources.ica_aroma" = ["*.nii.gz"]
+"nro.modules.func.resources.synbold_disco" = ["epi_reg"]
+"nro.engine" = ["*.scene.in", "*.b85"]
+"nro.modules.dynconn" = ["*.b85"]
+"nro.modules.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
 "nro.qc" = ["*.scene.in"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not integration"]
+markers = [
+    "integration: exercises process, Git, or filesystem boundaries across subsystems",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402"]

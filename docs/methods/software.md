@@ -68,6 +68,6 @@ Record sparsification, initialization, and internal search counts when reporting
 The 16 bundled references are scientific inputs, not interchangeable labels.
 Their resource provenance note is:
 
-```{literalinclude} ../../nro/networks/resources/README.md
+```{literalinclude} ../../nro/modules/networks/resources/README.md
 :language: text
 ```

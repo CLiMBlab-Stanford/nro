@@ -9,7 +9,6 @@ from typing import Any, Mapping, Sequence
 
 from nro.configuration.store import fingerprint
 
-
 INSTANCE_CONTRACT_VERSION = 3
 
 
@@ -270,6 +269,7 @@ class InstanceSpec:
     def instance_contract(self) -> dict[str, Any]:
         """Return the normalized semantic contract used for freshness."""
         from nro.orchestration.catalog import canonical_contract
+
         return canonical_contract(self.contract.as_dict(self.identity))
 
     @property
@@ -289,9 +289,13 @@ class InstanceSpec:
             }
         )
 
-    def as_record(self) -> dict[str, Any]:
-        """Serialize to the current registry storage representation."""
-        contract = self.instance_contract
+    def as_record(self, *, compiled_contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Serialize storage fields, optionally using an owner-compiled contract.
+
+        The scheduler may carry a contract from another scientific catalog.
+        Supplying it avoids interpreting that catalog in the scheduler process.
+        """
+        contract = self.instance_contract if compiled_contract is None else dict(compiled_contract)
         return {
             "instance_key": self.key,
             "module": self.module,
@@ -306,10 +310,8 @@ class InstanceSpec:
             "revision_fingerprint": self.revision_fingerprint,
             # Registry storage uses "artifact" for the concrete filesystem
             # evidence implementing this conceptual instance contract.
-            "artifact_contract_json": json.dumps(
-                contract, sort_keys=True, separators=(",", ":")
-            ),
-            "artifact_fingerprint": self.contract_fingerprint,
+            "artifact_contract_json": json.dumps(contract, sort_keys=True, separators=(",", ":")),
+            "artifact_fingerprint": fingerprint(contract),
             "command_json": json.dumps(self.command),
             "runtime_config_path": str(self.runtime_config),
             "input_paths_json": json.dumps(contract["inputs"]),

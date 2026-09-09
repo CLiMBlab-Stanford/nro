@@ -90,7 +90,7 @@ homelessness, and overlap CIFTIs; per-network maps; label TSV/JSON; YAML
 publication manifest; JSON index; and a relocatable scene. Human-readable map
 names permit stepping through networks in Workbench. Surface geometry is copied
 from the source scene, but anatomical volumes and registration dependencies are
-not scene dependencies. See the [path contract](../autoapi/nro/networks/paths/index.rst).
+not scene dependencies. See the [path contract](../autoapi/nro/modules/networks/paths/index.rst).
 
 ## Shipped configuration
 
@@ -101,8 +101,8 @@ rebuilding. The planner supplies instance-specific paths during orchestration.
 :language: yaml
 ```
 
-Implementation: [module](../autoapi/nro/networks/module/index.rst),
-[ICA](../autoapi/nro/networks/ica/index.rst),
-[clustering](../autoapi/nro/networks/clustering/index.rst),
-[OSLOM](../autoapi/nro/networks/oslom/index.rst),
-[labeling](../autoapi/nro/networks/labeling/index.rst).
+Implementation: [module](../autoapi/nro/modules/networks/module/index.rst),
+[ICA](../autoapi/nro/modules/networks/ica/index.rst),
+[clustering](../autoapi/nro/modules/networks/clustering/index.rst),
+[OSLOM](../autoapi/nro/modules/networks/oslom/index.rst),
+[labeling](../autoapi/nro/modules/networks/labeling/index.rst).

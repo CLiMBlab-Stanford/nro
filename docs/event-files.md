@@ -84,4 +84,4 @@ The import excluded 18 backups and one provenance/audit table that lacks event
 timing columns. Another 43 TSVs could not be read because of filesystem
 permissions and have not been imported. Source bytes and permissions were not
 changed. The detailed local audit, including hashes, duplicate groups, conflicts,
-and exclusions, is saved as `plans/EVENT_FILES_IMPORT.json`.
+and exclusions, is saved as `plans/evidence/EVENT_FILES_IMPORT.json`.

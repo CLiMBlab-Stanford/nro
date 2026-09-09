@@ -11,14 +11,13 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.paths import BIDS_PATH, WB_COMMAND_PATH
-from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.engine.cli import add_core_selection_arguments, core_selection
-from nro.microparcellation.cifti import resolve_wb_command
+from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.workbench import resolve_workbench_command
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
 
-
-DERIVATIVE_TYPES = ("microparcellation", "networks")
+DERIVATIVE_TYPES = ("dynconn", "microparcellation", "networks")
 LOG = logging.getLogger(__name__)
 
 
@@ -50,25 +49,23 @@ def _artifact_scene(manifest_path: Path) -> Path:
     return scene
 
 
-def _matching_rows(registry: Registry, args: argparse.Namespace) -> list[dict]:
+def _matching_rows(
+    registry: Registry | None, args: argparse.Namespace, *, records=None
+) -> list[dict]:
     selection = core_selection(args)
     projects = set(selected_projects(Path(args.bids_root), selection.projects))
     participants = set(selection.participants)
     workflows = set(selection.workflows)
     selectors = selection.instance_entities
     rows = []
-    for row in registry.instance_rows(read_only=True):
+    for row in registry.instance_rows(read_only=True) if records is None else records:
         if row["module"] != args.derivative_type or row["project"] not in projects:
             continue
         if participants and row["participant"] not in participants:
             continue
-        if workflows and not workflows.intersection(
-            str(row.get("workflow_ids") or "").split(",")
-        ):
+        if workflows and not workflows.intersection(str(row.get("workflow_ids") or "").split(",")):
             continue
-        if selectors and not matches_selectors(
-            json.loads(row["entities_json"]), selectors
-        ):
+        if selectors and not matches_selectors(json.loads(row["entities_json"]), selectors):
             continue
         rows.append(row)
     return rows
@@ -106,17 +103,25 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.wb_view") -> Non
         raise SystemExit(str(error)) from error
     if selection.modules and selection.modules != (args.derivative_type,):
         raise SystemExit("--module must match DERIVATIVE_TYPE when it is supplied")
-    registry = Registry.for_project("", bids_root=Path(args.bids_root).expanduser().resolve())
-    if not registry.existing_database_path().is_file():
+    from nro.orchestration.branch_views import registered_rows
+
+    records = registered_rows(Path(args.bids_root))
+    registry = (
+        Registry.for_project("", bids_root=Path(args.bids_root).expanduser().resolve())
+        if records is None
+        else None
+    )
+    if registry is not None and not registry.existing_database_path().is_file():
         raise SystemExit("No central nro registry found")
-    wb_command = resolve_wb_command(args.wb_command)
+    wb_command = resolve_workbench_command(args.wb_command)
     scenes: list[Path] = []
-    for row in _matching_rows(registry, args):
+    for row in _matching_rows(registry, args, records=records):
         subject_directory = Path(row["output_root"])
         prefix = str(row["output_prefix"])
-        manifest_name = (
-            f"{prefix}_desc-{args.derivative_type}_manifest.yaml"
+        description = (
+            "dynamicConnectivity" if args.derivative_type == "dynconn" else args.derivative_type
         )
+        manifest_name = f"{prefix}_desc-{description}_manifest.yaml"
         manifest_path = subject_directory / manifest_name
         if not manifest_path.is_file():
             LOG.warning("Skipping incomplete derivative: %s", manifest_path)

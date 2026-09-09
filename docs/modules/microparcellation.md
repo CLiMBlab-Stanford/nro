@@ -97,7 +97,7 @@ is independent of the execution-only streaming chunk sizes.
 :language: yaml
 ```
 
-Implementation: [module](../autoapi/nro/microparcellation/module/index.rst),
-[statistics](../autoapi/nro/microparcellation/statistics/index.rst),
-[coarsening](../autoapi/nro/microparcellation/coarsen/index.rst),
-[quality](../autoapi/nro/microparcellation/quality/index.rst).
+Implementation: [module](../autoapi/nro/modules/microparcellation/module/index.rst),
+[statistics](../autoapi/nro/modules/microparcellation/statistics/index.rst),
+[coarsening](../autoapi/nro/modules/microparcellation/coarsen/index.rst),
+[quality](../autoapi/nro/modules/microparcellation/quality/index.rst).

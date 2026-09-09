@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from nro.configuration.site import settings
 
+from nro.configuration.site import settings
 
 LAB_PATH = Path("/juice6/u/nlp/climblab")
 _SITE, _ = settings()

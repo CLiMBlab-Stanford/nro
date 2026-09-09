@@ -17,7 +17,7 @@ nro edit workflow experiment
 
 Model IDs are `TASK/VARIANT`; a task alone means `TASK/main`. Config IDs are
 `CLASS/ID`, where class is `preprocessing`, `clean`, `microparcellation`,
-`networks`, or `firstlevels`. Anatomy and functional preprocessing share the
+`dynconn`, `networks`, or `firstlevels`. Anatomy and functional preprocessing share the
 `preprocessing` config. Workflow IDs have no class prefix.
 
 If a create target exists, the interactive command announces that it is opening

@@ -1,7 +1,7 @@
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-from nro.microparcellation.scene import write_workbench_scene
+from nro.modules.microparcellation.scene import write_workbench_scene
 
 
 class _WorkbenchStub:

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import shlex
 import shutil
@@ -17,10 +15,11 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+from contextlib import contextmanager
+from pathlib import Path
 
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
-
 
 IMAGES = {
     "qunex": "docker://qunex/qunex_suite@sha256:a06befbb64f93ab289bbef94d1d00bf957c7cdff920f35e107f90b186ff9f09d",
@@ -56,17 +55,21 @@ def install_runtime(*, offline=False) -> None:
     """Reuse a host runtime or install unprivileged Apptainer when supported."""
     from nro.configuration.site import CHECKOUT, read_overrides, site_file
     from nro.engine.site_setup import save_settings
+
     values, _ = settings()
     if shutil.which(values["runtime"]):
         return
-    found = next((shutil.which(name) for name in ("apptainer", "singularity") if shutil.which(name)), None)
+    found = next(
+        (shutil.which(name) for name in ("apptainer", "singularity") if shutil.which(name)), None
+    )
     if found is None:
         if offline:
             raise RuntimeError("No container runtime available for offline setup")
         missing = [name for name in ("curl", "rpm2cpio", "cpio") if not shutil.which(name)]
         if missing:
             raise RuntimeError(
-                "Automatic unprivileged Apptainer installation requires " + ", ".join(missing)
+                "Automatic unprivileged Apptainer installation requires "
+                + ", ".join(missing)
                 + ". Ask the cluster administrator to supply these or load a Singularity/Apptainer module."
             )
         root = CHECKOUT / ".nro-runtime"
@@ -79,10 +82,13 @@ def install_runtime(*, offline=False) -> None:
                     script = temporary / "install.sh"
                     download(
                         "https://raw.githubusercontent.com/apptainer/apptainer/v1.4.5/tools/install-unprivileged.sh",
-                        script, checksum="33d416ca870fdfcfc6b5fd8791f02bf041d742a5b718d015a9a1cf61aa1b30dd",
+                        script,
+                        checksum="33d416ca870fdfcfc6b5fd8791f02bf041d742a5b718d015a9a1cf61aa1b30dd",
                     )
                     staged = temporary / "runtime"
-                    subprocess.run(["bash", str(script), "-e", "-v", "1.4.5", str(staged)], check=True)
+                    subprocess.run(
+                        ["bash", str(script), "-e", "-v", "1.4.5", str(staged)], check=True
+                    )
                     run_probe([str(staged / "bin/apptainer"), "--version"])
                     staged.rename(root)
             found = str(root / "bin/apptainer")
@@ -113,14 +119,18 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(url: str, target: Path, *, checksum: str | None = None, md5: str | None = None) -> None:
+def download(
+    url: str, target: Path, *, checksum: str | None = None, md5: str | None = None
+) -> None:
     """Verify and publish a download, allowing HTTP only for pinned official OSLOM."""
     official_oslom = url == OSLOM_SOURCE and checksum == OSLOM_SHA256
     if not url.startswith("https://") and not official_oslom:
         raise ValueError("Downloads require HTTPS")
     with atomic_output_path(target) as staged:
         with urllib.request.urlopen(url, timeout=60) as response, staged.open("wb") as stream:
-            if not response.url.startswith("https://") and not (official_oslom and response.url == OSLOM_SOURCE):
+            if not response.url.startswith("https://") and not (
+                official_oslom and response.url == OSLOM_SOURCE
+            ):
                 raise ValueError("Refusing a download redirected to an insecure URL")
             progress = time.monotonic()
             for chunk in iter(lambda: response.read(8 * 1024 * 1024), b""):
@@ -159,27 +169,57 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
     """
     values, _ = settings()
     results = []
+
     def check(name, function, required=True):
         try:
             detail = function()
-            results.append({"name": name, "ok": True, "required": required, "detail": str(detail or "available")})
-        except (OSError, RuntimeError, ValueError, KeyError, ImportError, subprocess.SubprocessError) as error:
+            results.append(
+                {
+                    "name": name,
+                    "ok": True,
+                    "required": required,
+                    "detail": str(detail or "available"),
+                }
+            )
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            KeyError,
+            ImportError,
+            subprocess.SubprocessError,
+        ) as error:
             results.append({"name": name, "ok": False, "required": required, "detail": str(error)})
+
     def file(key):
         path = Path(values[key])
         if not path.is_file() or not path.stat().st_size:
             raise RuntimeError(f"Missing or empty: {path}")
         return path
+
     def executable(value):
         resolved = shutil.which(value)
         if not resolved:
             raise RuntimeError(f"Executable unavailable: {value}")
         return resolved
+
     from nro.configuration.definitions import validate_store
-    check("definitions store", lambda: validate_store(Path(values['definitions'])))
-    for name in ("numpy", "scipy", "pandas", "nibabel", "yaml", "sklearn", "nilearn", "nitransforms"):
+
+    check("definitions store", lambda: validate_store(Path(values["definitions"])))
+    for name in (
+        "numpy",
+        "scipy",
+        "pandas",
+        "nibabel",
+        "yaml",
+        "sklearn",
+        "nilearn",
+        "nitransforms",
+    ):
+
         def import_check(name=name):
             __import__(name)
+
         check(name, import_check)
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
     for key in IMAGES:
@@ -192,12 +232,15 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
         ("fsaverage", "*_hemi-L_den-164k_midthickness.surf.gii"),
         ("fsaverage", "*_hemi-R_den-164k_midthickness.surf.gii"),
     ):
+
         def template_check(space=space, pattern=pattern):
             found = list((Path(values["templates"]) / f"tpl-{space}").glob(pattern))
             if not found or any(not p.stat().st_size for p in found):
                 raise RuntimeError(f"Missing template: tpl-{space}/{pattern}")
+
         check(f"template {space}/{pattern}", template_check)
     for key in ("bids", "work", "registry"):
+
         def directory_check(key=key):
             path = Path(values[key])
             if key == "bids":
@@ -210,40 +253,86 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
             if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
                 raise RuntimeError(f"Directory cannot be written or created: {path}")
             return path
+
         check(key, directory_check)
     for command in ("sbatch", "squeue", "sacct", "scancel"):
         check(command, lambda command=command: executable(command), required=slurm)
     check("OSLOM", lambda: executable(values["oslom"]), required=with_oslom)
     if with_oslom:
         for name in ("igraph", "leidenalg"):
-            check(name, lambda name=name: run_probe([__import__("sys").executable, "-c", f"import {name}"]))
+            check(
+                name,
+                lambda name=name: run_probe([__import__("sys").executable, "-c", f"import {name}"]),
+            )
     if deep:
         for relative, (md5, _version) in template_catalog().items():
-            check(f"template checksum {relative}", lambda relative=relative, md5=md5: verify_template(Path(values["templates"]) / relative, md5))
+            check(
+                f"template checksum {relative}",
+                lambda relative=relative, md5=md5: verify_template(
+                    Path(values["templates"]) / relative, md5
+                ),
+            )
         for key in IMAGES:
             path = Path(values[key])
             receipt = path.with_name(path.name + ".receipt.json")
             if receipt.is_file():
+
                 def receipt_check(path=path, receipt=receipt):
                     if sha256(path) != json.loads(receipt.read_text())["sha256"]:
-                        raise RuntimeError(f"Installed image differs from its acquisition receipt: {path}")
+                        raise RuntimeError(
+                            f"Installed image differs from its acquisition receipt: {path}"
+                        )
+
                 check(f"{key} checksum", receipt_check)
-        tools = " ".join(shlex.quote(x) for x in (
-            "fslmaths", "flirt", "applywarp", "3dNwarpApply", "antsRegistration",
-            "antsApplyTransforms", "recon-all", "mri_convert", "wb_command",
-        ))
+        tools = " ".join(
+            shlex.quote(x)
+            for x in (
+                "fslmaths",
+                "flirt",
+                "applywarp",
+                "3dNwarpApply",
+                "antsRegistration",
+                "antsApplyTransforms",
+                "recon-all",
+                "mri_convert",
+                "wb_command",
+            )
+        )
         script = (
             "test -s /nro-license && source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1 || exit 1; "
             "for tool in " + tools + '; do command -v "$tool" || exit 1; done'
         )
-        check("QuNex execution", lambda: run_probe([
-            values["runtime"], "exec", "--cleanenv", "--bind", values["license"] + ":/nro-license:ro",
-            values["qunex"], "bash", "-c", script,
-        ], timeout=120))
+        check(
+            "QuNex execution",
+            lambda: run_probe(
+                [
+                    values["runtime"],
+                    "exec",
+                    "--cleanenv",
+                    "--bind",
+                    values["license"] + ":/nro-license:ro",
+                    values["qunex"],
+                    "bash",
+                    "-c",
+                    script,
+                ],
+                timeout=120,
+            ),
+        )
         for key in ("synthstrip", "synbold"):
-            check(f"{key} execution", lambda key=key: run_probe([
-                values["runtime"], "exec", "--cleanenv", values[key], "/bin/true",
-            ], timeout=120))
+            check(
+                f"{key} execution",
+                lambda key=key: run_probe(
+                    [
+                        values["runtime"],
+                        "exec",
+                        "--cleanenv",
+                        values[key],
+                        "/bin/true",
+                    ],
+                    timeout=120,
+                ),
+            )
     return results
 
 
@@ -262,7 +351,9 @@ def install_images(*, offline=False) -> None:
         if offline:
             raise RuntimeError(f"Offline setup cannot obtain {key}: {path}")
         if not shutil.which(values["runtime"]):
-            raise RuntimeError("Install or load Singularity/Apptainer, then set runtime with nro paths.")
+            raise RuntimeError(
+                "Install or load Singularity/Apptainer, then set runtime with nro paths."
+            )
         with resource_lock(path):
             if path.is_file() and path.stat().st_size:
                 continue
@@ -274,10 +365,14 @@ def install_images(*, offline=False) -> None:
                     download(source, staged)
                 run_probe([values["runtime"], "inspect", str(staged)])
                 digest = sha256(staged)
-            atomic_write_json(path.with_name(path.name + ".receipt.json"), {
-                "source": source, "sha256": digest,
-                "verification": "HTTPS or container transport, runtime inspect; SHA-256 recorded after acquisition",
-            })
+            atomic_write_json(
+                path.with_name(path.name + ".receipt.json"),
+                {
+                    "source": source,
+                    "sha256": digest,
+                    "verification": "HTTPS or container transport, runtime inspect; SHA-256 recorded after acquisition",
+                },
+            )
 
 
 def extract_zip(archive: Path, destination: Path) -> None:
@@ -305,17 +400,30 @@ def install_workbench(*, offline=False) -> None:
     if offline:
         raise RuntimeError(f"Workbench is missing: {executable}")
     if platform.machine() not in {"x86_64", "amd64"}:
-        raise RuntimeError("Automatic Workbench installation supports Linux x86_64; configure an existing executable.")
+        raise RuntimeError(
+            "Automatic Workbench installation supports Linux x86_64; configure an existing executable."
+        )
     if executable.parent.name not in {"bin_linux64", "bin_rh_linux64"}:
-        raise RuntimeError("For automatic Workbench installation select a path ending in workbench/bin_linux64/wb_command.")
+        raise RuntimeError(
+            "For automatic Workbench installation select a path ending in workbench/bin_linux64/wb_command."
+        )
     root = executable.parent.parent
     with resource_lock(root):
         if executable.is_file():
             return
         if root.exists():
-            raise RuntimeError(f"Refusing to replace an existing incomplete Workbench directory: {root}")
+            raise RuntimeError(
+                f"Refusing to replace an existing incomplete Workbench directory: {root}"
+            )
         os_release = platform.freedesktop_os_release()
-        flavor = "rh_linux64" if any(x in (os_release.get("ID", "") + " " + os_release.get("ID_LIKE", "")) for x in ("rhel", "centos", "fedora")) else "linux64"
+        flavor = (
+            "rh_linux64"
+            if any(
+                x in (os_release.get("ID", "") + " " + os_release.get("ID_LIKE", ""))
+                for x in ("rhel", "centos", "fedora")
+            )
+            else "linux64"
+        )
         source = WORKBENCH_BASE + f"workbench-{flavor}-v2.2.1.zip"
         with tempfile.TemporaryDirectory(dir=root.parent, prefix=".workbench-") as temporary:
             temporary = Path(temporary)
@@ -323,7 +431,8 @@ def install_workbench(*, offline=False) -> None:
             download(source, archive, checksum=WORKBENCH_SHA256[flavor])
             extract_zip(archive, temporary / "extracted")
             candidates = [
-                path for path in (temporary / "extracted").rglob("wb_command")
+                path
+                for path in (temporary / "extracted").rglob("wb_command")
                 if path.parent.name.startswith("bin_")
             ]
             if len(candidates) != 1:
@@ -334,7 +443,9 @@ def install_workbench(*, offline=False) -> None:
             tree = command.parent.parent
             if command.parent.name != executable.parent.name:
                 command.parent.rename(tree / executable.parent.name)
-            atomic_write_json(tree / "nro-download.json", {"source": source, "sha256": sha256(archive)})
+            atomic_write_json(
+                tree / "nro-download.json", {"source": source, "sha256": sha256(archive)}
+            )
             tree.rename(root)
 
 
@@ -353,9 +464,13 @@ def install_templates(*, offline=False) -> None:
             source = "https://templateflow.s3.amazonaws.com/" + relative + "?versionId=" + version
             print(f"Downloading template {relative}", flush=True)
             download(source, target, md5=md5)
-            atomic_write_json(target.with_name(target.name + ".receipt.json"), {
-                "source": source, "sha256": sha256(target),
-            })
+            atomic_write_json(
+                target.with_name(target.name + ".receipt.json"),
+                {
+                    "source": source,
+                    "sha256": sha256(target),
+                },
+            )
 
 
 def install_oslom(*, offline=False) -> None:
@@ -368,7 +483,9 @@ def install_oslom(*, offline=False) -> None:
         raise RuntimeError(f"OSLOM is missing for offline setup: {target}")
     compiler = shutil.which("g++")
     if not compiler:
-        raise RuntimeError("Building OSLOM requires g++; install the host C++ compiler and rerun setup.")
+        raise RuntimeError(
+            "Building OSLOM requires g++; install the host C++ compiler and rerun setup."
+        )
     with resource_lock(target):
         if target.is_file():
             return
@@ -386,19 +503,41 @@ def install_oslom(*, offline=False) -> None:
                 source.extractall(temporary, filter="data")
             root = temporary / "OSLOM2"
             executable = root / "oslom_undir"
-            arguments = ["-o", "oslom_undir", "Sources_2_5/OSLOM_files/main_undirected.cpp", "-O3", "-Wall"]
+            arguments = [
+                "-o",
+                "oslom_undir",
+                "Sources_2_5/OSLOM_files/main_undirected.cpp",
+                "-O3",
+                "-Wall",
+            ]
             print("Compiling OSLOM; this may take a few minutes", flush=True)
             run_probe([compiler, *arguments], cwd=root, timeout=600)
-            run_probe([
-                str(executable), "-f", "example.dat", "-uw", "-r", "1", "-hr", "1", "-seed", "1",
-            ], cwd=root, timeout=120)
+            run_probe(
+                [
+                    str(executable),
+                    "-f",
+                    "example.dat",
+                    "-uw",
+                    "-r",
+                    "1",
+                    "-hr",
+                    "1",
+                    "-seed",
+                    "1",
+                ],
+                cwd=root,
+                timeout=120,
+            )
             partition = root / "example.dat_oslo_files/tp"
             if not partition.is_file() or not partition.stat().st_size:
                 raise RuntimeError("OSLOM example fit did not produce a partition")
             receipt = {
-                "source": OSLOM_SOURCE, "source_sha256": OSLOM_SHA256,
-                "sha256": sha256(executable), "compiler": run_probe([compiler, "--version"]),
-                "build_arguments": arguments, "verification": "Bundled example graph fit",
+                "source": OSLOM_SOURCE,
+                "source_sha256": OSLOM_SHA256,
+                "sha256": sha256(executable),
+                "compiler": run_probe([compiler, "--version"]),
+                "build_arguments": arguments,
+                "verification": "Bundled example graph fit",
             }
             with atomic_output_path(target) as staged:
                 shutil.copyfile(executable, staged)

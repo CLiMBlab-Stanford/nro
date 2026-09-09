@@ -8,7 +8,6 @@ import pytest
 import nro.cli as cli
 from nro.bin.run import build_parser as run_parser
 
-
 ROOT = Path(__file__).parents[1]
 
 

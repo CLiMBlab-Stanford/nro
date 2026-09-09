@@ -1,35 +1,32 @@
+import logging
 import tempfile
 import unittest
-import logging
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 
-from nro.microparcellation.coarsen import _variation_edge_costs, loukas_variation_edges
-from nro.microparcellation.cifti import load_dlabel, load_pconn, write_dlabel, write_pconn
-from nro.microparcellation.config import CoarseningConfig
-from nro.microparcellation.gifti import (
-    iter_func_blocks,
-    load_surfaces,
-    write_surface_metric,
-)
-from nro.microparcellation.statistics import (
+from nro.configuration.store import ConfigStore
+from nro.engine.cifti import load_dlabel, load_pconn
+from nro.engine.surface_geometry import load_surfaces
+from nro.modules.func.synbold_disco import ensure_image
+from nro.modules.microparcellation.cifti import write_dlabel, write_pconn
+from nro.modules.microparcellation.coarsen import _variation_edge_costs, loukas_variation_edges
+from nro.modules.microparcellation.config import CoarseningConfig
+from nro.modules.microparcellation.module import _coarsening_targets, _region_edges
+from nro.modules.microparcellation.quality import spatial_null_partitions
+from nro.modules.microparcellation.statistics import (
     _profile_reliability,
     _quarter_standardized,
     local_edge_correlations,
     make_parcel_mean_loader,
     parcel_correlations,
 )
-from nro.microparcellation.module import _coarsening_targets, _region_edges
-from nro.microparcellation.quality import spatial_null_partitions
-from nro.configuration.store import ConfigStore
-from nro.networks.config import OslomConfig
-from nro.networks.adjacency import lower_triangular_adjacency, pconn_to_adjacency
-from nro.networks.consensus import membership_stability
-from nro.networks.leiden import write_hint
-from nro.networks.oslom import parse_tp, resolve_oslom_executable, run_oslom
-from nro.func.synbold_disco import ensure_image
+from nro.modules.networks.adjacency import lower_triangular_adjacency, pconn_to_adjacency
+from nro.modules.networks.config import OslomConfig
+from nro.modules.networks.consensus import membership_stability
+from nro.modules.networks.leiden import write_hint
+from nro.modules.networks.oslom import parse_tp, resolve_oslom_executable, run_oslom
 from nro.orchestration.runner import Runner
 
 
@@ -70,58 +67,26 @@ class ScientificAlgorithmTests(unittest.TestCase):
     def test_synbold_image_resolution_requires_existing_image(self):
         with tempfile.TemporaryDirectory() as d:
             image = Path(d) / "synbold-disco_v1.4.sif"
-            with patch("nro.func.synbold_disco.shutil.which", return_value="/usr/bin/singularity"):
+            with patch(
+                "nro.modules.func.synbold_disco.shutil.which", return_value="/usr/bin/singularity"
+            ):
                 with self.assertRaisesRegex(SystemExit, "Provide it before starting"):
                     ensure_image(image=image, engine="singularity")
                 image.write_bytes(b"image")
                 self.assertEqual(ensure_image(image=image, engine="singularity"), image)
-
-    def test_bilateral_functional_blocks_are_concatenated_left_then_right(self):
-        class Array:
-            def __init__(self, data): self.data = np.asarray(data)
-        images = {
-            "left": type("Image", (), {"darrays": [Array([1, 2]), Array([3, 4])]})(),
-            "right": type("Image", (), {"darrays": [Array([5, 6, 7]), Array([8, 9, 10])]})(),
-        }
-        loader = type("Nib", (), {"load": staticmethod(lambda path: images[path])})()
-        with patch("nro.microparcellation.gifti._nib", return_value=loader):
-            blocks = list(iter_func_blocks((Path("left"), Path("right")), 1))
-        np.testing.assert_array_equal(blocks[0], [[1, 2, 5, 6, 7]])
-        np.testing.assert_array_equal(blocks[1], [[3, 4, 8, 9, 10]])
-
-    def test_two_dimensional_functional_gifti_is_transposed_to_time_by_vertex(self):
-        class Array:
-            def __init__(self, data): self.data = np.asarray(data)
-        images = {
-            "left": type("Image", (), {"darrays": [Array([[1, 3], [2, 4]])]})(),
-            "right": type("Image", (), {"darrays": [Array([[5, 8], [6, 9], [7, 10]])]})(),
-        }
-        loader = type("Nib", (), {"load": staticmethod(lambda path: images[path])})()
-        with patch("nro.microparcellation.gifti._nib", return_value=loader):
-            blocks = list(iter_func_blocks((Path("left"), Path("right")), 1))
-        np.testing.assert_array_equal(blocks[0], [[1, 2, 5, 6, 7]])
-        np.testing.assert_array_equal(blocks[1], [[3, 4, 8, 9, 10]])
 
     def test_bilateral_surface_faces_receive_right_offset(self):
         surfaces = {
             "left": (np.zeros((3, 3)), np.array([[0, 1, 2]])),
             "right": (np.ones((4, 3)), np.array([[0, 2, 3]])),
         }
-        with patch("nro.microparcellation.gifti.load_surface", side_effect=lambda path: surfaces[str(path)]):
+        with patch(
+            "nro.engine.surface_geometry.load_surface", side_effect=lambda path: surfaces[str(path)]
+        ):
             coords, faces, counts = load_surfaces((Path("left"), Path("right")))
         self.assertEqual(counts, (3, 4))
         self.assertEqual(coords.shape, (7, 3))
         np.testing.assert_array_equal(faces, [[0, 1, 2], [3, 5, 6]])
-
-    def test_bilateral_metrics_are_split_and_named(self):
-        calls = []
-        with tempfile.TemporaryDirectory() as d, patch(
-            "nro.microparcellation.gifti.write_metric", side_effect=lambda path, arrays, names: calls.append((path, arrays, names))
-        ):
-            result = write_surface_metric(Path(d), "sub-01", "homeless", [np.arange(5)], ["score"], (2, 3))
-        self.assertEqual(tuple(path.name for path in result), ("sub-01_L_homeless.shape.gii", "sub-01_R_homeless.shape.gii"))
-        np.testing.assert_array_equal(calls[0][1][0], [0, 1])
-        np.testing.assert_array_equal(calls[1][1][0], [2, 3, 4])
 
     def test_microparcellation_cifti_round_trip(self):
         labels = np.array([0, 0, 1, 1, 2, -1])
@@ -173,14 +138,14 @@ class ScientificAlgorithmTests(unittest.TestCase):
             configured.touch()
             environment.touch()
             self.assertEqual(resolve_oslom_executable(configured), configured.resolve())
-            with patch("nro.networks.oslom.shutil.which", return_value=str(environment)):
+            with patch("nro.modules.networks.oslom.shutil.which", return_value=str(environment)):
                 self.assertEqual(resolve_oslom_executable(None), environment.resolve())
 
     def test_oslom_resolution_requires_existing_executable(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             missing = root / "missing-oslom"
-            with patch("nro.networks.oslom.shutil.which", return_value=None):
+            with patch("nro.modules.networks.oslom.shutil.which", return_value=None):
                 with self.assertRaisesRegex(FileNotFoundError, "not found on PATH"):
                     resolve_oslom_executable(None)
                 with self.assertRaisesRegex(FileNotFoundError, "Configured OSLOM"):
@@ -225,9 +190,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
             _coarsening_targets(100, 10, 0)
 
     def test_region_edges_are_deduplicated_from_original_spatial_graph(self):
-        base_edges = np.array(
-            [[0, 1], [1, 2], [2, 3], [0, 2], [3, 4], [4, 5]], dtype=np.int64
-        )
+        base_edges = np.array([[0, 1], [1, 2], [2, 3], [0, 2], [3, 4], [4, 5]], dtype=np.int64)
         labels = np.array([0, 0, 1, 1, 2, -1], dtype=np.int64)
         np.testing.assert_array_equal(
             _region_edges(base_edges, labels),
@@ -253,11 +216,12 @@ class ScientificAlgorithmTests(unittest.TestCase):
 
     def test_vectorized_loukas_cost_matches_matrix_expression(self):
         from scipy import sparse
-        w = sparse.csr_matrix(np.array([[0., .4, .2], [.4, 0., .7], [.2, .7, 0.]]))
+
+        w = sparse.csr_matrix(np.array([[0.0, 0.4, 0.2], [0.4, 0.0, 0.7], [0.2, 0.7, 0.0]]))
         degree = np.asarray(w.sum(1)).ravel()
-        a = np.array([[1., 2.], [3., -1.], [.5, .25]])
+        a = np.array([[1.0, 2.0], [3.0, -1.0], [0.5, 0.25]])
         edges, costs = _variation_edge_costs(w, degree, a)
-        p = np.array([[.5, -.5], [-.5, .5]])
+        p = np.array([[0.5, -0.5], [-0.5, 0.5]])
         expected = []
         for i, j in edges:
             wij = w[i, j]
@@ -280,7 +244,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
             self.assertEqual(parse_tp(p), [{0, 2, 4}, {1, 3}])
 
     def test_oslom_hint_file_is_passed_to_subprocess(self):
-        from nro.networks.config import OslomConfig
+        from nro.modules.networks.config import OslomConfig
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -299,7 +263,13 @@ class ScientificAlgorithmTests(unittest.TestCase):
 
             cfg = OslomConfig(executable=Path("/bin/echo"), initial_partition=hint)
             with patch.object(Runner, "run_child", new=fake_run_child):
-                runner = Runner(module_name="Test Module", container=None, binds=(), logger=logging.getLogger("test-oslom"), next_step=iter(range(1, 100)).__next__)
+                runner = Runner(
+                    module_name="Test Module",
+                    container=None,
+                    binds=(),
+                    logger=logging.getLogger("test-oslom"),
+                    next_step=iter(range(1, 100)).__next__,
+                )
                 self.assertEqual(run_oslom(graph, root / "run", cfg, runner=runner), [{0, 1}])
 
     def test_write_hint_uses_one_community_per_line(self):
@@ -354,9 +324,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 np.arange(8, dtype=np.float32) * np.float32(1e-20),
             )
         )
-        quarters, valid = _quarter_standardized(
-            data, global_signal_regression=False
-        )
+        quarters, valid = _quarter_standardized(data, global_signal_regression=False)
         self.assertTrue(all(item[0] and not item[1] for item in valid))
         self.assertTrue(all(np.all(item[:, 1] == 0) for item in quarters))
         self.assertTrue(all(np.all(np.isfinite(item)) for item in quarters))
@@ -373,12 +341,15 @@ class ScientificAlgorithmTests(unittest.TestCase):
         )
         edges = np.array([[0, 1], [0, 2], [1, 3]], dtype=np.int64)
 
-        with patch(
-            "nro.microparcellation.statistics.load_functional",
-            side_effect=lambda path: runs[str(path[0])],
-        ), patch(
-            "nro.microparcellation.statistics._vertex_reliability",
-            side_effect=qualities,
+        with (
+            patch(
+                "nro.modules.microparcellation.statistics.load_functional",
+                side_effect=lambda path: runs[str(path[0])],
+            ),
+            patch(
+                "nro.modules.microparcellation.statistics._vertex_reliability",
+                side_effect=qualities,
+            ),
         ):
             result = local_edge_correlations(
                 ((Path("run1"),), (Path("run2"),)),
@@ -414,15 +385,19 @@ class ScientificAlgorithmTests(unittest.TestCase):
         labels = np.array([0, 0, 1, 1])
         mask = np.ones(4, dtype=bool)
 
-        with patch(
-            "nro.microparcellation.statistics.load_functional",
-            side_effect=lambda path: runs[str(path[0])],
-        ), patch(
-            "nro.microparcellation.statistics._vertex_reliability",
-            side_effect=AssertionError("vertex reliability should be skipped"),
-        ), patch(
-            "nro.microparcellation.statistics._parcel_reliability",
-            side_effect=AssertionError("parcel reliability should be skipped"),
+        with (
+            patch(
+                "nro.modules.microparcellation.statistics.load_functional",
+                side_effect=lambda path: runs[str(path[0])],
+            ),
+            patch(
+                "nro.modules.microparcellation.statistics._vertex_reliability",
+                side_effect=AssertionError("vertex reliability should be skipped"),
+            ),
+            patch(
+                "nro.modules.microparcellation.statistics._parcel_reliability",
+                side_effect=AssertionError("parcel reliability should be skipped"),
+            ),
         ):
             local = local_edge_correlations(
                 files,
@@ -459,9 +434,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
             np.outer(np.diag(parcel_gram), np.diag(parcel_gram))
         )
         np.fill_diagonal(parcel_expected, 0.0)
-        np.testing.assert_allclose(
-            local, vertex_expected[edges[:, 0], edges[:, 1]], atol=2e-6
-        )
+        np.testing.assert_allclose(local, vertex_expected[edges[:, 0], edges[:, 1]], atol=2e-6)
         np.testing.assert_allclose(parcels, parcel_expected, atol=2e-6)
 
     def test_parcel_correlations_use_reliability_weighted_gram(self):
@@ -477,12 +450,15 @@ class ScientificAlgorithmTests(unittest.TestCase):
         labels = np.array([0, 0, 1, 1, 2, 2])
         mask = np.ones(6, dtype=bool)
 
-        with patch(
-            "nro.microparcellation.statistics.load_functional",
-            side_effect=lambda path: runs[str(path[0])],
-        ), patch(
-            "nro.microparcellation.statistics._parcel_reliability",
-            side_effect=qualities,
+        with (
+            patch(
+                "nro.modules.microparcellation.statistics.load_functional",
+                side_effect=lambda path: runs[str(path[0])],
+            ),
+            patch(
+                "nro.modules.microparcellation.statistics._parcel_reliability",
+                side_effect=qualities,
+            ),
         ):
             result = parcel_correlations(
                 ((Path("run1"),), (Path("run2"),)),
@@ -498,13 +474,8 @@ class ScientificAlgorithmTests(unittest.TestCase):
         gram = np.zeros((3, 3))
         for data, quality in zip(runs.values(), qualities):
             z = (data - data.mean(axis=0)) / data.std(axis=0, ddof=1)
-            parcels = np.column_stack(
-                [z[:, labels == parcel].mean(axis=1) for parcel in range(3)]
-            )
-            parcels = (
-                (parcels - parcels.mean(axis=0))
-                / parcels.std(axis=0, ddof=1)
-            )
+            parcels = np.column_stack([z[:, labels == parcel].mean(axis=1) for parcel in range(3)])
+            parcels = (parcels - parcels.mean(axis=0)) / parcels.std(axis=0, ddof=1)
             weighted = parcels * np.sqrt(quality)[None, :]
             gram += weighted.T @ weighted
         denominator = np.sqrt(np.outer(np.diag(gram), np.diag(gram)))
@@ -517,8 +488,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
         )
         np.testing.assert_allclose(
             result.parcel_effective_runs,
-            np.square(np.sum(qualities, axis=0))
-            / np.sum(np.square(qualities), axis=0),
+            np.square(np.sum(qualities, axis=0)) / np.sum(np.square(qualities), axis=0),
             atol=1e-6,
         )
         np.testing.assert_array_equal(result.parcel_supporting_runs, [2, 2, 2])
@@ -535,12 +505,10 @@ class ScientificAlgorithmTests(unittest.TestCase):
 
     def test_parcel_quality_scores_variance_preserved_and_spatial_null(self):
         time = np.linspace(-1.0, 1.0, 12, dtype=np.float32)
-        data = np.column_stack(
-            (time, time, -time, -time, time ** 2, time ** 2)
-        ).astype(np.float32)
+        data = np.column_stack((time, time, -time, -time, time**2, time**2)).astype(np.float32)
         labels = np.array([0, 0, 1, 1, 2, 2])
         with patch(
-            "nro.microparcellation.statistics.load_functional",
+            "nro.modules.microparcellation.statistics.load_functional",
             return_value=data,
         ):
             result = parcel_correlations(

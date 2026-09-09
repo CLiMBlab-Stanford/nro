@@ -27,27 +27,17 @@ def test_image_sidecars_preserve_gifti_type() -> None:
 
 
 def test_bids_metadata_inheritance_merges_root_to_image(tmp_path: Path) -> None:
-    image = (
-        tmp_path
-        / "sub-01"
-        / "ses-a"
-        / "func"
-        / "sub-01_ses-a_task-rest_run-1_bold.nii.gz"
-    )
+    image = tmp_path / "sub-01" / "ses-a" / "func" / "sub-01_ses-a_task-rest_run-1_bold.nii.gz"
     image.parent.mkdir(parents=True)
     image.touch()
     (tmp_path / "dataset_description.json").write_text("{}")
     root_metadata = tmp_path / "task-rest_bold.json"
     root_metadata.write_text(json.dumps({"RepetitionTime": 2.0, "TaskName": "rest"}))
     session_metadata = image.parents[1] / "sub-01_ses-a_task-rest_bold.json"
-    session_metadata.write_text(
-        json.dumps({"RepetitionTime": 1.5, "PhaseEncodingDirection": "j-"})
-    )
+    session_metadata.write_text(json.dumps({"RepetitionTime": 1.5, "PhaseEncodingDirection": "j-"}))
     exact_metadata = image.with_suffix("").with_suffix(".json")
     exact_metadata.write_text(json.dumps({"TotalReadoutTime": 0.05}))
-    (tmp_path / "task-other_bold.json").write_text(
-        json.dumps({"RepetitionTime": 99.0})
-    )
+    (tmp_path / "task-other_bold.json").write_text(json.dumps({"RepetitionTime": 99.0}))
 
     resolved = resolve_bids_metadata(image)
 
@@ -67,7 +57,10 @@ def test_bids_metadata_inheritance_merges_root_to_image(tmp_path: Path) -> None:
 def test_nested_path_collections_have_one_shared_conversion() -> None:
     values = (Path("a"), [Path("b"), Path("c")])
     assert flatten_paths((*values, {"nested": Path("d")})) == [
-        Path("a"), Path("b"), Path("c"), Path("d")
+        Path("a"),
+        Path("b"),
+        Path("c"),
+        Path("d"),
     ]
     assert manifest_value(values) == ["a", ["b", "c"]]
 
@@ -92,8 +85,7 @@ def _write_cleaned_run_contract(
     mask = tmp_path / "sub-1_task-rest_desc-confounds_timeseries.tsv"
     mask.write_text("motion_outlier00\n0\n1\n0\n0\n", encoding="utf-8")
     files = tuple(
-        tmp_path / f"sub-1_task-rest_hemi-{hemi}_desc-clean_bold.func.gii"
-        for hemi in ("L", "R")
+        tmp_path / f"sub-1_task-rest_hemi-{hemi}_desc-clean_bold.func.gii" for hemi in ("L", "R")
     )
     for file, retained_frames, effective_rank, dominant_fraction in (
         (files[0], 3, 12.0, 0.35),

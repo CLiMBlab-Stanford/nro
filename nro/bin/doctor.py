@@ -2,6 +2,7 @@
 
 import argparse
 import json
+
 from nro.engine.dependencies import check_installation
 
 
@@ -17,7 +18,9 @@ def main(argv=None, *, prog="nro doctor"):
     parser.add_argument("--local", action="store_true", help="Treat Slurm as optional")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    results = check_installation(deep=args.deep, with_oslom=not args.without_oslom, slurm=not args.local)
+    results = check_installation(
+        deep=args.deep, with_oslom=not args.without_oslom, slurm=not args.local
+    )
     if args.json:
         print(json.dumps(results, indent=2))
     else:

@@ -7,14 +7,36 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Callable, IO, Mapping, Protocol
+from pathlib import Path
+from typing import IO, Callable, Mapping, Protocol
 
 from nro.orchestration.contracts import ExecutionEnvelope
+
+
+def process_group_alive(group: int) -> bool:
+    """Check a local Linux process group for non-zombie members before releasing inputs."""
+    if not Path("/proc/self/stat").is_file():
+        raise ShutdownUnconfirmed("Cannot inspect local process groups without /proc")
+    for path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = path.read_text().rsplit(")", 1)[1].split()
+            if int(fields[2]) == group and fields[0] not in {"Z", "X"}:
+                return True
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, IndexError) as error:
+            raise ShutdownUnconfirmed(f"Cannot establish process-group shutdown: {path}") from error
+    return False
+
+
+class ShutdownUnconfirmed(RuntimeError):
+    """A process group still has live members after cancellation escalation."""
 
 
 @dataclass(frozen=True)
 class ExecutionResult:
     """Process exit status and cancellation flags for a supervised attempt."""
+
     return_code: int
     cancelled: bool
     scheduler_cancelled: bool
@@ -36,6 +58,7 @@ class ExecutionLauncher(Protocol):
         poll_interval: float,
         cancellation_state: Callable[[], tuple[bool, bool]],
         heartbeat: Callable[[], None],
+        process_started: Callable[[int], None] | None = None,
     ) -> ExecutionResult:
         """Execute an immutable envelope while polling cancellation and renewing heartbeats."""
         ...
@@ -50,7 +73,7 @@ class SubprocessExecutionLauncher:
 
     def terminate(self) -> None:
         """Send SIGTERM to the active process group; ignore an already-ended process."""
-        if self.process is None or self.process.poll() is not None:
+        if self.process is None:
             return
         try:
             os.killpg(self.process.pid, signal.SIGTERM)
@@ -66,6 +89,7 @@ class SubprocessExecutionLauncher:
         poll_interval: float,
         cancellation_state: Callable[[], tuple[bool, bool]],
         heartbeat: Callable[[], None],
+        process_started: Callable[[int], None] | None = None,
     ) -> ExecutionResult:
         """Launch the command in a new process group and supervise it.
 
@@ -81,27 +105,47 @@ class SubprocessExecutionLauncher:
             start_new_session=True,
             env=dict(environment),
         )
-        cancelled = False
-        scheduler_cancelled = False
-        while self.process.poll() is None:
-            cancel, scheduler_cancelled = cancellation_state()
-            if cancel:
-                cancelled = True
-                self.terminate()
-                try:
-                    self.process.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(self.process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                break
-            heartbeat()
-            time.sleep(poll_interval)
-        return_code = self.process.wait()
-        self.process = None
-        return ExecutionResult(
-            return_code=return_code,
-            cancelled=cancelled,
-            scheduler_cancelled=scheduler_cancelled,
-        )
+        if process_started is not None:
+            try:
+                process_started(self.process.pid)
+            except BaseException:
+                self._stop_group()
+                raise
+        try:
+            cancelled = False
+            scheduler_cancelled = False
+            while self.process.poll() is None:
+                cancel, scheduler_cancelled = cancellation_state()
+                if cancel:
+                    cancelled = True
+                    self._stop_group()
+                    break
+                heartbeat()
+                time.sleep(poll_interval)
+            return_code = self.process.wait()
+            if process_group_alive(self.process.pid):
+                self._stop_group()
+            self.process = None
+            return ExecutionResult(return_code, cancelled, scheduler_cancelled)
+        except ShutdownUnconfirmed:
+            raise
+        except BaseException:
+            self._stop_group()
+            raise
+
+    def _stop_group(self) -> None:
+        self.terminate()
+        try:
+            self.process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 20
+        while process_group_alive(self.process.pid):
+            if time.monotonic() >= deadline:
+                raise ShutdownUnconfirmed(f"Process group {self.process.pid} has not stopped")
+            time.sleep(0.05)
+        self.process.wait()

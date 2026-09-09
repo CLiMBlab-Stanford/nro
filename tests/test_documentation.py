@@ -4,26 +4,30 @@ import ast
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_public_classes_and_methods_have_docstrings() -> None:
+def test_public_api_has_docstrings() -> None:
     missing = []
     for path in sorted((ROOT / "nro").rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
+        if not ast.get_docstring(tree):
+            missing.append(f"{path.relative_to(ROOT)}:1 module")
         for declaration in tree.body:
-            if not isinstance(declaration, ast.ClassDef):
+            if isinstance(declaration, ast.ClassDef) and not declaration.name.startswith("_"):
+                public = [declaration]
+                public.extend(
+                    method
+                    for method in declaration.body
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and (not method.name.startswith("_") or method.name == "__init__")
+                )
+            elif isinstance(
+                declaration, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not declaration.name.startswith("_"):
+                public = [declaration]
+            else:
                 continue
-            if declaration.name.startswith("_"):
-                continue
-            public = [declaration]
-            public.extend(
-                method
-                for method in declaration.body
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and (not method.name.startswith("_") or method.name == "__init__")
-            )
             for item in public:
                 if not ast.get_docstring(item):
                     missing.append(f"{path.relative_to(ROOT)}:{item.lineno} {item.name}")

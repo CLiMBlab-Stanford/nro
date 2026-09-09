@@ -4,20 +4,17 @@ import hashlib
 import json
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 
 from nro.engine.io import atomic_write_text
+
+from .execution_cache import cache_publication
 from .registry import Registry
 
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
 
 
-def _worker_source_root() -> Path:
-    """Return the repository root that workers import."""
-    return Path(__file__).resolve().parents[2]
-
-
+@cache_publication
 def _write_worker_script(
     registry: Registry,
     *,
@@ -30,13 +27,15 @@ def _write_worker_script(
     idle_timeout: int = DEFAULT_WORKER_IDLE_TIMEOUT,
     drain_seconds: int = 15 * 60,
 ) -> Path:
-    from nro.configuration.site import site_file
-    site_path = site_file()
-    selected_site = str(site_path) if site_path.is_file() else None
+    from nro.orchestration.scheduler_implementation import capture_worker_implementation
+
+    source, site_path, python = capture_worker_implementation(registry.paths.control, bids_root)
     profile_payload = json.dumps(
         {
             "bids_root": str(bids_root),
-            "site_config": selected_site,
+            "site_config": str(site_path),
+            "source": source.digest,
+            "python": str(python),
             "partition": partition,
             "account": account,
             "hours": hours,
@@ -49,13 +48,23 @@ def _write_worker_script(
     profile = hashlib.sha256(profile_payload.encode("utf-8")).hexdigest()[:12]
     path = registry.paths.workers / f"worker-large-{memory_gb}gb-{profile}.sbatch"
     command = [
-        sys.executable, "-m", "nro.orchestration.worker",
-        "--bids-root", str(bids_root), "--resource-class", "large",
-        "--memory-gb", str(memory_gb),
-        "--idle-timeout", str(idle_timeout),
-        "--walltime-seconds", str(hours * 60 * 60),
-        "--drain-seconds", str(drain_seconds),
-        "--profile", profile,
+        str(python),
+        "-m",
+        "nro.orchestration.worker",
+        "--bids-root",
+        str(bids_root),
+        "--resource-class",
+        "large",
+        "--memory-gb",
+        str(memory_gb),
+        "--idle-timeout",
+        str(idle_timeout),
+        "--walltime-seconds",
+        str(hours * 60 * 60),
+        "--drain-seconds",
+        str(drain_seconds),
+        "--profile",
+        profile,
     ]
     lines = [
         "#!/usr/bin/env bash",
@@ -68,22 +77,26 @@ def _write_worker_script(
     ]
     if account:
         lines.append(f"#SBATCH --account={account}")
-    lines.extend((
-        "set -euo pipefail",
-        *(["export NRO_SITE_CONFIG=" + shlex.quote(selected_site)] if selected_site else []),
-        f"cd {shlex.quote(str(_worker_source_root()))}",
-        "exec " + shlex.join(command),
-    ))
+    lines.extend(
+        (
+            "set -euo pipefail",
+            "exec " + shlex.join(source.command(command, site=site_path)),
+        )
+    )
     atomic_write_text(path, "\n".join(lines) + "\n")
     return path
 
 
+@cache_publication
 def _submit_workers(
     registry: Registry,
     request_id: str | None,
     script: Path,
     memory_gb: int,
 ) -> list[str]:
+    from nro.orchestration.scheduler_implementation import validate_worker_script
+
+    validate_worker_script(registry.paths.control, script)
     submitted: list[str] = []
     registry.reconcile_scheduler_submissions()
     for submission_id, _token in registry.reserve_worker_submissions(

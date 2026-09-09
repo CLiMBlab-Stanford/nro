@@ -1,16 +1,15 @@
 """Guard the unified module-runner contract against architectural regression."""
 
-from pathlib import Path
 import ast
-
+from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 MODULE_FILES = (
-    ROOT / "nro/anat/module.py",
-    ROOT / "nro/func/module.py",
-    ROOT / "nro/clean/module.py",
-    ROOT / "nro/microparcellation/module.py",
-    ROOT / "nro/networks/module.py",
+    ROOT / "nro/modules/anat/module.py",
+    ROOT / "nro/modules/func/module.py",
+    ROOT / "nro/modules/clean/module.py",
+    ROOT / "nro/modules/microparcellation/module.py",
+    ROOT / "nro/modules/networks/module.py",
 )
 
 

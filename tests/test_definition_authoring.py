@@ -1,22 +1,22 @@
 """Definition drafts, validation, and guarded publication in isolated stores."""
 
-from pathlib import Path
 import fcntl
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
 
 from nro.bin.create import main as create
-from nro.bin.edit import main as edit
 from nro.bin.delete import main as delete
+from nro.bin.edit import main as edit
 from nro.configuration import store as store_module
 from nro.configuration.authoring import definition_target, validate_definition
 from nro.configuration.store import ConfigStore
 from nro.engine import definition_editor
-from nro.firstlevels.authoring import discover_event_files, model_draft
-from nro.firstlevels.task_models import validate_task_model
+from nro.modules.firstlevels.authoring import discover_event_files, model_draft
+from nro.modules.firstlevels.task_models import validate_task_model
 
 
 @pytest.fixture
@@ -36,8 +36,11 @@ def _write(path, text):
 
 
 def _events(path, labels, column="trial_type"):
-    return _write(path, f"onset\tduration\t{column}\tresponse_time\n" +
-                  "".join(f"{i * 2}\t1\t{label}\t0.5\n" for i, label in enumerate(labels)))
+    return _write(
+        path,
+        f"onset\tduration\t{column}\tresponse_time\n"
+        + "".join(f"{i * 2}\t1\t{label}\t0.5\n" for i, label in enumerate(labels)),
+    )
 
 
 def _interactive(monkeypatch, editor, responses):
@@ -59,7 +62,9 @@ def test_event_discovery_uses_inheritance_and_source_runs(tmp_path):
     _write(specific.with_name("sub-01_ses-1_task-newtask_bold.nii.gz"), "x")
     _write(bids / "alpha/sub-01/derivatives/copy/func/sub-01_task-newtask_bold.nii.gz", "x")
     assert discover_event_files("newtask", bids) == (root_table, specific)
-    assert discover_event_files("newtask", bids, projects=("alpha",), participants=("sub-02",)) == (root_table,)
+    assert discover_event_files("newtask", bids, projects=("alpha",), participants=("sub-02",)) == (
+        root_table,
+    )
     with pytest.raises(ValueError, match="Unknown BIDS project"):
         discover_event_files("newtask", bids, projects=("missing",))
     with pytest.raises(ValueError, match="Unknown participant"):
@@ -72,8 +77,10 @@ def test_event_discovery_uses_inheritance_and_source_runs(tmp_path):
 
 
 def test_model_draft_unions_conditions_without_inferring_other_predictors(tmp_path):
-    paths = [_events(tmp_path / "one.tsv", ["S", "S", "n/a"]),
-             _events(tmp_path / "two.tsv", ["N", "S"])]
+    paths = [
+        _events(tmp_path / "one.tsv", ["S", "S", "n/a"]),
+        _events(tmp_path / "two.tsv", ["N", "S"]),
+    ]
     messages = []
     model = validate_task_model(yaml.safe_load(model_draft(paths, report=messages.append)))
     assert model["conditions"] == "trial_type"
@@ -103,34 +110,45 @@ def test_draft_maps_unsafe_contrast_names_without_losing_conditions(tmp_path):
     model = yaml.safe_load(model_draft([table]))
     assert len(model["contrasts"]) == 3
     assert {key for weights in model["contrasts"].values() for key in weights} == {
-        "A B", "A-B", "trial_type.trial_type.C",
+        "A B",
+        "A-B",
+        "trial_type.trial_type.C",
     }
-    from nro.firstlevels.compiler import task_node
+    from nro.modules.firstlevels.compiler import task_node
+
     node = task_node(model)
     assert {name for contrast in node["Contrasts"] for name in contrast["ConditionList"]} == {
-        "trial_type.A B", "trial_type.A-B", "trial_type.trial_type.C",
+        "trial_type.A B",
+        "trial_type.A-B",
+        "trial_type.trial_type.C",
     }
 
 
 def test_model_draft_uses_compact_shorthand_with_equivalent_compilation(tmp_path):
     from copy import deepcopy
-    from nro.firstlevels.compiler import task_node
+
+    from nro.modules.firstlevels.compiler import task_node
 
     text = model_draft([_events(tmp_path / "events.tsv", ["E", "H"])])
     assert "  E: {E: 1}\n" in text
     model = yaml.safe_load(text)
     qualified = deepcopy(model)
-    qualified["contrasts"] = {name: {f"trial_type.{key}": weight for key, weight in weights.items()}
-                              for name, weights in model["contrasts"].items()}
+    qualified["contrasts"] = {
+        name: {f"trial_type.{key}": weight for key, weight in weights.items()}
+        for name, weights in model["contrasts"].items()
+    }
     assert task_node(model) == task_node(qualified)
 
 
-@pytest.mark.parametrize("text", [
-    "onset\tduration\ttrial_type\n",
-    "onset\tduration\ttrial_type\n0\t-1\tA\n",
-    "onset\tduration\ttrial_type\nNaN\t1\tA\n",
-    "onset\tduration\ttrial_type\ttrial_type\n0\t1\tA\tB\n",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "onset\tduration\ttrial_type\n",
+        "onset\tduration\ttrial_type\n0\t-1\tA\n",
+        "onset\tduration\ttrial_type\nNaN\t1\tA\n",
+        "onset\tduration\ttrial_type\ttrial_type\n0\t1\tA\tB\n",
+    ],
+)
 def test_malformed_events_do_not_create_partial_drafts(tmp_path, text):
     with pytest.raises(ValueError):
         model_draft([_write(tmp_path / "events.tsv", text)])
@@ -173,15 +191,18 @@ def test_copy_model_removes_execution_membership(store, tmp_path):
     assert yaml.safe_load(output.read_text())["model_set"] == []
 
 
-@pytest.mark.parametrize("kind,identifier,text", [
-    ("model", "newtask", "conditions: trial_type\ncontrasts: {}\n"),
-    ("model", "newtask", "conditions: trial_type\nconditions: other\n"),
-    ("config", "clean/alternate", "typo: 2\n"),
-    ("config", "clean/alternate", "minimum_temporal_rank: wrong\n"),
-    ("config", "clean/main", "minimum_temporal_rank: 25\n"),
-    ("workflow", "alternate", "clean: absent\n"),
-    ("workflow", "alternate", "unknown: main\n"),
-])
+@pytest.mark.parametrize(
+    "kind,identifier,text",
+    [
+        ("model", "newtask", "conditions: trial_type\ncontrasts: {}\n"),
+        ("model", "newtask", "conditions: trial_type\nconditions: other\n"),
+        ("config", "clean/alternate", "typo: 2\n"),
+        ("config", "clean/alternate", "minimum_temporal_rank: wrong\n"),
+        ("config", "clean/main", "minimum_temporal_rank: 25\n"),
+        ("workflow", "alternate", "clean: absent\n"),
+        ("workflow", "alternate", "unknown: main\n"),
+    ],
+)
 def test_validation_rejects_invalid_staged_definitions(store, kind, identifier, text):
     with pytest.raises(ValueError):
         validate_definition(store, definition_target(store, kind, identifier), text)
@@ -250,18 +271,23 @@ def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, 
 
 
 def test_missing_edit_and_noninteractive_fallback_are_errors(store):
-    for command, argv in ((edit, ["workflow", "absent"]),
-                          (create, ["workflow", "main"]),
-                          (create, ["workflow", "new"])):
+    for command, argv in (
+        (edit, ["workflow", "absent"]),
+        (create, ["workflow", "main"]),
+        (create, ["workflow", "new"]),
+    ):
         with pytest.raises(SystemExit):
             command(argv)
     assert not (store.root / "workflows/new_workflow.yml").exists()
 
 
-@pytest.mark.parametrize("available,expected", [
-    ({"vi", "nano"}, "/bin/nano"),
-    ({"vi"}, "/bin/vi"),
-])
+@pytest.mark.parametrize(
+    "available,expected",
+    [
+        ({"vi", "nano"}, "/bin/nano"),
+        ({"vi"}, "/bin/vi"),
+    ],
+)
 def test_editor_fallback_prefers_nano(store, monkeypatch, available, expected):
     def editor(command, **kwargs):
         assert command[0] == expected
@@ -269,8 +295,11 @@ def test_editor_fallback_prefers_nano(store, monkeypatch, available, expected):
     _interactive(monkeypatch, editor, [])
     monkeypatch.delenv("VISUAL", raising=False)
     monkeypatch.delenv("EDITOR", raising=False)
-    monkeypatch.setattr(definition_editor.shutil, "which",
-                        lambda name: f"/bin/{name}" if name in available else None)
+    monkeypatch.setattr(
+        definition_editor.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name in available else None,
+    )
     edit(["workflow", "main"])
 
 
@@ -345,7 +374,11 @@ def test_delete_requires_confirmation(store, monkeypatch, response):
     with pytest.raises(SystemExit):
         delete(["workflow", "experiment"])
     assert target.exists()
-    _interactive(monkeypatch, lambda *args, **kwargs: pytest.fail("Deletion must not open an editor"), [response])
+    _interactive(
+        monkeypatch,
+        lambda *args, **kwargs: pytest.fail("Deletion must not open an editor"),
+        [response],
+    )
     delete(["workflow", "experiment"])
     assert target.exists() == (response == "n")
 

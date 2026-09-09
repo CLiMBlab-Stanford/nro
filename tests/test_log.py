@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import nro.bin.log as log_cli
-from nro.orchestration.registry import Registry, utcnow
-from nro.orchestration.planner import build_subject_instances
 from nro.configuration.store import ConfigStore
+from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.registry import Registry, utcnow
 
 
 def _write(path: Path, text: str = "log\n") -> Path:
@@ -38,7 +38,9 @@ def _registry_with_logs(tmp_path: Path) -> tuple[Path, Registry, Path, Path, Pat
         target_module="func",
         selectors={},
         instances=instances,
-        terminal_instance_keys=[instance.key for instance in instances if instance.module == "func"],
+        terminal_instance_keys=[
+            instance.key for instance in instances if instance.module == "func"
+        ],
         concurrency=2,
         partition=None,
     )
@@ -62,15 +64,22 @@ def _registry_with_logs(tmp_path: Path) -> tuple[Path, Registry, Path, Path, Pat
                        started_at, completed_at, log_path, created_at
                    ) VALUES (?, ?, 'success', ?, 32, ?, ?, ?, ?)""",
                 (
-                    row["id"], worker, row["revision_fingerprint"], now, now,
-                    str(path), now,
+                    row["id"],
+                    worker,
+                    row["revision_fingerprint"],
+                    now,
+                    now,
+                    str(path),
+                    now,
                 ),
             )
     return bids, registry, anat_instance_log, func_instance_log, anat_worker_log, func_worker_log
 
 
 def test_collects_only_workers_that_attempted_matching_instances(tmp_path: Path) -> None:
-    _bids, registry, _anat_instance, _func_instance, anat_worker, func_worker = _registry_with_logs(tmp_path)
+    _bids, registry, _anat_instance, _func_instance, anat_worker, func_worker = _registry_with_logs(
+        tmp_path
+    )
     instance_ids = log_cli._matching_instance_ids(
         registry,
         projects={"demo"},
@@ -92,7 +101,9 @@ def test_collects_only_workers_that_attempted_matching_instances(tmp_path: Path)
 
 
 def test_instance_level_collects_attempt_logs_for_matching_instances(tmp_path: Path) -> None:
-    _bids, registry, anat_instance, func_instance, _anat_worker, _func_worker = _registry_with_logs(tmp_path)
+    _bids, registry, anat_instance, func_instance, _anat_worker, _func_worker = _registry_with_logs(
+        tmp_path
+    )
     instance_ids = log_cli._matching_instance_ids(
         registry,
         projects={"demo"},
@@ -113,10 +124,10 @@ def test_instance_level_collects_attempt_logs_for_matching_instances(tmp_path: P
     assert set(unfiltered) == {anat_instance.resolve(), func_instance.resolve()}
 
 
-def test_main_opens_all_matching_logs_in_one_less_session(
-    tmp_path: Path, monkeypatch
-) -> None:
-    bids, _registry, _anat_instance, func_instance, _anat_worker, _func_worker = _registry_with_logs(tmp_path)
+def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkeypatch) -> None:
+    bids, _registry, _anat_instance, func_instance, _anat_worker, _func_worker = (
+        _registry_with_logs(tmp_path)
+    )
     commands: list[list[str]] = []
     monkeypatch.setattr(log_cli.shutil, "which", lambda command: "/usr/bin/less")
 
@@ -127,8 +138,19 @@ def test_main_opens_all_matching_logs_in_one_less_session(
     monkeypatch.setattr(log_cli.subprocess, "run", fake_run)
     log_cli.main(
         [
-                "-p", "01", "-P", "demo", "-m", "func", "-w", "main",
-                "-r", "run=1", "-i", "--bids-root", str(bids),
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "-w",
+            "main",
+            "-r",
+            "run=1",
+            "-i",
+            "--bids-root",
+            str(bids),
         ]
     )
 

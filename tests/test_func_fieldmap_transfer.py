@@ -4,23 +4,23 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore
 from nro.configuration.runtime import configure
+from nro.configuration.store import ConfigStore
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.engine.execution import resolve_runner_command
 from nro.engine.neuroimaging import create_copy_nifti_step
-from nro.func.module import (
+from nro.modules.func.steps import (
     _canonical_fieldmap_order,
     _create_ants_registration_step,
     _create_bold_ref_to_topup_transform_step,
+    _create_t1_epi_vox_target_step,
     _create_target_readout_warp_step,
     _create_target_shift_step,
-    _create_t1_epi_vox_target_step,
+    _normalized_topup_matrix,
     _pe_to_fsl_shift_direction,
     _resolve_fieldmapless_sdc_method,
-    _normalized_topup_matrix,
     _resolve_sdc_reference_policy,
     _write_topup_datain,
     rigid_transform_metrics,
@@ -252,9 +252,7 @@ def test_synbold_remains_selected_with_required_metadata() -> None:
         ("k-", "z-"),
     ],
 )
-def test_pe_to_fsl_shift_direction(
-    bids_direction: str, fsl_direction: str
-) -> None:
+def test_pe_to_fsl_shift_direction(bids_direction: str, fsl_direction: str) -> None:
     assert _pe_to_fsl_shift_direction(bids_direction) == fsl_direction
 
 

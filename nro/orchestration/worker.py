@@ -18,12 +18,19 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.paths import BIDS_PATH
+from nro.engine.io import atomic_write_json
+from nro.orchestration.assessment import AssessmentConflict
 from nro.orchestration.contracts import ExecutionEnvelope
-from nro.orchestration.execution import ExecutionLauncher, SubprocessExecutionLauncher
+from nro.orchestration.dependency_state import AttemptInvalidated
+from nro.orchestration.execution import (
+    ExecutionLauncher,
+    ShutdownUnconfirmed,
+    SubprocessExecutionLauncher,
+)
+from nro.orchestration.execution_cache import cleanup_cache
 from nro.orchestration.manifests import assess_registry, record_completion
 from nro.orchestration.registry import Registry, ensure_shared_directory, utcnow
-from nro.engine.io import atomic_write_json
-
+from nro.orchestration.scheduler_implementation import validate_worker_script
 
 COMPATIBLE = {
     "large": ("large", "medium", "small"),
@@ -32,9 +39,7 @@ COMPATIBLE = {
 }
 
 
-def _append_event(
-    registry: Registry, instance: ExecutionEnvelope, event: dict
-) -> None:
+def _append_event(registry: Registry, instance: ExecutionEnvelope, event: dict) -> None:
     path = instance.log_path.parent / "events.jsonl"
     ensure_shared_directory(path.parent)
     record = {
@@ -106,9 +111,7 @@ def _outputs(instance: ExecutionEnvelope) -> tuple[Path, ...]:
     root = instance.output_root
     declared = instance.expected_outputs
     if not declared:
-        raise RuntimeError(
-            f"Instance has an empty fixed output contract: {instance.instance_id}"
-        )
+        raise RuntimeError(f"Instance has an empty fixed output contract: {instance.instance_id}")
     resolved_root = root.resolve()
     values: set[Path] = set()
     for candidate in declared:
@@ -147,7 +150,8 @@ def _outputs(instance: ExecutionEnvelope) -> tuple[Path, ...]:
                 missing_references.add(resolved)
 
     pending = [
-        path for path in values
+        path
+        for path in values
         if path.name.endswith(("_manifest.json", "_manifest.yaml", "_manifest.yml"))
     ]
     visited: set[Path] = set()
@@ -166,9 +170,7 @@ def _outputs(instance: ExecutionEnvelope) -> tuple[Path, ...]:
                 f"Instance publication manifest is unreadable: {manifest_path}: {error}"
             ) from error
         if not isinstance(manifest, dict):
-            raise RuntimeError(
-                f"Instance publication manifest is not a mapping: {manifest_path}"
-            )
+            raise RuntimeError(f"Instance publication manifest is not a mapping: {manifest_path}")
         before = set(values)
         inventory = manifest.get("public_outputs")
         if inventory is None:
@@ -293,13 +295,13 @@ def _looks_like_oom(log_path: Path, return_code: int) -> bool:
     except OSError:
         return False
     return any(
-        marker in text
-        for marker in ("out of memory", "out_of_memory", "oom_kill", "oom-kill")
+        marker in text for marker in ("out of memory", "out_of_memory", "oom_kill", "oom-kill")
     )
 
 
 class Worker:
     """Claim derivative instances or ingestion stages and supervise their execution."""
+
     def __init__(
         self,
         registry: Registry,
@@ -324,7 +326,9 @@ class Worker:
         )
         self.drain_seconds = drain_seconds
         self.profile = profile
-        self.worker_id = f"{os.environ.get('SLURM_JOB_ID', 'local')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        self.worker_id = (
+            f"{os.environ.get('SLURM_JOB_ID', 'local')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        )
         self.launcher = launcher or SubprocessExecutionLauncher()
         self.stop_requested = False
 
@@ -366,6 +370,7 @@ class Worker:
             return
         submission_id, _token = reservation
         try:
+            validate_worker_script(self.registry.paths.control, script)
             result = subprocess.run(
                 ["sbatch", "--parsable", f"--dependency=afterany:{job_id}", str(script)],
                 check=True,
@@ -393,9 +398,7 @@ class Worker:
             candidates: list[tuple[int, Path]] = []
             prefix = f"worker-{self.resource_class}-"
             pattern = (
-                f"{prefix}*gb-{self.profile}.sbatch"
-                if self.profile
-                else f"{prefix}*gb.sbatch"
+                f"{prefix}*gb-{self.profile}.sbatch" if self.profile else f"{prefix}*gb.sbatch"
             )
             for candidate in self.registry.paths.workers.glob(pattern):
                 value = candidate.name.removeprefix(prefix)
@@ -419,6 +422,7 @@ class Worker:
             return
         submission_id, _token = reservation
         try:
+            validate_worker_script(self.registry.paths.control, script)
             result = subprocess.run(
                 ["sbatch", "--parsable", str(script)],
                 check=True,
@@ -428,9 +432,7 @@ class Worker:
             job_id = result.stdout.strip().split(";", 1)[0]
             if not job_id:
                 raise RuntimeError(f"sbatch returned no adaptive worker job ID: {result.stdout!r}")
-            self.registry.update_submission(
-                submission_id, state="submitted", slurm_job_id=job_id
-            )
+            self.registry.update_submission(submission_id, state="submitted", slurm_job_id=job_id)
         except BaseException as error:
             self.registry.update_submission(submission_id, state="error")
             print(f"WARNING: could not submit {memory_gb} GB worker: {error}", file=sys.stderr)
@@ -456,6 +458,7 @@ class Worker:
         )
         for submission_id, _token in reservations:
             try:
+                validate_worker_script(self.registry.paths.control, script)
                 result = subprocess.run(
                     ["sbatch", "--parsable", str(script)],
                     check=True,
@@ -502,12 +505,18 @@ class Worker:
         _append_event(
             self.registry,
             instance,
-            {"event": "attempt_started", "attempt_id": attempt_id, "worker_id": self.worker_id,
-             "command": command, "cwd": os.getcwd(), "log": str(log_path),
-             "inputs": [str(path) for path in instance.input_paths],
-             "runtime_config": str(instance.execution.runtime_config),
-             "revision_fingerprint": instance.revision_fingerprint,
-             "runner_graph_signature": started_runner_graph_signature},
+            {
+                "event": "attempt_started",
+                "attempt_id": attempt_id,
+                "worker_id": self.worker_id,
+                "command": command,
+                "cwd": os.getcwd(),
+                "log": str(log_path),
+                "inputs": [str(path) for path in instance.input_paths],
+                "runtime_config": str(instance.execution.runtime_config),
+                "revision_fingerprint": instance.revision_fingerprint,
+                "runner_graph_signature": started_runner_graph_signature,
+            },
         )
         try:
             with log_path.open("w", encoding="utf-8") as log:
@@ -530,11 +539,10 @@ class Worker:
                     )
 
                 def cancellation_state() -> tuple[bool, bool]:
-                    scheduler_cancelled = self.registry.attempt_cancel_requested(
-                        attempt_id
-                    )
+                    scheduler_cancelled = self.registry.attempt_cancel_requested(attempt_id)
                     return self.stop_requested or scheduler_cancelled, scheduler_cancelled
 
+                self.registry.record_attempt_process(attempt_id, -1)
                 result = self.launcher.run(
                     instance,
                     stdout=log,
@@ -554,6 +562,9 @@ class Worker:
                     heartbeat=lambda: self.registry.heartbeat_worker(
                         self.worker_id, state="running"
                     ),
+                    process_started=lambda group: self.registry.record_attempt_process(
+                        attempt_id, group
+                    ),
                 )
                 cancelled = result.cancelled
                 scheduler_cancelled = result.scheduler_cancelled
@@ -566,9 +577,15 @@ class Worker:
                     attempt_id,
                     state="cancelled",
                     error_type=None if scheduler_cancelled else "WorkerTerminated",
-                    error_message=None if scheduler_cancelled else "Worker terminated while instance was running",
+                    error_message=None
+                    if scheduler_cancelled
+                    else "Worker terminated while instance was running",
                 )
-                _append_event(self.registry, instance, {"event": "attempt_cancelled", "attempt_id": attempt_id})
+                _append_event(
+                    self.registry,
+                    instance,
+                    {"event": "attempt_cancelled", "attempt_id": attempt_id},
+                )
                 return
             if return_code != 0:
                 message = _failure_summary(log_path, return_code)
@@ -590,13 +607,21 @@ class Worker:
                         self._submit_adaptive_worker(next_memory)
                     return
                 self.registry.finish_attempt(
-                    attempt_id, state="error", error_type="CalledProcessError", error_message=message
+                    attempt_id,
+                    state="error",
+                    error_type="CalledProcessError",
+                    error_message=message,
                 )
                 self._cancel_failed_descendants(instance)
                 _append_event(
-                    self.registry, instance,
-                    {"event": "attempt_failed", "attempt_id": attempt_id, "return_code": return_code,
-                     "error": message},
+                    self.registry,
+                    instance,
+                    {
+                        "event": "attempt_failed",
+                        "attempt_id": attempt_id,
+                        "return_code": return_code,
+                        "error": message,
+                    },
                 )
                 return
             current_runner_graph_signature = _runner_graph_signature(
@@ -654,6 +679,18 @@ class Worker:
                     "outputs": [item["path"] for item in manifest["public_outputs"]],
                 },
             )
+        except ShutdownUnconfirmed as error:
+            self.stop_requested = True
+            self._log(str(error) + "; retaining the active attempt until shutdown is confirmed")
+        except AttemptInvalidated as error:
+            self.registry.finish_attempt(
+                attempt_id, state="cancelled", error_type="UpstreamStale", error_message=str(error)
+            )
+            _append_event(
+                self.registry,
+                instance,
+                {"event": "attempt_cancelled", "attempt_id": attempt_id, "error": str(error)},
+            )
         except BaseException as error:
             message = f"{type(error).__name__}: {error}"
             if completion_started is not None:
@@ -672,52 +709,107 @@ class Worker:
             )
             self._cancel_failed_descendants(instance)
             _append_event(
-                self.registry, instance,
-                {"event": "attempt_failed", "attempt_id": attempt_id, "error": message,
-                 "traceback": traceback.format_exc()},
+                self.registry,
+                instance,
+                {
+                    "event": "attempt_failed",
+                    "attempt_id": attempt_id,
+                    "error": message,
+                    "traceback": traceback.format_exc(),
+                },
             )
 
     def _execute_ingestion(self, record: dict) -> None:
         """Supervise a noninteractive ingestion stage without derivative completion checks."""
         from types import SimpleNamespace
+
         from nro.bidsify.store import IngestionStore
         from nro.orchestration.contracts import ExecutionRecipe
 
-        store = IngestionStore(self.registry)
+        store = IngestionStore(self.registry, branch=record.get("branch", "main"))
         log_path = store.root / f"{record['id']}.log"
         result_path = store.root / f"{record['id']}.result"
         result_path.unlink(missing_ok=True)
-        envelope = SimpleNamespace(execution=ExecutionRecipe(
-            command=(sys.executable, '-m', 'nro.bidsify', '--request', record['id'],
-                     '--bids-root', str(self.registry.paths.bids_root), '--control', str(self.registry.paths.control)),
-            runtime_config=store.root / f"{record['id']}.json"))
-        self.registry.heartbeat_worker(self.worker_id, state='running')
+        envelope = SimpleNamespace(
+            execution=ExecutionRecipe(
+                command=(
+                    sys.executable,
+                    "-m",
+                    "nro.bidsify",
+                    "--request",
+                    record["id"],
+                    "--bids-root",
+                    str(self.registry.paths.bids_root),
+                    "--control",
+                    str(self.registry.paths.control),
+                ),
+                runtime_config=store.root / f"{record['id']}.json",
+            )
+        )
+        self.registry.heartbeat_worker(self.worker_id, state="running")
         try:
-            with log_path.open('a') as log:
+            if record.get("execution"):
+                from nro.bidsify.execution import stage_command
+
+                envelope.execution = ExecutionRecipe(
+                    command=stage_command(record, self.registry),
+                    runtime_config=store.root / f"{record['id']}.json",
+                )
+
+            def cancelled():
+                if self.stop_requested or self.registry.worker_shutdown_requested(self.worker_id):
+                    return True
+                if store.branch != "main":
+                    from nro.orchestration.branch_store import BranchStore
+
+                    owner = (
+                        BranchStore(self.registry.paths.control)
+                        .read()
+                        .topology.records.get(store.branch)
+                    )
+                    return owner is None or owner.retired
+                return False
+
+            with log_path.open("a") as log:
                 log_path.chmod(0o660)
                 log.write(f"{utcnow()} Stage: {record['stage']}\n")
                 log.flush()
                 result = self.launcher.run(
-                    envelope, stdout=log, environment=dict(os.environ), poll_interval=self.poll_interval,
-                    cancellation_state=lambda: (self.stop_requested or self.registry.worker_shutdown_requested(self.worker_id), False),
-                    heartbeat=lambda: self.registry.heartbeat_worker(self.worker_id, state='running'))
+                    envelope,
+                    stdout=log,
+                    environment=dict(os.environ),
+                    poll_interval=self.poll_interval,
+                    cancellation_state=lambda: (cancelled(), False),
+                    heartbeat=lambda: self.registry.heartbeat_worker(
+                        self.worker_id, state="running"
+                    ),
+                )
             if result.cancelled:
-                store.finish(record['id'], self.worker_id, state='interrupted')
+                store.finish(record["id"], self.worker_id, state="interrupted")
             elif result.return_code != 0 or not result_path.is_file():
-                store.finish(record['id'], self.worker_id, state='failed', changes={'issues': ['Scheduled stage failed; inspect the ingestion log and retry through nro bidsify']})
+                store.finish(
+                    record["id"],
+                    self.worker_id,
+                    state="failed",
+                    changes={
+                        "issues": [
+                            "Scheduled stage failed; inspect the ingestion log and retry through nro bidsify"
+                        ]
+                    },
+                )
             else:
                 changes = json.loads(result_path.read_text())
-                store.finish(record['id'], self.worker_id, state=changes.pop('state'), changes=changes)
+                store.finish(
+                    record["id"], self.worker_id, state=changes.pop("state"), changes=changes
+                )
         except Exception:
-            store.finish(record['id'], self.worker_id, state='interrupted')
+            store.finish(record["id"], self.worker_id, state="interrupted")
         finally:
-            self.registry.heartbeat_worker(self.worker_id, state='idle')
+            self.registry.heartbeat_worker(self.worker_id, state="idle")
             self._expand_ready_pool()
 
     def _cancel_failed_descendants(self, instance: ExecutionEnvelope) -> None:
-        cancelled = self.registry.cancel_attempts_downstream_of_failure(
-            instance.instance_id
-        )
+        cancelled = self.registry.cancel_attempts_downstream_of_failure(instance.instance_id)
         if cancelled:
             self._log(
                 f"requested cancellation of {len(cancelled)} active downstream attempt(s) "
@@ -731,7 +823,13 @@ class Worker:
         try:
             demanded = self.registry.demanded_instance_ids()
             if demanded:
-                assess_registry(self.registry, instance_ids=demanded)
+                try:
+                    assess_registry(self.registry, instance_ids=demanded, compiled=True)
+                except AssessmentConflict:
+                    self._log("artifact assessment deferred because the registry kept changing")
+            from nro.orchestration.branch_reconciliation import reconcile_branch_requests
+
+            reconcile_branch_requests(self.registry)
             cancelled = self.registry.cancel_attempts_with_stale_upstreams()
             self.registry.reconcile_requests()
             if cancelled:
@@ -789,8 +887,9 @@ class Worker:
                     memory_gb=self.memory_gb,
                 )
                 if instance is None:
-                    from nro.bidsify.store import IngestionStore
-                    ingestion = IngestionStore(self.registry).claim(self.worker_id, self.memory_gb)
+                    from nro.bidsify.index import IngestionIndex
+
+                    ingestion = IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
                     if ingestion is not None:
                         idle_since = time.monotonic()
                         idle_announced = False
@@ -804,9 +903,7 @@ class Worker:
                         self._log("idle; waiting for a ready instance")
                         idle_announced = True
                     if time.monotonic() - idle_since >= self.idle_timeout:
-                        self._log(
-                            f"idle timeout reached after {self.idle_timeout:g}s; exiting"
-                        )
+                        self._log(f"idle timeout reached after {self.idle_timeout:g}s; exiting")
                         break
                     time.sleep(self.poll_interval)
                     continue
@@ -839,9 +936,11 @@ class Worker:
             self.registry.close_worker(self.worker_id, state=final_state)
             self.registry.mark_submission_complete(os.environ.get("SLURM_JOB_ID"))
             self._log(f"stopped (state={final_state})")
+            cleanup_cache(self.registry)
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the internal worker-process argument parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--resource-class", choices=tuple(COMPATIBLE), default="large")
@@ -855,8 +954,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run one reusable worker until it drains or receives shutdown."""
     args = build_parser().parse_args(argv)
     registry = Registry.for_project("", bids_root=args.bids_root)
+    from nro.orchestration.scheduler_implementation import require_worker_source
+
+    require_worker_source(registry.paths.control)
     raise SystemExit(
         Worker(
             registry,

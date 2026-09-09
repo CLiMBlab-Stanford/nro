@@ -187,6 +187,34 @@ have stale outputs later. A previous attempt error can coexist with a fresh
 instance produced by a later attempt. Cancelling one request does not erase an
 instance or its history.
 
+### Input changes during execution
+
+Claiming an attempt records its resolved upstream instance IDs and generations,
+including transitive ancestors. These references remain unchanged if replanning
+replaces the current dependency graph. They describe the inputs actually selected
+for that attempt, not the branch names or locations used to discover them.
+
+Invalidation follows both current dependencies and active attempts' captured
+inputs. A changed producer invalidates affected consumers and requests cancellation
+of their running attempts. Unrelated work continues. Demand remains active, so
+cancelled work can retry with compatible inputs without a new request. A retry
+does not silently change the requested scientific configuration.
+
+An upstream rebuild waits for those consumers to stop, rather than letting them
+finish using obsolete data. Cancellation of a supervised command stops its whole
+process group. Unknown shutdown state continues to block replacement; an expired
+worker lease alone is not proof that its processes stopped. Completed consumers
+also become stale when their required upstream generation changes.
+
+Completion validates the attempt, contract, captured inputs, and mutation barriers
+again under the publication lock before writing its manifest and advancing its
+generation. A late completion cannot override cancellation. Nro does not retain
+old derivative generations to let invalidated attempts run to completion.
+
+The current scheduler applies these rules to registered dependencies. Branch input
+resolution and branch scientific registries still need integration before this
+policy can govern actual cross-branch workloads.
+
 ## Freshness boundary
 
 The planner always constructs the complete module and instance dependency graph
@@ -205,6 +233,26 @@ generations are freshness evidence.
 
 The command, interpreter path, memory tier, and source revision are execution
 or provenance details. They do not independently constitute freshness evidence.
+
+### Concurrent assessment
+
+A full assessment captures the selected graph and its ancestors in one registry
+transaction. Filesystem checks run outside the lock. Publication then checks
+that the graph, configurations, generations, and active attempts still match
+the captured records before applying any decisions. A result computed before a
+concurrent completion cannot overwrite that newer completion.
+
+Assessment retries up to three times on conflict. Workers defer a persistently
+contended assessment until a later check-in; `status --verify` asks the user to
+retry. Unrelated work, heartbeats, and memory-limit changes do not force retries.
+The snapshot's comparison token coordinates publication and is not part of an
+artifact's scientific contract.
+
+The scientific evaluator can return its report from a separately selected
+implementation without opening the scheduler database. The report can update
+scientific normalization and artifact state, but cannot redirect output paths,
+change instance identity, or rewire dependencies. Branch authorization and
+automatic validator selection are separate, unfinished integration work.
 
 ## Module planning boundary
 

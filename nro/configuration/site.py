@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import tomllib
-
+from contextlib import contextmanager
+from pathlib import Path
 
 CHECKOUT = Path(__file__).resolve().parents[2]
 RECORD_NAME = ".nro-installation.json"
@@ -15,6 +15,7 @@ DEFAULTS = {
     "definitions": str(LAB / "nro-definitions"),
     "bids": str(LAB / "BIDS"),
     "work": str(LAB / "WORK"),
+    "development": str(LAB / "NRO_DEV"),
     "registry": str(LAB / ".nro"),
     "images": str(LAB / "apptainer/images"),
     "templates": str(LAB / "templateflow"),
@@ -27,8 +28,10 @@ DEFAULTS = {
     "binds": ["/juice6:/juice6"],
 }
 ENVIRONMENT_KEYS = {
-    "NRO_BIDS_PATH": "bids", "NRO_WORK_PATH": "work",
-    "NRO_WB_COMMAND": "workbench", "TEMPLATEFLOW_HOME": "templates",
+    "NRO_BIDS_PATH": "bids",
+    "NRO_WORK_PATH": "work",
+    "NRO_WB_COMMAND": "workbench",
+    "TEMPLATEFLOW_HOME": "templates",
     "FS_LICENSE": "license",
 }
 DERIVED = {
@@ -36,10 +39,34 @@ DERIVED = {
     "synthstrip": ("images", "synthstrip_1.7.sif"),
     "synbold": ("images", "synbold-disco_v1.4.sif"),
     "mni_template": (
-        "templates", "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz"
+        "templates",
+        "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
     ),
 }
 PATH_KEYS = (set(DEFAULTS) - {"runtime", "partition", "account", "binds"}) | set(DERIVED)
+
+
+def generic_defaults() -> dict:
+    """Return checkout-independent path proposals for a new standalone site."""
+    root = Path.home().resolve() / "nro"
+    return {
+        **{
+            key: str(root / suffix)
+            for key, suffix in {
+                "definitions": "definitions",
+                "bids": "bids",
+                "work": "work",
+                "development": "development",
+                "registry": ".nro",
+                "images": "images",
+                "templates": "templateflow",
+                "workbench": "workbench/bin_linux64/wb_command",
+                "oslom": "oslom/oslom_undir",
+                "license": "freesurfer/license.txt",
+            }.items()
+        },
+        "binds": [],
+    }
 
 
 def installation_record(root: Path = CHECKOUT) -> dict:
@@ -48,21 +75,29 @@ def installation_record(root: Path = CHECKOUT) -> dict:
     if not path.exists():
         return {}
     value = json.loads(path.read_text())
-    if value.get("mode") not in {"personal", "shared"}:
+    if value.get("mode") not in {"personal", "shared", "branch"}:
         raise ValueError(f"Invalid installation mode in {path}")
     if value.get("checkout") != str(root):
         raise ValueError(f"Installation record belongs to another checkout: {path}")
     return value
 
 
+def _require_no_pending_conversion(record: dict) -> None:
+    if (CHECKOUT / ".nro-installation-transition.json").exists() and record.get("mode") != "branch":
+        raise ValueError(
+            "Shared-to-branch conversion is incomplete; resume ./install --convert-to-branch"
+        )
+
+
 def site_file() -> Path:
     """Resolve the site TOML path, enforcing the recorded path for shared installations."""
     record = installation_record()
+    _require_no_pending_conversion(record)
     selected = os.environ.get("NRO_SITE_CONFIG")
-    if record.get("mode") == "shared":
+    if record.get("mode") in {"shared", "branch"}:
         required = Path(record["site"]).expanduser().resolve()
         if selected and Path(selected).expanduser().resolve() != required:
-            raise ValueError(f"This shared installation uses {required}")
+            raise ValueError(f"This {record['mode']} installation uses {required}")
         return required
     if selected:
         path = Path(selected).expanduser().resolve()
@@ -114,12 +149,13 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
     values = dict(DEFAULTS)
     sources = {key: "lab default" for key in values}
     if not LAB.is_dir() or not os.access(LAB, os.R_OK | os.X_OK):
-        values["definitions"] = str(Path.home().resolve() / "nro/definitions")
-        sources["definitions"] = "home default"
+        proposals = generic_defaults()
+        values.update(proposals)
+        sources.update({key: "home default" for key in proposals})
     overrides = read_overrides(path)
     values.update(overrides)
     sources.update({key: str(path) for key in overrides})
-    if installation_record().get("mode") != "shared":
+    if installation_record().get("mode") not in {"shared", "branch"}:
         for variable, key in ENVIRONMENT_KEYS.items():
             if os.environ.get(variable):
                 values[key] = os.environ[variable]
@@ -135,10 +171,86 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
 
 def definitions_root() -> Path:
     """Resolve the selected definitions directory without creating it or reading its files."""
-    root = Path(settings()[0]["definitions"]).resolve()
-    if (root / '.nro-incomplete').exists():
-        raise ValueError(f'Definitions publication is incomplete: {root}; inspect or recreate the store')
+    values = settings()[0]
+    root = Path(values["definitions"]).resolve()
+    record = installation_record()
+    if record.get("mode") == "branch" and record.get("ready"):
+        from nro.configuration.branch_definitions import selected_definitions
+
+        root = selected_definitions(Path(values["registry"]), record, root) or root
+    if (root / ".nro-incomplete").exists():
+        raise ValueError(
+            f"Definitions publication is incomplete: {root}; inspect or recreate the store"
+        )
     return root
+
+
+def require_execution_support(*, scientific: bool = False) -> None:
+    """Require branch execution to pass through the central admission boundary."""
+    record = installation_record()
+    _require_no_pending_conversion(record)
+    if record.get("mode") == "shared" and not record.get("ready"):
+        raise ValueError("The shared installation is undergoing setup or maintenance")
+    if record.get("mode") == "branch":
+        raise ValueError(
+            "Development installations must use nro run and the central scheduler; "
+            "direct production registry access and unbound execution are not permitted."
+        )
+    if scientific:
+        from nro.orchestration.branch_store import BranchStore
+        from nro.orchestration.releases import ReleaseStore
+        from nro.orchestration.scheduler_implementation import implementation_path
+
+        control = Path(settings()[0]["registry"])
+        if implementation_path(control).exists():
+            ReleaseStore(BranchStore(control)).require_approved(CHECKOUT)
+
+
+def require_definition_write(path: Path | None = None, *, creating_store: bool = False) -> None:
+    """Limit development writes to a selected private store or a new isolated store."""
+    record = installation_record()
+    _require_no_pending_conversion(record)
+    if record.get("mode") == "branch":
+        if not record.get("ready"):
+            raise ValueError(
+                "Incomplete development installations cannot edit definitions; finish setup first"
+            )
+        from nro.configuration.branch_definitions import require_private_store, selected_definitions
+
+        values = settings()[0]
+        control, shared = Path(values["registry"]), Path(values["definitions"])
+        selected = selected_definitions(control, record, shared)
+        if creating_store and path is not None:
+            require_private_store(control, shared, path, owner=record["branch"])
+            return
+        if selected is None:
+            raise ValueError(
+                "Development installations cannot edit shared definitions; "
+                "use nro branch definitions --definitions PATH to select a private store"
+            )
+        require_private_store(control, shared, selected, owner=record["branch"])
+        if path is not None and not path.expanduser().resolve().is_relative_to(selected):
+            raise ValueError("Definition is outside the selected development store")
+
+
+@contextmanager
+def definition_write(path: Path):
+    """Keep branch selection fixed while publishing or deleting one definition.
+
+    This lock serializes branch selection with cooperating nro writers. Direct
+    filesystem edits do not take the lock and remain the developer's responsibility.
+    """
+    record = installation_record()
+    if record.get("mode") == "branch" and record.get("ready"):
+        from nro.orchestration.branch_store import BranchStore
+
+        store = BranchStore(Path(settings()[0]["registry"]))
+        with store._lock():
+            require_definition_write(path)
+            yield
+    else:
+        require_definition_write(path)
+        yield
 
 
 def resolve_resources(value: object) -> object:

@@ -3,22 +3,35 @@
 import glob
 import json
 import os
-from pathlib import Path
 import readline
 import sys
+from pathlib import Path
 
 from nro.configuration.site import (
-    CHECKOUT, LAB, PATH_KEYS, installation_record, read_overrides, settings, site_file, validate_setting,
+    LAB,
+    PATH_KEYS,
+    generic_defaults,
+    installation_record,
+    read_overrides,
+    settings,
+    site_file,
+    validate_setting,
 )
 from nro.engine.io import atomic_write_text
 
 DESCRIPTIONS = {
     "definitions": "Configurations, workflows, models, events, and ingestion profiles",
-    "bids": "Directory containing BIDS projects", "work": "Intermediate files",
-    "registry": "Shared registry and logs", "images": "Container images",
-    "templates": "TemplateFlow data", "workbench": "wb_command executable",
-    "license": "Existing FreeSurfer license", "runtime": "Singularity or Apptainer executable",
-    "oslom": "oslom_undir executable", "partition": "Slurm partition",
+    "bids": "Directory containing BIDS projects",
+    "work": "Intermediate files",
+    "development": "Branch-owned derivatives, intermediate files, and debug BIDS",
+    "registry": "Shared registry and logs",
+    "images": "Container images",
+    "templates": "TemplateFlow data",
+    "workbench": "wb_command executable",
+    "license": "Existing FreeSurfer license",
+    "runtime": "Singularity or Apptainer executable",
+    "oslom": "oslom_undir executable",
+    "partition": "Slurm partition",
     "account": "Slurm account (- for none)",
 }
 
@@ -27,17 +40,9 @@ def interactive_defaults(sources: dict) -> dict:
     """Suggest generic storage when lab storage is unavailable; retain explicit settings."""
     if LAB.is_dir() and os.access(LAB, os.R_OK | os.X_OK):
         return {}
-    root = Path.home().resolve() / "nro"
-    paths = {key: str(root / suffix) for key, suffix in {
-        "bids": "bids", "work": "work", "images": "images", "definitions": "definitions",
-        "templates": "templateflow", "workbench": "workbench/bin_linux64/wb_command",
-        "license": "freesurfer/license.txt", "oslom": "oslom/oslom_undir",
-    }.items()}
-    paths["registry"] = str((CHECKOUT / "../../.nro").resolve())
-    proposals = {key: value for key, value in paths.items() if sources[key] == "lab default"}
-    if sources["binds"] == "lab default":
-        proposals["binds"] = []
-    return proposals
+    return {
+        key: value for key, value in generic_defaults().items() if sources[key] == "lab default"
+    }
 
 
 def save_settings(path: Path, overrides: dict) -> None:
@@ -55,11 +60,16 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
     Shared edits require maintenance authorization and an inactive worker pool.
     Cancellation before save leaves the old file intact. No data are relocated.
     """
+    if installation_record().get("mode") == "branch":
+        raise ValueError(
+            "Branch installations cannot edit the shared site; use its maintainer installation"
+        )
     if installation_record().get("mode") == "shared" and not maintain:
         raise ValueError("Shared settings require --maintain and maintainer write access.")
     path = site_file() if path is None else path
     if installation_record().get("mode") == "shared":
         from nro.engine.bootstrap import check_workers
+
         check_workers(path)
     overrides = read_overrides(path)
     values, sources = settings(path=path)
@@ -77,9 +87,11 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
     else:
         if not sys.stdin.isatty():
             raise ValueError("Interactive setup needs a terminal; use paths set key=value.")
+
         def complete(text, state):
             matches = glob.glob(os.path.expanduser(text) + "*")
             return matches[state] if state < len(matches) else None
+
         previous = readline.get_completer()
         readline.set_completer(complete)
         readline.parse_and_bind("tab: complete")
@@ -94,7 +106,9 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
                 print(f"  {key}: {values[key]}")
             accept_all = input("Accept all defaults? [Y/n]: ").strip().lower() in {"", "y", "yes"}
             for key, description in DESCRIPTIONS.items():
-                entered = "" if accept_all else input(f"{description}\n  {key} [{values[key]}]: ").strip()
+                entered = (
+                    "" if accept_all else input(f"{description}\n  {key} [{values[key]}]: ").strip()
+                )
                 value = entered or values[key]
                 if key == "account" and entered == "-":
                     value = ""

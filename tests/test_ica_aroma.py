@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import os
 import logging
+import os
 from itertools import count
 from pathlib import Path
 
 import numpy as np
 
-from nro.func import ica_aroma
 from nro.configuration.runtime import configure
+from nro.modules.func import ica_aroma
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
-from nro.func import module as func_module
-from nro.func.ica_aroma import denoising, make_dilated_anatomical_epi_mask
+from nro.engine.io import write_json
 from nro.engine.neuroimaging import create_copy_nifti_step
+from nro.modules.func import steps as func_steps
+from nro.modules.func.ica_aroma import denoising, make_dilated_anatomical_epi_mask
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import artifact_decision
 
@@ -158,9 +159,7 @@ def test_workflow_estimates_from_smoothed_copy_but_denoises_unsmoothed_data(
     assert observed["denoising_input"] == unsmoothed
     assert observed["denoising_design"] == out_dir / "melodic.ica" / "melodic_mix"
     assert observed["denoising_mask"] == out_dir / "regression_mask.nii.gz"
-    assert (out_dir / "melodic.complete").read_text().startswith(
-        "MELODIC decomposition"
-    )
+    assert (out_dir / "melodic.complete").read_text().startswith("MELODIC decomposition")
 
 
 def test_dilated_anatomical_mask_uses_mm_and_intersects_epi_support(tmp_path: Path) -> None:
@@ -197,7 +196,7 @@ def test_shared_regression_outputs_do_not_require_second_melodic(tmp_path: Path)
     runner = _runner()
     aroma_dir = tmp_path / "space-MNI/aroma"
     outputs = (aroma_dir / "denoised_func_data_aggr.nii.gz",)
-    step = func_module._create_shared_aroma_regression_step(
+    step = func_steps._create_shared_aroma_regression_step(
         runner=runner,
         epi=tmp_path / "mni_bold.nii.gz",
         input_space="MNI152NLin2009cAsym",
@@ -224,7 +223,6 @@ def test_shared_regression_becomes_stale_when_t1w_classification_changes(tmp_pat
     shared_classified = shared_work / "aroma/classified_motion_ICs.txt"
     shared_policy = shared_work / "ica_aroma_policy.json"
     epi = tmp_path / "mni_bold.nii.gz"
-    mean = tmp_path / "mni_mean.nii.gz"
     mask = tmp_path / "mni_mask.nii.gz"
     inputs = [epi, mask, shared_mix, shared_classified, shared_policy]
     for path in inputs:
@@ -232,9 +230,8 @@ def test_shared_regression_becomes_stale_when_t1w_classification_changes(tmp_pat
         path.write_bytes(b"input")
 
     out_4d = tmp_path / "cleaned.nii"
-    out_mean = tmp_path / "cleaned_mean.nii.gz"
     runner = _runner()
-    regression = func_module._create_shared_aroma_regression_step(
+    regression = func_steps._create_shared_aroma_regression_step(
         runner=runner,
         epi=epi,
         input_space="MNI152NLin2009cAsym",
@@ -252,13 +249,13 @@ def test_shared_regression_becomes_stale_when_t1w_classification_changes(tmp_pat
     for path in outputs:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"output")
-    policy = func_module._ica_aroma_shared_regression_policy_payload(
+    policy = func_steps._ica_aroma_shared_regression_policy_payload(
         input_space="MNI152NLin2009cAsym",
         denoise_type="aggr",
         repetition_time=1.0,
         shared_work_dir=shared_work,
     )
-    func_module.write_json(work_dir / "ica_aroma_policy.json", policy)
+    write_json(work_dir / "ica_aroma_policy.json", policy)
 
     should_run, _ = artifact_decision(outputs, False, inputs=regression.inputs)
     assert not should_run
@@ -302,7 +299,7 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
                 binds=(),
                 logger=logging.getLogger("test.ica-aroma.fake-runner"),
                 next_step=count(1).__next__,
-                )
+            )
 
         def require_cmds(self, commands_required) -> None:
             assert "melodic" not in commands_required
@@ -321,7 +318,9 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
                 if command[0] == "bet":
                     support = Path(command[2])
                     nib.save(nib.Nifti1Image(data.mean(axis=3), np.eye(4)), support)
-                    support_mask = support.with_name(support.name.replace(".nii.gz", "_mask.nii.gz"))
+                    support_mask = support.with_name(
+                        support.name.replace(".nii.gz", "_mask.nii.gz")
+                    )
                     nib.save(
                         nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4)),
                         support_mask,
@@ -346,60 +345,69 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
     def fake_copy(source: Path, destination: Path) -> None:
         destination.write_bytes(source.read_bytes())
 
-    monkeypatch.setattr(func_module, "make_dilated_anatomical_epi_mask", fake_mask)
-    monkeypatch.setattr(func_module, "run_ica_aroma_denoising", fake_denoising)
-    monkeypatch.setattr(func_module, "copy_or_convert_nifti", fake_copy)
+    monkeypatch.setattr(func_steps, "make_dilated_anatomical_epi_mask", fake_mask)
+    monkeypatch.setattr(func_steps, "run_ica_aroma_denoising", fake_denoising)
+    monkeypatch.setattr(func_steps, "copy_or_convert_nifti", fake_copy)
     monkeypatch.setattr(
-        func_module,
+        func_steps,
         "_resolve_container_command_for_wrapper",
         lambda **kwargs: "fsl_regfilt",
     )
 
     work_dir = tmp_path / "space-MNI"
     out_4d = tmp_path / "cleaned_mni.nii.gz"
-    out_mean = tmp_path / "cleaned_mni_mean.nii.gz"
+    out_mean = tmp_path / "cleaned_mean.nii.gz"
     runner = FakeRunner()
     aroma_dir = work_dir / "aroma"
     denoised = aroma_dir / "denoised_func_data_aggr.nii.gz"
-    runner.add_step(func_module._create_shared_aroma_regression_step(
-        runner=runner,
-        epi=epi,
-        input_space="MNI152NLin2009cAsym",
-        regression_mask=brain_mask,
-        mixing_matrix=shared_melodic / "melodic_mix",
-        classified_components=shared_aroma / "classified_motion_ICs.txt",
-        shared_policy=shared_work / "ica_aroma_policy.json",
-        aroma_dir=aroma_dir,
-        outputs=(denoised,),
-        env={},
-        force=False,
-        denoise_type="aggr",
-    ))
-    runner.add_step(create_copy_nifti_step(
-        src=denoised,
-        dst=out_4d,
-        force=False,
-        step_name="Install Shared ICA-AROMA Output",
-    ))
-    runner.add_step(func_module._create_temporal_mean_step(
-        in_4d=out_4d,
-        out_3d=out_mean,
-        env={},
-        force=False,
-        chunk_vols=8,
-    ))
+    runner.add_step(
+        func_steps._create_shared_aroma_regression_step(
+            runner=runner,
+            epi=epi,
+            input_space="MNI152NLin2009cAsym",
+            regression_mask=brain_mask,
+            mixing_matrix=shared_melodic / "melodic_mix",
+            classified_components=shared_aroma / "classified_motion_ICs.txt",
+            shared_policy=shared_work / "ica_aroma_policy.json",
+            aroma_dir=aroma_dir,
+            outputs=(denoised,),
+            env={},
+            force=False,
+            denoise_type="aggr",
+        )
+    )
+    runner.add_step(
+        create_copy_nifti_step(
+            src=denoised,
+            dst=out_4d,
+            force=False,
+            step_name="Install Shared ICA-AROMA Output",
+        )
+    )
+    runner.add_step(
+        func_steps._create_temporal_mean_step(
+            in_4d=out_4d,
+            out_3d=out_mean,
+            env={},
+            force=False,
+            chunk_vols=8,
+        )
+    )
     with runner.run_context():
         runner.execute()
 
     assert observed["in_file"] == epi
     assert observed["melmix"] == shared_melodic / "melodic_mix"
     np.testing.assert_array_equal(observed["indices"], np.array([1]))
-    assert func_module._ica_aroma_shared_regression_policy_payload(
-        input_space="MNI152NLin2009cAsym",
-        denoise_type="aggr",
-        repetition_time=1.0,
-        shared_work_dir=shared_work,
-    )["estimation_space"] == "T1w"
+    assert (
+        func_steps._ica_aroma_shared_regression_policy_payload(
+            input_space="MNI152NLin2009cAsym",
+            denoise_type="aggr",
+            repetition_time=1.0,
+            shared_work_dir=shared_work,
+        )["estimation_space"]
+        == "T1w"
+    )
     assert out_4d.exists()
     assert out_mean.exists()
     assert not any(command and command[0] == "melodic" for command in commands)

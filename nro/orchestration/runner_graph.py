@@ -25,12 +25,14 @@ from nro.engine.io import atomic_write_json
 
 class NodeState(str, Enum):
     """Freshness outcome of a declared step in the current execution."""
+
     FRESH = "fresh"
     DIRTY = "dirty"
 
 
 class StepKind(str, Enum):
     """Execution mechanism for a Python action, command, or directory-producing tool."""
+
     PYTHON = "python"
     COMMAND = "command"
     DIRECTORY = "directory"
@@ -80,26 +82,16 @@ def artifact_decision(
         )
     if force:
         return True, "Forced re-run requested."
-    missing = [
-        str(path)
-        for path in output_paths
-        if not path.exists() or path.stat().st_size == 0
-    ]
+    missing = [str(path) for path in output_paths if not path.exists() or path.stat().st_size == 0]
     if missing:
         return True, "Missing or empty outputs: " + ", ".join(missing)
-    input_paths = [
-        Path(path) for path in inputs if path is not None and Path(path).exists()
-    ]
+    input_paths = [Path(path) for path in inputs if path is not None and Path(path).exists()]
     if not input_paths:
         return False, "Output(s) exist and are up to date."
     oldest_output = min(path_mtime(path) for path in output_paths)
-    stale_inputs = [
-        str(path) for path in input_paths if path_mtime(path) > oldest_output
-    ]
+    stale_inputs = [str(path) for path in input_paths if path_mtime(path) > oldest_output]
     if stale_inputs:
-        return True, "Re-running because inputs are newer than outputs: " + ", ".join(
-            stale_inputs
-        )
+        return True, "Re-running because inputs are newer than outputs: " + ", ".join(stale_inputs)
     return False, "Output(s) exist and are up to date."
 
 
@@ -300,9 +292,9 @@ class RunnerGraph:
     def _node_id(outputs: Sequence[Path]) -> str:
         label = outputs[0].name if outputs else "operation"
         slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "operation"
-        identity = "\0".join(
-            str(Path(path).resolve(strict=False)) for path in outputs
-        ).encode("utf-8")
+        identity = "\0".join(str(Path(path).resolve(strict=False)) for path in outputs).encode(
+            "utf-8"
+        )
         digest = hashlib.sha256(identity).hexdigest()[:12]
         return f"{slug}-{digest}"
 
@@ -376,8 +368,7 @@ class RunnerGraph:
             raise ValueError("Module DAG contains a cycle involving: " + ", ".join(cyclic))
 
         self._dependencies = {
-            key: tuple(sorted(values, key=insertion.get))
-            for key, values in dependencies.items()
+            key: tuple(sorted(values, key=insertion.get)) for key, values in dependencies.items()
         }
         self._order = tuple(order)
         self._frozen = True

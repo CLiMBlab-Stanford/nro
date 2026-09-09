@@ -8,6 +8,7 @@ import nibabel as nib
 import numpy as np
 
 from nro.configuration.store import ConfigStore
+
 from .images import gifti_vertex_count
 
 
@@ -15,15 +16,13 @@ def templateflow_roots() -> tuple[Path, ...]:
     """Return existing local TemplateFlow trees in preference order."""
     candidates: list[Path] = []
     from nro.configuration.site import settings
+
     configured = settings()[0]["templates"]
     if configured:
         candidates.append(Path(configured).expanduser())
 
     mni_template = (
-        ConfigStore()
-        .load_configuration("preprocessing", "main")
-        .values["anat"]
-        .get("mni_template")
+        ConfigStore().load_configuration("preprocessing", "main").values["anat"].get("mni_template")
     )
     if mni_template:
         candidates.append(Path(mni_template).expanduser().parent.parent)

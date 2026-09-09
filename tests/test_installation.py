@@ -2,21 +2,20 @@ from __future__ import annotations
 
 import io
 import json
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tarfile
-from types import SimpleNamespace
 import zipfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from nro.configuration import site
 from nro.configuration.store import ConfigStore
-from nro.engine import bootstrap, dependencies
-from nro.engine import site_setup
-from nro.engine.site_setup import save_settings, edit_settings
+from nro.engine import bootstrap, dependencies, site_setup
+from nro.engine.site_setup import edit_settings, save_settings
 
 
 @pytest.fixture
@@ -36,10 +35,16 @@ def test_lab_defaults_preserve_preprocessing_identity(isolated_site):
 
 
 def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_path):
-    save_settings(isolated_site, {
-        "images": str(tmp_path / "images"), "runtime": "apptainer", "binds": [],
-        "templates": str(tmp_path / "templates"), "license": str(tmp_path / "license"),
-    })
+    save_settings(
+        isolated_site,
+        {
+            "images": str(tmp_path / "images"),
+            "runtime": "apptainer",
+            "binds": [],
+            "templates": str(tmp_path / "templates"),
+            "license": str(tmp_path / "license"),
+        },
+    )
     store = ConfigStore()
     preprocessing = store.load_configuration("preprocessing", "main").values
     clean = store.load_configuration("clean", "main").values
@@ -61,17 +66,20 @@ def test_invalid_path_update_is_atomic(isolated_site):
 
 
 @pytest.mark.parametrize("shared", [False, True])
-def test_interactive_generic_defaults_preserve_explicit_paths(isolated_site, tmp_path, monkeypatch, shared):
+def test_interactive_generic_defaults_preserve_explicit_paths(
+    isolated_site, tmp_path, monkeypatch, shared
+):
     monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
-    monkeypatch.setattr(site_setup, "CHECKOUT", tmp_path / "checkout")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-    monkeypatch.setattr(site_setup, "installation_record", lambda: {"mode": "shared" if shared else "personal"})
+    monkeypatch.setattr(
+        site_setup, "installation_record", lambda: {"mode": "shared" if shared else "personal"}
+    )
     save_settings(isolated_site, {"work": "/configured/work"})
     monkeypatch.setenv("NRO_BIDS_PATH", "/configured/BIDS")
     _, sources = site.settings()
     proposed = site_setup.interactive_defaults(sources)
     assert proposed["images"] == str(tmp_path / "home/nro/images")
-    assert proposed["registry"] == str((tmp_path / "checkout/../../.nro").resolve())
+    assert proposed["registry"] == str(tmp_path / "home/nro/.nro")
     assert "work" not in proposed and "bids" not in proposed
     assert proposed["binds"] == []
 
@@ -85,12 +93,15 @@ def test_interactive_defaults_keep_reachable_lab(isolated_site, tmp_path, monkey
 
 
 @pytest.mark.parametrize("accept_all", [False, True])
-def test_interactive_paths_display_and_save_proposals(isolated_site, tmp_path, monkeypatch, capsys, accept_all):
+def test_interactive_paths_display_and_save_proposals(
+    isolated_site, tmp_path, monkeypatch, capsys, accept_all
+):
     monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})
     monkeypatch.setattr(site_setup.sys.stdin, "isatty", lambda: True)
     prompts = []
+
     def accept(prompt):
         prompts.append(prompt)
         if prompt.startswith("Accept all"):
@@ -98,6 +109,7 @@ def test_interactive_paths_display_and_save_proposals(isolated_site, tmp_path, m
         if not accept_all and "work [" in prompt:
             return str(tmp_path / "scratch")
         return ""
+
     monkeypatch.setattr("builtins.input", accept)
     edit_settings()
     proposed_bids = str(tmp_path / "home/nro/bids")
@@ -116,7 +128,9 @@ def test_interactive_paths_display_and_save_proposals(isolated_site, tmp_path, m
 
 def test_shared_site_ignores_personal_environment(isolated_site, monkeypatch):
     save_settings(isolated_site, {"bids": "/shared/BIDS"})
-    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "shared", "site": str(isolated_site)})
+    monkeypatch.setattr(
+        site, "installation_record", lambda: {"mode": "shared", "site": str(isolated_site)}
+    )
     monkeypatch.setattr("nro.engine.site_setup.installation_record", site.installation_record)
     monkeypatch.setenv("NRO_BIDS_PATH", "/personal/BIDS")
     assert site.settings()[0]["bids"] == "/shared/BIDS"
@@ -135,11 +149,19 @@ def test_shared_onboarding_never_syncs_or_mutates_checkout(tmp_path, monkeypatch
     (environment / "bin/python").write_text("interpreter")
     config = root / "site.toml"
     config.write_text("")
-    record = {"mode": "shared", "checkout": str(root), "environment": str(environment), "site": str(config), "ready": True}
+    record = {
+        "mode": "shared",
+        "checkout": str(root),
+        "environment": str(environment),
+        "site": str(config),
+        "ready": True,
+    }
     (root / bootstrap.RECORD).write_text(json.dumps(record))
     monkeypatch.setattr(bootstrap, "ROOT", root)
+
     def unexpected(*args, **kwargs):
         pytest.fail("User onboarding attempted shared maintenance")
+
     monkeypatch.setattr(bootstrap.subprocess, "run", unexpected)
     before = {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     bin_dir = tmp_path / "user/bin"
@@ -148,7 +170,8 @@ def test_shared_onboarding_never_syncs_or_mutates_checkout(tmp_path, monkeypatch
     after = {str(p): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     assert before == after
     assert not (root / ".nro-install.lock").exists()
-    assert str(environment / "bin/python") in (bin_dir / "nro").read_text()
+    assert "nro directory-aware launcher" in (bin_dir / "nro").read_text()
+    assert json.loads((bin_dir / ".nro-launchers.json").read_text())["default"] == str(root)
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])
@@ -159,17 +182,30 @@ def test_personal_setup_installs_oslom_by_default(tmp_path, monkeypatch, without
     (root / ".nro-bootstrap/bin/uv").write_text("uv")
     config = root / "site.toml"
     config.write_text(f'registry = "{tmp_path / "registry"}"\n')
-    record = {"mode": "personal", "checkout": str(root), "environment": str(root / ".nro-env"), "site": str(config), "ready": True, "with_oslom": False}
+    record = {
+        "mode": "personal",
+        "checkout": str(root),
+        "environment": str(root / ".nro-env"),
+        "site": str(config),
+        "ready": True,
+        "with_oslom": False,
+    }
     if existing:
         (root / bootstrap.RECORD).write_text(json.dumps(record))
     monkeypatch.setattr(bootstrap, "ROOT", root)
     calls = []
     monkeypatch.setattr(bootstrap.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
     monkeypatch.setattr(bootstrap, "connect_user", lambda *a, **kw: None)
-    bootstrap.main([
-        "--offline", "--mode", "personal", "--site", str(config),
-        *(["--without-oslom"] if without_oslom else []),
-    ])
+    bootstrap.main(
+        [
+            "--offline",
+            "--mode",
+            "personal",
+            "--site",
+            str(config),
+            *(["--without-oslom"] if without_oslom else []),
+        ]
+    )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
     assert ("oslom" in calls[0][0]) is not without_oslom
     assert calls[0][1]["cwd"] == root
@@ -180,8 +216,8 @@ def test_personal_setup_installs_oslom_by_default(tmp_path, monkeypatch, without
 
 def test_maintenance_rejects_active_workers(tmp_path):
     control = tmp_path / "registry"
-    control.mkdir()
-    with sqlite3.connect(control / "registry.sqlite3") as db:
+    (control / "shared/scheduler").mkdir(parents=True)
+    with sqlite3.connect(control / "shared/scheduler/registry.sqlite3") as db:
         db.execute("CREATE TABLE workers (state TEXT, slurm_job_id TEXT)")
         db.execute("CREATE TABLE scheduler_submissions (state TEXT, slurm_job_id TEXT)")
         db.execute("INSERT INTO workers VALUES ('running', NULL)")
@@ -191,21 +227,28 @@ def test_maintenance_rejects_active_workers(tmp_path):
         bootstrap.check_workers(config)
 
 
-@pytest.mark.parametrize("scheduler", ["ended", "RUNNING", "PENDING", "COMPLETING", "failed", "timeout", "missing"])
+@pytest.mark.parametrize(
+    "scheduler", ["ended", "RUNNING", "PENDING", "COMPLETING", "failed", "timeout", "missing"]
+)
 def test_maintenance_checks_slurm_without_mutating_registry(tmp_path, monkeypatch, scheduler):
     control = tmp_path / "registry"
-    control.mkdir()
-    database = control / "registry.sqlite3"
+    (control / "shared/scheduler").mkdir(parents=True)
+    database = control / "shared/scheduler/registry.sqlite3"
     with sqlite3.connect(database) as db:
         db.execute("CREATE TABLE workers (state TEXT, slurm_job_id TEXT)")
         db.execute("CREATE TABLE scheduler_submissions (state TEXT, slurm_job_id TEXT)")
         db.execute("INSERT INTO workers VALUES ('running', '123')")
-        db.executemany("INSERT INTO scheduler_submissions VALUES (?, ?)", [
-            ('submitted', '123'), ('cancel_requested', '124'),
-        ])
+        db.executemany(
+            "INSERT INTO scheduler_submissions VALUES (?, ?)",
+            [
+                ("submitted", "123"),
+                ("cancel_requested", "124"),
+            ],
+        )
     original = database.read_bytes()
     config = tmp_path / "site.toml"
     save_settings(config, {"registry": str(control)})
+
     def query(command, **kwargs):
         assert command == ["squeue", "--noheader", "--jobs", "123,124", "--format", "%T"]
         assert kwargs["check"] and kwargs["timeout"] == 15
@@ -215,7 +258,10 @@ def test_maintenance_checks_slurm_without_mutating_registry(tmp_path, monkeypatc
             raise subprocess.TimeoutExpired(command, 15)
         if scheduler == "missing":
             raise FileNotFoundError("squeue")
-        return subprocess.CompletedProcess(command, 0, stdout="" if scheduler == "ended" else scheduler + "\n")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="" if scheduler == "ended" else scheduler + "\n"
+        )
+
     monkeypatch.setattr(bootstrap.subprocess, "run", query)
     if scheduler == "ended":
         bootstrap.check_workers(config)
@@ -234,7 +280,14 @@ def test_launcher_does_not_replace_another_installation(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "nro").write_text("another installation")
-    record = {"environment": str(python.parent.parent), "site": str(config), "ready": True}
+    record = {
+        "checkout": str(tmp_path),
+        "mode": "shared",
+        "environment": str(python.parent.parent),
+        "site": str(config),
+        "ready": True,
+    }
+    (tmp_path / bootstrap.RECORD).write_text(json.dumps(record))
     with pytest.raises(RuntimeError, match="another command"):
         bootstrap.connect_user(record, bin_dir=bin_dir)
     assert (bin_dir / "nro").read_text() == "another installation"
@@ -245,6 +298,7 @@ def test_failed_download_never_replaces_target(tmp_path, monkeypatch, header, ch
     class Response(io.BytesIO):
         url = "https://example.org/file"
         headers = {"Content-Length": header}
+
     monkeypatch.setattr(dependencies.urllib.request, "urlopen", lambda *a, **k: Response(b"data"))
     target = tmp_path / "image.sif"
     target.write_bytes(b"original")
@@ -266,11 +320,13 @@ def test_archive_escape_is_rejected(tmp_path):
 def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monkeypatch):
     command = tmp_path / "workbench/bin_linux64/wb_command"
     save_settings(isolated_site, {"workbench": str(command)})
+
     def archive_download(url, target, checksum=None):
         assert checksum == dependencies.WORKBENCH_SHA256["linux64"]
         with zipfile.ZipFile(target, "w") as zipped:
             zipped.writestr("workbench/bin_linux64/wb_command", "wrapper")
             zipped.writestr("workbench/exe_linux64/wb_command", "binary")
+
     calls = []
     monkeypatch.setattr(dependencies, "download", archive_download)
     monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
@@ -279,42 +335,62 @@ def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monke
     dependencies.install_workbench()
     assert command.read_text() == "wrapper"
     assert "/bin_linux64/" in calls[0][0]
-    monkeypatch.setattr(dependencies, "download", lambda *a, **kw: pytest.fail("Unexpected download"))
+    monkeypatch.setattr(
+        dependencies, "download", lambda *a, **kw: pytest.fail("Unexpected download")
+    )
     dependencies.install_workbench(offline=True)
 
 
 def test_install_help_from_another_working_directory(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    result = subprocess.run([sys.executable, str(root / "install"), "--help"], cwd=tmp_path, text=True, capture_output=True)
+    result = subprocess.run(
+        [sys.executable, str(root / "install"), "--help"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == 0
     assert "--maintain" in result.stdout
     assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("exists", [False, True])
-def test_workers_export_only_an_existing_site_file(tmp_path, monkeypatch, exists):
+def test_workers_capture_resolved_site_settings(tmp_path, monkeypatch, exists):
     from nro.bin.run import _write_worker_script
 
     config = tmp_path / "site settings.toml"
     if exists:
         config.write_text("")
     monkeypatch.setattr(site, "site_file", lambda: config)
-    registry = SimpleNamespace(paths=SimpleNamespace(workers=tmp_path / "workers"))
+    registry = SimpleNamespace(
+        paths=SimpleNamespace(workers=tmp_path / "workers", control=tmp_path / "control")
+    )
     script = _write_worker_script(
-        registry, bids_root=tmp_path / "BIDS", partition="test", account=None,
-        hours=1, memory_gb=4, cpus=1,
+        registry,
+        bids_root=tmp_path / "BIDS",
+        partition="test",
+        account=None,
+        hours=1,
+        memory_gb=4,
+        cpus=1,
     ).read_text()
-    if exists:
-        assert f"export NRO_SITE_CONFIG='{config}'" in script
-    else:
-        assert "export NRO_SITE_CONFIG" not in script
+    assert "source_launcher.py" in script
+    assert str(config) not in script
+    (pinned_site,) = (registry.paths.control / "shared/cache/execution-sites").glob("*.toml")
+    assert str(pinned_site) in script
+    values = site.read_overrides(pinned_site)
+    assert values["bids"] == str(tmp_path / "BIDS")
+    assert values["registry"] == str(registry.paths.control)
 
 
-@pytest.mark.parametrize("url, checksum", [
-    (dependencies.OSLOM_SOURCE, None),
-    (dependencies.OSLOM_SOURCE, "wrong"),
-    ("http://example.org/archive", dependencies.OSLOM_SHA256),
-])
+@pytest.mark.parametrize(
+    "url, checksum",
+    [
+        (dependencies.OSLOM_SOURCE, None),
+        (dependencies.OSLOM_SOURCE, "wrong"),
+        ("http://example.org/archive", dependencies.OSLOM_SHA256),
+    ],
+)
 def test_http_download_requires_exact_oslom_pin(tmp_path, url, checksum):
     with pytest.raises(ValueError, match="HTTPS"):
         dependencies.download(url, tmp_path / "archive", checksum=checksum)
@@ -324,6 +400,7 @@ def test_official_oslom_http_download(tmp_path, monkeypatch):
     class Response(io.BytesIO):
         url = dependencies.OSLOM_SOURCE
         headers = {"Content-Length": "4"}
+
     monkeypatch.setattr(dependencies.urllib.request, "urlopen", lambda *a, **kw: Response(b"data"))
     monkeypatch.setattr(dependencies, "sha256", lambda path: dependencies.OSLOM_SHA256)
     target = tmp_path / "archive"
@@ -336,6 +413,7 @@ def test_oslom_build_publishes_only_after_validation(isolated_site, tmp_path, mo
     target = tmp_path / "installed/oslom_undir"
     save_settings(isolated_site, {"oslom": str(target)})
     monkeypatch.setattr(dependencies.shutil, "which", lambda name: "/usr/bin/g++")
+
     def archive_download(url, destination, checksum=None):
         assert url == dependencies.OSLOM_SOURCE
         assert checksum == dependencies.OSLOM_SHA256
@@ -347,6 +425,7 @@ def test_oslom_build_publishes_only_after_validation(isolated_site, tmp_path, mo
                 member.linkname = "/etc/passwd"
                 member.size = 0
             archive.addfile(member, io.BytesIO(b"data"))
+
     def probe(command, *, cwd=None, **kwargs):
         if "--version" in command:
             return "test compiler"
@@ -359,6 +438,7 @@ def test_oslom_build_publishes_only_after_validation(isolated_site, tmp_path, mo
             output.parent.mkdir()
             output.write_text("#module 0\n0 1 2\n")
         return ""
+
     monkeypatch.setattr(dependencies, "download", archive_download)
     monkeypatch.setattr(dependencies, "run_probe", probe)
     if failure:
@@ -372,7 +452,9 @@ def test_oslom_build_publishes_only_after_validation(isolated_site, tmp_path, mo
         assert receipt["source_sha256"] == dependencies.OSLOM_SHA256
         assert receipt["sha256"] == dependencies.sha256(target)
         assert target.stat().st_mode & 0o111
-        monkeypatch.setattr(dependencies, "download", lambda *a, **kw: pytest.fail("Unexpected download"))
+        monkeypatch.setattr(
+            dependencies, "download", lambda *a, **kw: pytest.fail("Unexpected download")
+        )
         dependencies.install_oslom(offline=True)
     assert not list(target.parent.glob(".oslom-*"))
 
@@ -388,10 +470,13 @@ def test_missing_oslom_offline_does_not_create_directories(isolated_site, tmp_pa
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, EOFError])
 @pytest.mark.parametrize("entry", ["bootstrap", "setup", "paths"])
 def test_setup_interrupts_exit_without_tracebacks(monkeypatch, capsys, entry, interruption):
-    from nro.bin import setup, paths
+    from nro.bin import paths, setup
+
     module = {"bootstrap": bootstrap, "setup": setup, "paths": paths}[entry]
+
     def interrupt(*args, **kwargs):
         raise interruption()
+
     monkeypatch.setattr(module, "edit_settings" if entry == "paths" else "_main", interrupt)
     with pytest.raises(SystemExit) as error:
         module.main([])
@@ -404,8 +489,10 @@ def test_setup_interrupts_exit_without_tracebacks(monkeypatch, capsys, entry, in
 def test_interrupted_path_prompt_preserves_settings(isolated_site, monkeypatch):
     original = isolated_site.read_bytes()
     monkeypatch.setattr(site_setup.sys.stdin, "isatty", lambda: True)
+
     def interrupt(prompt):
         raise KeyboardInterrupt()
+
     monkeypatch.setattr("builtins.input", interrupt)
     with pytest.raises(KeyboardInterrupt):
         edit_settings()
@@ -415,6 +502,7 @@ def test_interrupted_path_prompt_preserves_settings(isolated_site, monkeypatch):
 def test_bootstrap_propagates_child_cancellation(monkeypatch):
     def interrupt(*args):
         raise subprocess.CalledProcessError(130, ["setup"])
+
     monkeypatch.setattr(bootstrap, "_main", interrupt)
     with pytest.raises(SystemExit) as error:
         bootstrap.main([])
@@ -426,17 +514,20 @@ def test_bootstrap_propagates_child_cancellation(monkeypatch):
 @pytest.mark.parametrize("kind", ["signal", "exit"])
 def test_only_outer_setup_reports_cancellation(monkeypatch, capsys, entry, child, kind):
     from nro.bin import setup
+
     module = bootstrap if entry == "bootstrap" else setup
     if child:
         monkeypatch.setenv("NRO_SETUP_CHILD", "1")
     else:
         monkeypatch.delenv("NRO_SETUP_CHILD", raising=False)
+
     def interrupt(*args, **kwargs):
         if kind == "signal":
             raise KeyboardInterrupt()
         if entry == "bootstrap":
             raise subprocess.CalledProcessError(130, ["setup"])
         raise SystemExit(130)
+
     monkeypatch.setattr(module, "_main", interrupt)
     with pytest.raises(SystemExit) as error:
         module.main([])

@@ -2,14 +2,16 @@
 
 ## `./install` and `nro setup`
 
-Both use the same installer. First setup needs `--mode personal` or
-`--mode shared`, or asks interactively. An existing shared checkout connects
+Both use the same installer. First setup accepts `--mode personal`,
+`--mode shared`, or `--mode branch`, or asks interactively. A new checkout uses
+branch mode automatically when the user's dispatcher has a default installation.
+An existing shared checkout connects
 the caller's launcher unless `--maintain` is given. See the
 [installation guide](../installation.md) for effects and permissions.
 
 | Option | Meaning |
 | --- | --- |
-| `--mode personal/shared` | Declare the first installation's role. |
+| `--mode personal/shared/branch` | Declare the first installation's role; branch mode reuses an existing site read-only. |
 | `--maintain` | Permit shared environment/resource maintenance. |
 | `--site PATH` | Choose the site settings file during first setup. |
 | `--bin-dir PATH` | Place the user's launcher in this directory. |
@@ -56,11 +58,49 @@ The normal invocation displays a pageable list of public/private removal paths
 and asks for confirmation. `-f`/`--force` skips confirmation. `--dry-run` reports
 without deleting. `-l`/`--logs` removes matching attempt logs and inactive-worker
 logs only. `--json` supplies a structured result; `--work-root` overrides the
-private-file root. Active work is protected by the command's worker checks.
+private-file root. Selected instances must have no active attempts.
+
+Deleting an upstream artifact also invalidates its consumers and requests
+cancellation of their active attempts, even when those consumers were not selected
+for deletion. Their files are not purged. The command reserves the selected
+outputs and waits up to 30 seconds for confirmed consumer shutdown without holding
+the registry lock while waiting. If shutdown is not confirmed, it deletes no
+outputs; retry after the attempts stop. Invalidation and cancellation remain in
+effect, and demand is preserved. `--dry-run` does not invalidate or cancel work.
+
+After an interrupted purge, repeat the operation to recover its mutation lock and
+reservation. Registry repair refuses unresolved mutation reservations. This
+prevents repair from discarding the barrier while files might still be changing.
 
 Deletion is destructive and does not move files to trash. A bare invocation
-selects every controlled derivative across all projects, including historical
-lineages. Force does not mean it is safe to delete a shared user's needed work.
+selects every controlled derivative owned by the current branch across all
+projects, including historical lineages. Inherited outputs are excluded. Force
+does not mean it is safe to delete a shared user's needed work.
+
+Use `--cache` to remove unused executable-source snapshots and captured site
+settings across the shared installation:
+
+```bash
+nro purge --cache --dry-run
+nro purge --cache
+nro purge --cache --force
+```
+
+This mode ignores all artifact selectors, including project, participant,
+module, and workflow. `--bids-root` still selects the registry context. It does
+not remove derivatives, logs, definitions, container images, or dependency
+downloads, and cannot be combined with `--logs`.
+
+Cache cleanup is conservative: outstanding demand, attempts, workers, scheduler
+submissions, or queued/running ingestion defer collection across the whole
+pool. Unknown registry state also preserves the cache. `--force` skips the
+prompt; it never overrides these checks. State is checked again after
+confirmation. Old snapshots are not needed to assess derivative freshness.
+
+Normal requests and worker shutdown also attempt cleanup automatically. A
+process running from a snapshot retains its own source and site file; a later
+command can reclaim those after it exits. Unknown entries and partial capture
+directories are not automatically removed.
 
 ## `nro publish`
 

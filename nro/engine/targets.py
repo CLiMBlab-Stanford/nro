@@ -34,3 +34,11 @@ def add_smoothing_entity(path: Path, smoothing_mm: int) -> Path:
 def target_directory_name(space: str, smoothing_mm: int) -> str:
     """Return the directory name for one space and smoothing target."""
     return f"space-{space}_smoothing-{smoothing_entity_value(smoothing_mm)}"
+
+
+def target_output_names(base_prefix: str, space: str, smoothing_mm: int) -> tuple[str, str]:
+    """Return the shared target directory and entity-decorated output prefix."""
+    return (
+        target_directory_name(space, smoothing_mm),
+        f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing_mm)}",
+    )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
 from collections.abc import Iterable
@@ -119,6 +118,7 @@ def neuroimaging_environment(
         "SUBJECTS_DIR": str(subjects_dir),
     }
     from nro.configuration.site import settings
+
     site, _ = settings()
     environment["FS_LICENSE"] = site["license"]
     return environment
@@ -138,9 +138,7 @@ def collect_bind_directories(paths: Iterable[Path | None]) -> list[str]:
             continue
         candidate = Path(path).expanduser()
         if not candidate.is_absolute():
-            raise ValueError(
-                f"Container bind paths must be absolute host paths: {path}"
-            )
+            raise ValueError(f"Container bind paths must be absolute host paths: {path}")
         # Do not resolve symlinks here. A host-visible symlink may deliberately
         # target an installation path that exists only inside the container.
         absolute = candidate.absolute()
@@ -148,13 +146,10 @@ def collect_bind_directories(paths: Iterable[Path | None]) -> list[str]:
         while not directory.is_dir() and directory.parent != directory:
             directory = directory.parent
         if not directory.is_dir():
-            raise FileNotFoundError(
-                f"No existing directory can anchor container bind for {path}"
-            )
+            raise FileNotFoundError(f"No existing directory can anchor container bind for {path}")
         if directory == Path(directory.anchor):
             raise ValueError(
-                "Refusing to bind the host filesystem root while resolving "
-                f"container path: {path}"
+                f"Refusing to bind the host filesystem root while resolving container path: {path}"
             )
         directories.add(directory)
 

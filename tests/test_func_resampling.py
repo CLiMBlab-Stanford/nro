@@ -6,7 +6,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from nro.func.resampling import (
+from nro.modules.func.resampling import (
     flirt_to_afni_pull,
     plumb_affine,
     validate_afni_motion_affines,

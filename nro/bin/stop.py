@@ -6,11 +6,11 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.configuration.paths import BIDS_PATH
+from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.orchestration.catalog import MODULES
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
-from nro.orchestration.catalog import MODULES
 from nro.orchestration.worker_control import cancel_worker_allocations
 
 
@@ -19,19 +19,24 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument(
-        "-W", "--workers", action="store_true",
+        "-W",
+        "--workers",
+        action="store_true",
         help="Shut down the current user's lab-wide worker pool without cancelling instance demand",
     )
     parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument(
-        "-f", "--force", action="store_true",
+        "-f",
+        "--force",
+        action="store_true",
         help=(
             "Cancel matching demand from every user and stop the shared attempt; "
             "does not delete completed derivatives or registry history"
         ),
     )
     parser.add_argument(
-        "--only", action="store_true",
+        "--only",
+        action="store_true",
         help="Cancel only the selected derivative rather than its downstream dependents",
     )
     return parser
@@ -52,6 +57,41 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
     modules = list(selection.modules)
     selectors = selection.instance_entities
     total = {"instances": 0, "requests": 0, "attempts": 0}
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    branch_execution = (
+        installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    )
+    if branch_execution and not args.workers:
+        from nro.orchestration.scheduler_client import stop
+
+        if bids_root != Path(values["bids"]).resolve():
+            raise SystemExit("Branch cancellation uses the shared site BIDS root")
+        for project in selected_projects(bids_root, selection.projects):
+            result = stop(
+                Path(values["registry"]),
+                bids_root,
+                checkout=CHECKOUT,
+                project=project,
+                selection=dict(
+                    participants=selection.participants,
+                    modules=modules,
+                    workflows=selection.workflows,
+                    selectors=selectors,
+                    include_dependents=not args.only,
+                    force=args.force,
+                ),
+            )
+            for key, value in result.items():
+                total[key] += value
+        print(
+            f"Cancelled {total['instances']} instance demand(s) across {total['requests']} request(s); "
+            f"signalled {total['attempts']} running attempt(s)."
+        )
+        return
     if args.workers:
         if (
             selection.projects
@@ -69,11 +109,21 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             raise SystemExit(
                 "--workers controls the lab-wide pool; only --bids-root may accompany it"
             )
-        registry = Registry.for_project("", bids_root=bids_root)
-        if not registry.existing_database_path().is_file():
-            raise SystemExit("No central nro registry found")
-        shutdown = registry.request_worker_shutdown()
-        stopped_jobs, failures = cancel_worker_allocations(registry, shutdown)
+        if branch_execution:
+            from nro.orchestration.scheduler_client import pool_operation
+
+            if bids_root != Path(values["bids"]).resolve():
+                raise SystemExit("Worker shutdown uses the shared site BIDS root")
+            shutdown = pool_operation(
+                Path(values["registry"]), bids_root, checkout=CHECKOUT, operation="stop_workers"
+            )
+            stopped_jobs, failures = shutdown["stopped_jobs"], shutdown["failures"]
+        else:
+            registry = Registry.for_project("", bids_root=bids_root)
+            if not registry.existing_database_path().is_file():
+                raise SystemExit("No central nro registry found")
+            shutdown = registry.request_worker_shutdown()
+            stopped_jobs, failures = cancel_worker_allocations(registry, shutdown)
         print(
             f"Requested shutdown of {shutdown['workers']} worker(s); interrupted "
             f"{shutdown['attempts']} active instance attempt(s); cancelled "

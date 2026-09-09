@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Shared helpers for the anatomical preprocessing module."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional, Sequence
+
+from nro.configuration.runtime import SETTINGS
+from nro.engine.bids import acquisition_order_key, parse_bids_entities
+from nro.engine.images import sidecar_json_path
+from nro.engine.io import read_json
+
+
+def infer_session_id(path: Path, *, default_session: str | None = None) -> str:
+    """Return a path's BIDS session or the configured fallback session."""
+    for parent in [path.parent, *path.parents]:
+        if parent.name.startswith("ses-"):
+            return parent.name
+    fallback = default_session or str(SETTINGS.common.multi_session_label)
+    return fallback
+
+
+@dataclass(frozen=True)
+class AnatImage:
+    """An anatomical acquisition with parsed entities and an ordering timestamp."""
+
+    image: Path
+    json: Optional[Path]
+    modality: str
+    session_id: str
+    entities: dict[str, str]
+    time_kind: str
+    time_value: float
+
+
+def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatImage:
+    """Load the metadata used to order and combine one anatomical image."""
+    img = Path(path).resolve()
+    if not img.exists():
+        raise FileNotFoundError(f"Missing anatomical image: {img}")
+    js = sidecar_json_path(img)
+    meta: dict[str, Any] = {}
+    json_path: Optional[Path] = None
+    if js.exists():
+        meta = read_json(js)
+        json_path = js
+    ents = parse_bids_entities(img.name)
+    suffix = ents.get("suffix")
+    if suffix is None:
+        stem = img.name
+        if stem.endswith(".nii.gz"):
+            stem = stem[: -len(".nii.gz")]
+        elif stem.endswith(".nii"):
+            stem = stem[: -len(".nii")]
+        suffix = stem.split("_")[-1]
+    if suffix not in {"T1w", "T2w"}:
+        raise ValueError(f"Unsupported anatomical modality for {img}: {suffix!r}")
+    time_kind, time_value = acquisition_order_key(meta, img)
+    return AnatImage(
+        image=img,
+        json=json_path,
+        modality=str(suffix),
+        session_id=infer_session_id(img, default_session=default_session),
+        entities=ents,
+        time_kind=time_kind,
+        time_value=float(time_value),
+    )
+
+
+def sort_anat_images(images: Sequence[AnatImage]) -> list[AnatImage]:
+    """Sort anatomical images by the best available acquisition order."""
+    return sorted(images, key=lambda item: (item.time_kind, item.time_value, item.image.name))
+
+
+def robust_template_cmd(
+    inputs: Sequence[Path], out_template: Path, out_transform_prefix: Path
+) -> list[str]:
+    """Build an ``mri_robust_template`` command for anatomical averaging."""
+    cmd = [
+        "mri_robust_template",
+        "--template",
+        str(out_template),
+        "--satit",
+        "--mapmov",
+        str(out_transform_prefix),
+    ]
+    for path in inputs:
+        cmd += ["--mov", str(path)]
+    return cmd

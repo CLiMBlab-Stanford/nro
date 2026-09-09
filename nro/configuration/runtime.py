@@ -11,6 +11,7 @@ from .schema import compile_configuration
 _RUNTIME_SUFFIX = {
     "preprocessing": "_preprocess.yml",
     "clean": "_clean.yml",
+    "dynconn": "_dynconn.yml",
     "microparcellation": "_microparcellation.yml",
     "networks": "_networks.yml",
     "firstlevels": "_firstlevels.yml",
@@ -58,6 +59,9 @@ def load_runtime_configuration(
     path: str | Path, derivative_class: str
 ) -> tuple[str, dict[str, Any]]:
     """Read a fully resolved private configuration without applying defaults."""
+    from nro.configuration.site import require_execution_support
+
+    require_execution_support()
     try:
         suffix = _RUNTIME_SUFFIX[derivative_class]
     except KeyError as error:
@@ -65,8 +69,7 @@ def load_runtime_configuration(
     resolved_path = Path(path).expanduser().resolve()
     if not resolved_path.name.endswith(suffix):
         raise ValueError(
-            f"{derivative_class} runtime config must be named <ID>{suffix}: "
-            f"{resolved_path}"
+            f"{derivative_class} runtime config must be named <ID>{suffix}: {resolved_path}"
         )
     if not resolved_path.is_file():
         raise ValueError(f"Runtime config does not exist: {resolved_path}")
@@ -78,9 +81,7 @@ def load_runtime_configuration(
     return resolved_path.name[: -len(suffix)], values
 
 
-def configure_preprocessing(
-    project: str, preprocessing_id: str, values: dict[str, Any]
-) -> None:
+def configure_preprocessing(project: str, preprocessing_id: str, values: dict[str, Any]) -> None:
     """Adapt a resolved preprocessing configuration to module settings."""
     container = values["container"]
     container_args = {

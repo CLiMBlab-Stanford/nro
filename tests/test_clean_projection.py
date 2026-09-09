@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from nro.clean.module import _build_cleaning_projection, _cleaned_timecourse_quality
+from nro.modules.clean.cleaning import _build_cleaning_projection, _cleaned_timecourse_quality
 
 
 def test_projection_fit_ignores_censored_signal_but_evaluates_every_frame() -> None:
@@ -11,9 +11,7 @@ def test_projection_fit_ignores_censored_signal_but_evaluates_every_frame() -> N
     time = np.arange(n_scans, dtype=np.float64)
     nuisance = np.sin(2.0 * np.pi * time / 17.0)
     neural = np.cos(2.0 * np.pi * time / 29.0)
-    outliers = pd.DataFrame(
-        {"motion_outlier00": np.equal(time, 31.0).astype(np.float64)}
-    )
+    outliers = pd.DataFrame({"motion_outlier00": np.equal(time, 31.0).astype(np.float64)})
     projection = _build_cleaning_projection(
         confounds=pd.DataFrame({"nuisance": nuisance}),
         outliers=outliers,
@@ -45,9 +43,8 @@ def test_projection_removes_stopband_and_standardizes_from_retained_frames() -> 
     tr = 1.0
     time = np.arange(n_scans, dtype=np.float64) * tr
     passband = np.sin(2.0 * np.pi * 0.05 * time)
-    stopband = (
-        2.0 * np.sin(2.0 * np.pi * (1.0 / n_scans) * time)
-        + 3.0 * np.cos(2.0 * np.pi * 0.20 * time)
+    stopband = 2.0 * np.sin(2.0 * np.pi * (1.0 / n_scans) * time) + 3.0 * np.cos(
+        2.0 * np.pi * 0.20 * time
     )
     outlier_values = np.zeros(n_scans, dtype=np.float64)
     outlier_values[[50, 151]] = 1.0
@@ -157,10 +154,7 @@ def test_unidentifiable_passband_produces_explicit_zero_sentinel() -> None:
     )
 
     assert not projection.cleaning_defined
-    assert (
-        projection.undefined_reason
-        == "passband_basis_not_identifiable_from_retained_frames"
-    )
+    assert projection.undefined_reason == "passband_basis_not_identifiable_from_retained_frames"
     assert projection.passband_rank < projection.passband_dimension
     assert projection.algebraic_temporal_rank == 0
 

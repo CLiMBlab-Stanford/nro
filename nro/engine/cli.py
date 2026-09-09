@@ -7,13 +7,14 @@ import sys
 from dataclasses import dataclass
 from typing import Sequence
 
-from nro.engine.bids import parse_selectors, matches_selectors
+from nro.engine.bids import matches_selectors, parse_selectors
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 
 
 @dataclass(frozen=True)
 class CoreSelection:
     """Normalized data, workflow, spatial-target, and task-model selectors."""
+
     participants: tuple[str, ...]
     projects: tuple[str, ...]
     modules: tuple[str, ...]
@@ -35,7 +36,8 @@ class CoreSelection:
         if self.models:
             entities["model"] = self.models
         if self.model_sets:
-            from nro.firstlevels.task_models import model_ids_in_sets
+            from nro.modules.firstlevels.task_models import model_ids_in_sets
+
             entities["model_id"] = model_ids_in_sets(self.model_sets)
         return entities
 
@@ -60,40 +62,86 @@ def add_core_selection_arguments(
 ) -> None:
     """Add the selection options shared by user-facing orchestration tools."""
     parser.add_argument(
-        "-p", "--participant", nargs="+", action="extend", default=None,
-        metavar="ID", help="Select one or more BIDS participant IDs",
+        "-p",
+        "--participant",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="ID",
+        help="Select one or more BIDS participant IDs",
     )
     parser.add_argument(
-        "-P", "--project", nargs="+", action="extend", default=None,
-        metavar="PROJECT", help="Select one or more projects",
+        "-P",
+        "--project",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="PROJECT",
+        help="Select one or more projects",
     )
     parser.add_argument(
-        "-m", "--module", nargs="+", action="extend", choices=module_choices,
-        default=None, metavar="MODULE",
-        help=("Select one or more modules" + (
-            "; defaults to all workflow endpoints" if planner_defaults else ""
-        )),
+        "-m",
+        "--module",
+        nargs="+",
+        action="extend",
+        choices=module_choices,
+        default=None,
+        metavar="MODULE",
+        help=(
+            "Select one or more modules"
+            + ("; defaults to all workflow endpoints" if planner_defaults else "")
+        ),
     )
     parser.add_argument(
-        "-w", "--workflow", nargs="+", action="extend", default=None,
-        metavar="WORKFLOW", help="Select one or more workflow IDs",
+        "-w",
+        "--workflow",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="WORKFLOW",
+        help="Select one or more workflow IDs",
     )
     parser.add_argument(
-        "-r", "--run", nargs="+", action="extend", default=None,
+        "-r",
+        "--run",
+        nargs="+",
+        action="extend",
+        default=None,
         metavar="ENTITY=VALUE[,VALUE...]",
         help="Match BIDS runs; values are comma-delimited alternatives per entity",
     )
     parser.add_argument(
-        "-s", "--space", nargs="+", action="extend", default=None,
-        metavar="SPACE", help="Select one or more output spaces",
+        "-s",
+        "--space",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="SPACE",
+        help="Select one or more output spaces",
     )
     parser.add_argument(
-        "-S", "--smoothing", nargs="+", action="extend", type=int, default=None,
-        metavar="MM", help="Select one or more smoothing FWHM values in mm",
+        "-S",
+        "--smoothing",
+        nargs="+",
+        action="extend",
+        type=int,
+        default=None,
+        metavar="MM",
+        help="Select one or more smoothing FWHM values in mm",
     )
     parser.add_argument("--task", nargs="+", action="extend", help="Select BIDS tasks")
-    parser.add_argument("--model", nargs="+", action="extend", help="Select firstlevels variants or TASK/VARIANT IDs")
-    parser.add_argument("--model-set", nargs="+", action="extend", help="Select firstlevels model sets; requests default to main unless --model is given")
+    parser.add_argument(
+        "--model",
+        nargs="+",
+        action="extend",
+        help="Select firstlevels variants or TASK/VARIANT IDs",
+    )
+    parser.add_argument(
+        "--model-set",
+        nargs="+",
+        action="extend",
+        help="Select firstlevels model sets; requests default to main unless --model is given",
+    )
     if planner_defaults:
         parser.set_defaults(
             _planner_defaults=True,
@@ -106,10 +154,7 @@ def core_selection(args: argparse.Namespace) -> CoreSelection:
     """Normalize shared CLI values and parse run selectors."""
     planner_defaults = bool(getattr(args, "_planner_defaults", False))
     smoothing = tuple(
-        dict.fromkeys(
-            args.smoothing
-            or ((DEFAULT_SMOOTHING_MM,) if planner_defaults else ())
-        )
+        dict.fromkeys(args.smoothing or ((DEFAULT_SMOOTHING_MM,) if planner_defaults else ()))
     )
     if any(value < 0 for value in smoothing):
         raise ValueError("--smoothing values must be nonnegative integers")
@@ -127,24 +172,20 @@ def core_selection(args: argparse.Namespace) -> CoreSelection:
         ),
         projects=tuple(dict.fromkeys(args.project or ())),
         modules=tuple(
-            dict.fromkeys(
-                args.module
-                or (args._default_modules if planner_defaults else ())
-            )
+            dict.fromkeys(args.module or (args._default_modules if planner_defaults else ()))
         ),
         workflows=tuple(
             dict.fromkeys(
-                args.workflow
-                or ((getattr(args, "_default_workflow"),) if planner_defaults else ())
+                args.workflow or ((getattr(args, "_default_workflow"),) if planner_defaults else ())
             )
         ),
         runs=runs,
-        spaces=tuple(
-            dict.fromkeys(args.space or ((DEFAULT_SPACE,) if planner_defaults else ()))
-        ),
+        spaces=tuple(dict.fromkeys(args.space or ((DEFAULT_SPACE,) if planner_defaults else ()))),
         smoothing=smoothing,
         models=tuple(dict.fromkeys(getattr(args, "model", None) or ())),
-        model_sets=tuple(dict.fromkeys(args.model_set)) if getattr(args, "model_set", None) else None,
+        model_sets=tuple(dict.fromkeys(args.model_set))
+        if getattr(args, "model_set", None)
+        else None,
     )
 
 

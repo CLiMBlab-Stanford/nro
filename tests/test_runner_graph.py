@@ -74,9 +74,7 @@ def test_graph_construction_does_not_consult_artifact_freshness(
     output = tmp_path / "derivative"
     output.write_text("published")
     graph = RunnerGraph("test")
-    step = graph.add(
-        Step.python(name="Always declared", outputs=(output,), action=lambda: None)
-    )
+    step = graph.add(Step.python(name="Always declared", outputs=(output,), action=lambda: None))
 
     graph.freeze()
 

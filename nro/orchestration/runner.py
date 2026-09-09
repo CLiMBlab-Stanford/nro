@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import time
-from datetime import datetime, timezone
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
 
+from nro.engine.execution import collect_bind_directories, strip_ansi
+from nro.engine.io import atomic_write_json, atomic_write_text
+from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner_graph import (
     NodeState,
     RunnerGraph,
@@ -23,11 +26,10 @@ from nro.orchestration.runner_graph import (
     StepKind,
     artifact_decision,
 )
-from nro.engine.io import atomic_write_json, atomic_write_text
-from nro.engine.execution import collect_bind_directories, strip_ansi
 
 
 def shlex_quote(s: str) -> str:
+    """Quote one shell token for readable command logging."""
     if not s:
         return "''"
     if all(ch.isalnum() or ch in "._/+-=:" for ch in s):
@@ -62,6 +64,7 @@ class ContainerSpec:
     The image is a host path; bind mappings, clean environment, container home,
     and inner setup determine how host commands execute inside it.
     """
+
     image: Path
     engine: str = "singularity"
     cleanenv: bool = True
@@ -112,19 +115,27 @@ class Runner:
         logger: logging.Logger,
         next_step: Callable[[], int],
         step_log_separator: str = "=" * 50,
+        execution_context: ExecutionContext | None = None,
     ) -> None:
         """Create an empty owned graph and validate container availability.
 
         The logger receives execution events; next_step supplies display numbers.
         No scientific step runs during construction. Missing container resources
         raise SystemExit before execution.
+
+        An authorized execution context restricts declared destinations to its
+        public and private derivative roots. Factories must resolve paths before
+        adding steps; the runner does not rewrite commands or Python closures.
+        These checks do not sandbox undeclared writes by external software.
         """
+        from nro.configuration.site import require_execution_support
+
+        require_execution_support()
+        self._execution_context = execution_context
         self._container = container
         self._binds = tuple(binds)
         self._declared_paths: list[Path] = []
-        self._container_mount_cache: (
-            tuple[list[str], tuple[tuple[str, str], ...]] | None
-        ) = None
+        self._container_mount_cache: tuple[list[str], tuple[tuple[str, str], ...]] | None = None
         self._logger = logger
         self._next_step = next_step
         self._graph = RunnerGraph(module_name)
@@ -149,6 +160,7 @@ class Runner:
         """Add one externally constructed step to this runner's module DAG."""
         if not isinstance(step, Step):
             raise TypeError(f"Runner.add_step() requires a Step, got {type(step).__name__}")
+        self._validate_step_destinations(step)
         name = step.name
         if not name and step.kind is StepKind.COMMAND:
             name = self._guess_step_name(step.command)
@@ -166,6 +178,12 @@ class Runner:
             self._declared_paths.append(added.cwd)
         self._container_mount_cache = None
         return added
+
+    def _validate_step_destinations(self, step: Step) -> None:
+        if self._execution_context is not None:
+            for path in (*step.outputs, step.directory, step.breadcrumb, step.cwd):
+                if path is not None:
+                    self._execution_context.require_output(path)
 
     def set_definition_inputs(self, inputs: Sequence[Path]) -> None:
         """Set inputs inherited by subsequently added scientific steps."""
@@ -186,6 +204,8 @@ class Runner:
         if state is None:
             raise RuntimeError("Runner.execute() requires an active run_context().")
         graph = self._graph.freeze()
+        for step in graph.ordered_steps():
+            self._validate_step_destinations(step)
         state.graph = graph
 
         ledger = os.environ.get("NRO_STEP_LEDGER")
@@ -231,8 +251,7 @@ class Runner:
 
         for step in graph.ordered_steps():
             upstream_dirty = any(
-                states[parent] is NodeState.DIRTY
-                for parent in graph.dependencies(step)
+                states[parent] is NodeState.DIRTY for parent in graph.dependencies(step)
             )
             should_run, reason = artifact_decision(
                 step.outputs,
@@ -280,6 +299,7 @@ class Runner:
         )
 
     def _execute_declared_step(self, step: Step, *, reason: str) -> None:
+        self._validate_step_destinations(step)
         if step.kind is StepKind.PYTHON:
             if step.action is None:
                 raise RuntimeError(f"Python step {step.id!r} has no action.")
@@ -314,9 +334,7 @@ class Runner:
         if step.kind is not StepKind.DIRECTORY:
             raise RuntimeError(f"Unsupported step kind: {step.kind!r}")
         if step.action is None or step.validate is None:
-            raise RuntimeError(
-                f"Directory step {step.id!r} requires an action and validator."
-            )
+            raise RuntimeError(f"Directory step {step.id!r} requires an action and validator.")
         assert step.directory is not None and step.breadcrumb is not None
         directory = step.directory
         breadcrumb = step.breadcrumb
@@ -342,29 +360,21 @@ class Runner:
             step.action()
             if not directory.is_dir():
                 raise RuntimeError(
-                    "Directory artifact producer did not create its output directory: "
-                    f"{directory}"
+                    f"Directory artifact producer did not create its output directory: {directory}"
                 )
             valid, validation_reason = step.validate()
             if not valid:
                 raise RuntimeError(validation_reason)
-            additional_outputs = tuple(
-                output for output in step.outputs if output != breadcrumb
-            )
+            additional_outputs = tuple(output for output in step.outputs if output != breadcrumb)
             self._validate_artifact_outputs(additional_outputs)
             write_completion_breadcrumb(breadcrumb, step.breadcrumb_text)
 
     @staticmethod
     def _validate_artifact_outputs(outputs: Sequence[Path]) -> None:
-        missing = [
-            str(path)
-            for path in outputs
-            if not path.is_file() or path.stat().st_size == 0
-        ]
+        missing = [str(path) for path in outputs if not path.is_file() or path.stat().st_size == 0]
         if missing:
             raise RuntimeError(
-                "Artifact step did not produce nonempty file output(s): "
-                + ", ".join(missing)
+                "Artifact step did not produce nonempty file output(s): " + ", ".join(missing)
             )
 
     @staticmethod
@@ -390,9 +400,7 @@ class Runner:
         if self._container_mount_cache is not None:
             return self._container_mount_cache
         extra_binds = [
-            str(value).strip()
-            for value in self._container.extra_binds
-            if str(value).strip()
+            str(value).strip() for value in self._container.extra_binds if str(value).strip()
         ]
         used_targets = {
             parsed[1]
@@ -431,12 +439,15 @@ class Runner:
                 continue
             seen_binds.add(bind_spec)
             binds.append(bind_spec)
-        result = binds, tuple(
-            sorted(
-                (mapping for mapping in mappings if mapping[0] != mapping[1]),
-                key=lambda mapping: len(mapping[0]),
-                reverse=True,
-            )
+        result = (
+            binds,
+            tuple(
+                sorted(
+                    (mapping for mapping in mappings if mapping[0] != mapping[1]),
+                    key=lambda mapping: len(mapping[0]),
+                    reverse=True,
+                )
+            ),
         )
         self._container_mount_cache = result
         return result
@@ -531,9 +542,7 @@ class Runner:
                 for k, v in inner_env.items()
             ]
             exports = "; ".join(export_lines)
-        setup = self._translate_container_text(
-            (self._container.inner_setup or "").strip()
-        )
+        setup = self._translate_container_text((self._container.inner_setup or "").strip())
         parts = ["set -e"]
         if setup:
             parts.append(setup)
@@ -633,15 +642,10 @@ class Runner:
             Path(value) if Path(value).is_absolute() or cwd is None else cwd / Path(value)
             for value in outputs
         ]
-        invalid = [
-            str(path)
-            for path in paths
-            if not path.is_file() or path.stat().st_size == 0
-        ]
+        invalid = [str(path) for path in paths if not path.is_file() or path.stat().st_size == 0]
         if invalid:
             raise RuntimeError(
-                "Command completed without producing nonempty file output(s): "
-                + ", ".join(invalid)
+                "Command completed without producing nonempty file output(s): " + ", ".join(invalid)
             )
 
     @staticmethod
@@ -667,12 +671,7 @@ class Runner:
                 return list(canonical)
         if cwd is None:
             return displayed
-        return [
-            value
-            if Path(value).is_absolute()
-            else cwd / Path(value)
-            for value in displayed
-        ]
+        return [value if Path(value).is_absolute() else cwd / Path(value) for value in displayed]
 
     @staticmethod
     def _emit_step_event(
@@ -736,8 +735,12 @@ class Runner:
         if not running:
             return "Skipping"
         text = (reason or "").strip().lower()
-        if ("newer than outputs" in text or text.startswith("forced re-run")
-                or text.startswith("re-running") or text.startswith("instance completion certificate")):
+        if (
+            "newer than outputs" in text
+            or text.startswith("forced re-run")
+            or text.startswith("re-running")
+            or text.startswith("instance completion certificate")
+        ):
             return "Rerunning"
         return "Running"
 
@@ -778,7 +781,15 @@ class Runner:
             ):
                 if arg.startswith(prefix):
                     add(arg.split("=", 1)[1])
-            if arg in {"-out", "-omat", "-o", "--reg", "--fslmat", "--iout", "--fout"} and i + 1 < len(args):
+            if arg in {
+                "-out",
+                "-omat",
+                "-o",
+                "--reg",
+                "--fslmat",
+                "--iout",
+                "--fout",
+            } and i + 1 < len(args):
                 add(args[i + 1])
 
         if head == "mcflirt":
@@ -867,8 +878,13 @@ class Runner:
         self._logger.info("Cmd: %s%s", cmd_str, self._cwd_note(cwd))
         self._activate_step(step, human_name or "Command")
         self._emit_step_event(
-            step=step, name=human_name or "Command", status=status.lower(),
-            outputs=inferred_outputs, command=cmd_str, cwd=cwd, reason=reason,
+            step=step,
+            name=human_name or "Command",
+            status=status.lower(),
+            outputs=inferred_outputs,
+            command=cmd_str,
+            cwd=cwd,
+            reason=reason,
         )
         self._record_graph_step(
             step=step,
@@ -903,8 +919,12 @@ class Runner:
         if reason:
             self._logger.info("Status Reason: %s", reason)
         self._emit_step_event(
-            step=step, name=human_name or "Command", status="skipping",
-            outputs=inferred_outputs, cwd=cwd, reason=reason,
+            step=step,
+            name=human_name or "Command",
+            status="skipping",
+            outputs=inferred_outputs,
+            cwd=cwd,
+            reason=reason,
         )
         self._record_graph_step(
             step=step,
@@ -935,9 +955,11 @@ class Runner:
         if running:
             self._activate_step(step, step_name or "Python Step")
         self._emit_step_event(
-            step=step, name=step_name or "Python Step",
+            step=step,
+            name=step_name or "Python Step",
             status=self._status_from_reason(running=running, reason=reason).lower(),
-            outputs=canonical_outputs, reason=reason,
+            outputs=canonical_outputs,
+            reason=reason,
         )
         self._record_graph_step(
             step=step,
@@ -1172,11 +1194,24 @@ class Runner:
         elapsed = time.perf_counter() - started_at
         human_name = str(step_name or "").strip()
         if human_name:
-            self._logger.info("%s [step %03d] %s succeeded in %.3fs%s", label, step, human_name, elapsed, self._cwd_note(cwd))
+            self._logger.info(
+                "%s [step %03d] %s succeeded in %.3fs%s",
+                label,
+                step,
+                human_name,
+                elapsed,
+                self._cwd_note(cwd),
+            )
         else:
-            self._logger.info("%s [step %03d] succeeded in %.3fs%s", label, step, elapsed, self._cwd_note(cwd))
+            self._logger.info(
+                "%s [step %03d] succeeded in %.3fs%s", label, step, elapsed, self._cwd_note(cwd)
+            )
         self._emit_step_event(
-            step=step, name=human_name or "Command", status="success", cwd=cwd, elapsed=elapsed,
+            step=step,
+            name=human_name or "Command",
+            status="success",
+            cwd=cwd,
+            elapsed=elapsed,
         )
         self._record_graph_step(
             step=step,
@@ -1199,11 +1234,16 @@ class Runner:
         if step > 0:
             self._record_failed_step(step, human_name or "Command")
         if human_name:
-            self._logger.error("%s [step %03d] %s failed%s", label, step, human_name, self._cwd_note(cwd))
+            self._logger.error(
+                "%s [step %03d] %s failed%s", label, step, human_name, self._cwd_note(cwd)
+            )
         else:
             self._logger.error("%s [step %03d] failed%s", label, step, self._cwd_note(cwd))
         self._emit_step_event(
-            step=step, name=human_name or "Command", status="error", cwd=cwd,
+            step=step,
+            name=human_name or "Command",
+            status="error",
+            cwd=cwd,
             error=strip_ansi(output or ""),
         )
         self._record_graph_step(
@@ -1239,16 +1279,31 @@ class Runner:
         """
         human_name = str(step_name or self._guess_step_name(cmd)).strip()
         if self._container is None:
-            cmd_str, started_at, step = self._log_command_start("Step", cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason)
+            cmd_str, started_at, step = self._log_command_start(
+                "Step", cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason
+            )
             try:
                 if prepare is not None:
                     prepare()
-                subprocess.run(list(cmd), env=env, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=True)
+                subprocess.run(
+                    list(cmd),
+                    env=env,
+                    cwd=str(cwd) if cwd else None,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
                 if finalize is not None:
                     finalize()
                 self._validate_declared_outputs(outputs, cwd=cwd)
             except subprocess.CalledProcessError as e:
-                self._log_command_failure("Step", step, cwd=cwd, step_name=human_name, output=self._combined_output(e.stdout, e.stderr))
+                self._log_command_failure(
+                    "Step",
+                    step,
+                    cwd=cwd,
+                    step_name=human_name,
+                    output=self._combined_output(e.stdout, e.stderr),
+                )
                 raise SystemExit(f"Command failed ({e.returncode}): {cmd_str}") from e
             except BaseException as error:
                 self._log_command_failure(
@@ -1259,24 +1314,46 @@ class Runner:
             return
 
         full_cmd = self._container_prefix_for_cwd(cwd) + ["bash", "-lc", self._inner_cmd(cmd, env)]
-        cmd_str, started_at, step = self._log_command_start("Step (container)", full_cmd, cwd=cwd, step_name=human_name, outputs=outputs, reason=reason)
+        cmd_str, started_at, step = self._log_command_start(
+            "Step (container)",
+            full_cmd,
+            cwd=cwd,
+            step_name=human_name,
+            outputs=outputs,
+            reason=reason,
+        )
         host_env = self._host_env_for_container(env)
         try:
             if prepare is not None:
                 prepare()
-            subprocess.run(full_cmd, env=host_env, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=True)
+            subprocess.run(
+                full_cmd,
+                env=host_env,
+                cwd=str(cwd) if cwd else None,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
             if finalize is not None:
                 finalize()
             self._validate_declared_outputs(outputs, cwd=cwd)
         except subprocess.CalledProcessError as e:
-            self._log_command_failure("Step (container)", step, cwd=cwd, step_name=human_name, output=self._combined_output(e.stdout, e.stderr))
+            self._log_command_failure(
+                "Step (container)",
+                step,
+                cwd=cwd,
+                step_name=human_name,
+                output=self._combined_output(e.stdout, e.stderr),
+            )
             raise SystemExit(f"Command failed ({e.returncode}): {cmd_str}") from e
         except BaseException as error:
             self._log_command_failure(
                 "Step (container)", step, cwd=cwd, step_name=human_name, output=str(error)
             )
             raise
-        self._log_command_success("Step (container)", started_at, step, cwd=cwd, step_name=human_name)
+        self._log_command_success(
+            "Step (container)", started_at, step, cwd=cwd, step_name=human_name
+        )
 
     def run_child(
         self,
@@ -1304,18 +1381,18 @@ class Runner:
             full_cmd = list(cmd)
             host_env = env
         else:
-            full_cmd = self._container_prefix_for_cwd(cwd) + ["bash", "-lc", self._inner_cmd(cmd, env)]
+            full_cmd = self._container_prefix_for_cwd(cwd) + [
+                "bash",
+                "-lc",
+                self._inner_cmd(cmd, env),
+            ]
             host_env = self._host_env_for_container(env)
         rendered = self._format_cmd(full_cmd)
         self._logger.info("Cmd: %s%s", rendered, self._cwd_note(cwd))
         try:
             if stream_output:
                 started_at = time.monotonic()
-                deadline = (
-                    started_at + timeout_seconds
-                    if timeout_seconds is not None
-                    else None
-                )
+                deadline = started_at + timeout_seconds if timeout_seconds is not None else None
                 proc = subprocess.Popen(
                     full_cmd,
                     env=host_env,
@@ -1323,9 +1400,7 @@ class Runner:
                     text=True,
                 )
                 while True:
-                    remaining = (
-                        None if deadline is None else max(0.0, deadline - time.monotonic())
-                    )
+                    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
                     wait_for = 60.0 if remaining is None else min(60.0, remaining)
                     try:
                         return_code = proc.wait(timeout=wait_for)
@@ -1365,9 +1440,7 @@ class Runner:
                     self._logger.error("Stderr: %s", line.rstrip())
             raise SystemExit(f"Command failed ({error.returncode}): {rendered}") from error
         except subprocess.TimeoutExpired as error:
-            raise SystemExit(
-                f"Command timed out after {timeout_seconds}s: {rendered}"
-            ) from error
+            raise SystemExit(f"Command timed out after {timeout_seconds}s: {rendered}") from error
         if proc.stderr:
             for line in strip_ansi(proc.stderr).splitlines():
                 if line.strip():
@@ -1402,17 +1475,21 @@ class Runner:
             )
             try:
                 proc = subprocess.run(
-                    list(cmd), check=True, env=env,
-                    cwd=str(cwd) if cwd else None, text=True, capture_output=True,
+                    list(cmd),
+                    check=True,
+                    env=env,
+                    cwd=str(cwd) if cwd else None,
+                    text=True,
+                    capture_output=True,
                 )
             except subprocess.CalledProcessError as e:
                 self._log_command_failure(
-                    "Step", step, cwd=cwd,
+                    "Step",
+                    step,
+                    cwd=cwd,
                     output=self._combined_output(e.stdout, e.stderr),
                 )
-                raise SystemExit(
-                    f"Command failed ({e.returncode}): {self._format_cmd(cmd)}"
-                ) from e
+                raise SystemExit(f"Command failed ({e.returncode}): {self._format_cmd(cmd)}") from e
             self._log_command_success("Step", started_at, step, cwd=cwd)
             return (proc.stdout or "").strip()
         full_cmd = self._container_prefix_for_cwd(cwd) + ["bash", "-lc", self._inner_cmd(cmd, env)]
@@ -1422,12 +1499,18 @@ class Runner:
         )
         try:
             proc = subprocess.run(
-                full_cmd, check=True, env=host_env,
-                cwd=str(cwd) if cwd else None, text=True, capture_output=True,
+                full_cmd,
+                check=True,
+                env=host_env,
+                cwd=str(cwd) if cwd else None,
+                text=True,
+                capture_output=True,
             )
         except subprocess.CalledProcessError as e:
             self._log_command_failure(
-                "Step (container)", step, cwd=cwd,
+                "Step (container)",
+                step,
+                cwd=cwd,
                 output=self._combined_output(e.stdout, e.stderr),
             )
             raise SystemExit(
@@ -1450,27 +1533,44 @@ class Runner:
         finalize: Optional[Callable[[], None]] = None,
     ) -> None:
         """Execute a host command without container translation and validate its outputs."""
-        cmd_str, started_at, step = self._log_command_start("Step", args, cwd=cwd, step_name=step_name, outputs=outputs, reason=reason)
+        cmd_str, started_at, step = self._log_command_start(
+            "Step", args, cwd=cwd, step_name=step_name, outputs=outputs, reason=reason
+        )
         try:
             if prepare is not None:
                 prepare()
             subprocess.run(
-                list(args), env=env, cwd=str(cwd) if cwd else None,
-                text=True, capture_output=True, check=True, timeout=timeout_seconds,
+                list(args),
+                env=env,
+                cwd=str(cwd) if cwd else None,
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=timeout_seconds,
             )
             if finalize is not None:
                 finalize()
             self._validate_declared_outputs(outputs, cwd=cwd)
         except subprocess.CalledProcessError as e:
-            self._log_command_failure("Step", step, cwd=cwd, step_name=step_name, output=self._combined_output(e.stdout, e.stderr))
+            self._log_command_failure(
+                "Step",
+                step,
+                cwd=cwd,
+                step_name=step_name,
+                output=self._combined_output(e.stdout, e.stderr),
+            )
             raise SystemExit(f"Command failed ({e.returncode}): {cmd_str}") from e
         except subprocess.TimeoutExpired as e:
-            self._log_command_failure("Step", step, cwd=cwd, step_name=step_name, output=self._combined_output(e.stdout, e.stderr))
+            self._log_command_failure(
+                "Step",
+                step,
+                cwd=cwd,
+                step_name=step_name,
+                output=self._combined_output(e.stdout, e.stderr),
+            )
             raise SystemExit(f"Command timed out after {timeout_seconds}s: {cmd_str}") from e
         except BaseException as error:
-            self._log_command_failure(
-                "Step", step, cwd=cwd, step_name=step_name, output=str(error)
-            )
+            self._log_command_failure("Step", step, cwd=cwd, step_name=step_name, output=str(error))
             raise
         self._log_command_success("Step", started_at, step, cwd=cwd, step_name=step_name)
 
@@ -1489,19 +1589,30 @@ class Runner:
             for c in requested:
                 if self._container is None:
                     full_cmd = ["bash", "-lc", f"command -v {shlex_quote(c)} >/dev/null 2>&1"]
-                    proc = subprocess.run(full_cmd, env=os.environ.copy(), text=True, capture_output=True)
+                    proc = subprocess.run(
+                        full_cmd, env=os.environ.copy(), text=True, capture_output=True
+                    )
                     if proc.returncode != 0:
                         missing.append(c)
                 else:
                     check_cmd = self._inner_cmd(["command", "-v", c], None)
                     full_cmd = self._container_prefix() + ["bash", "-lc", check_cmd]
-                    proc = subprocess.run(full_cmd, env=self._host_env_for_container(None), text=True, capture_output=True)
+                    proc = subprocess.run(
+                        full_cmd,
+                        env=self._host_env_for_container(None),
+                        text=True,
+                        capture_output=True,
+                    )
                     if proc.returncode != 0:
                         missing.append(c)
             if missing:
                 if self._container is None:
-                    msg = "Missing required commands on PATH:\n" + "\n".join(f"- {c}" for c in missing)
+                    msg = "Missing required commands on PATH:\n" + "\n".join(
+                        f"- {c}" for c in missing
+                    )
                 else:
-                    msg = "Missing required commands inside container:\n" + "\n".join(f"- {c}" for c in missing)
+                    msg = "Missing required commands inside container:\n" + "\n".join(
+                        f"- {c}" for c in missing
+                    )
                     msg += f"\n\nContainer image: {self._container.image}"
                 raise SystemExit(msg)

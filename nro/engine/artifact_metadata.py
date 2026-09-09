@@ -54,6 +54,5 @@ def validate_metadata_fields(
         value = _field(document, path, label=label)
         if not _matches_kind(value, kind):
             raise ValueError(
-                f"{label} field {path} must have type {kind}, "
-                f"got {type(value).__name__}"
+                f"{label} field {path} must have type {kind}, got {type(value).__name__}"
             )

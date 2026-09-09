@@ -10,8 +10,10 @@ from collections.abc import Callable
 
 import nro.bin
 
-
 COMMAND_HELP = {
+    "release": "Record or inspect maintainer attestations for main releases.",
+    "cutover": "Convert the private-control layout during a maintenance window.",
+    "branch": "Register branches and locate their shared scientific registries.",
     "bidsify": "Download, review, convert, and approve BIDS sessions.",
     "create": "Create a model, config, or workflow definition.",
     "edit": "Edit an existing model, config, or workflow definition.",
@@ -23,6 +25,7 @@ COMMAND_HELP = {
     "doctor": "Check dependencies and site access.",
     "log": "Browse worker or derivative-instance logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
+    "promote": "Accept equivalent development artifacts after an approved merge.",
     "purge": "Remove nro-controlled derivatives and logs.",
     "qc": "Run an ad hoc quality control.",
     "run": "Plan work and supply the shared worker pool.",
@@ -78,10 +81,35 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
 
     command = values.pop(0)
     if command not in available_commands():
-        parser.error(
-            f"unknown command {command!r}; choose from "
-            + ", ".join(available_commands())
-        )
+        parser.error(f"unknown command {command!r}; choose from " + ", ".join(available_commands()))
+    from nro.configuration.site import installation_record
+
+    if installation_record().get("mode") == "branch" and command not in {
+        "branch",
+        "doctor",
+        "paths",
+        "setup",
+        "definitions",
+        "create",
+        "edit",
+        "delete",
+        "models",
+        "run",
+        "status",
+        "stop",
+        "log",
+        "set",
+        "purge",
+        "bidsify",
+        "promote",
+        "wb_view",
+        "qc",
+        "publish",
+    }:
+        if "-h" not in values and "--help" not in values:
+            parser.error(
+                f"{command} requires the central/main installation; a development installation does not grant maintenance authority"
+            )
     _command_main(command)(values, prog=f"{prog} {command}")
 
 

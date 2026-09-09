@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from nro.orchestration.registry import Registry, utcnow
-from nro.orchestration.planner import build_subject_instances
 from nro.bin.purge import main as purge_main
-from nro.engine.cli import page_text
 from nro.configuration.store import ConfigStore
+from nro.engine.cli import page_text
+from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.registry import Registry, utcnow
 
 
 def _write(path: Path, text: str = "x") -> Path:
@@ -43,7 +43,9 @@ def _registry_with_two_runs(tmp_path: Path):
         target_module="clean",
         selectors={},
         instances=instances,
-        terminal_instance_keys=[instance.key for instance in instances if instance.module == "clean"],
+        terminal_instance_keys=[
+            instance.key for instance in instances if instance.module == "clean"
+        ],
         concurrency=2,
         partition=None,
     )
@@ -68,30 +70,60 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
 
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func1_file = _write(
-        Path(func1["output_root"]) / "func" / f"{func1['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
+        Path(func1["output_root"])
+        / "func"
+        / f"{func1['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     func10_file = _write(
-        Path(func10["output_root"]) / "func" / f"{func10['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
+        Path(func10["output_root"])
+        / "func"
+        / f"{func10['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     clean1_file = _write(
-        Path(clean1["output_root"]) / "func" / f"{clean1['output_prefix']}_space-T1w_desc-clean_bold.nii.gz"
+        Path(clean1["output_root"])
+        / "func"
+        / f"{clean1['output_prefix']}_space-T1w_desc-clean_bold.nii.gz"
     )
     func1_work = _write(
         work
-        / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "func"
-        / f"{func1['output_prefix']}_bold" / "scratch.txt"
+        / "demo"
+        / "derivatives"
+        / "preprocessing"
+        / "main"
+        / "sub-01"
+        / "func"
+        / f"{func1['output_prefix']}_bold"
+        / "scratch.txt"
     ).parent
     func10_work = _write(
         work
-        / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "func"
-        / f"{func10['output_prefix']}_bold" / "scratch.txt"
+        / "demo"
+        / "derivatives"
+        / "preprocessing"
+        / "main"
+        / "sub-01"
+        / "func"
+        / f"{func10['output_prefix']}_bold"
+        / "scratch.txt"
     ).parent
     completion = _write(Path(func1["manifest_path"]), "{}")
 
     purge_main(
         [
-            "-p", "01", "-P", "demo", "-m", "func", "-r", "run=1",
-            "--bids-root", str(bids), "--work-root", str(work), "-f", "--json",
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "-r",
+            "run=1",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(work),
+            "-f",
+            "--json",
         ]
     )
     result = json.loads(capsys.readouterr().out)
@@ -108,9 +140,7 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
     assert _instance_row(registry, "func", "1")["artifact_state"] == "missing"
 
 
-def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(
-    tmp_path: Path, capsys
-) -> None:
+def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, capsys) -> None:
     """A minimally named sub-01_bold run must not own every sub-01_* file."""
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
@@ -134,8 +164,12 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(
     func = next(instance for instance in instances if instance.module == "func")
     anat_file = _write(Path(anat.output_root) / "sub-01_desc-preproc_T1w.nii.gz")
     freesurfer_file = _write(
-        Path(anat.output_root).parent.parent / "code" / "freesurfer" / "sub-01"
-        / "scripts" / "recon-all.done"
+        Path(anat.output_root).parent.parent
+        / "code"
+        / "freesurfer"
+        / "sub-01"
+        / "scripts"
+        / "recon-all.done"
     )
     func_file = _write(
         Path(func.output_root) / "func" / "sub-01_space-T1w_desc-preproc_bold.nii.gz"
@@ -143,8 +177,18 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(
 
     purge_main(
         [
-            "-p", "01", "-P", "demo", "-m", "func", "--bids-root", str(bids),
-            "--work-root", str(tmp_path / "work"), "-f", "--json",
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(tmp_path / "work"),
+            "-f",
+            "--json",
         ]
     )
     json.loads(capsys.readouterr().out)
@@ -154,14 +198,13 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(
     assert freesurfer_file.exists()
 
 
-def test_logs_only_purge_removes_matching_and_inactive_worker_logs(
-    tmp_path: Path, capsys
-) -> None:
+def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Path, capsys) -> None:
     bids, registry, _instances, request = _registry_with_two_runs(tmp_path)
     terminal_instance = _instance_row(registry, "func", "1")
     active_instance = _instance_row(registry, "func", "10")
     derivative = _write(
-        Path(terminal_instance["output_root"]) / "func"
+        Path(terminal_instance["output_root"])
+        / "func"
         / f"{terminal_instance['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     terminal_log = _write(registry.paths.events / "terminal" / "attempt-1.log")
@@ -174,13 +217,26 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(
             """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
                started_at, completed_at, log_path, created_at)
                VALUES (?, 'success', ?, 32, ?, ?, ?, ?)""",
-            (terminal_instance["id"], terminal_instance["revision_fingerprint"], now, now, str(terminal_log), now),
+            (
+                terminal_instance["id"],
+                terminal_instance["revision_fingerprint"],
+                now,
+                now,
+                str(terminal_log),
+                now,
+            ),
         )
         db.execute(
             """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
                started_at, log_path, created_at)
                VALUES (?, 'running', ?, 32, ?, ?, ?)""",
-            (active_instance["id"], active_instance["revision_fingerprint"], now, str(active_log), now),
+            (
+                active_instance["id"],
+                active_instance["revision_fingerprint"],
+                now,
+                str(active_log),
+                now,
+            ),
         )
         db.execute(
             """INSERT INTO scheduler_submissions(
@@ -197,8 +253,13 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(
 
     purge_main(
         [
-            "--logs", "--force", "--bids-root", str(bids),
-            "--work-root", str(tmp_path / "work"), "--json",
+            "--logs",
+            "--force",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(tmp_path / "work"),
+            "--json",
         ]
     )
     result = json.loads(capsys.readouterr().out)
@@ -217,7 +278,8 @@ def test_targeted_purge_refuses_active_attempt(tmp_path: Path) -> None:
     bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
     instance = _instance_row(registry, "func", "1")
     derivative = _write(
-        Path(instance["output_root"]) / "func"
+        Path(instance["output_root"])
+        / "func"
         / f"{instance['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     now = utcnow()
@@ -226,14 +288,30 @@ def test_targeted_purge_refuses_active_attempt(tmp_path: Path) -> None:
             """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
                started_at, log_path, created_at)
                VALUES (?, 'running', ?, 32, ?, ?, ?)""",
-            (instance["id"], instance["revision_fingerprint"], now, str(tmp_path / "active.log"), now),
+            (
+                instance["id"],
+                instance["revision_fingerprint"],
+                now,
+                str(tmp_path / "active.log"),
+                now,
+            ),
         )
 
     with pytest.raises(SystemExit, match="Refusing to purge active derivative"):
         purge_main(
             [
-                "-p", "01", "-P", "demo", "-m", "func", "-r", "run=1",
-                "--bids-root", str(bids), "--work-root", str(tmp_path / "work"),
+                "-p",
+                "01",
+                "-P",
+                "demo",
+                "-m",
+                "func",
+                "-r",
+                "run=1",
+                "--bids-root",
+                str(bids),
+                "--work-root",
+                str(tmp_path / "work"),
             ]
         )
     assert derivative.exists()
@@ -247,18 +325,33 @@ def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None
     clean = _instance_row(registry, "clean", "1")
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func_file = _write(
-        Path(func["output_root"]) / "func"
+        Path(func["output_root"])
+        / "func"
         / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     clean_file = _write(
-        Path(clean["output_root"]) / "func"
+        Path(clean["output_root"])
+        / "func"
         / f"{clean['output_prefix']}_space-T1w_desc-clean_bold.nii.gz"
     )
 
     purge_main(
         [
-            "-p", "01", "-P", "demo", "-m", "func", "clean", "-r", "run=1",
-            "--bids-root", str(bids), "--work-root", str(work), "-f", "--json",
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "clean",
+            "-r",
+            "run=1",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(work),
+            "-f",
+            "--json",
         ]
     )
     result = json.loads(capsys.readouterr().out)
@@ -269,9 +362,7 @@ def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None
     assert anat_file.exists()
 
 
-def test_purge_removes_one_space_smoothing_subject_artifact(
-    tmp_path: Path, capsys
-) -> None:
+def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, capsys) -> None:
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
@@ -294,11 +385,13 @@ def test_purge_removes_one_space_smoothing_subject_artifact(
     registry.register_instances(instances)
     micro = [row for row in registry.instance_rows() if row["module"] == "microparcellation"]
     selected = next(
-        row for row in micro
+        row
+        for row in micro
         if json.loads(row["entities_json"]) == {"space": "fsnative", "smoothing": "0"}
     )
     preserved = next(
-        row for row in micro
+        row
+        for row in micro
         if json.loads(row["entities_json"]) == {"space": "fsnative", "smoothing": "2"}
     )
     selected_file = _write(
@@ -309,19 +402,34 @@ def test_purge_removes_one_space_smoothing_subject_artifact(
     )
     work = tmp_path / "work"
     selected_work = _write(
-        work / "demo/derivatives/microparcellation/main"
+        work
+        / "demo/derivatives/microparcellation/main"
         / "space-fsnative_smoothing-0mm/sub-01/scratch.txt"
     ).parent
     preserved_work = _write(
-        work / "demo/derivatives/microparcellation/main"
+        work
+        / "demo/derivatives/microparcellation/main"
         / "space-fsnative_smoothing-2mm/sub-01/scratch.txt"
     ).parent
 
     purge_main(
         [
-            "-p", "01", "-P", "demo", "-m", "microparcellation",
-            "-s", "fsnative", "-S", "0", "--bids-root", str(bids),
-            "--work-root", str(work), "-f", "--json",
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "microparcellation",
+            "-s",
+            "fsnative",
+            "-S",
+            "0",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(work),
+            "-f",
+            "--json",
         ]
     )
     result = json.loads(capsys.readouterr().out)
@@ -342,16 +450,16 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     func = _instance_row(registry, "func", "1")
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func_file = _write(
-        Path(func["output_root"]) / "func"
+        Path(func["output_root"])
+        / "func"
         / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     func_work = _write(
-        work / "demo/derivatives/preprocessing/main/sub-01/func"
+        work
+        / "demo/derivatives/preprocessing/main/sub-01/func"
         / f"{func['output_prefix']}_bold/scratch.txt"
     )
-    foreign = _write(
-        bids / "demo/derivatives/other-pipeline/sub-01/foreign_result.nii.gz"
-    )
+    foreign = _write(bids / "demo/derivatives/other-pipeline/sub-01/foreign_result.nii.gz")
     attempt_log = _write(registry.paths.events / "complete" / "instance.log")
     now = utcnow()
     with registry.connection(write=True) as db:
@@ -360,14 +468,22 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
                started_at, completed_at, log_path, created_at)
                VALUES (?, 'success', ?, 32, ?, ?, ?, ?)""",
             (
-                func["id"], func["revision_fingerprint"], now, now,
-                str(attempt_log), now,
+                func["id"],
+                func["revision_fingerprint"],
+                now,
+                now,
+                str(attempt_log),
+                now,
             ),
         )
 
     purge_main(
         [
-            "--force", "--bids-root", str(bids), "--work-root", str(work),
+            "--force",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(work),
             "--json",
         ]
     )
@@ -383,21 +499,28 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     assert result["attempt_logs"] == 1
 
 
-def test_purge_reports_plan_and_requires_confirmation(
-    tmp_path: Path, capsys, monkeypatch
-) -> None:
+def test_purge_reports_plan_and_requires_confirmation(tmp_path: Path, capsys, monkeypatch) -> None:
     bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
     func = _instance_row(registry, "func", "1")
     derivative = _write(
-        Path(func["output_root"]) / "func"
+        Path(func["output_root"])
+        / "func"
         / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     monkeypatch.setattr("builtins.input", lambda _prompt: "no")
 
     purge_main(
         [
-            "-P", "demo", "-m", "func", "-r", "run=1",
-            "--bids-root", str(bids), "--work-root", str(tmp_path / "work"),
+            "-P",
+            "demo",
+            "-m",
+            "func",
+            "-r",
+            "run=1",
+            "--bids-root",
+            str(bids),
+            "--work-root",
+            str(tmp_path / "work"),
         ]
     )
     output = capsys.readouterr().out

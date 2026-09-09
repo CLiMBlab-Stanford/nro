@@ -5,10 +5,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from nro.firstlevels.statistics import fit_glm
-from nro.microparcellation.statistics import _moments, local_edge_correlations, parcel_correlations
-from nro.microparcellation.cifti import write_pconn, write_volume_dlabel
-from nro.networks.adjacency import pconn_to_adjacency
+from nro.modules.firstlevels.statistics import fit_glm
+from nro.modules.microparcellation.cifti import write_pconn, write_volume_dlabel
+from nro.modules.microparcellation.statistics import (
+    _moments,
+    local_edge_correlations,
+    parcel_correlations,
+)
+from nro.modules.networks.adjacency import pconn_to_adjacency
 
 
 def _execution_fields():
@@ -20,12 +24,14 @@ def _execution_fields():
                 yield from walk(kind, rule, (*prefix, key))
             elif isinstance(rule, Field) and rule.execution:
                 yield kind, (*prefix, key)
+
     return [item for kind, fields in SCHEMAS.items() for item in walk(kind, fields)]
 
 
 @pytest.mark.parametrize("kind,keys", _execution_fields())
 def test_every_declared_execution_setting_is_excluded_from_scientific_identity(kind, keys):
     from copy import deepcopy
+
     from nro.configuration.store import ConfigStore
 
     store = ConfigStore()
@@ -49,7 +55,12 @@ def test_split_half_block_frames_is_scientific():
     values = original.values
     before = original.scientific_fingerprint
     values["quality"]["split_half_block_frames"] += 1
-    assert store.load_configuration("microparcellation", "main", document=values).scientific_fingerprint != before
+    assert (
+        store.load_configuration(
+            "microparcellation", "main", document=values
+        ).scientific_fingerprint
+        != before
+    )
 
 
 @pytest.mark.parametrize("run_count", [1, 2])
@@ -64,24 +75,48 @@ def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, 
     for index, path in enumerate(files):
         signal = rng.normal(size=(241 - index * 10, 6))
         signal[:, 1] += signal[:, 0]
-        runs[path] = (1e4 + signal[:, labels] + rng.normal(scale=.4, size=(len(signal), len(labels)))).astype(np.float32)
+        runs[path] = (
+            1e4 + signal[:, labels] + rng.normal(scale=0.4, size=(len(signal), len(labels)))
+        ).astype(np.float32)
     edges = np.column_stack((np.arange(len(labels) - 1), np.arange(1, len(labels))))
 
     def compute(temporal, spatial):
-        options = dict(global_signal_regression=gsr, reliability_weighting=weighted,
-                       reliability_vertex_block_size=spatial, load_run=runs.__getitem__)
+        options = dict(
+            global_signal_regression=gsr,
+            reliability_weighting=weighted,
+            reliability_vertex_block_size=spatial,
+            load_run=runs.__getitem__,
+        )
         local = local_edge_correlations(files, edges, len(labels), temporal, **options)
-        parcels = parcel_correlations(files, labels, mask, temporal,
-            split_half_block_frames=19, null_partitions=(np.roll(labels, 1),), **options)
+        parcels = parcel_correlations(
+            files,
+            labels,
+            mask,
+            temporal,
+            split_half_block_frames=19,
+            null_partitions=(np.roll(labels, 1),),
+            **options,
+        )
         return local, parcels
 
     expected_local, expected = compute(31, 5)
     for temporal, spatial in ((1, 1), (7, 3), (128, 64), (1024, 1024)):
         local, actual = compute(temporal, spatial)
-        np.testing.assert_allclose(local.correlations, expected_local.correlations, atol=3e-6, rtol=2e-5)
-        for field in ("correlations", "variance_preserved", "null_variance_preserved", "parcel_reliability_mean",
-                      "parcel_effective_runs", "total_sum_squares", "residual_sum_squares"):
-            np.testing.assert_allclose(getattr(actual, field), getattr(expected, field), atol=3e-6, rtol=2e-5)
+        np.testing.assert_allclose(
+            local.correlations, expected_local.correlations, atol=3e-6, rtol=2e-5
+        )
+        for field in (
+            "correlations",
+            "variance_preserved",
+            "null_variance_preserved",
+            "parcel_reliability_mean",
+            "parcel_effective_runs",
+            "total_sum_squares",
+            "residual_sum_squares",
+        ):
+            np.testing.assert_allclose(
+                getattr(actual, field), getattr(expected, field), atol=3e-6, rtol=2e-5
+            )
         for field, value in expected.split_half.items():
             if isinstance(value, float):
                 np.testing.assert_allclose(actual.split_half[field], value, atol=3e-6, rtol=2e-5)
@@ -101,16 +136,20 @@ def test_high_offset_moments_do_not_depend_on_streaming_blocks():
         np.testing.assert_allclose(m2, expected_m2, rtol=1e-8)
 
 
-@pytest.mark.parametrize("grid", [[0.0], [-.3, 0., .3, .6]])
+@pytest.mark.parametrize("grid", [[0.0], [-0.3, 0.0, 0.3, 0.6]])
 def test_glm_spatial_blocks_preserve_effects_variances_and_noise_groups(grid):
     rng = np.random.default_rng(42)
     retained = np.ones(80, dtype=bool)
     retained[[3, 5, 21, 40]] = False
     design = np.column_stack((np.ones(80), rng.normal(size=(80, 3))))
     data = design @ rng.normal(size=(4, 17)) + rng.normal(size=(80, 17))
-    expected = fit_glm(data, design[retained], retained=retained, ar_grid=np.array(grid), block_size=17)
+    expected = fit_glm(
+        data, design[retained], retained=retained, ar_grid=np.array(grid), block_size=17
+    )
     for size in (1, 4, 128):
-        actual = fit_glm(data, design[retained], retained=retained, ar_grid=np.array(grid), block_size=size)
+        actual = fit_glm(
+            data, design[retained], retained=retained, ar_grid=np.array(grid), block_size=size
+        )
         np.testing.assert_array_equal(actual.groups, expected.groups)
         np.testing.assert_allclose(actual.beta, expected.beta, atol=1e-7)
         np.testing.assert_allclose(actual.residual_variance, expected.residual_variance, atol=1e-7)
@@ -119,8 +158,9 @@ def test_glm_spatial_blocks_preserve_effects_variances_and_noise_groups(grid):
 
 
 def test_network_sparsification_blocks_preserve_exact_edges_and_threshold(tmp_path):
-    _, parcels = write_volume_dlabel(tmp_path / "labels.dlabel.nii", np.arange(8),
-                                     np.ones((2, 2, 2), bool), np.eye(4))
+    _, parcels = write_volume_dlabel(
+        tmp_path / "labels.dlabel.nii", np.arange(8), np.ones((2, 2, 2), bool), np.eye(4)
+    )
     rng = np.random.default_rng(80)
     weights = rng.uniform(-1, 1, (8, 8))
     weights = (weights + weights.T) / 2

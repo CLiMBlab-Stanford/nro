@@ -8,14 +8,14 @@ import json
 import re
 import shutil
 from pathlib import Path
+
 import nibabel as nib
 import numpy as np
 from nibabel.processing import resample_from_to
 
 from nro.configuration.paths import BIDS_PATH
-from nro.orchestration.runtime import resolve_workflow_runtime
 from nro.configuration.runtime import load_runtime_configuration
-
+from nro.orchestration.runtime import resolve_workflow_runtime
 
 _SCENE_TEMPLATE = Path(__file__).with_name("registration_audit.scene.in")
 _TEMPLATE_VOLUME = "sub-c001_desc-firstvolsAcrossRuns_leftSagSlab_bold.nii.gz"
@@ -29,7 +29,9 @@ _TEMPLATE_SURFACES = {
 
 
 def _natural_key(value: str) -> tuple[object, ...]:
-    return tuple(int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value))
+    return tuple(
+        int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)
+    )
 
 
 def _run_sort_key(path: Path) -> tuple[object, ...]:
@@ -58,6 +60,7 @@ def find_registered_bold(subject_dir: Path) -> list[Path]:
 
 
 def find_surfaces(subject_dir: Path, subject: str) -> dict[tuple[str, str], Path]:
+    """Locate the registration surfaces required by the QC montage."""
     anat_dirs = [subject_dir / "anat", *sorted(subject_dir.glob("ses-*/anat"))]
     result: dict[tuple[str, str], Path] = {}
     for key in _TEMPLATE_SURFACES:
@@ -163,9 +166,7 @@ def _write_spec(
     )
     path.write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n<CaretSpecFile Version="1.0">\n'
-        "   <MetaData>\n   </MetaData>\n"
-        + "\n".join(entries)
-        + "\n</CaretSpecFile>\n",
+        "   <MetaData>\n   </MetaData>\n" + "\n".join(entries) + "\n</CaretSpecFile>\n",
         encoding="utf-8",
     )
 
@@ -214,9 +215,10 @@ def create_registration_audit(
     subject: str,
     sagittal_coordinate: float = -20.0,
     slab_thickness: int = 3,
+    bold_files: list[Path] | None = None,
 ) -> dict[str, Path]:
-    """Create a relocatable Workbench scene bundle for one subject."""
-    bold_files = find_registered_bold(subject_dir)
+    """Create a scene using anatomy from subject_dir and optional resolved BOLD inputs."""
+    bold_files = find_registered_bold(subject_dir) if bold_files is None else bold_files
     if not bold_files:
         raise FileNotFoundError(
             f"No *_space-T1w_desc-preproc_bold.nii[.gz] files found under {subject_dir}"
@@ -231,7 +233,9 @@ def create_registration_audit(
         _first_volume(image)  # Fail before creating an incomplete output bundle.
         images.append((path, image))
 
-    source_voxel_sizes = [float(np.min(nib.affines.voxel_sizes(image.affine))) for _, image in images]
+    source_voxel_sizes = [
+        float(np.min(nib.affines.voxel_sizes(image.affine))) for _, image in images
+    ]
     qc_voxel_size = float(np.median(source_voxel_sizes))
     slab_shape, slab_affine = _world_aligned_sagittal_grid(
         anatomical,
@@ -300,7 +304,9 @@ def create_registration_audit(
         "SlabThicknessVoxels": slab_shape[0],
         "RunCount": len(run_records),
         "Runs": run_records,
-        "Surfaces": {f"{hemi}.{surface}": path.name for (hemi, surface), path in packaged_surfaces.items()},
+        "Surfaces": {
+            f"{hemi}.{surface}": path.name for (hemi, surface), path in packaged_surfaces.items()
+        },
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return {
@@ -324,14 +330,17 @@ def registration_output_dir(
     return output_dir
 
 
-def build_parser(
-    *, prog: str = "python -m nro.qc registration"
-) -> argparse.ArgumentParser:
+def build_parser(*, prog: str = "python -m nro.qc registration") -> argparse.ArgumentParser:
+    """Build the registration quality-control parser."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("participant", help="BIDS participant label, with or without sub-")
-    parser.add_argument("-p", "--project", required=True, help="Project directory under the Climblab BIDS root")
     parser.add_argument(
-        "-w", "--workflow", default="main",
+        "-p", "--project", required=True, help="Project directory under the Climblab BIDS root"
+    )
+    parser.add_argument(
+        "-w",
+        "--workflow",
+        default="main",
         help="Workflow ID whose preprocessing lineage should be audited",
     )
     parser.add_argument(
@@ -355,8 +364,74 @@ def main(
     *,
     prog: str = "python -m nro.qc registration",
 ) -> None:
+    """Create registration montages for one participant's derivatives."""
     args = build_parser(prog=prog).parse_args(argv)
     subject = args.participant if args.participant.startswith("sub-") else f"sub-{args.participant}"
+    from nro.orchestration.branch_views import registered_rows
+
+    rows = registered_rows(Path(BIDS_PATH))
+    if rows is not None:
+        from nro.configuration.site import CHECKOUT, settings
+        from nro.orchestration.branch_store import BranchStore
+        from nro.orchestration.branches import BranchPaths
+
+        values = settings()[0]
+        branches = BranchStore(Path(values["registry"]))
+        name = branches.read().topology.require_checkout(CHECKOUT)
+        if name == "main":
+            from nro.orchestration.releases import ReleaseStore
+
+            ReleaseStore(branches).require_approved(CHECKOUT)
+        selected = [
+            row
+            for row in rows
+            if row["project"] == args.project
+            and row["participant"] == subject.removeprefix("sub-")
+            and args.workflow in row.get("workflow_ids", "").split(",")
+        ]
+        anatomicals = [row for row in selected if row["module"] == "anat"]
+        if len(anatomicals) != 1:
+            raise SystemExit(
+                "Registration QC requires one registered anatomical instance for the selected workflow"
+            )
+        paths = BranchPaths(name, *(Path(values[key]) for key in ("bids", "work", "development")))
+        anatomical = anatomicals[0]
+        subject_dir = Path(anatomical["output_root"]).parent
+        derivative_root = (
+            paths.output_project(args.project)
+            / "derivatives/preprocessing"
+            / anatomical["directory_label"]
+        )
+        output_dir = (
+            args.output_dir.resolve()
+            if args.output_dir
+            else registration_output_dir(derivative_root, subject)
+        )
+        paths.require_output(output_dir, args.project)
+        bold = sorted(
+            {
+                path
+                for row in selected
+                if row["module"] == "func"
+                for path in Path(row["output_root"]).glob(
+                    f"{row['output_prefix']}_space-T1w_desc-preproc_bold.nii*"
+                )
+                if path.is_file()
+            },
+            key=_run_sort_key,
+        )
+        outputs = create_registration_audit(
+            subject_dir=subject_dir,
+            output_dir=output_dir,
+            subject=subject,
+            sagittal_coordinate=args.sagittal_coordinate,
+            slab_thickness=args.slab_thickness,
+            bold_files=bold,
+        )
+        print(
+            f"Registration audit includes {len(bold)} functional runs.\nScene: {outputs['scene']}\nRun index: {outputs['index']}"
+        )
+        return
     preprocessing_id, _ = load_runtime_configuration(
         resolve_workflow_runtime(
             project=args.project,

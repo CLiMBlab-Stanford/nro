@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 _FSAVERAGE_MARKER = "__NRO_FSAVERAGE__="
 
 

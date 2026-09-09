@@ -25,9 +25,7 @@ def cancel_worker_allocations(
         submissions.setdefault(job_id, []).append(submission_id)
     for job_id in shutdown["job_ids"]:
         try:
-            result = subprocess.run(
-                ["scancel", job_id], text=True, capture_output=True, timeout=30
-            )
+            result = subprocess.run(["scancel", job_id], text=True, capture_output=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as error:
             failures.append(f"{job_id}: {error}")
             continue
@@ -98,15 +96,9 @@ def _active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
         if alive:
             workers.append(str(row["id"]))
     jobs.update(
-        str(row["slurm_job_id"])
-        for row in activity["submissions"]
-        if row.get("slurm_job_id")
+        str(row["slurm_job_id"]) for row in activity["submissions"] if row.get("slurm_job_id")
     )
-    active_jobs = [
-        job_id
-        for job_id in sorted(jobs)
-        if _slurm_job_terminal(job_id) is not True
-    ]
+    active_jobs = [job_id for job_id in sorted(jobs) if _slurm_job_terminal(job_id) is not True]
     return workers, active_jobs
 
 
@@ -119,9 +111,7 @@ def wait_for_worker_shutdown(
     """Wait until every worker process/allocation is confirmed inactive."""
     deadline = time.monotonic() + timeout
     while True:
-        workers, jobs = _active_pool_members(
-            registry.worker_pool_activity(for_repair=True)
-        )
+        workers, jobs = _active_pool_members(registry.worker_pool_activity(for_repair=True))
         if not workers and not jobs:
             return
         if time.monotonic() >= deadline:
@@ -143,13 +133,12 @@ def stop_worker_pool_for_repair(registry: Registry) -> dict:
     # so no follow-up scheduler bookkeeping is useful here. This also keeps
     # repair usable when only the registry version, rather than its worker
     # control tables, is obsolete.
-    stopped_jobs, failures = cancel_worker_allocations(
-        registry, shutdown, update_registry=False
-    )
+    stopped_jobs, failures = cancel_worker_allocations(registry, shutdown, update_registry=False)
     wait_for_worker_shutdown(registry)
-    from nro.bidsify.store import IngestionStore
+    from nro.bidsify.index import IngestionIndex
+
     # These allocations are now confirmed stopped. Ingestion survives repair,
     # so release its leases before the worker table is discarded.
     with registry._lock():
-        IngestionStore(registry).recover_locked({row['id'] for row in shutdown['worker_rows']})
+        IngestionIndex(registry).recover_locked({row["id"] for row in shutdown["worker_rows"]})
     return {**shutdown, "stopped_jobs": stopped_jobs, "cancellation_failures": failures}

@@ -1,9 +1,10 @@
 # nro
 
 `nro` processes anatomical and functional MRI from BIDS datasets. It produces
-preprocessed images, cleaned time courses, small brain parcels, and individualized
-functional networks. Users request results; a lab-wide orchestration layer finds
-their dependencies and distributes ready work across a shared Slurm worker pool.
+preprocessed images, cleaned time courses, dynamic-connectivity scenes, small
+brain parcels, and individualized functional networks. Users request results;
+a lab-wide orchestration layer finds their dependencies and distributes ready
+work across a shared Slurm worker pool.
 
 The design separates scientific computation from scheduling. Modules declare
 their complete steps before execution; a common runner handles freshness,
@@ -11,17 +12,19 @@ logging, and resumption. Public outputs have explicit contracts. Changed inputs,
 configurations, or contracts can invalidate results, while equivalent requests
 share existing work.
 
-Derivatives are produced by _modules_ with configurable settings, and sequences of configured
-modules are organized into _workflows_.
+Derivatives are produced by _modules_ with configurable settings. Sequences of
+configured modules are organized into _workflows_.
 
-The main processing sequence contains five modules:
+The main processing graph contains these modules:
 
 1. `anat` prepares anatomical images.
 2. `func` prepares each functional run.
 3. `clean` removes unwanted signal from functional data.
-4. `microparcellation` divides the brain into small regions and measures their
+4. `dynconn` packages cleaned vertex- or voxel-level signals for interactive
+   dynamic-connectivity viewing.
+5. `microparcellation` divides the brain into small regions and measures their
    connectivity.
-5. `networks` groups those regions into individualized functional networks.
+6. `networks` groups those regions into individualized functional networks.
 
 A separate `firstlevels` branch estimates task effects from `func` outputs.
 Registered task models specify run, session, and subject contrasts; volume and
@@ -74,9 +77,9 @@ Run the complete workflow for one participant:
 nro run -p t20 -P nptl
 ```
 
-With no `--module`, requests reach every workflow endpoint: currently `networks`
-and `firstlevels`. Firstlevels selects models in set `main` for matching tasks.
-Shared upstream work runs once.
+With no `--module`, requests reach every workflow endpoint: currently `dynconn`,
+`networks`, and `firstlevels`. Firstlevels selects models in set `main` for
+matching tasks. Shared upstream work runs once.
 
 Run through a particular module, or select several participants:
 
@@ -130,6 +133,7 @@ Open the Workbench scene stored with a completed subject-level derivative:
 
 ```bash
 nro wb_view microparcellation -p t20 -P nptl
+nro wb_view dynconn -p t20 -P nptl -s fsnative -S 2
 nro wb_view networks -p t20 -P nptl -s fsnative -S 2
 ```
 
@@ -194,6 +198,10 @@ Run the test suite with:
 ```bash
 .nro-env/bin/python -m pytest -q
 ```
+
+The default command runs the development suite. The
+[development guide](docs/development.md#tests) gives commands for the integration
+tier and the complete suite.
 
 Install with `--dev` to include test dependencies. The documentation build needs
 only `docs/requirements.txt`; it does not install neuroimaging containers or

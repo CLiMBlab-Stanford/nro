@@ -4,17 +4,19 @@
 
 ```bash
 nro wb_view microparcellation -P nptl -p t20 -s fsnative -S 2
+nro wb_view dynconn -P nptl -p t20 -s fsnative -S 2
 nro wb_view networks -P nptl -p t20 --no-open
 ```
 
-The positional derivative type is `microparcellation` or `networks`. Common
+The positional derivative type is `dynconn`, `microparcellation`, or `networks`. Common
 selectors choose matching artifacts. The command opens scenes already stored
 with completed artifacts; it does not rerun processing. `--no-open` prints
 scene paths. `--wb-command` overrides the Workbench command path; `wb_view`
 is found beside it. Opening a GUI requires a working display.
 
 Surface scenes provide white, pial, midthickness, and inflated geometry.
-Midthickness is the default view. Network CIFTIs contain named maps so users
+Midthickness is the default view. Dynamic-connectivity scenes expose Workbench's
+on-demand correlation layer over concatenated retained frames. Network CIFTIs contain named maps so users
 can step through networks. Volume scenes use volume data without carrying
 surface files. See each [module's output guide](../modules/index.md).
 

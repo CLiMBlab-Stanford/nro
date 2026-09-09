@@ -1,8 +1,8 @@
 # Installation
 
 Run `./install` from a Linux checkout. The script finds its own checkout even
-when invoked from another directory. First setup asks for `personal` or
-`shared` mode and saves that role in the untracked `.nro-installation.json`.
+when invoked from another directory. First setup asks for `personal`, `shared`,
+or `branch` mode and saves that role in the untracked `.nro-installation.json`.
 
 The bootstrap requires Python 3.11 or newer with `venv` and pip support.
 It installs uv 0.8.22 in `.nro-bootstrap` and uses `uv.lock` to create an
@@ -17,9 +17,57 @@ Pass `--local` when setting up a host without Slurm.
 
 The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
 if setup reports that it is absent. No environment activation is needed.
-An existing, different `nro` launcher is not overwritten; select `--bin-dir`
-or explicitly move the old launcher. `python -m nro.bin.run` remains available
-through the installation's Python interpreter.
+The launcher selects an installed checkout when invoked inside its directory
+tree, and the user's default installation elsewhere. Adding another checkout
+does not change that default. Use `./install --default` to explicitly select
+the successfully connected checkout as your default. This changes only your
+launcher index, not other users' defaults or the checkout's write authority.
+Working-directory selection still takes precedence inside connected checkouts.
+
+If your installed command is the earlier fixed-path nro launcher, add
+`--replace-launcher` to authorize replacement. The installer checks its format
+and installation record, retains a `nro.previous-...` backup beside it, and
+installs the dispatcher. Without `--default`, its previous default is preserved.
+Unrelated commands, modified shell scripts, and symlinks are refused even with
+this flag; choose `--bin-dir` or move them aside explicitly. The installer prints
+the resulting default and any retained backup path.
+`python -m nro.bin.run` remains available through the installation's interpreter;
+it does not use working-directory selection.
+
+## Development checkouts
+
+With a default installation already connected to the user's launcher, running
+`./install` in another, new checkout selects branch mode and reuses that site's
+settings. Without that connection, select an existing site explicitly:
+
+```bash
+./install --mode branch --site /path/to/site.toml
+```
+
+Branch setup creates an editable environment in that checkout's `.nro-env`,
+checks shared dependencies without installing them, and registers or attaches
+the Git branch with the central store. It does not update the production
+environment, site settings, or definitions. `--maintain` is rejected in branch
+mode. Main cannot be installed as a development branch.
+
+The branch remains selected in checkout subdirectories. After leaving the
+checkout, the launcher selects the previous default. If only a branch has been
+installed, there is no outside-checkout default. An incomplete installation,
+switched or detached branch, or revoked registration produces an error instead
+of falling back to production. The launcher excludes ambient Python import
+paths when selecting an interpreter.
+
+The managed launcher must be the `nro` command selected by PATH. A shell alias
+or an activated environment's own `nro` command can bypass it; use `type -a nro`
+to inspect shell resolution. Launcher checkout bindings live in
+`.nro-launchers.json` beside the user launcher, not in the lab registry.
+
+Branch processing requires [an approved, activated main scheduler](commands/releases.md).
+The normal commands then use branch-owned outputs, compatible ancestor inputs,
+and the shared worker pool. Shared definition/site editing remains blocked from
+development installations. Use `nro branch`, `nro doctor`, and `nro paths show`
+to inspect setup. See [development](development.md#branch-isolation-work) for
+execution and maintenance boundaries.
 
 ## Shared installations
 
@@ -53,9 +101,56 @@ ACLs. Shared setup creates new files with a readable umask; it does not rewrite
 permissions on existing trees. BIDS derivatives, WORK, and the registry need
 the lab's usual shared write permissions independently of the software tree.
 
-Editable code can change underneath running processes. This installer does
-not isolate revisions or make separate experimental checkouts safe to mix
-with the production worker pool.
+The shared checkout supplies the approved scheduler implementation. New work
+captures its selected source before submission; editing the checkout does not
+change already launched attempts. Use registered development checkouts for
+feature work instead of editing the shared installation.
+
+### Replacing the original shared development checkout
+
+An existing shared installation can remain in use while a separate shared
+checkout is prepared. Select the existing site with `--site` when installing
+the replacement; do not reset the registry or copy a virtual environment or
+`.nro-installation.json` between checkouts. If the site TOML lives inside the
+old development checkout, first copy those settings to a durable shared location
+or into the replacement shared checkout, keeping their values unchanged.
+
+After the replacement shared installation is ready, connect it as your default:
+
+```bash
+./install --default --replace-launcher
+```
+
+The replacement flag is needed only for the earlier fixed-path launcher.
+Each user connects their own default; one user's installation does not change
+another user's shell resolution. This does not authorize a main release or
+establish its version. Approve and activate the main release separately.
+
+To convert the old shared checkout to development mode, coordinate a maintenance
+window with all clients, finish or cancel demand, and stop workers and pending
+allocations. Resolve active ingestion and review leases too. Then, from that
+checkout:
+
+```bash
+./install --convert-to-branch
+```
+
+Conversion requires a named non-main Git branch and a different, ready shared
+default. It uses that default's site file, which must be outside the development
+checkout and resolve to the same paths and settings as the original site.
+It does not synchronize dependencies, delete the environment, move artifacts,
+reset registries, or change your default. It registers or attaches the branch
+and retains the original record in `.nro-installation-transition.json`.
+
+Interrupted conversion blocks scientific execution. Repeat the same command to
+resume; do not restore the old shared record manually. If only launcher connection
+failed after conversion, reconnect with the same command. Other users whose
+default still selects the converted checkout must connect to the replacement
+shared installation. They will not silently fall back to production.
+
+After conversion, the checkout uses branch-owned outputs, compatible ancestor
+inputs, and the shared scheduler. Conversion itself creates no demand and moves
+no derivatives.
 
 ## Site settings
 
@@ -69,11 +164,12 @@ The path editor displays all proposed paths before asking for changes. It
 offers lab defaults when `/juice6/u/nlp/climblab` is readable and traversable.
 Otherwise, setup proposes paths under the user's resolved home directory:
 `~/nro/bids`, `~/nro/work`, `~/nro/templateflow`, and related resource directories.
-The generic registry default is `../../.nro` relative to the repository root,
-preserving the lab registry's relative location.
+The generic private-control root is `~/nro/.nro`, independent of checkout
+location. Users joining a shared deployment should select its existing root;
+branch installation inherits it from the selected site.
 These are suggestions, not directories created by the editor. Previously
 configured paths and environment overrides are retained even if unavailable.
-Runtime defaults do not change until the proposed settings are saved.
+Interactive and noninteractive setup use the same resolved defaults.
 
 The `definitions` path selects a separate, lab-owned
 [definitions store](definitions.md). It defaults to
@@ -96,6 +192,12 @@ nro paths set runtime=/usr/bin/apptainer
 Shared editing requires `--maintain`, write permission, and a stopped worker
 pool. Changes update settings for new commands; they do not relocate files or
 migrate a registry. Worker scripts carry the selected site filename explicitly.
+
+Private state uses the [shared/branch hierarchy](commands/branches.md#storage-and-safeguards).
+An existing flat-layout control store is rejected before any new scheduler is
+created. Use the explicit [cutover command](commands/cutover.md) during a
+coordinated maintenance window; neither installation nor registry repair silently
+moves or adopts the old store.
 
 The site file accepts `definitions`, `bids`, `work`, `registry`, `images`, `templates`,
 `workbench`, `oslom`, `license`, `runtime`, `partition`, `account`, and `binds`.

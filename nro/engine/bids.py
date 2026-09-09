@@ -4,21 +4,69 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .io import read_json
 
-
 # BIDS entity order is also the deterministic tie-breaker when multiple equally
 # small selector sets can identify every run.
-ENTITY_ORDER = (
-    "ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"
-)
+ENTITY_ORDER = ("ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk")
 NON_RUN_ENTITIES = {
-    "sub", "space", "scale", "smoothing", "res", "den", "hemi", "desc", "label",
-    "from", "to", "mode",
+    "sub",
+    "space",
+    "scale",
+    "smoothing",
+    "res",
+    "den",
+    "hemi",
+    "desc",
+    "label",
+    "from",
+    "to",
+    "mode",
 }
+
+
+def acquisition_time_seconds(raw: str) -> float:
+    """Parse a BIDS acquisition time into seconds after midnight."""
+    item = str(raw).strip()
+    try:
+        hour, minute, remainder = item.split(":", 2)
+        if "." in remainder:
+            second, fraction = remainder.split(".", 1)
+        else:
+            second, fraction = remainder, "0"
+        microsecond = int((fraction + "000000")[:6])
+        parsed = time(
+            hour=int(hour),
+            minute=int(minute),
+            second=int(second),
+            microsecond=microsecond,
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Unrecognized AcquisitionTime: {raw!r}") from error
+    return parsed.hour * 3600.0 + parsed.minute * 60.0 + parsed.second + parsed.microsecond / 1e6
+
+
+def acquisition_order_key(metadata: Mapping[str, Any], path: Path) -> tuple[str, float]:
+    """Return the best available chronological key for an imaging acquisition."""
+    if "AcquisitionDateTime" in metadata:
+        return (
+            "acqdt",
+            datetime.fromisoformat(str(metadata["AcquisitionDateTime"])).timestamp(),
+        )
+    if "AcquisitionTime" in metadata:
+        return (
+            "acqtime",
+            acquisition_time_seconds(str(metadata["AcquisitionTime"])),
+        )
+    if "SeriesNumber" in metadata:
+        return "series", float(metadata["SeriesNumber"])
+    if "AcquisitionNumber" in metadata:
+        return "acqnum", float(metadata["AcquisitionNumber"])
+    return "mtime", Path(path).stat().st_mtime
 
 
 @dataclass(frozen=True)
@@ -169,7 +217,9 @@ def resolve_bids_table(path: Path, *, suffix: str) -> Path:
         matches = []
         for candidate in directory.glob(f"*{suffix}.tsv"):
             entities = parse_bids_entities(candidate.name)
-            if bids_suffix(candidate) == suffix and all(target.get(k) == v for k, v in entities.items()):
+            if bids_suffix(candidate) == suffix and all(
+                target.get(k) == v for k, v in entities.items()
+            ):
                 matches.append((len(entities), candidate))
         if matches:
             specificity = max(count for count, _ in matches)
@@ -188,9 +238,7 @@ def replace_bids_entity_token(path: Path, old: str, new: str) -> Path:
     parts = path.name.split("_")
     matches = [index for index, part in enumerate(parts) if part == old]
     if len(matches) != 1:
-        raise ValueError(
-            f"Expected exactly one {old!r} entity token in filename: {path}"
-        )
+        raise ValueError(f"Expected exactly one {old!r} entity token in filename: {path}")
     parts[matches[0]] = new
     return path.with_name("_".join(parts))
 
@@ -203,8 +251,7 @@ def bids_readout_time(metadata: Mapping[str, Any]) -> float:
     matrix_size = metadata.get("ReconMatrixPE") or metadata.get("AcquisitionMatrixPE")
     if echo_spacing is None or matrix_size is None:
         raise ValueError(
-            "Need TotalReadoutTime or "
-            "EffectiveEchoSpacing+ReconMatrixPE/AcquisitionMatrixPE"
+            "Need TotalReadoutTime or EffectiveEchoSpacing+ReconMatrixPE/AcquisitionMatrixPE"
         )
     return float(echo_spacing) * (int(matrix_size) - 1)
 
@@ -251,9 +298,7 @@ def _parse_selector_values(
             raise ValueError(f"Run selector must use entity=value syntax, got {raw!r}")
         key, value = raw.split("=", 1)
         key = key.strip().removeprefix("--")
-        requested = tuple(
-            dict.fromkeys(item.strip() for item in value.split(",") if item.strip())
-        )
+        requested = tuple(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
         if not key or "_" in key:
             raise ValueError(f"Invalid BIDS entity selector: {raw!r}")
         if reject_non_run and key in NON_RUN_ENTITIES:
@@ -285,6 +330,7 @@ def _session_from_path(path: Path) -> str | None:
 
 
 def raw_run_stem(path: Path) -> str:
+    """Remove the NIfTI extension and ``_bold`` suffix from a BOLD path."""
     name = path.name
     if name.endswith(".nii.gz"):
         name = name[: -len(".nii.gz")]
@@ -298,12 +344,18 @@ def raw_run_stem(path: Path) -> str:
 @dataclass(frozen=True)
 class BidsRun:
     """One discovered BOLD acquisition and its identifying BIDS entities."""
+
     participant: str
     session: str | None
     stem: str
     entities: Mapping[str, str]
     path: Path
     selectors: tuple[str, ...] = ()
+
+
+def run_arguments(run: BidsRun) -> tuple[str, ...]:
+    """Build deterministic command-line selectors for one BIDS run."""
+    return ("--run", *(f"{key}={value}" for key, value in sorted(run.entities.items())))
 
 
 def _record(path: Path) -> BidsRun:
@@ -320,6 +372,7 @@ def _record(path: Path) -> BidsRun:
 
 
 def discover_raw_runs(subject_dir: Path) -> tuple[BidsRun, ...]:
+    """Discover source BOLD runs at the BIDS subject or session level."""
     # Source BIDS permits functional data directly below the subject or one
     # session level below it. Avoid a recursive glob here: derivative trees or
     # other nested copies must never expand the source run universe.
@@ -344,9 +397,8 @@ def _matches(
         (
             key not in entities
             if value is None
-            else entities.get(key) in (
-                {value} if isinstance(value, str) else {str(item) for item in value}
-            )
+            else entities.get(key)
+            in ({value} if isinstance(value, str) else {str(item) for item in value})
         )
         for key, value in selectors.items()
     )
@@ -387,11 +439,15 @@ def resolve_run(
     runs: Sequence[BidsRun],
     selectors: Mapping[str, Sequence[str] | str | None],
 ) -> BidsRun:
+    """Resolve selectors to exactly one run or report the ambiguous candidates."""
     matches = [run for run in runs if _matches(run.entities, selectors)]
-    rendered = " ".join(
-        f"{key}={'' if value is None else ','.join(value) if not isinstance(value, str) else value}"
-        for key, value in selectors.items()
-    ) or "<none>"
+    rendered = (
+        " ".join(
+            f"{key}={'' if value is None else ','.join(value) if not isinstance(value, str) else value}"
+            for key, value in selectors.items()
+        )
+        or "<none>"
+    )
     if len(matches) != 1:
         candidates = [run.stem for run in matches] if matches else [run.stem for run in runs]
         state = "ambiguous" if matches else "matched no runs"
@@ -405,7 +461,10 @@ def minimal_selectors(target: BidsRun, runs: Sequence[BidsRun]) -> tuple[str, ..
         return ()
     keys = sorted(
         set().union(*(run.entities.keys() for run in runs)),
-        key=lambda key: (ENTITY_ORDER.index(key) if key in ENTITY_ORDER else len(ENTITY_ORDER), key),
+        key=lambda key: (
+            ENTITY_ORDER.index(key) if key in ENTITY_ORDER else len(ENTITY_ORDER),
+            key,
+        ),
     )
     for size in range(1, len(keys) + 1):
         for subset in itertools.combinations(keys, size):

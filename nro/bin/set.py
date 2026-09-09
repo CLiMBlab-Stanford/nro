@@ -58,10 +58,30 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
             print("No supported registry settings were provided.")
         return
     bids_root = Path(args.bids_root).expanduser().resolve()
-    registry = Registry.for_project("", bids_root=bids_root)
-    if not registry.existing_database_path().is_file():
-        raise SystemExit("No central nro registry found")
-    updated_requests = registry.set_active_concurrency(settings["concurrency"])
+    from nro.configuration import site
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = site.settings()[0]
+    if (
+        site.installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    ):
+        from nro.orchestration.scheduler_client import pool_operation
+
+        if bids_root != Path(values["bids"]).resolve():
+            raise SystemExit("Pool settings use the shared site BIDS root")
+        updated_requests = pool_operation(
+            Path(values["registry"]),
+            bids_root,
+            checkout=site.CHECKOUT,
+            operation="concurrency",
+            concurrency=settings["concurrency"],
+        )["updated_requests"]
+    else:
+        registry = Registry.for_project("", bids_root=bids_root)
+        if not registry.existing_database_path().is_file():
+            raise SystemExit("No central nro registry found")
+        updated_requests = registry.set_active_concurrency(settings["concurrency"])
     if updated_requests == 0:
         raise SystemExit("No active requests have a concurrency setting to update")
     result = {
@@ -71,10 +91,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
-    print(
-        f"Set concurrency={settings['concurrency']} on "
-        f"{updated_requests} active request(s)."
-    )
+    print(f"Set concurrency={settings['concurrency']} on {updated_requests} active request(s).")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """Strict YAML parsing shared by configuration consumers and authoring tools."""
 
+import re
 from copy import deepcopy
 from functools import lru_cache
-import re
 
 import yaml
 
@@ -13,10 +13,13 @@ class DefinitionError(ValueError):
 
 class _Loader(yaml.SafeLoader):
     def construct_mapping(self, node, deep=False):
+        """Reject non-string or duplicate YAML mapping keys."""
         self.flatten_mapping(node)
         keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
         if any(not isinstance(key, str) for key in keys):
-            raise DefinitionError(f"Mapping keys must be strings at line {node.start_mark.line + 1}")
+            raise DefinitionError(
+                f"Mapping keys must be strings at line {node.start_mark.line + 1}"
+            )
         if len(set(keys)) != len(keys):
             raise DefinitionError(f"Duplicate YAML mapping keys at line {node.start_mark.line + 1}")
         return super().construct_mapping(node, deep=deep)

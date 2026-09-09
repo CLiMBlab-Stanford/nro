@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -8,15 +8,14 @@ import nibabel as nib
 import numpy as np
 
 from nro.engine.images import sidecar_json_path
-
-from nro.microparcellation.config import (
+from nro.modules.microparcellation.config import (
     CoarseningConfig,
     ConnectivityConfig,
     InputsConfig,
-    OutputConfig,
     ModuleConfig,
+    OutputConfig,
 )
-from nro.microparcellation.module import run
+from nro.modules.microparcellation.module import run
 
 
 def _write_surface(path: Path) -> None:
@@ -78,9 +77,7 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
         surface = tmp_path / f"sub-test_hemi-{hemi}_midthickness.surf.gii"
         functional = tmp_path / f"sub-test_hemi-{hemi}_desc-clean_bold.func.gii"
         for surface_type in ("pial", "midthickness", "white", "inflated"):
-            _write_surface(
-                tmp_path / f"sub-test_hemi-{hemi}_{surface_type}.surf.gii"
-            )
+            _write_surface(tmp_path / f"sub-test_hemi-{hemi}_{surface_type}.surf.gii")
         _write_functional(functional, index)
         surfaces.append(surface)
         functionals.append(functional)
@@ -119,7 +116,7 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
         ),
     )
 
-    with caplog.at_level(logging.INFO, logger="nro.microparcellation.module"):
+    with caplog.at_level(logging.INFO, logger="nro.modules.microparcellation.module"):
         outputs = run(cfg)
     assert outputs["scene"].is_file()
     assert all(path.is_file() for path in outputs["scene_surfaces"])
@@ -133,13 +130,18 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
     def forbidden(*_args, **_kwargs):
         raise AssertionError("a current step unexpectedly recomputed")
 
-    monkeypatch.setattr("nro.microparcellation.module.load_surfaces", forbidden)
-    monkeypatch.setattr("nro.microparcellation.module.local_edge_correlations", forbidden)
-    monkeypatch.setattr("nro.microparcellation.module.parcel_correlations", forbidden)
+    monkeypatch.setattr("nro.modules.microparcellation.module.load_surfaces", forbidden)
+    monkeypatch.setattr("nro.modules.microparcellation.module.local_edge_correlations", forbidden)
+    monkeypatch.setattr("nro.modules.microparcellation.module.parcel_correlations", forbidden)
     shutil.rmtree(cfg.output.work_directory)
-    cfg = replace(cfg, connectivity=replace(cfg.connectivity, temporal_block_size=6, reliability_vertex_block_size=2))
+    cfg = replace(
+        cfg,
+        connectivity=replace(
+            cfg.connectivity, temporal_block_size=6, reliability_vertex_block_size=2
+        ),
+    )
     caplog.clear()
-    with caplog.at_level(logging.INFO, logger="nro.microparcellation.module"):
+    with caplog.at_level(logging.INFO, logger="nro.modules.microparcellation.module"):
         resumed = run(cfg)
 
     assert all(path.stat().st_mtime_ns == mtime for path, mtime in mtimes.items())

@@ -1,6 +1,6 @@
-from pathlib import Path
-from itertools import count
 import logging
+from itertools import count
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -10,7 +10,7 @@ from nro.configuration.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
-from nro.func.module import (
+from nro.modules.func.steps import (
     _ants_pe_aligned_frame,
     _create_nifti_in_ants_frame_step,
     _create_restore_ants_warp_step,
@@ -103,16 +103,18 @@ def test_restore_ants_warp_rotates_lps_vectors_back_to_oblique_pe(tmp_path: Path
     target_ras = np.zeros(3)
     target_ras[frame.physical_axis] = np.sign(frame.pe_direction_ras[frame.physical_axis])
     target_lps = ras_to_lps @ target_ras
-    amplitudes = np.linspace(-3.0, 3.0, num=np.prod(aligned_reference.shape), dtype=np.float32).reshape(
-        aligned_reference.shape
-    )
+    amplitudes = np.linspace(
+        -3.0, 3.0, num=np.prod(aligned_reference.shape), dtype=np.float32
+    ).reshape(aligned_reference.shape)
     aligned_vectors = np.zeros((*aligned_reference.shape, 1, 3), dtype=np.float32)
     aligned_vectors[..., 0, :] = amplitudes[..., None] * target_lps
     warp_header = nib.Nifti1Header()
     warp_header.set_data_dtype(np.float32)
     warp_header.set_intent("vector")
     aligned_warp_path = tmp_path / "aligned_warp.nii.gz"
-    nib.save(nib.Nifti1Image(aligned_vectors, aligned_reference.affine, warp_header), aligned_warp_path)
+    nib.save(
+        nib.Nifti1Image(aligned_vectors, aligned_reference.affine, warp_header), aligned_warp_path
+    )
 
     restored_path = tmp_path / "restored_warp.nii.gz"
     runner = _runner()

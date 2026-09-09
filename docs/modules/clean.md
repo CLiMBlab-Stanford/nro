@@ -54,7 +54,7 @@ exact-design ranks, nuisance selection, final algebraic rank, participation
 effective rank, dominant temporal variance fraction, and whether cleaning was
 defined. Quality estimates also identify the spatial sample used. These fields
 support downstream admission decisions without reloading all data. Exact names
-and types are defined in the [clean contract](../autoapi/nro/clean/contract/index.rst).
+and types are defined in the [clean contract](../autoapi/nro/modules/clean/contract/index.rst).
 
 ## Configuration
 
@@ -74,5 +74,5 @@ command used inside the configured execution environment.
 :language: yaml
 ```
 
-Implementation: [module](../autoapi/nro/clean/module/index.rst),
+Implementation: [module](../autoapi/nro/modules/clean/module/index.rst),
 [downstream reader](../autoapi/nro/engine/cleaned_timeseries/index.rst).

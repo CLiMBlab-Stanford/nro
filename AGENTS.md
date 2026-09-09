@@ -58,3 +58,14 @@ Check technical claims against the implementation and nearby documentation.
 Use the repository's established terms and keep comments and docstrings aligned
 with the code. AI disclosure belongs in `AI_PROVENANCE.md` and commit or
 pull-request metadata, not in ordinary technical documentation.
+
+## Plans
+
+Treat files under `plans/` as current agent guidance. Update an affected plan when
+the design, implementation, paths, terminology, or remaining work changes. Remove
+superseded instructions instead of appending a historical checkpoint. Each Markdown
+plan except `plans/README.md` declares whether it is `active`, `deferred`, or
+`maintained`; do not execute a deferred plan without a new user request.
+
+One-off migration reports belong under `plans/evidence/`. They support auditing but
+do not define current behavior.

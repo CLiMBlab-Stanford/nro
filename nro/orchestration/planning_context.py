@@ -8,7 +8,7 @@ from typing import Mapping
 
 from nro.configuration.store import ResolvedWorkflow, fingerprint
 from nro.engine.bids import BidsRun
-from nro.orchestration.registry import RegisteredWorkflow, Registry
+from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 
 class ParticipantUnavailableError(RuntimeError):
@@ -45,7 +45,7 @@ class SubjectPlanningContext:
     subject_dir: Path
     workflow: ResolvedWorkflow
     registered: RegisteredWorkflow
-    registry: Registry
+    registry: WorkflowRegistry
     runs: tuple[BidsRun, ...]
     aggregate_source_inputs: tuple[Path, ...]
     target_pairs: tuple[tuple[str, int], ...]

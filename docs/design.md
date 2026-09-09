@@ -13,11 +13,12 @@ instances from the lab-wide registry. Within each instance, a shared `Runner`
 owns a graph of `Step` declarations and executes them in dependency order.
 
 ```text
-anat ──► func ──► clean ──► microparcellation ──► networks
-  └──────── anatomical geometry and transforms ─────────►
+anat ──► func ──► clean ──┬─► dynconn
+  │                       └─► microparcellation ──► networks
+  └──────────── anatomical geometry and transforms ─────────►
 ```
 
-The sequence is not five monolithic cluster jobs. There are many run-wise
+The sequence is not a chain of monolithic cluster jobs. There are many run-wise
 `func` and `clean` instances, followed by subject-level aggregation. From
 `clean` onward, space and smoothing are independent scheduling entities.
 The module pages specify additional direct anatomy dependencies.
@@ -53,14 +54,20 @@ they change methods or required metadata.
 
 ## Shared operation
 
-The registry stores identities, demand, attempts, workers, and submissions.
-The filesystem remains authoritative for actual output existence and validity.
-Several requests can share an instance; cancelling one request need not stop
-work still demanded by another. Concurrency limits apply across projects.
+The central scheduler registry stores demand, attempts, workers, and Slurm
+submissions. Each registered Git branch also has a scientific registry for its
+compiled contracts and artifact observations. The filesystem remains
+authoritative for output existence and validity. Several requests can share an
+instance; cancelling one request need not stop work still demanded by another.
+Concurrency limits apply across projects and development branches.
 
-A shared editable installation is an operational agreement, not revision
-isolation. Stop workers and coordinate maintenance. Separate experimental
-checkouts cannot safely share the production pool without further isolation.
+An approved `main` installation runs the scheduler. Registered development
+checkouts submit compiled work through that scheduler, inherit compatible
+ancestor artifacts, and write new outputs to branch-owned directories. Each
+attempt runs from captured source selected at submission, so workers can serve
+different branches without importing their modules into the scheduler. See
+[branch registration](commands/branches.md) and
+[development](development.md#branch-isolation-work).
 
 ## Naming and portability
 

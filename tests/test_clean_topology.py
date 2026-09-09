@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from nro.clean.contract import (
+from nro.modules.clean.cleaning import _expected_input_groups, _volume_gm_mask_path
+from nro.modules.clean.contract import (
     CLEAN_SIDECAR_FIELDS,
     clean_output_contract,
     validate_clean_sidecar,
 )
-from nro.clean.module import _expected_input_groups, _volume_gm_mask_path
 
 
 def test_cleaning_inputs_are_fixed_by_run_and_preprocessing_config(
@@ -92,10 +92,7 @@ def test_clean_output_contract_tracks_required_temporal_metadata() -> None:
 
     assert fields["Cleaning.TemporalMaskFile"] == "string"
     assert fields["Cleaning.RetainedFrames"] == "integer"
-    assert (
-        fields["Cleaning.QualityControl.ParticipationRatioEffectiveTemporalRank"]
-        == "number"
-    )
+    assert fields["Cleaning.QualityControl.ParticipationRatioEffectiveTemporalRank"] == "number"
 
 
 def test_clean_sidecar_validation_rejects_a_missing_contract_field() -> None:

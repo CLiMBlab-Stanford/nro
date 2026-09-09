@@ -79,17 +79,13 @@ def load_cleaned_run_metadata(files: tuple[Path, ...]) -> CleanedRunMetadata:
         "TemporalMaskRegex",
     )
     first_sidecar, first, _first_quality = records[0]
-    values = {
-        key: _required(first, key, first_sidecar)
-        for key in run_keys
-    }
+    values = {key: _required(first, key, first_sidecar) for key in run_keys}
     for sidecar, cleaning, _quality in records[1:]:
         for key, expected in values.items():
             actual = _required(cleaning, key, sidecar)
             if actual != expected:
                 raise ValueError(
-                    f"Cleaned run sidecars disagree on Cleaning.{key}: "
-                    f"{first_sidecar} != {sidecar}"
+                    f"Cleaned run sidecars disagree on Cleaning.{key}: {first_sidecar} != {sidecar}"
                 )
 
     defined: list[bool] = []
@@ -100,15 +96,11 @@ def load_cleaned_run_metadata(files: tuple[Path, ...]) -> CleanedRunMetadata:
         is_defined = bool(_required(cleaning, "CleaningDefined", sidecar))
         defined.append(is_defined)
         if not is_defined:
-            reasons.add(
-                str(cleaning.get("CleaningUndefinedReason") or "unspecified")
-            )
+            reasons.add(str(cleaning.get("CleaningUndefinedReason") or "unspecified"))
         participation.append(
             float(_required(quality, "ParticipationRatioEffectiveTemporalRank", sidecar))
         )
-        dominant.append(
-            float(_required(quality, "DominantTemporalVarianceFraction", sidecar))
-        )
+        dominant.append(float(_required(quality, "DominantTemporalVarianceFraction", sidecar)))
 
     mask_file = Path(str(values["TemporalMaskFile"]))
     return CleanedRunMetadata(

@@ -7,8 +7,8 @@ import json
 import os
 import shutil
 import uuid
-from contextlib import contextmanager
 from collections.abc import Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -173,8 +173,19 @@ def atomic_write_text(
             with temporary.open("rb") as stream:
                 os.fsync(stream.fileno())
         os.replace(temporary, path)
+        if durable:
+            sync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def sync_directory(path: Path) -> None:
+    """Flush directory entries after durable publication on Linux."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def atomic_write_json(

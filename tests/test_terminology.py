@@ -4,6 +4,12 @@ import sqlite3
 from pathlib import Path
 
 from nro.bin.log import build_parser as log_parser
+from nro.bin.purge import build_parser as purge_parser
+from nro.bin.run import build_parser as run_parser
+from nro.bin.status import build_parser as status_parser
+from nro.bin.stop import build_parser as stop_parser
+from nro.configuration.paths import REGISTRY_PATH
+from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore
 from nro.orchestration.catalog import BUILTIN_MODULES, MODULES
 from nro.orchestration.contracts import (
     ExecutionEnvelope,
@@ -14,13 +20,6 @@ from nro.orchestration.contracts import (
     ResourceRequest,
 )
 from nro.orchestration.registry import Registry
-from nro.bin.purge import build_parser as purge_parser
-from nro.bin.run import build_parser as run_parser
-from nro.bin.status import build_parser as status_parser
-from nro.bin.stop import build_parser as stop_parser
-from nro.configuration.store import ConfigStore, DERIVATIVE_CLASSES
-from nro.configuration.paths import REGISTRY_PATH
-
 
 ROOT = Path(__file__).parents[1]
 
@@ -29,11 +28,20 @@ def test_code_defines_the_canonical_system_vocabulary() -> None:
     assert DERIVATIVE_CLASSES == (
         "preprocessing",
         "clean",
+        "dynconn",
         "microparcellation",
         "networks",
         "firstlevels",
     )
-    assert MODULES == ("anat", "func", "clean", "microparcellation", "networks", "firstlevels")
+    assert MODULES == (
+        "anat",
+        "func",
+        "clean",
+        "microparcellation",
+        "dynconn",
+        "networks",
+        "firstlevels",
+    )
     assert tuple(descriptor.name for descriptor in BUILTIN_MODULES) == MODULES
 
 
@@ -60,10 +68,13 @@ def test_instance_spec_has_the_documented_contract_hierarchy() -> None:
 def test_module_specific_planning_lives_with_each_scientific_module() -> None:
     assert not (ROOT / "nro" / "orchestration" / "instances.py").exists()
     for module in MODULES:
-        assert (ROOT / "nro" / module / "planning.py").is_file()
+        root = ROOT / "nro" / "modules" / module
+        assert (root / "planning.py").is_file()
+        assert not (ROOT / "nro" / module).exists()
     planner_source = (ROOT / "nro" / "orchestration" / "planner.py").read_text()
     for module in MODULES:
-        assert f"from nro.{module}" not in planner_source
+        package = f"nro.modules.{module}"
+        assert f"from {package}" not in planner_source
 
 
 def test_control_commands_select_modules_consistently() -> None:
@@ -94,12 +105,8 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
         actions = {action.dest: action.option_strings for action in parser_factory()._actions}
         assert {name: actions[name] for name in expected} == expected
 
-    assert "instance_level" in {
-        action.dest for action in log_parser()._actions
-    }
-    assert "instance_level" not in {
-        action.dest for action in status_parser()._actions
-    }
+    assert "instance_level" in {action.dest for action in log_parser()._actions}
+    assert "instance_level" not in {action.dest for action in status_parser()._actions}
     purge_actions = {action.dest: action for action in purge_parser()._actions}
     assert purge_actions["logs"].option_strings == ["-l", "--logs"]
     assert purge_actions["force"].option_strings == ["-f", "--force"]
@@ -125,10 +132,14 @@ def test_primary_user_commands_live_in_bin() -> None:
     assert not (ROOT / "nro" / "registration_qc").exists()
 
 
-def test_default_registry_is_lab_wide() -> None:
+def test_default_registry_is_lab_wide(monkeypatch) -> None:
+    from nro.orchestration.control_paths import ControlPaths
+
+    monkeypatch.setattr(ControlPaths, "require_current_layout", lambda self: None)
     registry = Registry.for_project("nptl")
     assert registry.paths.control == REGISTRY_PATH
     assert registry.paths.control == Path("/juice6/u/nlp/climblab/.nro")
+    assert registry.paths.database == REGISTRY_PATH / "shared/scheduler/registry.sqlite3"
 
 
 def test_workflow_api_exposes_configurations_by_derivative_class() -> None:
@@ -145,13 +156,8 @@ def test_fresh_registry_uses_class_and_module_columns(tmp_path: Path) -> None:
 
     with sqlite3.connect(registry.paths.database) as connection:
         columns = {
-            table: {
-                str(row[1])
-                for row in connection.execute(f"PRAGMA table_info({table})")
-            }
-            for table in (
-                "configuration_lineages", "workflow_bindings", "requests", "instances"
-            )
+            table: {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+            for table in ("configuration_lineages", "workflow_bindings", "requests", "instances")
         }
 
     assert "derivative_class" in columns["configuration_lineages"]

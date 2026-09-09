@@ -24,7 +24,7 @@ nro models show langlocSN/main
 nro run -P nptl -p t20 -m firstlevels -s fsnative -S 2
 ```
 
-A bare `nro run` requests both `networks` and `firstlevels`, including GLMs for
+A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including GLMs for
 matching tasks in model set `main`. Use `-m` to restrict the requested branches.
 Multiple spaces and smoothing values create independent instances.
 One instance covers a participant, model variant, space, and smoothing value.
@@ -79,7 +79,7 @@ would redefine the same subject-level artifact.
    conditions and non-estimable contrasts have omission records, not zero
    effect maps. If censoring makes the temporal model unidentifiable or leaves
    no residual dimensions, omit the entire run's estimates with a reason.
-   These decisions do not alter the preconstructed step graph. Invalid inputs
+   These decisions do not alter the preconstructed runner graph. Invalid inputs
    or unsupported model instructions still raise errors.
 
 If the post-task rank is below the absolute nuisance-protection floor, nuisance
@@ -171,7 +171,7 @@ random effects, HRF derivatives, and temporal filtering are not supported.
 Effect units must be comparable across runs; no automatic acquisition-gain
 normalization is applied.
 
-Implementation: [compiler](../autoapi/nro/firstlevels/compiler/index.rst),
-[design](../autoapi/nro/firstlevels/design/index.rst),
-[statistics](../autoapi/nro/firstlevels/statistics/index.rst),
-[module](../autoapi/nro/firstlevels/module/index.rst).
+Implementation: [compiler](../autoapi/nro/modules/firstlevels/compiler/index.rst),
+[design](../autoapi/nro/modules/firstlevels/design/index.rst),
+[statistics](../autoapi/nro/modules/firstlevels/statistics/index.rst),
+[module](../autoapi/nro/modules/firstlevels/module/index.rst).

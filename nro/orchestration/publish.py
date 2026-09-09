@@ -10,7 +10,6 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry, utcnow
 
@@ -25,11 +24,7 @@ def _sha256(path: Path) -> str:
 
 def _derivative_root(project_root: Path, instance: dict) -> Path:
     path = Path(instance["output_root"]).resolve()
-    expected = (
-        project_root
-        / "derivatives"
-        / module_descriptor(instance["module"]).configuration_class
-    )
+    expected = project_root / "derivatives" / instance["derivative_class"]
     try:
         relative = path.relative_to(expected)
     except ValueError as error:
@@ -71,6 +66,7 @@ def publish(
     request_id: str,
     destination: Path,
     validate: bool = True,
+    compiled: bool = False,
 ) -> Path:
     """Snapshot fresh terminal artifacts and recursive provenance into a new destination.
 
@@ -78,7 +74,7 @@ def publish(
     generations; reject an existing destination or changed source artifacts.
     Run an available BIDS validator unless validate is false.
     """
-    assess_registry(registry, projects=(registry.paths.project,))
+    assess_registry(registry, projects=(registry.paths.project,), compiled=compiled)
     request, instances = registry.publication_instances(request_id)
     if not instances:
         raise RuntimeError(f"Request has no terminal derivative instances: {request_id}")
@@ -106,7 +102,19 @@ def publish(
                 int(instance["current_generation"]),
                 _sha256(manifest_path),
             )
-            root = _derivative_root(registry.paths.project_root, instance)
+            with registry.connection() as db:
+                execution = db.execute(
+                    "SELECT context_json FROM instance_execution WHERE instance_id=?",
+                    (instance["id"],),
+                ).fetchone()
+            project_root = registry.paths.project_root
+            if execution:
+                from nro.orchestration.execution_context import ExecutionContext
+
+                project_root = ExecutionContext.from_dict(
+                    json.loads(execution[0])
+                ).paths.output_project(instance["project"])
+            root = _derivative_root(project_root, instance)
             for item in manifest["public_outputs"]:
                 source = Path(item["path"]).resolve()
                 relative = source.relative_to(root)
@@ -138,7 +146,9 @@ def publish(
             "project": request["project"],
             "target_module": request["target_module"],
             "instances": embedded_instances,
-            "files": [{key: value for key, value in item.items() if key != "source"} for item in copied],
+            "files": [
+                {key: value for key, value in item.items() if key != "source"} for item in copied
+            ],
         }
         (staging / ".nro-publication.json").write_text(
             json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -151,7 +161,7 @@ def publish(
                 text=True,
                 capture_output=True,
             )
-        assess_registry(registry, projects=(registry.paths.project,))
+        assess_registry(registry, projects=(registry.paths.project,), compiled=compiled)
         _request_after, instances_after = registry.publication_instances(request_id)
         if any(instance["artifact_state"] != "fresh" for instance in instances_after):
             raise RuntimeError("Live derivative changed or became stale during publication")

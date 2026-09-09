@@ -1,17 +1,20 @@
 """Read-only Flywheel access with isolated credentials and opaque saved IDs."""
 
-from .errors import BidsificationError
-
 import hashlib
 import logging
 import os
 import re
 from pathlib import Path
 
+from .errors import BidsificationError
+
 
 def _revision(file) -> dict:
-    return {'version': getattr(file, 'version', None), 'hash': getattr(file, 'hash', None),
-            'modified': str(getattr(file, 'modified', '') or '')}
+    return {
+        "version": getattr(file, "version", None),
+        "hash": getattr(file, "hash", None),
+        "modified": str(getattr(file, "modified", "") or ""),
+    }
 
 
 class FlywheelSource:
@@ -30,7 +33,9 @@ class FlywheelSource:
             return
         key = os.environ.get(profile["credential_env"])
         if not key:
-            raise BidsificationError(f"Set {profile['credential_env']} in your environment before submission")
+            raise BidsificationError(
+                f"Set {profile['credential_env']} in your environment before submission"
+            )
         if ":" in key:
             host, key = key.split(":", 1)
             if host != profile["host"]:
@@ -52,7 +57,9 @@ class FlywheelSource:
         try:
             self.client = flywheel.Client(f"{profile['host']}:{key}")
         except Exception:
-            raise BidsificationError("Could not initialize Flywheel client; check server credentials") from None
+            raise BidsificationError(
+                "Could not initialize Flywheel client; check server credentials"
+            ) from None
 
     def sessions(self) -> list[dict]:
         """List session IDs and transient identity labels for BIDS matching and review."""
@@ -61,11 +68,20 @@ class FlywheelSource:
             for path in self.profile["projects"]:
                 project = self.client.lookup(path)
                 for session in project.sessions.iter():
-                    result.append({"id": session.id, "label": session.label,
-                                   "subject_code": getattr(getattr(session, 'subject', None), 'code', None),
-                                   "remote_project": path})
+                    result.append(
+                        {
+                            "id": session.id,
+                            "label": session.label,
+                            "subject_code": getattr(
+                                getattr(session, "subject", None), "code", None
+                            ),
+                            "remote_project": path,
+                        }
+                    )
         except Exception:
-            raise BidsificationError("Flywheel inventory failed; check authentication and project access") from None
+            raise BidsificationError(
+                "Flywheel inventory failed; check authentication and project access"
+            ) from None
         return result
 
     def inventory(self, session_id: str, rules: list[dict]) -> list[dict]:
@@ -75,37 +91,60 @@ class FlywheelSource:
             session = self.client.get_session(session_id)
             for acquisition in session.acquisitions.iter():
                 matches = [r for r in rules if re.search(r["pattern"], acquisition.label or "")]
-                kind = (matches[0]['datatype'], matches[0]['suffix']) if matches else (None, None)
+                kind = (matches[0]["datatype"], matches[0]["suffix"]) if matches else (None, None)
                 for file in acquisition.files or []:
                     if file.type != "dicom":
                         continue
-                    result.append({"id": acquisition.id + "-" + hashlib.sha256(file.name.encode()).hexdigest()[:16],
-                                   "acquisition": acquisition.id, "file_token": hashlib.sha256(file.name.encode()).hexdigest(),
-                                   "bytes": int(file.size or 0), "datatype": kind[0], "suffix": kind[1],
-                                   "source_revision": _revision(file),
-                                   "confirmed": False, "entities": {}, "events": None})
+                    result.append(
+                        {
+                            "id": acquisition.id
+                            + "-"
+                            + hashlib.sha256(file.name.encode()).hexdigest()[:16],
+                            "acquisition": acquisition.id,
+                            "file_token": hashlib.sha256(file.name.encode()).hexdigest(),
+                            "bytes": int(file.size or 0),
+                            "datatype": kind[0],
+                            "suffix": kind[1],
+                            "source_revision": _revision(file),
+                            "confirmed": False,
+                            "entities": {},
+                            "events": None,
+                        }
+                    )
         except Exception:
             raise BidsificationError("Could not inventory the selected Flywheel session") from None
         if not result:
-            raise BidsificationError("No acquisition DICOM files found; this source needs an explicit file adapter")
+            raise BidsificationError(
+                "No acquisition DICOM files found; this source needs an explicit file adapter"
+            )
         return result
 
     def describe(self, item: dict) -> str:
         """Return the acquisition label for terminal review, never persisted in records."""
         try:
-            return str(self.client.get_acquisition(item['acquisition']).label)
+            return str(self.client.get_acquisition(item["acquisition"]).label)
         except Exception:
-            raise BidsificationError('Cannot retrieve acquisition label for review') from None
+            raise BidsificationError("Cannot retrieve acquisition label for review") from None
 
     def download(self, item: dict, destination: Path) -> None:
         """Download one unchanged file into the caller's approved staging directory."""
         try:
             acquisition = self.client.get_acquisition(item["acquisition"])
-            matches = [f for f in acquisition.files or [] if hashlib.sha256(f.name.encode()).hexdigest() == item["file_token"]]
-            if len(matches) != 1 or int(matches[0].size or 0) != item["bytes"] or _revision(matches[0]) != item['source_revision']:
+            matches = [
+                f
+                for f in acquisition.files or []
+                if hashlib.sha256(f.name.encode()).hexdigest() == item["file_token"]
+            ]
+            if (
+                len(matches) != 1
+                or int(matches[0].size or 0) != item["bytes"]
+                or _revision(matches[0]) != item["source_revision"]
+            ):
                 raise BidsificationError("source changed")
             matches[0].download(str(destination))
             if destination.stat().st_size != item["bytes"]:
                 raise BidsificationError("incomplete download")
         except Exception:
-            raise BidsificationError("Flywheel download failed or source changed; inspect the source before retrying") from None
+            raise BidsificationError(
+                "Flywheel download failed or source changed; inspect the source before retrying"
+            ) from None

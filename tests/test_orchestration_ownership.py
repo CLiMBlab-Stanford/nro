@@ -6,8 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.store import ConfigStore
 from nro.bin.purge import _purge_instances
+from nro.configuration.store import ConfigStore
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.ownership import (
     instance_record_path,
@@ -29,9 +29,7 @@ def _historical_store(tmp_path: Path) -> ConfigStore:
     (root / "configs" / "clean" / "retired_clean.yml").write_text(
         yaml.safe_dump({"standardize": False})
     )
-    (root / "workflows" / "retired_workflow.yml").write_text(
-        yaml.safe_dump({"clean": "retired"})
-    )
+    (root / "workflows" / "retired_workflow.yml").write_text(yaml.safe_dump({"clean": "retired"}))
     store = ConfigStore()
     store.root = root
     return store
@@ -61,9 +59,7 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
         write_instance_ownership(registry, instance_ids[instance.key])
 
     clean = next(instance for instance in instances if instance.module == "clean")
-    marker = lineage_record_path(
-        bids / "demo", "clean", registered.directories["clean"]
-    )
+    marker = lineage_record_path(bids / "demo", "clean", registered.directories["clean"])
     receipt = instance_record_path(
         bids / "demo",
         "clean",
@@ -92,10 +88,7 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     assert clean.key in rows
     assert rows[clean.key]["directory_label"] == "retired"
     assert rows[clean.key]["workflow_ids"] is None
-    status = {
-        row["instance_key"]: row
-        for row in registry.instance_status_snapshot(expose_nonfresh=True)
-    }
+    status = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
     assert status[clean.key]["status"] == "Unavailable"
     assert not status[clean.key]["recomputable"]
     assert result.artifacts == len(instances)
@@ -115,9 +108,7 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
     workflow = ConfigStore().resolve("main")
-    first = Registry.for_project(
-        "demo", bids_root=bids, registry_path=tmp_path / "first" / ".nro"
-    )
+    first = Registry.for_project("demo", bids_root=bids, registry_path=tmp_path / "first" / ".nro")
     first_registered = first.register_workflow(workflow)
     first_instance = build_subject_instances(
         project="demo",
@@ -150,7 +141,5 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
         bids_root=bids,
     )[0]
 
-    assert first_registered.lineages["preprocessing"] != second_registered.lineages[
-        "preprocessing"
-    ]
+    assert first_registered.lineages["preprocessing"] != second_registered.lineages["preprocessing"]
     assert first_instance.key == second_instance.key

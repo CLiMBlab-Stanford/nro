@@ -1,16 +1,16 @@
 """Review and publish text definitions without exposing partially edited files."""
 
 import difflib
-from contextlib import contextmanager
 import fcntl
 import os
-from pathlib import Path
 import shlex
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Callable
 
 
@@ -26,6 +26,14 @@ def read_definition(path: Path) -> bytes | None:
 
 @contextmanager
 def _definition_lock(path: Path, expected: bytes | None):
+    from nro.configuration.site import definition_write
+
+    with definition_write(path), _file_lock(path, expected):
+        yield
+
+
+@contextmanager
+def _file_lock(path: Path, expected: bytes | None):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_name(f".{path.name}.edit.lock")
     mode = stat.S_IMODE(path.stat().st_mode) if expected is not None else 0o644
@@ -85,8 +93,13 @@ def delete_definition(path: Path, *, expected: bytes) -> Path:
 
 
 def review_definition(
-    path: Path, initial: str, *, expected: bytes | None,
-    validate: Callable[[str], None], source: Path | None = None, yes: bool = False,
+    path: Path,
+    initial: str,
+    *,
+    expected: bytes | None,
+    validate: Callable[[str], None],
+    source: Path | None = None,
+    yes: bool = False,
 ) -> bool:
     """Edit a private draft, validate it, show a diff, and confirm publication.
 
@@ -96,10 +109,17 @@ def review_definition(
     """
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if not interactive and (source is None or not yes):
-        raise ValueError("Use an interactive terminal, or --file FILE --yes; create --output FILE saves a local draft")
+        raise ValueError(
+            "Use an interactive terminal, or --file FILE --yes; create --output FILE saves a local draft"
+        )
     command = None
     if source is None:
-        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or shutil.which("nano") or shutil.which("vi")
+        editor = (
+            os.environ.get("VISUAL")
+            or os.environ.get("EDITOR")
+            or shutil.which("nano")
+            or shutil.which("vi")
+        )
         if not editor or not shlex.split(editor):
             raise ValueError("Set VISUAL or EDITOR, or supply --file FILE")
         command = shlex.split(editor)
@@ -117,7 +137,11 @@ def review_definition(
                 validate(text)
             except ValueError as error:
                 print(f"Validation failed: {error}", file=sys.stderr)
-                if not command or input("Reopen the draft? [Y/n] ").strip().lower() not in {"", "y", "yes"}:
+                if not command or input("Reopen the draft? [Y/n] ").strip().lower() not in {
+                    "",
+                    "y",
+                    "yes",
+                }:
                     raise
                 continue
             if expected is not None and text.encode("utf-8") == expected:
@@ -125,10 +149,17 @@ def review_definition(
                 saved = True
                 return False
             before = expected.decode("utf-8") if expected is not None else ""
-            print("".join(difflib.unified_diff(
-                before.splitlines(keepends=True), text.splitlines(keepends=True),
-                fromfile=str(path), tofile="proposed definition",
-            )), end="")
+            print(
+                "".join(
+                    difflib.unified_diff(
+                        before.splitlines(keepends=True),
+                        text.splitlines(keepends=True),
+                        fromfile=str(path),
+                        tofile="proposed definition",
+                    )
+                ),
+                end="",
+            )
             print("Scientific changes may affect artifact freshness on the next assessment.")
             if not yes and input(f"Save {path}? [y/N] ").strip().lower() not in {"y", "yes"}:
                 print("Cancelled; the stored definition is unchanged.")

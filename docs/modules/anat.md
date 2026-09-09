@@ -60,7 +60,7 @@ manifest records exact paths rather than requiring downstream filename guesses.
 Required metadata includes `inputs`, `selection_strategy`, `outputs`,
 `freesurfer_subjects_dir`, `mni_template`, configuration provenance, and
 `complete`. Optional products have nullable paths. The full typed schema is
-[`ANATOMICAL_MANIFEST_FIELDS`](../autoapi/nro/anat/contract/index.rst).
+[`ANATOMICAL_MANIFEST_FIELDS`](../autoapi/nro/modules/anat/contract/index.rst).
 
 ## Configuration
 
@@ -78,6 +78,6 @@ environment isolation, and inner setup command for preprocessing.
 :end-before: func:
 ```
 
-Implementation: [module construction](../autoapi/nro/anat/module/index.rst),
-[planning](../autoapi/nro/anat/planning/index.rst).
+Implementation: [module construction](../autoapi/nro/modules/anat/module/index.rst),
+[planning](../autoapi/nro/modules/anat/planning/index.rst).
 See [software and methods sources](../methods/software.md).

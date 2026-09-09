@@ -15,4 +15,5 @@ def __getattr__(name):
     if name not in __all__:
         raise AttributeError(name)
     from nro.configuration import store
+
     return getattr(store, name)

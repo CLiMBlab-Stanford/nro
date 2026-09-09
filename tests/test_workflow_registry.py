@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor
 import shutil
 import sqlite3
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 import pytest
 import yaml
 
-from nro.orchestration.registry import APPLICATION_ID, SCHEMA_VERSION, Registry
-from nro.orchestration.planner import build_subject_instances
-from nro.orchestration.runtime import select_runtime_config
-from nro.anat.__main__ import build_parser as anat_parser
-from nro.func.__main__ import build_parser as func_parser
-from nro.clean.__main__ import build_parser as clean_parser
-from nro.microparcellation.__main__ import build_parser as microparcellation_parser
-from nro.networks.__main__ import build_parser as networks_parser
-from nro.qc.registration import build_parser as registration_parser
 from nro.configuration.runtime import load_runtime_configuration
-from nro.configuration.store import ConfigStore, DERIVATIVE_CLASSES, WorkflowError
+from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore, WorkflowError
+from nro.modules.anat.__main__ import build_parser as anat_parser
+from nro.modules.clean.__main__ import build_parser as clean_parser
+from nro.modules.func.__main__ import build_parser as func_parser
+from nro.modules.microparcellation.__main__ import build_parser as microparcellation_parser
+from nro.modules.networks.__main__ import build_parser as networks_parser
+from nro.orchestration.registry import APPLICATION_ID, SCHEMA_VERSION, Registry
+from nro.orchestration.runtime import select_runtime_config
+from nro.qc.registration import build_parser as registration_parser
 
 
 def _write_yaml(path: Path, value: dict) -> None:
@@ -75,7 +74,7 @@ def test_registry_reinitialize_restores_original_state_if_rebuild_fails(
 ) -> None:
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registry.initialize()
-    marker = registry.paths.control / "original-state"
+    marker = registry.paths.database.parent / "original-state"
     marker.write_text("preserve on failure")
     original_database = registry.paths.database.read_bytes()
 
@@ -226,7 +225,7 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
 
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
-    first = registry.register_workflow(store.resolve("experiment"))
+    registry.register_workflow(store.resolve("experiment"))
     _write_yaml(
         workflow_path,
         {"preprocessing": "experiment", "clean": "nogsr"},
@@ -336,7 +335,10 @@ def test_numeric_directory_names_skip_existing_workflow_name(tmp_path: Path) -> 
     workflow_path = configs / "workflows" / "experiment_workflow.yml"
     _write_yaml(workflow_path, {"preprocessing": "first"})
     _write_yaml(configs / "configs" / "preprocessing" / "first_preprocessing.yml", {})
-    _write_yaml(configs / "configs" / "preprocessing" / "second_preprocessing.yml", {"anat": {"nthreads": 7}})
+    _write_yaml(
+        configs / "configs" / "preprocessing" / "second_preprocessing.yml",
+        {"anat": {"nthreads": 7}},
+    )
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
 

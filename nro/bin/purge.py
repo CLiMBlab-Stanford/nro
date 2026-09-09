@@ -4,28 +4,33 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from nro.engine.cli import matches_instance_selectors as matches_selectors
-from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
-from nro.orchestration.registry import Registry, utcnow
-from nro.orchestration.selection import selected_projects
-from nro.orchestration.catalog import MODULES, module_descriptor, normalize_module
+from nro.engine.bids import parse_bids_entities
+from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
+from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.orchestration.catalog import MODULES, normalize_module
 from nro.orchestration.ownership import (
     instance_record_path,
     remove_empty_ownership_root,
 )
-from nro.engine.bids import parse_bids_entities
+from nro.orchestration.purge_paths import (
+    _is_within,
+    _purge_attempt_logs,
+    _purge_inactive_worker_logs,
+    _remove_path,
+)
+from nro.orchestration.registry import Registry, utcnow
+from nro.orchestration.selection import selected_projects
 
 
 @dataclass(frozen=True)
 class PurgeResult:
     """Counters and removed-path records accumulated during a purge."""
+
     projects: int = 0
     instances: int = 0
     derivative_paths: int = 0
@@ -65,9 +70,7 @@ def _matching_instances(
             continue
         if modules and str(row["module"]) not in modules:
             continue
-        if workflows and not workflows.intersection(
-            str(row.get("workflow_ids") or "").split(",")
-        ):
+        if workflows and not workflows.intersection(str(row.get("workflow_ids") or "").split(",")):
             continue
         entities = json.loads(row["entities_json"])
         if selectors and not matches_selectors(entities, selectors):
@@ -76,29 +79,7 @@ def _matching_instances(
     return result
 
 
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
-        return True
-    except ValueError:
-        return False
-
-
-def _remove_path(path: Path, *, dry_run: bool) -> bool:
-    if not path.exists() and not path.is_symlink():
-        return False
-    if dry_run:
-        return True
-    if path.is_symlink() or path.is_file():
-        path.unlink(missing_ok=True)
-    else:
-        shutil.rmtree(path)
-    return True
-
-
-RUN_IDENTITY_ENTITIES = {
-    "ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"
-}
+RUN_IDENTITY_ENTITIES = {"ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"}
 
 
 def _prefix_owned_paths(
@@ -117,9 +98,7 @@ def _prefix_owned_paths(
     """
     if not root.is_dir() or not prefix:
         return []
-    expected = {
-        key: str(value) for key, value in entities.items() if key in RUN_IDENTITY_ENTITIES
-    }
+    expected = {key: str(value) for key, value in entities.items() if key in RUN_IDENTITY_ENTITIES}
     inventory_key = root.resolve()
     if inventories is None:
         paths = tuple(sorted(root.rglob("*")))
@@ -135,11 +114,7 @@ def _prefix_owned_paths(
         if "anat" in relative_parts or "freesurfer" in relative_parts:
             continue
         target_breadcrumb = path.name == f".{prefix}_complete"
-        if (
-            not target_breadcrumb
-            and path.name != prefix
-            and not path.name.startswith(prefix + "_")
-        ):
+        if not target_breadcrumb and path.name != prefix and not path.name.startswith(prefix + "_"):
             continue
         if target_breadcrumb:
             selected.append(path)
@@ -176,12 +151,16 @@ def _instance_paths(
     entities = json.loads(instance["entities_json"])
     if module == "anat":
         derivative_paths.append(output_root)
-    elif module in {"microparcellation", "networks"}:
+    elif module in {"dynconn", "microparcellation", "networks"}:
         derivative_paths.append(output_root)
     elif module == "firstlevels":
         # A task root spans participants, variants and levels. Only this exact
         # participant/model/target prefix is owned by the selected instance.
-        derivative_paths.extend(path for path in output_root.glob(f"node-*/{sub_id}/{output_prefix}_*") if path.is_file())
+        derivative_paths.extend(
+            path
+            for path in output_root.glob(f"node-*/{sub_id}/{output_prefix}_*")
+            if path.is_file()
+        )
     else:
         derivative_paths.extend(
             _prefix_owned_paths(
@@ -212,32 +191,32 @@ def _instance_paths(
             base = project_work_derivatives / relative_output
             if entities.get("ses"):
                 base /= f"ses-{entities['ses']}"
-            target = (
-                f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
-            )
+            target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
             filename_target = target
             run_prefix = output_prefix.removesuffix(f"_{filename_target}")
             work_paths.append(base / run_prefix / target)
-        elif module in {"microparcellation", "networks"}:
+        elif module in {"dynconn", "microparcellation", "networks"}:
             work_paths.append(project_work_derivatives / relative_output)
         elif module == "firstlevels":
-            work_paths.append(project_work_derivatives / "firstlevels" / str(instance["directory_label"]) / output_prefix)
+            work_paths.append(
+                project_work_derivatives
+                / "firstlevels"
+                / str(instance["directory_label"])
+                / output_prefix
+            )
 
     derivative_paths.append(Path(instance["manifest_path"]))
-    descriptor = module_descriptor(module)
     derivative_paths.append(
         instance_record_path(
             registry.paths.project_root,
-            descriptor.configuration_class,
+            str(instance["derivative_class"]),
             str(instance["directory_label"]),
             module,
             str(instance["instance_key"]),
         )
     )
     allowed_derivative_roots = (derivatives_root, registry.paths.control)
-    derivative_root_resolved = {
-        root.resolve(strict=False) for root in allowed_derivative_roots
-    }
+    derivative_root_resolved = {root.resolve(strict=False) for root in allowed_derivative_roots}
     derivative_paths = [
         path
         for path in dict.fromkeys(derivative_paths)
@@ -283,11 +262,27 @@ def _purge_instances(
     work_root: Path,
     dry_run: bool,
 ) -> PurgeResult:
-    selected = [
-        (registry, instance)
-        for registry, instances in planned
-        for instance in instances
-    ]
+    ids = {int(instance["id"]) for _registry, instances in planned for instance in instances}
+    if dry_run or not ids:
+        return _purge_reserved_instances(planned, work_root=work_root, dry_run=dry_run)
+    registry = planned[0][0]
+    active = _active_instances(registry, ids)
+    if active:
+        raise SystemExit(_active_error(active))
+    try:
+        with registry.artifact_mutation(ids):
+            return _purge_reserved_instances(planned, work_root=work_root, dry_run=False)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
+
+
+def _purge_reserved_instances(
+    planned: list[tuple[Registry, list[dict]]],
+    *,
+    work_root: Path,
+    dry_run: bool,
+) -> PurgeResult:
+    selected = [(registry, instance) for registry, instances in planned for instance in instances]
     if not selected:
         return PurgeResult()
     instance_ids = {int(instance["id"]) for _registry, instance in selected}
@@ -334,110 +329,19 @@ def _purge_instances(
         lineage_roots = {
             (
                 registry.paths.project_root,
-                module_descriptor(str(instance["module"])).configuration_class,
+                str(instance["derivative_class"]),
                 str(instance["directory_label"]),
             )
             for registry, instance in selected
         }
         for project_root, derivative_class, directory_label in lineage_roots:
-            remove_empty_ownership_root(
-                project_root, derivative_class, directory_label
-            )
+            remove_empty_ownership_root(project_root, derivative_class, directory_label)
 
     return PurgeResult(
         instances=len(instance_ids),
         derivative_paths=derivative_count,
         work_paths=work_count,
     )
-
-
-def _purge_attempt_logs(
-    registry: Registry,
-    *,
-    instance_ids: set[int],
-    dry_run: bool,
-) -> int:
-    """Remove terminal attempt logs belonging to the selected instances."""
-    if not instance_ids:
-        return 0
-    attempt_count = 0
-    with registry.connection() as db:
-        terminal_attempts = db.execute(
-            """SELECT id, instance_id, log_path FROM attempts
-               WHERE state NOT IN ('queued', 'running', 'cancel_requested')"""
-        ).fetchall()
-        active_instance_logs = {
-            str(row["log_path"])
-            for row in db.execute(
-                """SELECT DISTINCT log_path FROM attempts
-                   WHERE state IN ('queued', 'running', 'cancel_requested')
-                     AND log_path IS NOT NULL"""
-            )
-        }
-
-    deleted_attempt_ids = []
-    for attempt in terminal_attempts:
-        if int(attempt["instance_id"]) not in instance_ids:
-            continue
-        raw_path = str(attempt["log_path"] or "").strip()
-        # Sequential attempts deliberately share one current instance log. Never
-        # let bare log cleanup remove it while a newer attempt is active.
-        if not raw_path or raw_path in active_instance_logs:
-            continue
-        path = Path(raw_path)
-        if _is_within(path, registry.paths.events) and _remove_path(path, dry_run=dry_run):
-            attempt_count += 1
-            deleted_attempt_ids.append(int(attempt["id"]))
-    if deleted_attempt_ids and not dry_run:
-        with registry.connection(write=True) as db:
-            placeholders = ",".join("?" for _ in deleted_attempt_ids)
-            db.execute(
-                f"""UPDATE attempts SET log_path=NULL
-                    WHERE id IN ({placeholders})
-                      AND state NOT IN ('queued', 'running', 'cancel_requested')""",
-                deleted_attempt_ids,
-            )
-    return attempt_count
-
-
-def _purge_inactive_worker_logs(registry: Registry, *, dry_run: bool) -> int:
-    """Remove worker logs only when their Slurm jobs are known to be inactive."""
-    worker_count = 0
-    with registry.connection() as db:
-        active_job_ids = {
-            str(row["slurm_job_id"])
-            for row in db.execute(
-                """SELECT slurm_job_id FROM scheduler_submissions
-                   WHERE state IN ('prepared', 'submitted', 'running')
-                     AND slurm_job_id IS NOT NULL"""
-            )
-        }
-        active_job_ids.update(
-            str(row["slurm_job_id"])
-            for row in db.execute(
-                """SELECT slurm_job_id FROM workers
-                   WHERE state IN ('idle', 'running', 'draining')
-                     AND slurm_job_id IS NOT NULL"""
-            )
-        )
-        terminal_job_ids = {
-            str(row["slurm_job_id"])
-            for row in db.execute(
-                """SELECT slurm_job_id FROM scheduler_submissions
-                   WHERE state NOT IN ('prepared', 'submitted', 'running')
-                     AND slurm_job_id IS NOT NULL"""
-            )
-        }
-
-    for path in registry.paths.workers.glob("slurm-*.log"):
-        job_id = path.stem.removeprefix("slurm-")
-        if job_id in active_job_ids:
-            continue
-        if job_id not in terminal_job_ids and _slurm_job_may_be_active(job_id):
-            continue
-        worker_count += int(_remove_path(path, dry_run=dry_run))
-
-    return worker_count
 
 
 def _planned_paths(
@@ -461,11 +365,7 @@ def _planned_paths(
                     continue
                 target = private if _is_within(path, registry.paths.control) else public
                 target.add(path.absolute())
-            private.update(
-                path.absolute()
-                for path in work
-                if path.exists() or path.is_symlink()
-            )
+            private.update(path.absolute() for path in work if path.exists() or path.is_symlink())
     return sorted(public), sorted(private)
 
 
@@ -498,39 +398,192 @@ def _confirm() -> bool:
     return response.strip().lower() in {"y", "yes"}
 
 
-def _slurm_job_may_be_active(job_id: str) -> bool:
-    """Protect an untracked worker log unless Slurm confirms it is absent."""
-    try:
-        result = subprocess.run(
-            ["squeue", "-h", "-j", job_id, "-o", "%T"],
-            text=True,
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return True
-    if result.returncode != 0:
-        return True
-    return bool(result.stdout.strip())
-
-
 def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
     """Construct the purge parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--work-root", default=WORK_PATH)
-    parser.add_argument(
-        "-l", "--logs", action="store_true",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "-l",
+        "--logs",
+        action="store_true",
         help="Remove only matching attempt logs and logs from inactive workers",
     )
+    mode.add_argument(
+        "--cache",
+        action="store_true",
+        help="Remove unused execution snapshots lab-wide, ignoring selectors",
+    )
     parser.add_argument(
-        "-f", "--force", action="store_true",
+        "-f",
+        "--force",
+        action="store_true",
         help="Proceed without interactive confirmation",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser
+
+
+def _purge_cache(args) -> None:
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.execution_cache import CacheCollection, collect_cache
+    from nro.orchestration.scheduler_client import maintenance
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    bids_root = Path(args.bids_root).expanduser().resolve()
+    remote = (
+        installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    )
+    if remote and bids_root != Path(values["bids"]).resolve():
+        raise SystemExit("Cache maintenance uses the shared site BIDS root")
+    registry = None if remote else Registry.for_project("", bids_root=bids_root)
+
+    def collect(*, dry_run=False, approved=None):
+        if not remote:
+            return collect_cache(registry, dry_run=dry_run, approved=approved)
+        result = maintenance(
+            Path(values["registry"]),
+            bids_root,
+            checkout=CHECKOUT,
+            operation="cache",
+            dry_run=dry_run,
+            approved=None if approved is None else list(map(str, approved)),
+        )
+        return CacheCollection(
+            tuple(map(Path, result["paths"])),
+            tuple(map(Path, result["retained"])),
+            result["reason"],
+        )
+
+    if args.json and not args.force and not args.dry_run:
+        raise SystemExit("--json requires --force when purge is not a dry run")
+    preview = collect(dry_run=True)
+    if not args.json:
+        report = [
+            "Execution cache purge (all projects; artifact selectors are ignored).",
+            *(str(path) for path in preview.paths),
+        ]
+        if preview.reason:
+            report.append(f"Cache retained: {preview.reason}.")
+        elif not preview.paths:
+            report.append("No unused cache entries to remove.")
+        page_text("\n".join(report) + "\n")
+    if not args.dry_run and preview.paths and not args.force and not _confirm():
+        print("Purge cancelled.")
+        return
+    result = preview if args.dry_run else collect(approved=preview.paths)
+    payload = dict(
+        mode="cache",
+        dry_run=args.dry_run,
+        paths=[str(path) for path in result.paths],
+        retained=[str(path) for path in result.retained],
+        reason=result.reason,
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        verb = "Would purge" if args.dry_run else "Purged"
+        print(
+            f"{verb} {len(result.paths)} execution cache entries; retained {len(result.retained)}."
+        )
+        if result.reason:
+            print(f"Cleanup deferred: {result.reason}.")
+
+
+def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
+    from types import SimpleNamespace
+
+    from nro.orchestration.execution_context import ExecutionContext
+    from nro.orchestration.scheduler_client import maintenance
+
+    bids_root, work_root = Path(args.bids_root).resolve(), Path(args.work_root).resolve()
+    if bids_root != Path(values["bids"]).resolve() or work_root != Path(values["work"]).resolve():
+        raise SystemExit(
+            "Branch purge uses the shared site roots and maps output paths automatically"
+        )
+    control = Path(values["registry"])
+    snapshot = maintenance(control, bids_root, checkout=checkout, operation="purge_snapshot")
+    plan, public, private, projects = [], set(), set(), set()
+    for row in snapshot["rows"]:
+        if (
+            selection.projects
+            and row["project"] not in selection.projects
+            or selection.participants
+            and row["participant"] not in selection.participants
+            or selection.modules
+            and row["module"] not in selection.modules
+            or selection.workflows
+            and not set(selection.workflows).intersection(row["workflow_ids"].split(","))
+            or not matches_selectors(json.loads(row["entities_json"]), selection.instance_entities)
+        ):
+            continue
+        if not args.logs and row["attempt_state"] in {"queued", "running", "cancel_requested"}:
+            raise SystemExit(_active_error([row]))
+        context = ExecutionContext.from_dict(row["execution_context"])
+        facade = SimpleNamespace(
+            paths=SimpleNamespace(
+                project=row["project"],
+                control=control,
+                project_root=context.paths.output_project(row["project"]),
+            )
+        )
+        derivatives, work = (
+            ([], [])
+            if args.logs
+            else _instance_paths(
+                row, registry=facade, work_root=context.paths.private_project(row["project"]).parent
+            )
+        )
+        derivatives = [path for path in derivatives if path.exists() or path.is_symlink()]
+        work = [path for path in work if path.exists() or path.is_symlink()]
+        public.update(path for path in derivatives if not path.is_relative_to(control))
+        private.update(path for path in derivatives if path.is_relative_to(control))
+        private.update(work)
+        projects.add(row["project"])
+        plan.append(
+            dict(
+                id=row["id"],
+                token=row["purge_token"],
+                public=list(map(str, derivatives)),
+                private=list(map(str, work)),
+            )
+        )
+    if args.json and not args.force and not args.dry_run:
+        raise SystemExit("--json requires --force when purge is not a dry run")
+    if not args.json:
+        page_text(_render_plan(sorted(public), sorted(private), logs_only=args.logs))
+    if not args.force and not args.dry_run and not _confirm():
+        print("Purge cancelled.")
+        return
+    result = maintenance(
+        control,
+        bids_root,
+        checkout=checkout,
+        operation="purge",
+        plan=plan,
+        logs_only=args.logs,
+        dry_run=args.dry_run,
+    )
+    result.update(
+        projects=len(projects),
+        mode="logs" if args.logs else "all",
+        dry_run=args.dry_run,
+        planned_public_paths=list(map(str, sorted(public))),
+        planned_private_paths=list(map(str, sorted(private))),
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        verb = "Would purge" if args.dry_run else "Purged"
+        print(
+            f"{verb} {result['instances']} instance(s), {result['derivative_paths']} derivative/control paths, "
+            f"{result['work_paths']} WORK paths, and {result['attempt_logs'] + result['worker_logs']} logs."
+        )
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
@@ -540,10 +593,23 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
     args = build_parser(prog=prog).parse_args(argv)
+    if args.cache:
+        _purge_cache(args)
+        return
     try:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    if (
+        installation_record().get("mode") == "branch"
+        or implementation_path(Path(values["registry"])).is_file()
+    ):
+        _branch_purge(args, selection, values=values, checkout=CHECKOUT)
+        return
     bids_root = Path(args.bids_root).expanduser().resolve()
     work_root = Path(args.work_root).expanduser().resolve()
     selectors = selection.instance_entities
@@ -565,9 +631,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
         planned.append((registry, instances))
 
     selected_instance_ids = {
-        int(instance["id"])
-        for _registry, instances in planned
-        for instance in instances
+        int(instance["id"]) for _registry, instances in planned for instance in instances
     }
     central_registry = planned[0][0]
     if not args.logs:
@@ -576,9 +640,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
             raise SystemExit(_active_error(active))
 
     public_paths, private_paths = (
-        ([], [])
-        if args.logs
-        else _planned_paths(planned, work_root=work_root)
+        ([], []) if args.logs else _planned_paths(planned, work_root=work_root)
     )
     report = _render_plan(public_paths, private_paths, logs_only=args.logs)
     if args.json:
@@ -592,9 +654,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
 
     total = PurgeResult(projects=len(projects))
     if not args.logs:
-        result = _purge_instances(
-            planned, work_root=work_root, dry_run=args.dry_run
-        )
+        result = _purge_instances(planned, work_root=work_root, dry_run=args.dry_run)
         total = total.add(
             instances=result.instances,
             derivative_paths=result.derivative_paths,
@@ -606,9 +666,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
             instance_ids=selected_instance_ids,
             dry_run=args.dry_run,
         ),
-        worker_logs=_purge_inactive_worker_logs(
-            central_registry, dry_run=args.dry_run
-        ),
+        worker_logs=_purge_inactive_worker_logs(central_registry, dry_run=args.dry_run),
     )
 
     payload = total.__dict__ | {

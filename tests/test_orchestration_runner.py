@@ -1,15 +1,15 @@
-import logging
 import json
+import logging
 import subprocess
 from itertools import count
 from pathlib import Path
 
 import pytest
 
-from nro.orchestration.manifests import file_record
-from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
-from nro.orchestration.runner import ContainerSpec, Runner
 from nro.engine.execution import collect_bind_directories
+from nro.orchestration.manifests import file_record
+from nro.orchestration.runner import ContainerSpec, Runner
+from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
 
 
 def test_bind_collection_uses_existing_ancestors_for_future_outputs(
@@ -32,9 +32,7 @@ def test_bind_collection_uses_existing_ancestors_for_future_outputs(
         )
     )
 
-    assert binds == sorted(
-        (str(public_session), str(input_directory), str(work_session))
-    )
+    assert binds == sorted((str(public_session), str(input_directory), str(work_session)))
 
 
 def test_bind_collection_rejects_relative_paths_and_host_root(
@@ -142,9 +140,7 @@ def test_container_aliases_are_restored_in_captured_output(
         next_step=count(1).__next__,
     )
 
-    assert runner._restore_host_paths("__PATH__=/n0/fsaverage") == (
-        f"__PATH__={source}/fsaverage"
-    )
+    assert runner._restore_host_paths("__PATH__=/n0/fsaverage") == (f"__PATH__={source}/fsaverage")
 
 
 def test_resumable_step_requires_output_file(tmp_path: Path) -> None:
@@ -198,22 +194,26 @@ def test_fresh_public_boundary_does_not_require_private_work(tmp_path: Path) -> 
             public.write_text(private.read_text())
             manifest.write_text("complete")
 
-        runner.add_step(Step.python(
-            name="Build Private Intermediate",
-            outputs=(private,),
-            action=write_private,
-        ))
-        runner.add_step(Step.python(
-            name="Publish Derivative",
-            inputs=(private,),
-            outputs=(public, manifest),
-            action=publish,
-            validate=lambda: (
-                public.is_file() and public.read_text() == "intermediate",
-                "Public derivative is invalid.",
-            ),
-            completion_boundary=True,
-        ))
+        runner.add_step(
+            Step.python(
+                name="Build Private Intermediate",
+                outputs=(private,),
+                action=write_private,
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Publish Derivative",
+                inputs=(private,),
+                outputs=(public, manifest),
+                action=publish,
+                validate=lambda: (
+                    public.is_file() and public.read_text() == "intermediate",
+                    "Public derivative is invalid.",
+                ),
+                completion_boundary=True,
+            )
+        )
         return runner
 
     runner = construct()
@@ -276,14 +276,16 @@ def test_directory_artifact_clears_stale_contents_and_writes_breadcrumb_last(
         valid = (directory / "new-result.txt").is_file()
         return valid, "new opaque result is present" if valid else "missing opaque result"
 
-    runner.add_step(Step.directory_step(
-        name="Generate Opaque Directory",
-        directory=directory,
-        breadcrumb=breadcrumb,
-        force=True,
-        action=produce,
-        validate=validate,
-    ))
+    runner.add_step(
+        Step.directory_step(
+            name="Generate Opaque Directory",
+            directory=directory,
+            breadcrumb=breadcrumb,
+            force=True,
+            action=produce,
+            validate=validate,
+        )
+    )
     with runner.run_context():
         runner.execute()
 
@@ -308,13 +310,15 @@ def test_directory_artifact_failure_leaves_no_completion_breadcrumb(
     def produce_incomplete_directory() -> None:
         directory.mkdir(parents=True)
 
-    runner.add_step(Step.directory_step(
-        name="Generate Incomplete Directory",
-        directory=directory,
-        breadcrumb=breadcrumb,
-        action=produce_incomplete_directory,
-        validate=lambda: (False, "incomplete opaque output"),
-    ))
+    runner.add_step(
+        Step.directory_step(
+            name="Generate Incomplete Directory",
+            directory=directory,
+            breadcrumb=breadcrumb,
+            action=produce_incomplete_directory,
+            validate=lambda: (False, "incomplete opaque output"),
+        )
+    )
     with pytest.raises(RuntimeError, match="incomplete opaque output"):
         with runner.run_context():
             runner.execute()
@@ -329,7 +333,9 @@ def test_directory_timeout_cannot_publish_or_reuse_partial_results(tmp_path: Pat
     breadcrumb = directory / ".nro_complete"
     for timeout in (True, False):
         runner = Runner(
-            module_name="Timeout Test", container=None, binds=(),
+            module_name="Timeout Test",
+            container=None,
+            binds=(),
             logger=logging.getLogger("test.runner.timeout"),
             next_step=count(1).__next__,
         )
@@ -341,11 +347,16 @@ def test_directory_timeout_cannot_publish_or_reuse_partial_results(tmp_path: Pat
             if timeout:
                 raise subprocess.TimeoutExpired("oslom", 1)
 
-        runner.add_step(Step.directory_step(
-            name="Fit", directory=directory, breadcrumb=breadcrumb,
-            outputs=(result,), action=produce,
-            validate=lambda: (result.is_file(), "result exists"),
-        ))
+        runner.add_step(
+            Step.directory_step(
+                name="Fit",
+                directory=directory,
+                breadcrumb=breadcrumb,
+                outputs=(result,),
+                action=produce,
+                validate=lambda: (result.is_file(), "result exists"),
+            )
+        )
         if timeout:
             with pytest.raises(subprocess.TimeoutExpired), runner.run_context():
                 runner.execute()
@@ -450,7 +461,9 @@ def test_container_command_preflight_runs_configured_inner_setup(
     image.touch()
     calls: list[list[str]] = []
 
-    monkeypatch.setattr("nro.orchestration.runner.shutil.which", lambda _cmd: "/usr/bin/singularity")
+    monkeypatch.setattr(
+        "nro.orchestration.runner.shutil.which", lambda _cmd: "/usr/bin/singularity"
+    )
 
     def fake_run(command, **_kwargs):
         calls.append([str(part) for part in command])
@@ -515,11 +528,13 @@ def test_structured_step_ledger_records_outputs(tmp_path: Path, monkeypatch) -> 
     )
     output = tmp_path / "output.txt"
 
-    runner.add_step(Step.python(
-        name="Generate Output",
-        outputs=(output,),
-        action=lambda: output.write_text("done"),
-    ))
+    runner.add_step(
+        Step.python(
+            name="Generate Output",
+            outputs=(output,),
+            action=lambda: output.write_text("done"),
+        )
+    )
     with runner.run_context():
         runner.execute()
 
@@ -529,9 +544,7 @@ def test_structured_step_ledger_records_outputs(tmp_path: Path, monkeypatch) -> 
     assert generated["outputs"] == [str(output)]
     assert (tmp_path / "step-events.jsonl").is_file()
     graph = json.loads((tmp_path / "runner-graph.json").read_text())
-    generated_node = next(
-        node for node in graph["nodes"] if node["name"] == "Generate Output"
-    )
+    generated_node = next(node for node in graph["nodes"] if node["name"] == "Generate Output")
     assert generated_node["outputs"] == [str(output)]
     assert generated_node["execution"] == "success"
 
@@ -547,12 +560,14 @@ def test_python_artifact_validator_can_reopen_existing_output(tmp_path: Path) ->
         next_step=count(1).__next__,
     )
 
-    step = runner.add_step(Step.python(
-        name="Validated Output",
-        outputs=(output,),
-        action=lambda: output.write_text("valid"),
-        validate=lambda: (output.read_text() == "valid", "Semantic validation failed."),
-    ))
+    step = runner.add_step(
+        Step.python(
+            name="Validated Output",
+            outputs=(output,),
+            action=lambda: output.write_text("valid"),
+            validate=lambda: (output.read_text() == "valid", "Semantic validation failed."),
+        )
+    )
     with runner.run_context():
         states = runner.execute()
 
@@ -560,9 +575,7 @@ def test_python_artifact_validator_can_reopen_existing_output(tmp_path: Path) ->
     assert output.read_text() == "valid"
 
 
-def test_step_ledger_records_exact_planned_artifact_path(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_step_ledger_records_exact_planned_artifact_path(tmp_path: Path, monkeypatch) -> None:
     ledger = tmp_path / "current-steps.json"
     output = tmp_path / "private" / "checkpoint.txt"
     monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
@@ -574,18 +587,18 @@ def test_step_ledger_records_exact_planned_artifact_path(
         next_step=count(1).__next__,
     )
 
-    runner.add_step(Step.python(
-        name="Write Checkpoint",
-        outputs=(output,),
-        action=lambda: (output.parent.mkdir(parents=True), output.write_text("done")),
-    ))
+    runner.add_step(
+        Step.python(
+            name="Write Checkpoint",
+            outputs=(output,),
+            action=lambda: (output.parent.mkdir(parents=True), output.write_text("done")),
+        )
+    )
     with runner.run_context():
         runner.execute()
 
     current = json.loads(ledger.read_text())
-    checkpoint = next(
-        value for value in current.values() if value["name"] == "Write Checkpoint"
-    )
+    checkpoint = next(value for value in current.values() if value["name"] == "Write Checkpoint")
     assert checkpoint["outputs"] == [str(output)]
 
 
@@ -598,11 +611,13 @@ def test_runner_preserves_exact_declared_output_path(tmp_path: Path) -> None:
         logger=logging.getLogger("test.runner.reject-basename"),
         next_step=count(1).__next__,
     )
-    step = runner.add_step(Step.python(
-        name="Checkpoint",
-        outputs=(output,),
-        action=lambda: (output.parent.mkdir(parents=True), output.write_text("done")),
-    ))
+    step = runner.add_step(
+        Step.python(
+            name="Checkpoint",
+            outputs=(output,),
+            action=lambda: (output.parent.mkdir(parents=True), output.write_text("done")),
+        )
+    )
     assert step.outputs == (output,)
 
 
@@ -616,11 +631,13 @@ def test_graph_execution_is_forbidden_outside_runner_context(
         logger=logging.getLogger("test.runner.context-required"),
         next_step=count(1).__next__,
     )
-    runner.add_step(Step.python(
-        name="Output",
-        outputs=(tmp_path / "output",),
-        action=lambda: None,
-    ))
+    runner.add_step(
+        Step.python(
+            name="Output",
+            outputs=(tmp_path / "output",),
+            action=lambda: None,
+        )
+    )
     with pytest.raises(RuntimeError, match=r"active run_context"):
         runner.execute()
 
@@ -646,11 +663,13 @@ def test_compound_step_commands_use_uniform_user_facing_log_labels(
         )
         output.write_text(str(captured))
 
-    runner.add_step(Step.python(
-        name="Compound Step",
-        outputs=(output,),
-        action=execute,
-    ))
+    runner.add_step(
+        Step.python(
+            name="Compound Step",
+            outputs=(output,),
+            action=execute,
+        )
+    )
 
     with caplog.at_level(logging.INFO, logger=logger.name):
         with runner.run_context():
@@ -671,8 +690,10 @@ def test_module_dag_contract_rejects_topology_change_for_same_signature(
     first = RunnerGraph("Immutable")
     first.add(
         Step.python(
-            name="First", inputs=(tmp_path / "source.txt",),
-            outputs=(first_output,), action=lambda: None,
+            name="First",
+            inputs=(tmp_path / "source.txt",),
+            outputs=(first_output,),
+            action=lambda: None,
         )
     )
     first.freeze()
@@ -682,8 +703,10 @@ def test_module_dag_contract_rejects_topology_change_for_same_signature(
     changed_output = tmp_path / "changed.txt"
     changed.add(
         Step.python(
-            name="Changed", inputs=(tmp_path / "source.txt",),
-            outputs=(changed_output,), action=lambda: None,
+            name="Changed",
+            inputs=(tmp_path / "source.txt",),
+            outputs=(changed_output,),
+            action=lambda: None,
         )
     )
     changed.freeze()
@@ -736,14 +759,16 @@ def test_command_artifact_validator_reopens_invalid_existing_output(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr("nro.orchestration.runner.subprocess.run", fake_run)
-    step = runner.add_step(Step.command_step(
-        ["write-output", str(output)],
-        outputs=(output,),
-        validate=lambda: (
-            output.read_text() == "valid",
-            "Semantic command validation failed.",
-        ),
-    ))
+    step = runner.add_step(
+        Step.command_step(
+            ["write-output", str(output)],
+            outputs=(output,),
+            validate=lambda: (
+                output.read_text() == "valid",
+                "Semantic command validation failed.",
+            ),
+        )
+    )
     with runner.run_context():
         states = runner.execute()
 

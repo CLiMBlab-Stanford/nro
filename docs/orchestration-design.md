@@ -1,6 +1,6 @@
 # Orchestration design
 
-Status: implemented and audited on 2026-09-03.
+Status: implemented and audited on 2026-09-08.
 
 ## Scope and vocabulary
 
@@ -9,8 +9,8 @@ The normative vocabulary and its relationships are defined in
 lifecycle are defined in
 [Instance planning and execution](instance-lifecycle.md).
 
-The scientific surface consists of five modules: `anat`, `func`, `clean`,
-`microparcellation`, and `networks`. Their planner-facing metadata is assembled
+The scientific surface includes `anat`, `func`, `clean`, `dynconn`,
+`microparcellation`, `networks`, and `firstlevels`. Their planner-facing metadata is assembled
 in one closed built-in catalog. Module-specific instance construction lives in
 each scientific package; the central planner owns cross-module traversal.
 
@@ -59,30 +59,35 @@ The current command is part of the execution recipe and may be reformatted
 without making a derivative stale. Replanning an unchanged contract does not
 replace a recipe attached to active demand.
 
-## Registry
+## Registries and scheduler
 
-The lab has one private control store shared by every project:
+The lab has one private control store shared by every project and branch:
 
 ```text
 /juice6/u/nlp/climblab/.nro/
-    registry.sqlite3
-    registry.lock/
-    manifests/
-    requests/
-    events/
-    workers/
-    snapshots/
-    workflows/
+    shared/
+        branches.json
+        scheduler/registry.sqlite3
+        cache/
+        ingestion/
+        promotions/
+    branches/
+        main/registry.sqlite3
+        dev/registry.sqlite3
+        <branch-id>/registry.sqlite3
 ```
 
-Schema 14 is the only supported registry schema. There is no migration ladder:
-an incompatible development registry must be reinitialized.
+The scheduler schema is 17 and the scientific branch-registry schema is 2.
+These numbers validate private storage layouts; neither contributes to
+scientific freshness. There is no migration ladder. Rebuild an incompatible
+development registry with the documented repair command.
 
 Source project and participant directories are discovered independently of
-derivative planning. Project identity is also stored on requests and instances;
-workers and scheduler submissions are lab-wide. Consequently, concurrency
-limits and reusable worker capacity are enforced across simultaneous requests
-from different projects.
+derivative planning. Branch registries hold compiled scientific contracts,
+workflow lineages, and observations. The scheduler registry alone holds demand,
+attempts, workers, and submissions. Consequently, concurrency limits and
+reusable worker capacity are enforced across simultaneous requests from
+different projects and branches.
 
 All SQLite access is serialized by the same atomic directory lock. SQLite uses
 rollback journaling rather than WAL for cross-node safety. Transactions are
@@ -163,7 +168,7 @@ Space and smoothing are demand-driven. The planner does not enumerate every
 possible pair. A request creates only its requested cross-product (default:
 `fsnative` and `2mm`); a later request can add another pair without changing or
 rerunning unrelated pairs. `func` remains shared because it publishes all
-configured spaces, while each `clean`, `microparcellation`, and `networks`
+configured spaces, while each `clean`, `dynconn`, `microparcellation`, and `networks`
 instance represents exactly one pair.
 
 ## Workers and Slurm
@@ -182,11 +187,12 @@ higher-tier workers may accept lower-tier instances.
 
 ## Observation and mutation
 
-`status` and `log` are observational. They use read-only registry connections
-and do not assess artifacts, reconcile requests, or cancel work. `run` and
-workers own assessment and worker-pool growth. `set` changes live planner
-settings without creating demand. `stop`, `purge`, and `publish` are explicit
-mutation commands with distinct responsibilities.
+`log` is observational. `status --cached` reads saved state, while the default
+status previews inexpensive reassessment without storing it. `status --verify`
+performs authoritative assessment and updates the registry; it can cancel an
+attempt whose registered contract has become obsolete. `run` and workers also
+assess artifacts and grow the worker pool. `set`, `stop`, `purge`, and
+`publish` are explicit mutation commands with distinct responsibilities.
 
 ## Publication
 

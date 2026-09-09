@@ -72,9 +72,9 @@ column metadata. AROMA-enabled runs also retain corresponding no-AROMA products
 and classification records. Fieldmap-derived products exist only on applicable
 branches. The functional manifest identifies every published path.
 
-The [functional contract](../autoapi/nro/func/contracts/index.rst) defines the
+The [functional contract](../autoapi/nro/modules/func/contracts/index.rst) defines the
 required manifest and sidecar fields; the
-[resolver](../autoapi/nro/func/resolver/index.rst) defines reference selection.
+[resolver](../autoapi/nro/modules/func/resolver/index.rst) defines reference selection.
 
 ## Configuration
 
@@ -97,7 +97,7 @@ are available as confounds but are not selected by the default clean regex.
 :start-at: func:
 ```
 
-Implementation: [module](../autoapi/nro/func/module/index.rst),
-[resampling](../autoapi/nro/func/resampling/index.rst),
-[confounds](../autoapi/nro/func/confounds/index.rst).
+Implementation: [module](../autoapi/nro/modules/func/module/index.rst),
+[resampling](../autoapi/nro/modules/func/resampling/index.rst),
+[confounds](../autoapi/nro/modules/func/confounds/index.rst).
 See [software sources](../methods/software.md).

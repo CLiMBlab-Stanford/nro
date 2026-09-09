@@ -1,12 +1,12 @@
 import os
 from pathlib import Path
 
+from nro.configuration.store import ConfigStore
 from nro.orchestration.runtime import (
     CONFIGURATION_FINGERPRINT_ENV,
     select_runtime_config,
     selected_configuration_fingerprint,
 )
-from nro.configuration.store import ConfigStore
 
 
 def test_direct_workflow_selection_exports_intrinsic_configuration_fingerprint(

@@ -127,6 +127,7 @@ orchestration settings, separate from scientific contracts.
 | --- | --- | --- |
 | `preprocessing` | anat, func | [Anat](modules/anat.md), [func](modules/func.md) |
 | `clean` | clean | [Clean](modules/clean.md) |
+| `dynconn` | dynconn | [Dynamic connectivity](modules/dynconn.md) |
 | `microparcellation` | microparcellation | [Microparcellation](modules/microparcellation.md) |
 | `networks` | networks | [Networks](modules/networks.md) |
 | `firstlevels` | firstlevels | [First-level models](modules/firstlevels.md) |

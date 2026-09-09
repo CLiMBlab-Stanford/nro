@@ -5,12 +5,16 @@ public artifacts, and dependencies. Default values are included from the
 packaged starter YAML files. A lab's active [definitions store](../definitions.md)
 may override those values.
 
+All seven scientific packages live under `nro.modules`. Their direct module
+entry points therefore use `python -m nro.modules.NAME`.
+
 ```{toctree}
 :maxdepth: 1
 
 anat
 func
 clean
+dynconn
 microparcellation
 networks
 firstlevels
@@ -18,8 +22,8 @@ firstlevels
 
 `anat` runs per participant across available anatomical acquisitions; `func`
 runs per BOLD acquisition. `clean` runs per acquisition, space, and smoothing.
-`microparcellation` and `networks` aggregate per participant, space, and
-smoothing. The planner records exclusions of unusable source selections;
+`dynconn`, `microparcellation`, and `networks` aggregate per participant,
+space, and smoothing. The planner records exclusions of unusable source selections;
 downstream run-quality exclusions are recorded in artifact metadata.
 
 `firstlevels` is a separate branch from `func`. It fits task models per run and

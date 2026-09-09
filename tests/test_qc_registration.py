@@ -25,7 +25,9 @@ def _write_anatomy(subject_dir: Path, subject: str, affine: np.ndarray) -> None:
     nib.save(nib.Nifti1Image(anatomical, affine), anat / f"{subject}_desc-preproc_T1w.nii.gz")
     for hemi in ("L", "R"):
         for surface in ("white", "pial"):
-            (anat / f"{subject}_space-fsnative_hemi-{hemi}_{surface}.surf.gii").write_text("surface")
+            (anat / f"{subject}_space-fsnative_hemi-{hemi}_{surface}.surf.gii").write_text(
+                "surface"
+            )
 
 
 def test_registration_audit_stacks_first_volumes_and_writes_scene(tmp_path: Path) -> None:
@@ -34,7 +36,12 @@ def test_registration_audit_stacks_first_volumes_and_writes_scene(tmp_path: Path
     affine = np.diag([2.0, 2.0, 2.0, 1.0])
     affine[:3, 3] = (-8.0, -9.0, -10.0)
     first = subject_dir / "func" / f"{subject}_task-a_run-10_space-T1w_desc-preproc_bold.nii.gz"
-    second = subject_dir / "ses-one" / "func" / f"{subject}_ses-one_task-a_run-2_space-T1w_desc-preproc_bold.nii.gz"
+    second = (
+        subject_dir
+        / "ses-one"
+        / "func"
+        / f"{subject}_ses-one_task-a_run-2_space-T1w_desc-preproc_bold.nii.gz"
+    )
     _write_nifti(first, 10.0, affine)
     _write_nifti(second, 2.0, affine)
     _write_anatomy(subject_dir, subject, affine)
@@ -69,7 +76,9 @@ def test_registration_audit_resamples_a_different_grid(tmp_path: Path) -> None:
     shifted = affine.copy()
     shifted[0, 3] = 0.25
     for run, run_affine in ((1, affine), (2, affine), (3, shifted)):
-        path = subject_dir / "func" / f"{subject}_task-a_run-{run}_space-T1w_desc-preproc_bold.nii.gz"
+        path = (
+            subject_dir / "func" / f"{subject}_task-a_run-{run}_space-T1w_desc-preproc_bold.nii.gz"
+        )
         _write_nifti(path, float(run), run_affine)
     _write_anatomy(subject_dir, subject, affine)
 
@@ -95,12 +104,7 @@ def test_registration_output_is_a_nested_derivative_parallel_to_entities(
         derivative_root / "derivatives" / "qc" / "registration" / "sub-t20"
     )
     assert registration_output_dir(derivative_root, "sub-t20", "ses-one") == (
-        derivative_root
-        / "derivatives"
-        / "qc"
-        / "registration"
-        / "sub-t20"
-        / "ses-one"
+        derivative_root / "derivatives" / "qc" / "registration" / "sub-t20" / "ses-one"
     )
 
 
@@ -112,8 +116,6 @@ def test_qc_command_dispatches_registration_arguments(monkeypatch) -> None:
 
     monkeypatch.setitem(qc_engine.QUALITY_CONTROLS, "registration", registration)
 
-    qc_engine.main(
-        ["registration", "t20", "-p", "nptl"], prog="nro qc"
-    )
+    qc_engine.main(["registration", "t20", "-p", "nptl"], prog="nro qc")
 
     assert received == [(["t20", "-p", "nptl"], "nro qc registration")]

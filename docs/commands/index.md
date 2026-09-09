@@ -14,6 +14,10 @@ viewing
 models
 authoring
 bidsify
+branches
+releases
+promotion
+cutover
 ```
 
 `nro definitions create [PATH]` initializes a lab-owned definitions store.
@@ -23,7 +27,7 @@ validation scope, and version-control policy.
 
 ## Shared selectors
 
-`run`, `status`, `stop`, `log`, `purge`, and `wb_view` use the common selector
+`run`, `status`, `stop`, `log`, `purge`, `promote`, and `wb_view` use the common selector
 engine. Their remaining options are command-specific.
 
 | Option | Meaning |
@@ -45,11 +49,12 @@ Space and smoothing values expand as a cross-product. Run selectors describe
 acquisitions; `run=01` alone is not necessarily unique across tasks or directions.
 
 For `run`, omitted `--module` selects every endpoint of the module graph,
-currently `networks` and `firstlevels`. Explicit modules restrict the targets;
+currently `dynconn`, `networks`, and `firstlevels`. Explicit modules restrict the targets;
 their upstream dependencies are included. Workflow, space, and smoothing default
 to `main`, `fsnative`, and `2`. Missing participants/projects select all
 matches. Inspection and cleanup commands ordinarily leave omitted selectors
-unrestricted. In particular, bare `purge` is lab-wide. `publish`, `set`,
+unrestricted. Bare `purge` covers all projects owned by the current branch;
+inherited outputs are excluded. `publish`, `set`,
 installation commands, and `qc registration` have different parsers, documented
 on their pages; do not assume the common short flags apply to them.
 

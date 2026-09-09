@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+
 from nro.orchestration.runner_graph import Step
 
 from .images import copy_or_convert_nifti, nifti_volume_count
 from .io import atomic_output_path, invalid_gzip_files
-
 
 LOG = logging.getLogger(__name__)
 
@@ -22,14 +22,13 @@ def create_native_overlap_mask_step(
     force: bool,
 ) -> Step:
     """Create a step producing shared finite, nonzero image support."""
+
     def validate() -> tuple[bool, str]:
         import nibabel as nib
         import numpy as np
 
         try:
-            count = int(
-                np.count_nonzero(np.asarray(nib.load(str(out_mask)).dataobj) > 0)
-            )
+            count = int(np.count_nonzero(np.asarray(nib.load(str(out_mask)).dataobj) > 0))
         except Exception as error:
             return False, f"Native overlap mask is unreadable: {error}"
         return (
@@ -47,17 +46,14 @@ def create_native_overlap_mask_step(
         shape = tuple(int(value) for value in first.shape[:3])
         overlap = np.ones(shape, dtype=bool)
         for path, image in zip(images, loaded):
-            if (
-                tuple(int(value) for value in image.shape[:3]) != shape
-                or not np.allclose(image.affine, first.affine)
+            if tuple(int(value) for value in image.shape[:3]) != shape or not np.allclose(
+                image.affine, first.affine
             ):
                 raise SystemExit(f"Native overlap inputs are not in the same grid: {path}")
             data = np.asarray(image.dataobj)
             if data.ndim > 3:
                 data = data[..., 0]
-            overlap &= np.isfinite(data) & (
-                np.abs(data) > np.finfo(np.float32).eps
-            )
+            overlap &= np.isfinite(data) & (np.abs(data) > np.finfo(np.float32).eps)
         if erosion_voxels > 0:
             overlap = binary_erosion(
                 overlap,
@@ -98,14 +94,13 @@ def create_image_support_mask_step(
     force: bool,
 ) -> Step:
     """Create a step producing one image's finite, nonzero support."""
+
     def validate() -> tuple[bool, str]:
         import nibabel as nib
         import numpy as np
 
         try:
-            count = int(
-                np.count_nonzero(np.asarray(nib.load(str(out_mask)).dataobj) > 0)
-            )
+            count = int(np.count_nonzero(np.asarray(nib.load(str(out_mask)).dataobj) > 0))
         except Exception as error:
             return False, f"Image support mask is unreadable: {error}"
         return (
@@ -122,9 +117,7 @@ def create_image_support_mask_step(
         data = np.asarray(reference.dataobj)
         if data.ndim > 3:
             data = data[..., 0]
-        support = np.isfinite(data) & (
-            np.abs(data) > np.finfo(np.float32).eps
-        )
+        support = np.isfinite(data) & (np.abs(data) > np.finfo(np.float32).eps)
         if erosion_voxels > 0:
             support = binary_erosion(
                 support,
@@ -134,8 +127,7 @@ def create_image_support_mask_step(
         count = int(support.sum())
         if count < int(minimum_voxels):
             raise SystemExit(
-                f"Insufficient valid image support: {count} voxels; "
-                f"minimum is {minimum_voxels}."
+                f"Insufficient valid image support: {count} voxels; minimum is {minimum_voxels}."
             )
         header = reference.header.copy()
         header.set_data_dtype(np.uint8)
@@ -181,6 +173,7 @@ def create_mask_resampling_step(
     force: bool,
 ) -> Step:
     """Create a nearest-neighbor mask-resampling step."""
+
     def resample() -> None:
         import nibabel as nib
         from nibabel.processing import resample_from_to

@@ -19,7 +19,7 @@ documentation they publish.
 | Provider | Tool or agent | Model identifier | Period | Roles | Identification basis |
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | Codex | GPT-5 | 2026-09 | implementation, testing, documentation, review, refactoring | The active agent environment identifies the tool as Codex based on GPT-5; the underlying model is not disclosed beyond that family. |
-| OpenAI | Codex | GPT-6 | 2026-09 | implementation, testing, documentation, review | The active environment identifies Codex as based on GPT-6. |
+| OpenAI | Codex | GPT-6 | 2026-09 | implementation, testing, documentation, review, refactoring | The active environment identifies Codex as based on GPT-6. |
 
 ## Agent registration
 

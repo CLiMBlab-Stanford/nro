@@ -11,7 +11,6 @@ import yaml
 
 from nro.configuration.store import DERIVATIVE_CLASSES, UPSTREAM_CLASS, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
-from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import instance_key
 
@@ -24,16 +23,13 @@ OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
 
 
-def lineage_root(
-    project_root: Path, derivative_class: str, directory_label: str
-) -> Path:
+def lineage_root(project_root: Path, derivative_class: str, directory_label: str) -> Path:
     """Return the public root assigned to one configuration lineage."""
     return Path(project_root) / "derivatives" / derivative_class / directory_label
 
 
-def lineage_record_path(
-    project_root: Path, derivative_class: str, directory_label: str
-) -> Path:
+def lineage_record_path(project_root: Path, derivative_class: str, directory_label: str) -> Path:
+    """Return the ownership record for one configuration lineage."""
     return lineage_root(project_root, derivative_class, directory_label) / (
         f"{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
     )
@@ -46,6 +42,7 @@ def instance_record_path(
     module: str,
     key: str,
 ) -> Path:
+    """Return the ownership receipt path for one module instance."""
     digest = key.split(":", 1)[-1]
     return (
         lineage_root(project_root, derivative_class, directory_label)
@@ -60,10 +57,7 @@ def remove_empty_ownership_root(
     project_root: Path, derivative_class: str, directory_label: str
 ) -> None:
     """Remove a lineage marker after its final instance receipt is purged."""
-    control = (
-        lineage_root(project_root, derivative_class, directory_label)
-        / OWNERSHIP_DIRECTORY
-    )
+    control = lineage_root(project_root, derivative_class, directory_label) / OWNERSHIP_DIRECTORY
     instances = control / "instances"
     if instances.is_dir():
         for module_directory in instances.iterdir():
@@ -88,9 +82,7 @@ def remove_empty_ownership_root(
 def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dict]]:
     with registry.connection() as db:
         lineage = dict(
-            db.execute(
-                "SELECT * FROM configuration_lineages WHERE id=?", (lineage_id,)
-            ).fetchone()
+            db.execute("SELECT * FROM configuration_lineages WHERE id=?", (lineage_id,)).fetchone()
         )
         upstream = [
             dict(row)
@@ -111,7 +103,9 @@ def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dic
     return lineage, upstream
 
 
-def write_instance_ownership(registry: "Registry", instance_id: int) -> Path:
+def write_instance_ownership(
+    registry: "Registry", instance_id: int, *, attempt_id: int | None = None
+) -> Path:
     """Store enough public metadata to recover an instance after registry repair."""
     with registry.connection() as db:
         instance = dict(
@@ -128,9 +122,28 @@ def write_instance_ownership(registry: "Registry", instance_id: int) -> Path:
                 (instance_id,),
             ).fetchone()
         )
-    lineage, upstream = _lineage_rows(
-        registry, int(instance["configuration_lineage_id"])
-    )
+    lineage, upstream = _lineage_rows(registry, int(instance["configuration_lineage_id"]))
+    project_root = registry.paths.bids_root / str(instance["project"])
+    provenance = None
+    with registry.connection() as db:
+        if attempt_id is None:
+            execution = db.execute(
+                "SELECT context_json, provenance_json FROM instance_execution WHERE instance_id=?",
+                (instance_id,),
+            ).fetchone()
+        else:
+            execution = db.execute(
+                """SELECT e.context_json,e.provenance_json FROM attempt_execution e
+                JOIN attempts a ON a.id=e.attempt_id WHERE e.attempt_id=? AND a.instance_id=?""",
+                (attempt_id, instance_id),
+            ).fetchone()
+    if execution is not None:
+        from nro.orchestration.execution_context import ExecutionContext
+
+        context = ExecutionContext.from_dict(json.loads(execution["context_json"]))
+        project_root = context.paths.output_project(str(instance["project"]))
+        context.require_output(Path(instance["output_root"]))
+        provenance = json.loads(execution["provenance_json"])
     now = datetime.now(timezone.utc).isoformat()
     root_record = {
         "record_version": OWNERSHIP_VERSION,
@@ -146,8 +159,10 @@ def write_instance_ownership(registry: "Registry", instance_id: int) -> Path:
         "upstream": upstream,
         "updated_at": now,
     }
+    if provenance is not None:
+        root_record["implementation"] = provenance
     root_path = lineage_record_path(
-        registry.paths.project_root,
+        project_root,
         str(lineage["derivative_class"]),
         str(lineage["directory_label"]),
     )
@@ -179,8 +194,10 @@ def write_instance_ownership(registry: "Registry", instance_id: int) -> Path:
         },
         "recorded_at": now,
     }
+    if provenance is not None:
+        receipt["implementation"] = provenance
     receipt_path = instance_record_path(
-        registry.paths.project_root,
+        project_root,
         str(lineage["derivative_class"]),
         str(lineage["directory_label"]),
         str(instance["module"]),
@@ -261,9 +278,7 @@ def _validate_lineage_record(
         raise ValueError("upstream lineage list is missing")
     expected_parent = UPSTREAM_CLASS[derivative_class]
     parent_fingerprints = [
-        str(item.get("lineage_fingerprint"))
-        for item in upstream
-        if isinstance(item, Mapping)
+        str(item.get("lineage_fingerprint")) for item in upstream if isinstance(item, Mapping)
     ]
     if expected_parent is None and parent_fingerprints:
         raise ValueError("root lineage unexpectedly declares an upstream lineage")
@@ -301,6 +316,8 @@ def _validate_instance_record(
     if record.get("project") != project:
         raise ValueError("project does not match its derivative tree")
     module = str(record.get("module"))
+    from nro.orchestration.catalog import module_descriptor
+
     if module_descriptor(module).configuration_class != derivative_class:
         raise ValueError("module does not belong to the recorded derivative class")
     if record.get("lineage_fingerprint") != marker.get("lineage_fingerprint"):
@@ -322,9 +339,8 @@ def _validate_instance_record(
     if not isinstance(record.get("artifact_contract"), Mapping):
         raise ValueError("artifact contract is missing")
     contract = record["artifact_contract"]
-    if (
-        contract.get("module") != module
-        or contract.get("entities") != dict(sorted(entities.items()))
+    if contract.get("module") != module or contract.get("entities") != dict(
+        sorted(entities.items())
     ):
         raise ValueError("artifact contract does not match the instance identity")
     output = contract.get("output")
@@ -377,27 +393,18 @@ def materialize_instance_specs(
                     module=str(record["module"]),
                     project=str(record["project"]),
                     participant=str(record["participant"]),
-                    entities={
-                        str(key): str(value)
-                        for key, value in record["entities"].items()
-                    },
+                    entities={str(key): str(value) for key, value in record["entities"].items()},
                     scope=str(record["scope"]),
                     configuration_lineage_id=lineage_id,
                     config_fingerprint=str(contract["configuration"]),
                     directory_label=str(record["directory_label"]),
                     runtime_config=runtime_path,
                     command=tuple(str(value) for value in execution["command"]),
-                    dependencies=tuple(
-                        str(value) for value in contract.get("dependencies", ())
-                    ),
-                    input_paths=tuple(
-                        Path(value) for value in contract.get("inputs", ())
-                    ),
+                    dependencies=tuple(str(value) for value in contract.get("dependencies", ())),
+                    input_paths=tuple(Path(value) for value in contract.get("inputs", ())),
                     output_root=Path(output["root"]),
                     output_prefix=output.get("prefix"),
-                    expected_outputs=tuple(
-                        Path(value) for value in output.get("expected", ())
-                    ),
+                    expected_outputs=tuple(Path(value) for value in output.get("expected", ())),
                     output_format=str(output["format"]),
                     resource_class=str(resources["resource_class"]),
                     memory_gb=int(resources["memory_gb"]),

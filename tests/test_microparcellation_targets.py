@@ -3,14 +3,14 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from nro.microparcellation.__main__ import (
-    infer_gray_matter_mask,
-    infer_surface_geometry,
-    target_output_names,
-)
 from nro.engine.bids import BidsRun
-from nro.microparcellation.targets import expected_clean_target
+from nro.engine.clean_targets import expected_clean_target
+from nro.engine.surface_geometry import surface_geometry
+from nro.engine.targets import target_output_names
 from nro.engine.templates import find_fsaverage_surface, find_mni_gray_matter_mask
+from nro.modules.microparcellation.__main__ import (
+    infer_gray_matter_mask,
+)
 
 
 def _touch(path: Path) -> Path:
@@ -29,10 +29,11 @@ def test_output_names_use_space_without_redundant_domain() -> None:
 def test_expected_target_is_derived_from_source_bids_and_requested_entities(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("nro.clean.paths.BIDS_PATH", str(tmp_path / "bids"))
+    monkeypatch.setattr("nro.engine.paths.BIDS_PATH", str(tmp_path / "bids"))
     runs = (
         BidsRun(
-            participant="01", session="a",
+            participant="01",
+            session="a",
             stem="sub-01_ses-a_task-rest_run-01",
             entities={"ses": "a", "task": "rest", "run": "01"},
             path=tmp_path / "bids/demo/sub-01/ses-a/func/run.nii.gz",
@@ -45,9 +46,7 @@ def test_expected_target_is_derived_from_source_bids_and_requested_entities(
         project="demo",
         clean_id="main",
     )
-    assert (target.domain, target.space, target.smoothing_mm) == (
-        "surface", "fsnative", 2
-    )
+    assert (target.domain, target.space, target.smoothing_mm) == ("surface", "fsnative", 2)
     assert [path.name for path in target.functional[0]] == [
         "sub-01_ses-a_task-rest_run-01_space-fsnative_smoothing-2mm_hemi-L_desc-clean_bold.func.gii",
         "sub-01_ses-a_task-rest_run-01_space-fsnative_smoothing-2mm_hemi-R_desc-clean_bold.func.gii",
@@ -57,9 +56,7 @@ def test_expected_target_is_derived_from_source_bids_and_requested_entities(
 def _write_functional(path: Path, vertices: int) -> None:
     image = nib.gifti.GiftiImage()
     for _ in range(4):
-        image.add_gifti_data_array(
-            nib.gifti.GiftiDataArray(np.arange(vertices, dtype=np.float32))
-        )
+        image.add_gifti_data_array(nib.gifti.GiftiDataArray(np.arange(vertices, dtype=np.float32)))
     nib.save(image, path)
 
 
@@ -87,17 +84,14 @@ def test_template_surface_geometry_is_resolved_only_from_configured_templateflow
     expected = []
     for hemi, vertices in (("L", 4), ("R", 5)):
         clean = tmp_path / f"sub-01_space-fsaverage_hemi-{hemi}_desc-clean_bold.func.gii"
-        template = (
-            templateflow
-            / f"tpl-fsaverage_hemi-{hemi}_den-test_pial.surf.gii"
-        )
+        template = templateflow / f"tpl-fsaverage_hemi-{hemi}_den-test_pial.surf.gii"
         _write_functional(clean, vertices)
         _write_surface(template, vertices)
         clean_paths.append(clean)
         expected.append(template)
     monkeypatch.setenv("TEMPLATEFLOW_HOME", str(templateflow.parent))
 
-    resolved = infer_surface_geometry(
+    resolved = surface_geometry(
         tmp_path / "empty-anat",
         "01",
         "pial",
@@ -131,9 +125,10 @@ def test_mni_mask_falls_back_to_matching_local_templateflow_grid(
     nib.save(nib.Nifti1Image(np.ones((4, 5, 6), dtype=np.float32), affine), expected)
     monkeypatch.setenv("TEMPLATEFLOW_HOME", str(template_dir.parent))
 
-    assert infer_gray_matter_mask(
-        ((functional,),), None, project="unused", space="MNITest"
-    ) == expected
+    assert (
+        infer_gray_matter_mask(((functional,),), None, project="unused", space="MNITest")
+        == expected
+    )
 
 
 def test_mni_mask_accepts_cropped_functional_grid_at_template_resolution(

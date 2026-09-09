@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 LOG = logging.getLogger(__name__)
 
 
@@ -46,9 +45,7 @@ def rigid_transform_metrics(
         math.acos(float(np.clip((np.trace(rotation) - 1.0) / 2.0, -1.0, 1.0)))
     )
     center = (
-        np.zeros(3, dtype=np.float64)
-        if center_mask is None
-        else fsl_scaled_mm_center(center_mask)
+        np.zeros(3, dtype=np.float64) if center_mask is None else fsl_scaled_mm_center(center_mask)
     )
     displacement = rotation @ center + delta[:3, 3] - center
     return {

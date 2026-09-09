@@ -16,4 +16,3 @@ autoapi_python_class_content = "both"
 autoapi_add_toctree_entry = False
 autoapi_member_order = "bysource"
 html_static_path = []
-

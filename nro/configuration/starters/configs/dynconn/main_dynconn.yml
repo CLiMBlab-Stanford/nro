@@ -1,0 +1,13 @@
+input_filter: {}
+surface: pial
+output_dir: null
+prefix: null
+overwrite: false
+inclusion:
+  minimum_retained_frames: 100
+  minimum_retained_fraction: 0.7
+  minimum_residual_design_dof: 50
+  minimum_participation_effective_rank: 10.0
+  maximum_dominant_temporal_variance_fraction: 0.5
+  minimum_usable_runs: 1
+  minimum_aggregate_retained_frames: 100

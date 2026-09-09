@@ -19,15 +19,15 @@ module
   contains a complete graph of steps
 
 instance
-  owns one Runner and one RunnerGraph
+  owns one Runner, which owns one RunnerGraph
   produces public and private artifacts
 ```
 
 ### Derivative class
 
 A **derivative class** is a broad category of related results and configuration.
-The current classes are `preprocessing`, `clean`, `microparcellation`, and
-`networks`.
+The current classes are `preprocessing`, `clean`, `dynconn`, `microparcellation`,
+`networks`, and `firstlevels`.
 
 Classes organize configuration lineages and derivative directories. They are
 not themselves schedulable. Most classes correspond to one module. The
@@ -59,16 +59,16 @@ sequence of steps.
 
 A **module** is the complete scientific directed acyclic graph needed to
 realize one kind of schedulable work. The current modules are `anat`, `func`,
-`clean`, `microparcellation`, and `networks`.
+`clean`, `dynconn`, `microparcellation`, `networks`, and `firstlevels`.
 
 A module's graph is determined entirely by resolved BIDS data and its workflow.
 It is fully constructed before freshness is examined. Existing, missing,
 fresh, stale, or invalid files may affect whether declared steps run, but may
 never change which steps exist or how they depend on one another.
 
-In the filesystem, a module's scientific construction belongs in
-`nro/<module>/module.py`; planner-facing construction of its instances belongs
-in `nro/<module>/planning.py`.
+All scientific module packages live under `nro/modules/`. Their scientific
+construction belongs in `nro/modules/<module>/module.py`; planner-facing
+instance construction belongs in `nro/modules/<module>/planning.py`.
 
 ### Instance
 
@@ -155,17 +155,22 @@ module-local planning functions.
 
 ### Registry
 
-The **registry** is the planner's durable lab-wide SQL state. It stores the
-discovered source project/participant tree, workflows, instances, dependency
-edges, requests, attempts, workers, and scheduler submissions. Ordinary source
-discovery does not create derivative instances or demand. Registry bootstrap
-and repair additionally discover existing files in nro-controlled derivative
-locations and register the instances that own them, without creating demand.
-The registry is the single locking and transaction authority; it is not a
-second planner implementation.
+The registry has two coordinated parts. The shared scheduler registry stores
+requests, attempts, workers, Slurm submissions, and the lab-wide concurrency
+limit. Each development branch has a scientific registry that stores its
+discovered source tree, compiled workflows, instances, dependencies, and
+artifact observations. This separation lets the scheduler coordinate all
+branches without importing their code.
+
+Ordinary source discovery does not create derivative instances or demand.
+Registry bootstrap and repair additionally discover existing files in
+nro-controlled derivative locations and register the instances that own them,
+without creating demand. The registries are the locking and transaction
+authorities for their respective state; neither is a second planner
+implementation.
 
 The filesystem remains authoritative for whether derivative files currently
-exist and match their completion records. The registry is authoritative for
+exist and match their completion records. The registries are authoritative for
 orchestration identity, demand, and history.
 
 Each owned derivative configuration root contains `.nro/lineage.json` and one

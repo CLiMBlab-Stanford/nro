@@ -9,16 +9,29 @@ from nro.orchestration.registry import discover_registry_projects
 def selected_projects(bids_root: Path, projects: Iterable[str] = ()) -> list[str]:
     """Return explicit projects or every project represented centrally."""
     requested = tuple(dict.fromkeys(projects))
-    return list(requested) if requested else discover_registry_projects(bids_root)
+    if requested:
+        return list(requested)
+    from nro.configuration.site import CHECKOUT, installation_record, settings
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = settings()[0]
+    control = Path(values["registry"])
+    if installation_record().get("mode") == "branch" or implementation_path(control).is_file():
+        from nro.orchestration.scheduler_client import status
+
+        if bids_root.resolve() != Path(values["bids"]).resolve():
+            raise ValueError("Branch selection uses the shared site BIDS root")
+        report = status(control, bids_root, checkout=CHECKOUT, mode="cached")
+        visible = set(report["visible_ids"])
+        return sorted({row["project"] for row in report["rows"] if row["id"] in visible})
+    return discover_registry_projects(bids_root)
 
 
 def discover_bids_participants(project_root: Path) -> tuple[str, ...]:
     """Return participant IDs represented by source BIDS directories."""
     return tuple(
         sorted(
-            path.name.removeprefix("sub-")
-            for path in project_root.glob("sub-*")
-            if path.is_dir()
+            path.name.removeprefix("sub-") for path in project_root.glob("sub-*") if path.is_dir()
         )
     )
 

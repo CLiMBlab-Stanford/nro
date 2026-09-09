@@ -1,11 +1,11 @@
+import logging
 import shutil
 import tempfile
 import unittest
-import logging
 from itertools import count
 from pathlib import Path
 
-from nro.func.synbold_disco import create_synthetic_reference_step
+from nro.modules.func.synbold_disco import create_synthetic_reference_step
 from nro.orchestration.runner import Runner
 
 
@@ -23,8 +23,12 @@ class _FakeRunner(Runner):
 
     def run_child(self, command, **_kwargs) -> None:
         self.commands.append(list(command))
-        inputs = next(Path(value.split(":", 1)[0]) for value in command if value.endswith(":/INPUTS:ro"))
-        outputs = next(Path(value.split(":", 1)[0]) for value in command if value.endswith(":/OUTPUTS"))
+        inputs = next(
+            Path(value.split(":", 1)[0]) for value in command if value.endswith(":/INPUTS:ro")
+        )
+        outputs = next(
+            Path(value.split(":", 1)[0]) for value in command if value.endswith(":/OUTPUTS")
+        )
         (outputs / "BOLD_s_3D.nii.gz").write_bytes(b"synthetic")
         if self.preserve_transform:
             shutil.copy2(inputs / "epi_reg_d.mat", outputs / "epi_reg_d.mat")

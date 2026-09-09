@@ -30,6 +30,7 @@ def create_json_step(
     force: bool,
 ) -> Step:
     """Create an exact, semantically validated JSON-output step."""
+
     def validate() -> tuple[bool, str]:
         try:
             current = read_json(path)
@@ -82,9 +83,7 @@ def require_nested_manifest_output(
         raise SystemExit(f"{manifest_name} manifest is missing an outputs mapping: {manifest_path}")
     nested = outputs.get(section)
     if not isinstance(nested, dict):
-        raise SystemExit(
-            f"{manifest_name} manifest is missing outputs.{section}: {manifest_path}"
-        )
+        raise SystemExit(f"{manifest_name} manifest is missing outputs.{section}: {manifest_path}")
     raw = str(nested.get(key, "")).strip()
     if not raw:
         raise SystemExit(

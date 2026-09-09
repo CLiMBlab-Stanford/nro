@@ -2,7 +2,8 @@ import logging
 
 import pytest
 
-from nro.func.__main__ import _run_with_error_logging
+from nro.modules.func.__main__ import _run_with_error_logging
+
 
 def test_func_entry_point_logs_system_exit_as_error(caplog) -> None:
     def fail(_argv):
