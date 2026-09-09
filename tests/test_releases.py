@@ -70,6 +70,46 @@ def test_attestation_does_not_tag_deploy_or_change_science(release):
     assert store.branches.registry("main").instances() == ()
 
 
+def test_initial_release_can_use_explicit_bootstrap_attestation(release):
+    root, store = release
+    git(root, "tag", "-a", "v0.0.1", "-m", "Synthetic initial release")
+    row = store.approve(root, "0.0.1", bootstrap=True)
+    assert row["pr"] is None
+    assert store.history() == (row,)
+    assert store.require_approved(root) == row
+
+    with pytest.raises(ValueError, match="after the first release"):
+        store.approve(root, "0.0.1", bootstrap=True)
+
+
+def test_bootstrap_attestation_rejects_other_versions_and_pr_options(release):
+    root, store = release
+    with pytest.raises(ValueError, match="limited to release 0.0.1"):
+        store.approve(root, "0.0.2", bootstrap=True)
+    with pytest.raises(ValueError, match="does not accept"):
+        store.approve(
+            root,
+            "0.0.1",
+            pr="example#1",
+            attest_merged=True,
+            bootstrap=True,
+        )
+    assert not store.path.exists()
+
+
+def test_later_main_checkout_can_attest_tagged_bootstrap_release(release):
+    root, store = release
+    initial = git(root, "rev-parse", "HEAD")
+    git(root, "tag", "-a", "v0.0.1", "-m", "Synthetic initial release")
+    commit_version(root, "0.0.2")
+
+    bootstrap = store.approve(root, "0.0.1", bootstrap=True)
+    assert bootstrap["commit"] == initial
+    current = store.approve(root, "0.0.2", pr="example#2", attest_merged=True)
+    assert current["commit"] == git(root, "rev-parse", "HEAD")
+    assert store.require_approved(root) == current
+
+
 def test_approval_requires_explicit_attestation(release):
     root, store = release
     with pytest.raises(ValueError, match="attestation"):
@@ -136,6 +176,25 @@ def test_release_cli_requires_flags_before_writes(tmp_path):
 
     with pytest.raises(SystemExit) as error:
         main(["0.0.1", "--bids-root", str(tmp_path / "BIDS")])
+    assert error.value.code == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_release_cli_rejects_mixed_bootstrap_and_pr_attestation(tmp_path):
+    from nro.bin.release import main
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "0.0.1",
+                "--bootstrap",
+                "--pr",
+                "example#1",
+                "--attest-merged",
+                "--bids-root",
+                str(tmp_path / "BIDS"),
+            ]
+        )
     assert error.value.code == 2
     assert list(tmp_path.iterdir()) == []
 

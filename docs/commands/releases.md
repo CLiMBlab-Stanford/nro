@@ -1,15 +1,30 @@
 # Release attestation
 
-`nro release` records a maintainer's statement that a PR was approved and merged
-into `main`. It does not query a hosting service or supply a cryptographic
-signature. This policy assumes trusted maintainers.
+`nro release` records a maintainer's approval of a `main` release. Normal approval
+attests that a PR was approved and merged. The initial bootstrap is recorded
+separately because 0.0.1 created the `main` branch directly. The command does not
+query a hosting service or supply a cryptographic signature. This policy assumes
+trusted maintainers.
 
 Prepare the version change in the reviewed PR. After merging it, use a clean,
 registered `main` checkout:
 
 ```bash
-nro release 0.0.1 --pr https://HOST/OWNER/REPO/pull/NUMBER --attest-merged
+nro release 0.0.2 --pr https://HOST/OWNER/REPO/pull/NUMBER --attest-merged
 ```
+
+The directly created first `main` branch has no preceding PR. Record that one-time
+bootstrap explicitly:
+
+```bash
+nro release 0.0.1 --bootstrap
+```
+
+Bootstrap approval is accepted only for 0.0.1 when the release history is empty.
+It reads the `v0.0.1` tag and verifies that commit is an ancestor of the current
+clean `main` checkout. The checkout may therefore already contain a later release.
+Bootstrap cannot be combined with `--pr` or `--attest-merged`. All later approvals
+require the merged PR reference and explicit merge attestation.
 
 The version must match the committed `pyproject.toml`. The first release must be
 `0.0.1`. Each later release must advance the version by at least one patch and
