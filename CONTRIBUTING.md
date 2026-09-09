@@ -85,6 +85,9 @@ maintenance cost, or ambiguity. Document intentional incompatibilities and migra
 steps in the pull request.
 
 After merge and maintainer attestation, tag the release as `vMAJOR.MINOR.PATCH` and
-push the tag without moving or replacing an existing release. Git versions record
-source releases; they do not participate in scientific artifact freshness. See the
-[release guide](docs/commands/releases.md) for attestation and deployment.
+push the tag without moving or replacing an existing release. The tag workflow checks
+the package version and main ancestry, then creates the corresponding GitHub Release.
+Verify that the workflow succeeded before considering publication complete. Git
+versions record source releases; they do not participate in scientific artifact
+freshness. See the [release guide](docs/commands/releases.md) for attestation and
+deployment.

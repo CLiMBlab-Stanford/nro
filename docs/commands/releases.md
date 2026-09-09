@@ -79,8 +79,17 @@ The main-version check runs on pull requests to enforce this rule.
 Use patch releases for compatible fixes and minor releases for new features or
 intentional interface changes during the 0.x series. Tag an approved release as
 `vMAJOR.MINOR.PATCH`; the package version omits the `v`. Do not move or replace a
-published release tag. Version changes and Git tags remain separate from scientific
-freshness, which is based on artifact contracts and inputs.
+published release tag.
+
+Pushing a version tag starts the GitHub Release workflow. It rejects a tag whose
+version differs from `pyproject.toml`, whose target is not on `main`, or whose name is
+not a plain semantic version prefixed by `v`. Release tags must be annotated. A valid
+tag creates a GitHub Release with generated notes and marks it as the latest release.
+Verify that the workflow succeeded. A tag without its GitHub Release is not a
+complete publication.
+
+Version changes, tags, and GitHub Releases remain separate from scientific freshness,
+which is based on artifact contracts and inputs.
 
 nro follows [Semantic Versioning](https://semver.org/). Major version zero denotes
 initial development, so interfaces may change between minor releases. Compatibility

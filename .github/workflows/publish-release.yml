@@ -1,0 +1,38 @@
+name: Publish GitHub release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch the current main branch
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+      - name: Validate the release tag
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python .github/workflows/check_release_tag.py "$GITHUB_REF_NAME"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "GitHub Release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --title "nro ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              --latest
+          fi
