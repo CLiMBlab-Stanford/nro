@@ -4,6 +4,9 @@ This is an early-development codebase. Shared execution requires an installed ma
 release and registered development checkouts. Installing or maintaining the shared
 checkout records and activates its tagged release.
 
+See [Develop on a branch](branching-tutorial.md) for the Git, registration,
+promotion, and release sequence.
+
 ## Release and compatibility policy
 
 The project follows [Semantic Versioning](https://semver.org/) beginning with

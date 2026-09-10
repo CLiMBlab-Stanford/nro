@@ -46,6 +46,7 @@ methods/software
 :maxdepth: 2
 :caption: Development
 
+branching-tutorial
 instance-lifecycle
 orchestration-design
 api

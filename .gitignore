@@ -10,6 +10,7 @@ __pycache__/
 
 # Local installation settings, downloaded dependencies, and registry state
 /.nro-installation.json
+/.nro-installation-transition.json
 /.nro-install.lock
 /.nro-site.toml
 /.nro-env/

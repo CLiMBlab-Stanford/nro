@@ -162,26 +162,27 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
 
 
 def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, yes: bool) -> None:
-    if target.kind == "config" and target.identifier.split("/")[1] == "main":
-        raise ValueError(
-            "Cannot delete a class's main config: it supplies the defaults. Use nro edit instead"
-        )
     print(f"Delete {target.kind} {target.identifier}: {target.path}")
     if target.kind == "config":
         config_id = target.identifier.split("/")[1]
-        references = []
-        for path in sorted((store.root / "workflows").glob("*_workflow.yml")):
-            try:
-                value = parse_mapping(path.read_text(encoding="utf-8"), source=str(path))
-            except (ValueError, yaml.YAMLError) as error:
-                raise ValueError(f"Cannot check workflow references in {path}: {error}") from error
-            if value.get(target.derivative_class, "main") == config_id:
-                references.append(path.name.removesuffix("_workflow.yml"))
-        if references:
-            print(
-                "Warning: these workflows will not resolve until the config is restored or their selections change: "
-                + ", ".join(references)
-            )
+        if config_id == "main":
+            print("The class will inherit its packaged main configuration after deletion.")
+        else:
+            references = []
+            for path in sorted((store.root / "workflows").glob("*_workflow.yml")):
+                try:
+                    value = parse_mapping(path.read_text(encoding="utf-8"), source=str(path))
+                except (ValueError, yaml.YAMLError) as error:
+                    raise ValueError(
+                        f"Cannot check workflow references in {path}: {error}"
+                    ) from error
+                if value.get(target.derivative_class, "main") == config_id:
+                    references.append(path.name.removesuffix("_workflow.yml"))
+            if references:
+                print(
+                    "Warning: these workflows will not resolve until the config is restored "
+                    "or their selections change: " + ", ".join(references)
+                )
     if target.kind == "workflow" and target.identifier == "main":
         print("Warning: default requests will need this workflow to be recreated.")
     print(

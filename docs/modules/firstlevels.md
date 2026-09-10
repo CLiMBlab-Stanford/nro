@@ -31,8 +31,8 @@ One instance covers a participant, model variant, space, and smoothing value.
 Its run fits are separate steps within that instance, not separate worker jobs.
 
 Models live in `DEFINITIONS/models/TASK/VARIANT.yml` in the selected external store. They define
-event predictors and contrasts; the firstlevels configuration defines denoising
-and estimation. See [task models](../task-models.md) for the YAML format,
+event predictors and contrasts; the firstlevels configuration defines denoising,
+estimation, and run aggregation. See [task models](../task-models.md) for the YAML format,
 transformations, and model sets, and [model commands](../commands/models.md)
 for registration.
 
@@ -145,6 +145,7 @@ compliance.
 | `nuisance_variance_explained` | Desired fraction of standardized nuisance variance, subject to the rank cap. |
 | `minimum_temporal_rank` | Absolute number of post-task dimensions protected from nuisance removal. |
 | `minimum_temporal_rank_fraction` | Protected fraction of post-task dimensions. |
+| `aggregation_weighting` | Pool runs by inverse estimated marginal variance (`precision`) or arithmetic mean (`equal`). |
 | `noise_model` | `ar1` or `ols`. |
 | `ar_grid` | Finite AR(1) correlation candidates strictly between -1 and 1. Ignored for OLS. |
 | `spatial_block_size` | Locations evaluated together during fitting and summary calculation. One run's input array is loaded at a time. |

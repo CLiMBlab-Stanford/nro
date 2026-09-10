@@ -27,6 +27,8 @@ from nro.configuration.schema import (
 )
 from nro.configuration.site import definitions_root, resolve_resources
 
+PACKAGED_CONFIGS = Path(__file__).parent / "starters/configs"
+
 DERIVATIVE_CLASSES: tuple[str, ...] = (
     "preprocessing",
     "clean",
@@ -183,35 +185,34 @@ class ConfigStore:
         return workflow_id, self._find(f"{workflow_id}{suffix}", category="workflows")
 
     def configuration_path(self, derivative_class: str, config_id: str) -> Path:
-        """Return the source file for a validated derivative-class configuration ID."""
+        """Return an external configuration or the packaged ``main`` default."""
         if derivative_class not in DERIVATIVE_CLASSES:
             raise WorkflowError(f"Unknown derivative class: {derivative_class}")
         config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
-        return self._find(f"{config_id}_{derivative_class}.yml", category=derivative_class)
+        filename = f"{config_id}_{derivative_class}.yml"
+        external = self.configs / derivative_class / filename
+        if not external.resolve().is_relative_to(self.root):
+            raise WorkflowError(f"Definition escapes the store: {external}")
+        if external.is_file():
+            return external
+        if config_id == "main":
+            packaged = PACKAGED_CONFIGS / derivative_class / filename
+            if packaged.is_file():
+                return packaged
+        raise WorkflowError(
+            f"Configuration file {str(Path(derivative_class) / filename)!r} was not found "
+            f"in store or packaged defaults: {self.root}"
+        )
 
-    def load_configuration(
+    def _merge_configuration(
         self,
         derivative_class: str,
-        config_id: str,
+        base: Mapping[str, Any],
+        declared: Mapping[str, Any],
         *,
-        document: Mapping[str, Any] | None = None,
-    ) -> ResolvedConfiguration:
-        """Load main defaults and merge a named configuration override.
-
-        Resolve site references before fingerprinting. Invalid mappings and unknown
-        override keys raise WorkflowError rather than being silently accepted.
-        document validates a staged definition without writing it to the store.
-        """
-        base_path = self.configuration_path(derivative_class, "main")
-        config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
-        path = (
-            self.configuration_path(derivative_class, config_id)
-            if document is None
-            else self.configs / derivative_class / f"{config_id}_{derivative_class}.yml"
-        )
-        if document is not None and not isinstance(document, Mapping):
-            raise WorkflowError("Configuration must contain a mapping")
-        declared = self._read_mapping(path) if document is None else dict(document)
+        path: Path,
+    ) -> dict[str, Any]:
+        """Validate and merge one partial configuration over resolved values."""
         forbidden = sorted(set(declared) & RUNTIME_FIELDS[derivative_class].keys())
         if forbidden:
             raise WorkflowError(f"{path}: {', '.join(forbidden)} belong in a workflow")
@@ -226,18 +227,9 @@ class ConfigStore:
                 f"{path}: Firstlevels selection keys belong in CLI requests, not configuration"
             )
         try:
-            base = compile_configuration(
-                derivative_class,
-                resolve_resources(
-                    declared if config_id == "main" else self._read_mapping(base_path)
-                ),
-            )
-        except (ValueError, TypeError) as error:
-            raise WorkflowError(f"{path if config_id == 'main' else base_path}: {error}") from error
-        try:
             override = normalize_fields(
                 SCHEMAS[derivative_class],
-                resolve_resources({} if config_id == "main" else declared),
+                resolve_resources(declared),
                 location=derivative_class,
                 complete=False,
             )
@@ -254,9 +246,55 @@ class ConfigStore:
                 raise WorkflowError("Configuration option input_filter must be a mapping")
             values["input_filter"] = deepcopy(dict(flexible_filter))
         try:
-            values = compile_configuration(derivative_class, values)
+            return compile_configuration(derivative_class, values)
         except DefinitionError as error:
             raise WorkflowError(f"{path}: {error}") from error
+
+    def load_configuration(
+        self,
+        derivative_class: str,
+        config_id: str,
+        *,
+        document: Mapping[str, Any] | None = None,
+    ) -> ResolvedConfiguration:
+        """Load main defaults and merge a named configuration override.
+
+        Resolve site references before fingerprinting. Invalid mappings and unknown
+        override keys raise WorkflowError rather than being silently accepted.
+        document validates a staged definition without writing it to the store.
+        """
+        default_path = PACKAGED_CONFIGS / derivative_class / f"main_{derivative_class}.yml"
+        if not default_path.is_file():
+            raise WorkflowError(f"Packaged defaults are missing: {default_path}")
+        config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
+        external_main = self.configs / derivative_class / f"main_{derivative_class}.yml"
+        target = self.configs / derivative_class / f"{config_id}_{derivative_class}.yml"
+        path = self.configuration_path(derivative_class, config_id) if document is None else target
+        if document is not None and not isinstance(document, Mapping):
+            raise WorkflowError("Configuration must contain a mapping")
+        try:
+            base = compile_configuration(
+                derivative_class,
+                resolve_resources(self._read_mapping(default_path)),
+            )
+        except (ValueError, TypeError) as error:
+            raise WorkflowError(f"{default_path}: {error}") from error
+        main_declared = (
+            dict(document)
+            if config_id == "main" and document is not None
+            else self._read_mapping(external_main)
+            if external_main.is_file()
+            else {}
+        )
+        values = self._merge_configuration(
+            derivative_class,
+            base,
+            main_declared,
+            path=external_main if external_main.is_file() or document is not None else default_path,
+        )
+        if config_id != "main":
+            declared = self._read_mapping(path) if document is None else dict(document)
+            values = self._merge_configuration(derivative_class, values, declared, path=path)
         return ResolvedConfiguration(
             derivative_class=derivative_class,
             config_id=config_id,

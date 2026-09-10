@@ -178,6 +178,11 @@ def create_store(root: Path | None = None) -> Path:
         staged = Path(temporary) / "store"
         shutil.copytree(STARTERS, staged)
         (staged / "gitignore").rename(staged / ".gitignore")
+        for kind in DERIVATIVE_CLASSES:
+            directory = staged / "configs" / kind
+            (directory / f"main_{kind}.yml").unlink()
+            if not any(directory.iterdir()):
+                (directory / ".gitkeep").touch()
         for category in CATEGORIES:
             (staged / category).mkdir(exist_ok=True)
         for category in ("models", "events"):

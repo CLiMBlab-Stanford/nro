@@ -402,7 +402,7 @@ def run_module(
         "model_document": model,
         "task_model": task_definition,
         "prefix": prefix,
-        "aggregation_weighting": task_definition["aggregation"]["weighting"],
+        "aggregation_weighting": config["aggregation_weighting"],
         "definition_fingerprint": definition_fingerprint(definition),
     }
     manifests = {}

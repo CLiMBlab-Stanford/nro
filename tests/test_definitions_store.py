@@ -20,7 +20,11 @@ from nro.modules.firstlevels.task_models import load_task_model, scientific_mode
 def test_create_has_only_generic_starters(tmp_path):
     root = create_store(tmp_path / "store")
     counts = validate_store(root)
-    assert counts == dict(configs=8, workflows=3, models=0, event_ids=0, event_tsvs=0, bidsify=1)
+    assert counts == dict(configs=2, workflows=3, models=0, event_ids=0, event_tsvs=0, bidsify=1)
+    for kind in DERIVATIVE_CLASSES:
+        assert not (root / "configs" / kind / f"main_{kind}.yml").exists()
+    for kind in set(DERIVATIVE_CLASSES) - {"networks"}:
+        assert (root / "configs" / kind / ".gitkeep").is_file()
     assert not (root / ".git").exists()
     assert (root / ".gitignore").is_file()
     assert yaml.safe_load((root / "bidsify/main.yml").read_text())["servers"] == {}
@@ -86,16 +90,14 @@ def test_validation_checks_events_and_references(tmp_path):
     assert validate_store(root)["event_tsvs"] == 1
 
 
-def test_no_fallback_for_missing_store_or_definition(tmp_path, monkeypatch):
+def test_missing_store_fails_but_main_configs_use_packaged_defaults(tmp_path, monkeypatch):
     monkeypatch.setitem(site.DEFAULTS, "definitions", str(tmp_path / "absent"))
     with pytest.raises(ValueError, match="does not exist"):
         ConfigStore()
     root = create_store(tmp_path / "store")
-    (root / "configs/clean/main_clean.yml").unlink()
-    with pytest.raises(ValueError, match="main_clean"):
-        ConfigStore(root).resolve()
-    with pytest.raises(ValueError, match="main_clean"):
-        ensure_store(root)
+    assert ConfigStore(root).resolve().configurations["clean"].path.name == "main_clean.yml"
+    assert ConfigStore(root).load_configuration("clean", "main").values["min_trs"] == 50
+    assert ensure_store(root) == root
 
 
 def test_relocation_preserves_compiled_identities(definitions_fixture, tmp_path):
@@ -105,7 +107,7 @@ def test_relocation_preserves_compiled_identities(definitions_fixture, tmp_path)
     assert first.resolve().fingerprint == second.resolve().fingerprint
     for kind in DERIVATIVE_CLASSES:
         a, b = first.load_configuration(kind, "main"), second.load_configuration(kind, "main")
-        assert a.path != b.path
+        assert a.path == b.path
         assert a.fingerprint == b.fingerprint
         assert a.scientific_fingerprint == b.scientific_fingerprint
     assert scientific_model(
@@ -136,7 +138,7 @@ def test_shared_filesystem_publication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: SimpleNamespace(renameat2=unsupported))
     root = create_store(tmp_path / "store")
-    assert validate_store(root)["configs"] == 8
+    assert validate_store(root)["configs"] == 2
     assert not (root / ".nro-incomplete").exists()
     with pytest.raises(FileExistsError):
         _publish(tmp_path / "anything", root)

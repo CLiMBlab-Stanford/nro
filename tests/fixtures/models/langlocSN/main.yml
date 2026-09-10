@@ -6,5 +6,3 @@ contrasts:
   S: {S: 1}
   N: {N: 1}
   SvN: {S: 0.5, N: -0.5}
-aggregation:
-  weighting: equal

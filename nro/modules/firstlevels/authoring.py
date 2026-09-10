@@ -150,7 +150,6 @@ def model_draft(
         "conditions": conditions,
         "hrf": "spm",
         "contrasts": contrasts,
-        "aggregation": {"weighting": "equal"},
     }
     validate_task_model(model)
     return (

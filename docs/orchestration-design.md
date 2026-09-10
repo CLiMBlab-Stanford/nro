@@ -28,11 +28,11 @@ requests accept identifiers; `nro paths` selects the store root.
 
 A derivative configuration contains only local parameters. A workflow selects
 configuration IDs and therefore supplies upstream lineage. The complete base
-for each class lives in its `main_<CLASS>.yml` file; resolution overlays a
-selected named YAML file once. No Python configuration-default map exists. The
-registry snapshots both the workflow and fully resolved class values; module
-processes read the immutable runtime values without a second merge or another
-configuration source.
+for each class lives in nro's packaged `main_<CLASS>.yml`; an optional external
+`main` override and then a selected named YAML file are overlaid in that order.
+No Python configuration-default map exists. The registry snapshots both the
+workflow and fully resolved class values; module processes read the immutable
+runtime values without a second merge or another configuration source.
 
 Configuration lineages form a DAG independent of participant instances.
 Equivalent lineages reuse a derivative directory. A changed definition creates

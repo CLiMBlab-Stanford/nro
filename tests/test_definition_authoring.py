@@ -87,6 +87,7 @@ def test_model_draft_unions_conditions_without_inferring_other_predictors(tmp_pa
     assert model["contrasts"] == {"N": {"N": 1}, "S": {"S": 1}}
     assert model["model_set"] == []
     assert model["hrf"] == "spm"
+    assert "aggregation" not in model
     assert "predictors" not in model
     assert any("1/2 tables" in line for line in messages)
     assert any("no condition label" in line for line in messages)
@@ -198,7 +199,7 @@ def test_copy_model_removes_execution_membership(store, tmp_path):
         ("model", "newtask", "conditions: trial_type\nconditions: other\n"),
         ("config", "clean/alternate", "typo: 2\n"),
         ("config", "clean/alternate", "minimum_temporal_rank: wrong\n"),
-        ("config", "clean/main", "minimum_temporal_rank: 25\n"),
+        ("config", "clean/main", "minimum_temporal_rank: wrong\n"),
         ("workflow", "alternate", "clean: absent\n"),
         ("workflow", "alternate", "unknown: main\n"),
     ],
@@ -209,7 +210,8 @@ def test_validation_rejects_invalid_staged_definitions(store, kind, identifier, 
 
 
 def test_create_existing_routes_to_edit_and_preserves_comments(store, monkeypatch, capsys):
-    target = store.configuration_path("clean", "main")
+    target = definition_target(store, "config", "clean/main").path
+    target.write_text("minimum_temporal_rank: 25\n")
     original = target.read_bytes()
 
     def editor(command, **kwargs):
@@ -397,12 +399,13 @@ def test_delete_rejects_changed_targets_after_confirmation(store, monkeypatch):
     assert target.read_text() == "clean: main\n"
 
 
-def test_delete_protects_main_configs_and_warns_about_workflow_references(store, capsys):
-    main = store.configuration_path("clean", "main")
-    original = main.read_bytes()
-    with pytest.raises(SystemExit):
-        delete(["config", "clean/main", "--yes"])
-    assert main.read_bytes() == original
+def test_delete_main_config_restores_packaged_default_and_warns_about_references(store, capsys):
+    main = _write(store.configs / "clean/main_clean.yml", "minimum_temporal_rank: 25\n")
+    assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 25
+    delete(["config", "clean/main", "--yes"])
+    assert not main.exists()
+    assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 30
+    assert "packaged main configuration" in capsys.readouterr().out
     alternative = _write(store.configs / "clean/alternative_clean.yml", "{}\n")
     workflow = _write(store.root / "workflows/experiment_workflow.yml", "clean: alternative\n")
     delete(["config", "clean/alternative", "--yes"])
