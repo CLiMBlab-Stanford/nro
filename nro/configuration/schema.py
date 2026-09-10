@@ -1,4 +1,4 @@
-"""Typed configuration rules; default values remain in the central YAML store."""
+"""Typed configuration rules for packaged defaults and site overrides."""
 
 import json
 import math
@@ -226,6 +226,7 @@ SCHEMAS = {
     },
     "firstlevels": {
         **DENOISING,
+        "aggregation_weighting": enum("equal", "precision"),
         "noise_model": enum("ols", "ar1"),
         "ar_grid": Field(
             "list",

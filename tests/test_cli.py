@@ -60,5 +60,5 @@ def test_python_module_parser_name_remains_available() -> None:
 def test_pyproject_defines_only_the_single_nro_console_script() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
-    assert metadata["project"]["version"] == "0.0.5"
+    assert metadata["project"]["version"] == "0.0.6"
     assert metadata["project"]["scripts"] == {"nro": "nro.cli:main"}

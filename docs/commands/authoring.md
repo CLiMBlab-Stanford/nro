@@ -44,8 +44,9 @@ the choice explicitly. A `trial_type` column present in only some tables needs
 an explicit decision: narrow discovery or specify another common column.
 Missing tables, malformed timing, and ambiguous BIDS inheritance are errors.
 
-The draft contains the union of observed conditions, the SPM HRF, equal run
-aggregation, and one contrast per condition against the implicit baseline.
+The draft contains the union of observed conditions, the SPM HRF, and one
+contrast per condition against the implicit baseline. Run aggregation is set by
+the selected firstlevels configuration.
 Weights use condition shorthand, such as `E: {E: 1}`, under a shared
 `conditions: trial_type`. Labels that themselves start with the column prefix
 are explicitly qualified to preserve their meaning.
@@ -67,9 +68,10 @@ Importing a local file with `--file` preserves its membership as written.
 
 ## Config and workflow drafts
 
-A new config starts with no overrides and includes commented main defaults as
-reference. Add only the settings that should differ. Omitted keys continue to
-follow the class's `main` config. To copy an existing override file:
+A new config starts with no overrides and includes commented packaged defaults
+as reference. Add only the settings that should differ. Omitted keys continue
+to follow the class's packaged `main` configuration and any external `main`
+override. To copy an existing override file:
 
 ```bash
 nro create config clean/another --from clean/alternative
@@ -153,12 +155,12 @@ nro delete workflow experiment
 nro create workflow experiment
 ```
 
-A class's `main` config cannot be deleted through this utility: it is the source
-of defaults for that class. Edit it instead. Deleting a named config warns about
-workflows that still select it; those workflows cannot resolve until the config
-is restored or their selections change. Deleting workflow `main` warns that
-default requests will need it recreated. Missing definitions can affect later
-artifact assessments, so coordinate shared-store resets with other users.
+Deleting an external class `main` override restores the packaged defaults.
+Deleting a named config warns about workflows that still select it; those
+workflows cannot resolve until the config is restored or their selections
+change. Deleting workflow `main` warns that default requests will need it
+recreated. Missing definitions can affect later artifact assessments, so
+coordinate shared-store resets with other users.
 
 Deletion uses the authoring lock and snapshot check, and reports the path of a
 private recovery copy in the system temporary directory. Copy it elsewhere to

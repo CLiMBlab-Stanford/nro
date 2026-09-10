@@ -41,8 +41,10 @@ moves datasets, artifacts, or registries. See the installation guide for all key
 
 ## `nro doctor`
 
-Check Python imports, runtime availability, configured resources, filesystem
-access, and Slurm executables. `--deep` additionally starts containers and
+Report the checkout, branch, environment, executable, and site settings selected
+for this invocation. The default checks Python package and configured-resource
+availability, filesystem access, and Slurm executables. `--deep` additionally
+imports scientific libraries, validates all definitions, starts containers, and
 checks tool availability, template checksums, and image receipts. `--local`
 makes Slurm optional; `--without-oslom` makes OSLOM optional. `--json` emits
 structured results. Failed required checks exit nonzero. Doctor does not install

@@ -4,7 +4,8 @@ This directory holds the scientific definitions used by an nro installation.
 Version it separately from nro's code. Keep credentials, imaging data, registry
 databases, logs, and generated derivatives outside this repository.
 
-* `configs/CLASS/ID_CLASS.yml`: module configurations; `main` supplies defaults.
+* `configs/CLASS/ID_CLASS.yml`: optional module-configuration overrides. Packaged
+  `main` configurations supply defaults when the store has no matching file.
 * `workflows/ID_workflow.yml`: configuration selections for each derivative class.
 * `models/TASK/VARIANT.yml`: task predictors, contrasts, and model-set membership.
 * `events/TASK/`: standard event tables and an `index.yml` listing their IDs.
@@ -17,6 +18,7 @@ Edit event indexes and ingestion profiles directly, then validate the store.
 
 New stores have no task models, event tables, or configured Flywheel servers.
 Populate those definitions for your experiments before requesting that work.
-The configuration values copied at creation remain under your control: updating
-nro does not overwrite them. Git initialization, commits, remotes, and branch
-changes are explicit human-managed operations.
+New stores inherit packaged `main` configurations. Adding
+`configs/CLASS/main_CLASS.yml` overrides selected defaults for that class; omitted
+settings still follow the package. Git initialization, commits, remotes, and
+branch changes are explicit human-managed operations.

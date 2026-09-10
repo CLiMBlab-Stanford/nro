@@ -12,9 +12,9 @@ for review. `nro edit model TASK/VARIANT` edits an existing model. See
 drafts, and save behavior.
 
 The firstlevels configuration supplies nuisance regression, temporal outlier
-handling, rank protection, and the noise model. Task models cannot override
-those settings or introduce confounds. This lets the same scientific model run
-under different denoising configurations.
+handling, rank protection, run aggregation, and the noise model. Task models
+cannot override those settings or introduce confounds. This lets the same
+scientific model run under different firstlevels configurations.
 
 ## Basic model
 
@@ -33,10 +33,10 @@ HRF applies to event-derived predictors. Confounds and the intercept are never
 convolved. Timing comes from `onset` and `duration`, adjusted for the functional
 input's `StartTime`; these timing columns are not automatic predictors.
 
-`aggregation.weighting` defaults to `equal`, which averages available original
-run estimates for each effect. `precision` uses inverse estimated marginal
-variance. Weighting changes the analysis and therefore affects freshness.
-See [inference](methods/firstlevels.md) for covariance and DOF calculations.
+The firstlevels configuration's `aggregation_weighting` setting controls how
+available original-run estimates are pooled. The default, `precision`, uses
+inverse estimated marginal variance; `equal` uses an arithmetic mean. See
+[inference](methods/firstlevels.md) for covariance and DOF calculations.
 
 ## Selection and model sets
 
@@ -69,8 +69,9 @@ registered work remains independent of later changes to model-set membership.
 Model sets are execution metadata. Membership changes do not alter instance
 identity, scientific fingerprints, or completion checks. Model file timestamps,
 comments, and `description` do not affect freshness either. Changing predictors,
-contrasts, transforms, HRFs, or weighting invalidates the corresponding model's
-artifacts, not every model using that firstlevels configuration.
+contrasts, transforms, or HRFs invalidates the corresponding model's artifacts,
+not every model using that firstlevels configuration. Changing a scientific
+firstlevels setting affects every model fitted with that configuration.
 
 Status, logs, stop, and purge accept the same explicit model/set filters. Omitted
 selectors on those commands mean all registered work, including development

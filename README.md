@@ -46,7 +46,8 @@ During the 0.x series, public interfaces may still change. The project retains
 older behavior when the benefit is clear and the implementation remains small,
 readable, and inexpensive to run. See the
 [development guide](docs/development.md#release-and-compatibility-policy) for
-the release policy.
+the release policy and the [branching tutorial](docs/branching-tutorial.md) for
+development and release workflows.
 
 ## Installation
 

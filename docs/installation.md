@@ -293,14 +293,17 @@ editing leaves the saved settings unchanged. To resume shared setup, use
 
 ## Checking an installation
 
-`nro doctor` reports Python packages, resource files, executable availability,
-directory access, and Slurm commands. `--local` makes Slurm optional;
+`nro doctor` first reports the checkout, branch, environment, executable, and site
+settings selected for the invocation. It then checks Python package and resource
+availability, directory access, and Slurm commands without importing the scientific
+libraries or parsing every definition. `--local` makes Slurm optional;
 OSLOM checks are mandatory by default; `--without-oslom` makes them optional.
 `--json` returns structured results.
 
-`nro doctor --deep` also starts each container, checks the required tools and
-license bind in QuNex, and verifies pinned template checksums and existing
-image acquisition receipts. These probes do not process subject data. Run the
+`nro doctor --deep` also imports the scientific libraries, validates every stored
+definition, starts each container, checks the required tools and license bind in
+QuNex, and verifies pinned template checksums and existing image acquisition
+receipts. These probes do not process subject data. Run the
 command within a compute allocation as well as on the login node to check shared mounts and
 runtime policy there. Setup runs deep checks before marking an installation
 ready. A GUI display is only needed when opening Workbench scenes.

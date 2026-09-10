@@ -8,6 +8,7 @@ import yaml
 
 from nro.configuration import site
 from nro.engine import site_setup
+from nro.orchestration import scheduler_implementation
 
 
 @pytest.fixture(scope="session")
@@ -58,6 +59,13 @@ def isolated_installation(tmp_path_factory, monkeypatch, definitions_fixture):
     monkeypatch.setenv("NRO_SITE_CONFIG", str(config))
     for variable in site.ENVIRONMENT_KEYS:
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(site, "CHECKOUT", root)
     monkeypatch.setattr(site, "installation_record", lambda: {})
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})
+    installed_record = scheduler_implementation.installation_record
+    monkeypatch.setattr(
+        scheduler_implementation,
+        "installation_record",
+        lambda selected=None: {} if selected is None else installed_record(selected),
+    )
     monkeypatch.setitem(site.DEFAULTS, "definitions", str(definitions_fixture))

@@ -50,7 +50,7 @@ def test_authoring_forms_compile_identically(form):
             "EvH": {"trial_type.E": 0.5, "trial_type.H": -0.5},
         }
     elif form == "explicit_defaults":
-        variant.update(hrf="spm", hrf_overrides={}, aggregation={"weighting": "equal"})
+        variant.update(hrf="spm", hrf_overrides={})
     elif form == "advanced":
         variant = scientific_model(source)
     else:
@@ -65,13 +65,19 @@ def test_authoring_forms_compile_identically(form):
     [
         ("hrf", "glover"),
         ("hrf_overrides", {"trial_type.E": None}),
-        ("aggregation", {"weighting": "precision"}),
         ("contrasts", {"E": {"E": 2}, "EvH": {"E": 1, "H": -1}}),
     ],
 )
 def test_scientific_changes_remain_distinct(field, value):
     source = _source()
     assert scientific_model(source) != scientific_model({**source, field: value})
+
+
+def test_task_models_reject_module_owned_aggregation():
+    from nro.modules.firstlevels.task_models import validate_task_model
+
+    with pytest.raises(ValueError, match="aggregation"):
+        validate_task_model({**_source(), "aggregation": {"weighting": "equal"}})
 
 
 def test_explicit_sequence_order_is_preserved():

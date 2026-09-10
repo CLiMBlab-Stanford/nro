@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -161,11 +162,13 @@ def run_probe(command: list[str], *, timeout=60, cwd: Path | None = None) -> str
     return result.stdout.strip()[-1000:]
 
 
-def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]:
+def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) -> list[dict]:
     """Return named dependency checks with ok, required, and detail fields.
 
-    Deep mode starts containers and verifies resource identities. It does not
-    install resources or process subject data.
+    Quick mode checks whether configured resources and Python modules are
+    available without loading scientific libraries or parsing every definition.
+    Deep mode starts containers and verifies resource identities. Neither mode
+    installs resources or processes subject data.
     """
     values, _ = settings()
     results = []
@@ -203,9 +206,23 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
             raise RuntimeError(f"Executable unavailable: {value}")
         return resolved
 
-    from nro.configuration.definitions import validate_store
+    def available_module(name):
+        if importlib.util.find_spec(name) is None:
+            raise ImportError(f"Python module unavailable: {name}")
 
-    check("definitions store", lambda: validate_store(Path(values["definitions"])))
+    if quick:
+
+        def definitions_check():
+            root = Path(values["definitions"])
+            if not root.is_dir() or not os.access(root, os.R_OK | os.X_OK):
+                raise RuntimeError(f"Definitions store is not readable: {root}")
+            return root
+
+        check("definitions store", definitions_check)
+    else:
+        from nro.configuration.definitions import validate_store
+
+        check("definitions store", lambda: validate_store(Path(values["definitions"])))
     for name in (
         "numpy",
         "scipy",
@@ -218,7 +235,10 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
     ):
 
         def import_check(name=name):
-            __import__(name)
+            if quick:
+                available_module(name)
+            else:
+                __import__(name)
 
         check(name, import_check)
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
@@ -260,10 +280,15 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True) -> list[dict]
     check("OSLOM", lambda: executable(values["oslom"]), required=with_oslom)
     if with_oslom:
         for name in ("igraph", "leidenalg"):
-            check(
-                name,
-                lambda name=name: run_probe([__import__("sys").executable, "-c", f"import {name}"]),
-            )
+            if quick:
+                check(name, lambda name=name: available_module(name))
+            else:
+                check(
+                    name,
+                    lambda name=name: run_probe(
+                        [__import__("sys").executable, "-c", f"import {name}"]
+                    ),
+                )
     if deep:
         for relative, (md5, _version) in template_catalog().items():
             check(

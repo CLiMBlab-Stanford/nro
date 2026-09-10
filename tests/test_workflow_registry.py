@@ -278,8 +278,7 @@ def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -
     first = registry.register_workflow(store.resolve("main"))
 
     main_path = configs / "configs" / "microparcellation" / "main_microparcellation.yml"
-    changed_main = yaml.safe_load(main_path.read_text(encoding="utf-8"))
-    changed_main["coarsening"]["target_vertices"] = 30000
+    changed_main = {"coarsening": {"target_vertices": 30000}}
     _write_yaml(main_path, changed_main)
     second = registry.register_workflow(store.resolve("main"))
 

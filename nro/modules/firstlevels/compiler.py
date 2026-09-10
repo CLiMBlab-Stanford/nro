@@ -136,7 +136,7 @@ def compile_model(source: dict, identifier: str, config: dict, *, sessions: bool
     node = task_node(source)
     rules = node["Model"]["Software"]["nro"]
     rules["denoising"] = {key: deepcopy(config[key]) for key in NUISANCE_KEYS}
-    rules["aggregation_weighting"] = source["aggregation"]["weighting"]
+    rules["aggregation_weighting"] = config["aggregation_weighting"]
     primitives = list(
         dict.fromkeys(
             v
@@ -184,9 +184,7 @@ def compile_model(source: dict, identifier: str, config: dict, *, sessions: bool
                 "Model": {
                     "Type": "meta",
                     "X": list(primitive_names.values()),
-                    "Software": {
-                        "nro": {"aggregation_weighting": source["aggregation"]["weighting"]}
-                    },
+                    "Software": {"nro": {"aggregation_weighting": config["aggregation_weighting"]}},
                 },
                 "Contrasts": deepcopy(summary_contrasts),
             }

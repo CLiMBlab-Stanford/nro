@@ -84,6 +84,7 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ),
         ("firstlevels", {"ar_grid": [0, 0]}, "ar_grid"),
         ("firstlevels", {"ar_grid": [1]}, "ar_grid"),
+        ("firstlevels", {"aggregation_weighting": "unknown"}, "aggregation_weighting"),
         ("firstlevels", {"low_pass": 0.1}, "low_pass"),
         ("preprocessing", {"func": {"bbregister_dof": 5}}, "bbregister_dof"),
         ("preprocessing", {"func": {"output_spaces": []}}, "output_spaces"),
@@ -99,17 +100,16 @@ def test_store_and_authoring_share_semantic_errors(store, kind, values, field):
         validate_definition(store, target, text)
 
 
-def test_main_is_checked_against_schema_not_its_own_values(store):
-    path = store.configuration_path("clean", "main")
-    source = yaml.safe_load(path.read_text())
-    for value in (
-        {**source, "verbose": "yes"},
-        {**source, "unknown": 1},
-        {key: value for key, value in source.items() if key != "min_trs"},
-    ):
+def test_external_main_is_a_validated_partial_override(store):
+    path = store.configs / "clean/main_clean.yml"
+    for value in ({"verbose": "yes"}, {"unknown": 1}):
         path.write_text(yaml.safe_dump(value))
         with pytest.raises(ValueError):
             store.load_configuration("clean", "main")
+    path.write_text("minimum_temporal_rank: 25\n")
+    values = store.load_configuration("clean", "main").values
+    assert values["minimum_temporal_rank"] == 25
+    assert values["min_trs"] == 50
 
 
 def test_equivalent_values_defaults_and_site_references(store):
@@ -177,8 +177,12 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     )
     assert original.scientific_fingerprint != changed.scientific_fingerprint
     values = store.load_configuration("firstlevels", "main").values
+    assert values["aggregation_weighting"] == "precision"
     assert scientific_values("firstlevels", values) != scientific_values(
         "firstlevels", {**values, "ar_grid": values["ar_grid"][::-1]}
+    )
+    assert scientific_values("firstlevels", values) != scientific_values(
+        "firstlevels", {**values, "aggregation_weighting": "equal"}
     )
 
 
@@ -292,7 +296,8 @@ def test_execution_edit_preserves_completed_registry_artifacts(
     assert preview_registry(registry)[instance_id][0] == "fresh"
     assert assess_registry(registry)[instance_id][0] == "fresh"
     stamp = output.stat().st_mtime_ns
-    config.path.write_text(yaml.safe_dump({**config.values, "verbose": True}))
+    external_main = store.configs / "clean" / "main_clean.yml"
+    external_main.write_text(yaml.safe_dump({"verbose": True}))
     updated = store.resolve("main")
     selected = registry.register_workflow(updated)
     assert selected.revision != registered.revision

@@ -31,17 +31,18 @@ nro definitions create /data/lab/nro-definitions
 nro paths set definitions=/data/lab/nro-definitions
 ```
 
-Creation copies packaged starter configurations and workflows, creates empty
-model and event catalogs, and adds an ingestion profile with no configured
-servers. It validates the staged files before publication and refuses an
-existing destination, even an empty directory. It does not change site settings
-or initialize Git. Both commands accept the installation's usual Python-module
-invocation through `python -m nro.bin.COMMAND`.
+Creation copies packaged workflows and named configuration examples, creates
+empty model and event catalogs, and adds an ingestion profile with no configured
+servers. Packaged `main` configurations remain in the nro installation and are
+inherited rather than copied. Creation validates the staged files before
+publication and refuses an existing destination, even an empty directory. It
+does not change site settings or initialize Git. Both commands accept the
+installation's usual Python-module invocation through `python -m nro.bin.COMMAND`.
 
 Omit the path to create the currently selected store. `./install` creates that
 store if missing and validates it if present. Installation never merges new
-starters into an existing store. Adopt changes to defaults explicitly through
-normal definition editing and review.
+named examples into an existing store. Package upgrades supply new defaults
+automatically unless the store deliberately overrides them.
 
 On shared installations, changing the selected path requires
 `nro paths set definitions=PATH --maintain` and an inactive worker pool. Selecting
@@ -62,8 +63,8 @@ nro definitions validate /data/lab/nro-definitions --json
 ```
 
 Omitting the path checks the selected store. Validation reads all definitions,
-including unused variants, and reports malformed filenames, missing defaults,
-invalid configuration keys, broken workflow references, invalid task models,
+including unused variants, and reports malformed filenames, missing packaged
+defaults, invalid configuration keys, broken workflow references, invalid task models,
 bad event tables, unindexed TSVs, and invalid ingestion profiles. It rejects
 symlinks in definition directories and cross-task event references. Empty model
 and event catalogs and empty Flywheel server mappings are valid starting points.
@@ -80,9 +81,11 @@ existing staged validation, writer locks, and concurrent-edit checks still
 apply. Edit event catalogs and ingestion profiles directly, then validate the
 store. Keep unrelated notes outside the structured definition directories.
 
-There is no fallback to packaged starters or registry-owned profiles when an
-active definition is absent. Missing required files are errors. Packaged
-starters exist only to initialize new stores and document default parameters.
+Every configuration class inherits its packaged `main` definition. A store may
+omit `main_CLASS.yml`; if present, that file is a partial site override. Named
+configuration IDs and workflows still require matching external files, and
+there is no registry-owned fallback. Deleting an external `main` restores the
+packaged values.
 
 ## Version control and reproducibility
 

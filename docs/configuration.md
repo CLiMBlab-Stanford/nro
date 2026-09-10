@@ -1,10 +1,11 @@
 # Workflows and configuration
 
-Scientific defaults live in `DEFINITIONS/configs`, grouped by derivative class.
-`DEFINITIONS` is the external root selected through `nro paths`; see
-[definitions stores](definitions.md). A workflow selects configuration IDs;
-`main` is the default workflow. Module pages show the starter configurations
-and explain which steps consume their keys. A site's active values may differ.
+Scientific defaults ship with nro as packaged `main` configurations, grouped by
+derivative class. The external definitions store may contain small site-specific
+overrides and named alternatives; see [definitions stores](definitions.md). A
+workflow selects configuration IDs, and `main` is the default workflow. Module
+pages show the packaged configurations and explain which steps consume their
+keys. A site's active values may differ when it defines an override.
 
 Use `nro create config CLASS/ID`, `nro create workflow ID`, or the corresponding
 `nro edit` commands to review and validate changes before saving. See
@@ -34,10 +35,11 @@ errors. Private runtime snapshots are also validated, without applying today's
 defaults to previously resolved settings.
 
 The [field schema](autoapi/nro/configuration/schema/index.rst) defines types,
-nullable fields, allowed values, bounds, and execution-only roles. Defaults
-remain exclusively in the `main` YAML files. Those files must supply every
-required field and pass the same validation as overrides. Editing a default
-does not redefine its type or make an unknown key valid.
+nullable fields, allowed values, bounds, and execution-only roles. Packaged
+`main` YAML files must supply every required field. An external
+`main_CLASS.yml`, when present, is a partial override: omitted fields continue
+to follow the packaged default. Editing an override does not redefine a field's
+type or make an unknown key valid.
 
 Duplicate mapping keys are rejected at every depth. Errors identify the source
 file and offending field. Validation catches malformed regular expressions,
@@ -94,8 +96,9 @@ normalization does not merge differently named configurations.
 For Python callers, `ResolvedConfiguration.fingerprint` identifies the full
 snapshot and `scientific_fingerprint` identifies the named scientific settings.
 Execution receives `values`, including execution controls. Adding a setting
-requires a schema field and a value in the class's `main` YAML. Add tests for
-its valid range, any cross-field rules, and its effect on scientific comparison.
+requires a schema field and a value in the packaged class `main` YAML. Add tests
+for its valid range, any cross-field rules, and its effect on scientific
+comparison.
 
 ## Execution settings and numerical reproducibility
 
@@ -133,8 +136,8 @@ orchestration settings, separate from scientific contracts.
 | `firstlevels` | firstlevels | [First-level models](modules/firstlevels.md) |
 
 [Task models](task-models.md) are separate from firstlevels configurations.
-They define event predictors, contrasts, HRFs, and aggregation weighting.
-The firstlevels configuration supplies denoising and estimation choices.
+They define event predictors, contrasts, and HRFs. The firstlevels configuration
+supplies denoising, estimation, and run-aggregation choices.
 Task/model/model-set selectors choose work; model-set membership does not
 contribute to scientific fingerprints.
 

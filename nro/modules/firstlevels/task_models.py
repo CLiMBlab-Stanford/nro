@@ -44,7 +44,6 @@ def validate_task_model(value: dict) -> dict:
         "transformations",
         "contrasts",
         "statsmodels",
-        "aggregation",
     }
     unknown = set(result) - allowed
     if unknown:
@@ -52,12 +51,6 @@ def validate_task_model(value: dict) -> dict:
     result["model_set"] = list(model_memberships(result))
     if "description" in result and not isinstance(result["description"], str):
         raise ValueError("description must be text")
-    aggregation = result.get("aggregation", {"weighting": "equal"})
-    if not isinstance(aggregation, dict) or set(aggregation) - {"weighting"}:
-        raise ValueError("aggregation accepts only weighting")
-    if aggregation.get("weighting", "equal") not in {"equal", "precision"}:
-        raise ValueError("aggregation.weighting must be equal or precision")
-    result["aggregation"] = {"weighting": aggregation.get("weighting", "equal")}
     task_node(result)
     return result
 
@@ -109,7 +102,6 @@ def _canonical_model(serialized: str) -> dict:
         "hrf": rules["default_hrf"],
         "hrf_overrides": rules["hrf_overrides"],
         "statsmodels": {"Transformations": transformations, "Contrasts": node["Contrasts"]},
-        "aggregation": source["aggregation"],
     }
 
 

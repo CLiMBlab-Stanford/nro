@@ -755,7 +755,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
             for name, weights in source["contrasts"].items()
         }
     elif edit == "defaults":
-        source.update(hrf="spm", hrf_overrides={}, aggregation={"weighting": "equal"})
+        source.update(hrf="spm", hrf_overrides={})
     elif edit == "execution":
         config["spatial_block_size"] = 4
     else:
