@@ -27,7 +27,7 @@ validation scope, and version-control policy.
 
 ## Shared selectors
 
-`run`, `status`, `stop`, `log`, `purge`, `promote`, and `wb_view` use the common selector
+`run`, `status`, `stop`, `log`, `purge`, `promote`, and `scene` use the common selector
 engine. Their remaining options are command-specific.
 
 | Option | Meaning |

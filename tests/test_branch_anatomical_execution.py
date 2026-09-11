@@ -1,5 +1,6 @@
 """Exercise branch output routing through the anatomical builder and runner."""
 
+import json
 import logging
 from dataclasses import replace
 
@@ -137,6 +138,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         context.paths.work / "demo/derivatives/preprocessing/main/sub-1/anat",
         base / "code/freesurfer",
         "sub-1",
+        "fsaverage6",
         "average",
         template,
         None,
@@ -151,6 +153,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     )
     job = anat.build_module(inputs, options, execution_context=context)
     graph = job._graph.freeze()
+    assert any("to-fsaverage6" in path.name for step in graph.steps for path in step.outputs)
     for step in graph.steps:
         for output in step.outputs:
             context.require_output(output)
@@ -158,6 +161,21 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     assert not context.paths.development.exists()
     # Execute the real initialization action without invoking imaging software.
     graph.steps[0].action()
+    configuration = next(
+        step for step in graph.steps if step.name == "Write Anatomical Configuration"
+    )
+    configuration.outputs[0].write_text(
+        json.dumps(
+            {
+                "selection_strategy": "average",
+                "fs_subject": "sub-1",
+                "mni_template": str(template),
+                "synthstrip_image": str(synthstrip),
+                "configuration_fingerprint": "previous-preprocessing-fingerprint",
+            }
+        )
+    )
+    assert configuration.validate is not None and configuration.validate()[0]
     owner = context.paths.output_project("demo") / "derivatives/preprocessing/main"
     assert (owner / "sub-1/anat").is_dir()
     assert (owner / "code/freesurfer").is_dir()

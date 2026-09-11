@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+from errno import EEXIST, ENOTEMPTY
 from pathlib import Path
 
 from nro.orchestration.registry import Registry
@@ -15,15 +16,38 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _remove_path(path: Path, *, dry_run: bool) -> bool:
+def _remove_empty_parents(path: Path, *, root: Path) -> None:
+    """Remove empty ancestors below root, stopping at the first nonempty directory."""
+    root = root.resolve(strict=False)
+    current = path.resolve(strict=False)
+    if current == root or not current.is_relative_to(root):
+        return
+    while current != root:
+        try:
+            current.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            if error.errno in {EEXIST, ENOTEMPTY}:
+                return
+            raise
+        current = current.parent
+
+
+def _remove_path(path: Path, *, dry_run: bool, prune_root: Path | None = None) -> bool:
+    """Remove one path and any newly empty ancestors below an optional boundary."""
     if not path.exists() and not path.is_symlink():
         return False
     if dry_run:
         return True
+    if prune_root is not None and not _is_within(path, prune_root):
+        raise ValueError(f"Purge path is outside its pruning root: {path}")
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
     else:
         shutil.rmtree(path)
+    if prune_root is not None:
+        _remove_empty_parents(path.parent, root=prune_root)
     return True
 
 
@@ -61,7 +85,11 @@ def _purge_attempt_logs(
         if not raw_path or raw_path in active_instance_logs:
             continue
         path = Path(raw_path)
-        if _is_within(path, registry.paths.events) and _remove_path(path, dry_run=dry_run):
+        if _is_within(path, registry.paths.events) and _remove_path(
+            path,
+            dry_run=dry_run,
+            prune_root=registry.paths.events,
+        ):
             attempt_count += 1
             deleted_attempt_ids.append(int(attempt["id"]))
     if deleted_attempt_ids and not dry_run:
@@ -111,7 +139,7 @@ def _purge_inactive_worker_logs(registry: Registry, *, dry_run: bool) -> int:
             continue
         if job_id not in terminal_job_ids and _slurm_job_may_be_active(job_id):
             continue
-        worker_count += int(_remove_path(path, dry_run=dry_run))
+        worker_count += int(_remove_path(path, dry_run=dry_run, prune_root=registry.paths.workers))
 
     return worker_count
 

@@ -1,24 +1,37 @@
 # Viewing and quality control
 
-## `nro wb_view`
+## `nro scene`
 
 ```bash
-nro wb_view microparcellation -P nptl -p t20 -s fsnative -S 2
-nro wb_view dynconn -P nptl -p t20 -s fsnative -S 2
-nro wb_view networks -P nptl -p t20 --no-open
+nro scene -P nptl -p t20 -s fsnative -S 2
+nro scene -P nptl -p t20 -m dynconn networks --open
+nro scene -P nptl -p t20 -s fsnative -S 2 --publish
 ```
 
-The positional derivative type is `dynconn`, `microparcellation`, or `networks`. Common
-selectors choose matching artifacts. The command opens scenes already stored
-with completed artifacts; it does not rerun processing. `--no-open` prints
-scene paths. `--wb-command` overrides the Workbench command path; `wb_view`
-is found beside it. Opening a GUI requires a working display.
+Common selectors choose completed derivatives. The command combines matching
+images, CIFTIs, and surface files without rerunning scientific processing. It
+creates one scene for each selected participant, space, smoothing level, and
+requested session or run group. The command prints every generated scene path.
+Add `--open` to launch the `wb_view` executable beside the configured
+`wb_command`. Opening a GUI requires a working display.
+
+Linked scenes are the default. They refer directly to source derivatives and
+do not duplicate large CIFTIs or surface geometry. `--publish` instead copies
+every input beneath the scene directory, rewrites references to those copies,
+and records SHA-256 checksums. Published scenes can be moved as a unit.
+
+Scenes are visualization caches, not module artifacts. They live at
+`PROJECT/derivatives/scenes/space-SPACE_smoothing-Nmm/sub-ID/SCENE_ID/`.
+Regenerating a scene replaces only a directory carrying an nro scene manifest;
+the command refuses to replace an unmanaged directory.
 
 Surface scenes provide white, pial, midthickness, and inflated geometry.
 Midthickness is the default view. Dynamic-connectivity scenes expose Workbench's
 on-demand correlation layer over concatenated retained frames. Network CIFTIs contain named maps so users
 can step through networks. Volume scenes use volume data without carrying
-surface files. See each [module's output guide](../modules/index.md).
+surface files. `--module` can restrict the derivative layers while nro still
+adds the geometry needed to display them. See each
+[module's output guide](../modules/index.md).
 
 ## `nro qc registration`
 

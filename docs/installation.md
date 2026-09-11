@@ -13,6 +13,9 @@ Pass `--dev` to include test dependencies.
 Pass `--with-bidsify` for Flywheel ingestion dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
+The installer includes the pinned official MARSS package. Pass `--without-marss`
+to omit it. `diagnose` does not import MARSS, but the default `auto` mode and
+`force` need it whenever they apply a correction.
 Pass `--local` when setting up a host without Slurm.
 
 The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
@@ -249,8 +252,11 @@ Automatic installation requires an x86_64 host and a target ending in
 An existing incomplete Workbench directory is reported rather than overwritten.
 
 The template catalog pins MNI T1w and GM probability maps and fsaverage surface
-geometry by S3 object version and checksum. It downloads only these selected
-files. The TemplateFlow Python client is not needed at runtime or setup.
+geometry by S3 object version and checksum. It includes the 41k geometry needed
+by the default fsaverage6 target. Setup derives the corresponding midthickness
+surface deterministically from its pinned white and pial surfaces. It downloads
+only these selected files. The TemplateFlow Python client is not needed at
+runtime or setup.
 
 The runtime installer reuses Singularity or Apptainer when available. Otherwise
 it can install unprivileged Apptainer 1.4.5 using the upstream installer, whose

@@ -9,5 +9,11 @@
   "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_midthickness.surf.gii": ["7877e68f5b1394c25a92e24762674a1a", "gnoZ6MbZqP8LBOmcYR5LwG8uSHc4y_Kf"],
   "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_pial.surf.gii": ["b1ac435b7deb2301c97ee76b726cb879", "JJ_hfUdHggrAyn1MA5m4zFzVfNheprPG"],
   "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_white.surf.gii": ["3fff96d869764dcadf4f8ee8cf8e10ad", "DGntHXwq1Jz6T_Q0I2ORTJH_M_NyUvJJ"],
-  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_sphere.surf.gii": ["7fdd2d156df4264b47cc706462d2c5be", "NaNYRBTh1jr4DwcOu5s6.GAvAg7sOu5x"]
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-164k_sphere.surf.gii": ["7fdd2d156df4264b47cc706462d2c5be", "NaNYRBTh1jr4DwcOu5s6.GAvAg7sOu5x"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-41k_white.surf.gii": ["6079877c1003e972a211e68319dc0f06", "NCjBLlYPKQyhphiiiGPfqtw9ggPVpi9U"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-41k_pial.surf.gii": ["1d29e40e5183c82349b665505bcc398c", "vy5qyrwhWR9x90FGI_7iMlNj_2nioUuU"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-L_den-41k_sphere.surf.gii": ["2af0c9e2e5e5bc73f812f7a0f7c93483", "mfuwj8kX23J6TwmQHUyoOcPLNoeAHRcX"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_white.surf.gii": ["b9b13e57e16d4bce813034f66bf5ce3d", "wRIEz9mhE780L6PAvo3pqDwvJoJPM43C"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_pial.surf.gii": ["498e3941ec50adfd2c772f219def4fa1", "CVJ1WQS5zVD2dXJHtozycsdA6f5EAMGT"],
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_sphere.surf.gii": ["dd84f143c1993446954dbf1ac41ef92f", "JWqTYQUYh.sWDuLwhswD1ncVg2rK3fx9"]
 }

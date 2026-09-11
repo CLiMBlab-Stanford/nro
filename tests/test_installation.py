@@ -31,7 +31,46 @@ def isolated_site(tmp_path, monkeypatch):
 
 def test_lab_defaults_preserve_preprocessing_identity(isolated_site):
     config = ConfigStore().load_configuration("preprocessing", "main")
-    assert config.fingerprint == "ba2380d9f1488ed597aba5311ec155b37cd5621f7128994b3417e17a2a56f075"
+    assert config.fingerprint == "04d9b64bbed28533736ccd866f4243dff61cda1ea025f83c9f5be520754b3919"
+    assert config.values["fsaverage_template"] == "fsaverage6"
+    assert "fsaverage6" in config.values["func"]["output_spaces"]
+
+
+def test_fsaverage6_midthickness_is_derived_from_pinned_surfaces(tmp_path):
+    import nibabel as nib
+    import numpy as np
+
+    directory = tmp_path / "tpl-fsaverage"
+    directory.mkdir()
+    triangles = np.asarray([[0, 1, 2]], dtype=np.int32)
+    for hemisphere in ("L", "R"):
+        for surface, offset in (("white", 0.0), ("pial", 2.0)):
+            image = nib.GiftiImage(
+                darrays=[
+                    nib.gifti.GiftiDataArray(
+                        np.full((3, 3), offset, dtype=np.float32),
+                        intent="NIFTI_INTENT_POINTSET",
+                    ),
+                    nib.gifti.GiftiDataArray(triangles, intent="NIFTI_INTENT_TRIANGLE"),
+                ]
+            )
+            nib.save(
+                image,
+                directory / f"tpl-fsaverage_hemi-{hemisphere}_den-41k_{surface}.surf.gii",
+            )
+
+    dependencies.ensure_fsaverage6_midthickness(tmp_path)
+    dependencies.ensure_fsaverage6_midthickness(tmp_path)
+
+    for hemisphere in ("L", "R"):
+        path = directory / f"tpl-fsaverage_hemi-{hemisphere}_den-41k_midthickness.surf.gii"
+        image = nib.load(str(path))
+        pointset = image.get_arrays_from_intent("NIFTI_INTENT_POINTSET")[0]
+        assert pointset.meta["AnatomicalStructureSecondary"] == "MidThickness"
+        np.testing.assert_array_equal(
+            pointset.data,
+            np.ones((3, 3), dtype=np.float32),
+        )
 
 
 def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_path):
@@ -217,7 +256,10 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
 
 @pytest.mark.parametrize("without_oslom", [False, True])
 @pytest.mark.parametrize("existing", [False, True])
-def test_personal_setup_installs_oslom_by_default(tmp_path, monkeypatch, without_oslom, existing):
+@pytest.mark.parametrize("without_marss", [False, True])
+def test_personal_setup_installs_selected_extras(
+    tmp_path, monkeypatch, without_oslom, existing, without_marss
+):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
     (root / ".nro-bootstrap/bin/uv").write_text("uv")
@@ -245,10 +287,12 @@ def test_personal_setup_installs_oslom_by_default(tmp_path, monkeypatch, without
             "--site",
             str(config),
             *(["--without-oslom"] if without_oslom else []),
+            *(["--without-marss"] if without_marss else []),
         ]
     )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
     assert ("oslom" in calls[0][0]) is not without_oslom
+    assert ("marss" in calls[0][0]) is not without_marss
     assert calls[0][1]["cwd"] == root
     assert calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"] == str(root / ".nro-env")
     assert ("--without-oslom" in calls[1][0]) is without_oslom

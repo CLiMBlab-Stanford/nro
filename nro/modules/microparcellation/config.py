@@ -87,12 +87,7 @@ class ConnectivityConfig:
     temporal_block_size: int = field(
         default_factory=microparcellation_default("connectivity", "temporal_block_size")
     )
-    reliability_weighting: bool = field(
-        default_factory=microparcellation_default("connectivity", "reliability_weighting")
-    )
-    reliability_vertex_block_size: int = field(
-        default_factory=microparcellation_default("connectivity", "reliability_vertex_block_size")
-    )
+    weighting: str = field(default_factory=microparcellation_default("connectivity", "weighting"))
     global_signal_regression: bool = field(
         default_factory=microparcellation_default("connectivity", "global_signal_regression")
     )

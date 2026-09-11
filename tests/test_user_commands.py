@@ -273,6 +273,62 @@ def test_status_without_a_registry_prints_an_empty_table(tmp_path: Path, capsys)
     assert len(output.splitlines()) == 1
 
 
+def test_branch_status_discovers_projects_from_its_single_scheduler_response(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import nro.bin.status as status_command
+    import nro.configuration.site as site
+    import nro.orchestration.scheduler_client as scheduler_client
+
+    bids = (tmp_path / "bids").resolve()
+    control = (tmp_path / "control").resolve()
+    checkout = (tmp_path / "checkout").resolve()
+    calls = []
+    row = {
+        "id": 1,
+        "project": "demo",
+        "participant": "01",
+        "module": "anat",
+        "entities_json": "{}",
+        "workflow_ids": "main",
+        "root_failure_ids": (),
+        "status": "Success",
+        "artifact_reason": "Current",
+        "current_generation": 1,
+        "memory_gb": 2,
+    }
+
+    monkeypatch.setattr(site, "CHECKOUT", checkout)
+    monkeypatch.setattr(
+        site, "settings", lambda: ({"registry": str(control), "bids": str(bids)}, None)
+    )
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch"})
+    monkeypatch.setattr(
+        status_command,
+        "selected_projects",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("branch status must not make a discovery request")
+        ),
+    )
+
+    def scheduler_status(*_args, **kwargs):
+        calls.append(kwargs["mode"])
+        return {
+            "rows": [row],
+            "visible_ids": [1],
+            "dependencies": [],
+            "ingestion": [],
+        }
+
+    monkeypatch.setattr(scheduler_client, "status", scheduler_status)
+
+    status_main(["--bids-root", str(bids), "--cached", "--json"])
+
+    report = json.loads(capsys.readouterr().out)
+    assert calls == ["cached"]
+    assert [item["project"] for item in report["instances"]] == ["demo"]
+
+
 def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     tmp_path: Path,
     capsys,

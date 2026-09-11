@@ -6,6 +6,17 @@ from pathlib import Path
 
 DEFAULT_SPACE = "fsnative"
 DEFAULT_SMOOTHING_MM = 2
+FSAVERAGE_SPACES = frozenset({"fsaverage", "fsaverage6"})
+
+
+def is_fsaverage_space(space: str) -> bool:
+    """Return whether a space names a supported FreeSurfer average template."""
+    return str(space) in FSAVERAGE_SPACES
+
+
+def is_surface_space(space: str) -> bool:
+    """Return whether an analysis space is represented as cortical surfaces."""
+    return str(space) == "fsnative" or is_fsaverage_space(space)
 
 
 def smoothing_entity_value(smoothing_mm: int) -> str:
@@ -37,7 +48,7 @@ def target_directory_name(space: str, smoothing_mm: int) -> str:
 
 
 def target_output_names(base_prefix: str, space: str, smoothing_mm: int) -> tuple[str, str]:
-    """Return the shared target directory and entity-decorated output prefix."""
+    """Return the private target directory and entity-decorated public prefix."""
     return (
         target_directory_name(space, smoothing_mm),
         f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing_mm)}",

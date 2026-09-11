@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.0.6"
+version = "0.1.0"
 description = "Climblab fMRI derivative orchestration"
 requires-python = ">=3.12"
 dependencies = [
-    "numpy>=1.26,<3", "scipy>=1.12,<2", "pandas>=2.2,<3",
+    "numpy>=1.26,<3", "scipy>=1.12,<2", "pandas>=2.2,<3", "matplotlib>=3.8,<4",
     "nibabel>=5.2,<6", "PyYAML>=6,<7", "scikit-learn>=1.4,<2",
     "nilearn>=0.10,<1", "nitransforms>=24,<26",
 ]
@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 bidsify = ["flywheel-sdk>=20,<21", "dcm2bids>=3.2,<4", "pydicom>=3,<4"]
 oslom = ["igraph>=0.11,<0.12", "leidenalg>=0.10,<0.11"]
+marss = ["MARSS==1.0.2"]
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
@@ -31,7 +32,6 @@ include = ["nro*"]
 "nro.modules.func.resources.ica_aroma" = ["*.nii.gz"]
 "nro.modules.func.resources.synbold_disco" = ["epi_reg"]
 "nro.engine" = ["*.scene.in", "*.b85"]
-"nro.modules.dynconn" = ["*.b85"]
 "nro.modules.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
 "nro.qc" = ["*.scene.in"]
 

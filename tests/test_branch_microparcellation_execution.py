@@ -136,10 +136,7 @@ def test_entry_routes_mixed_run_owners_and_outputs(case, monkeypatch, space):
     for root in roots[:2]:
         assert any(p.parent == root and f"_space-{space}_" in p.name for p in inputs)
     assert any(p.parent == roots[2] for p in inputs)
-    target = (
-        context.paths.output_project("demo")
-        / f"derivatives/microparcellation/main/space-{space}_smoothing-2mm/sub-1"
-    )
+    target = context.paths.output_project("demo") / "derivatives/microparcellation/main/sub-1"
     assert target.is_dir()
     assert any(
         p.parent == target and "Index_manifest.json" in p.name

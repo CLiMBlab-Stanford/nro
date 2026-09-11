@@ -17,6 +17,7 @@ import time
 import urllib.request
 import zipfile
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 
 from nro.configuration.site import settings
@@ -50,6 +51,46 @@ def verify_template(path: Path, md5: str) -> None:
         actual = hashlib.file_digest(stream, "md5").hexdigest()
     if actual != md5:
         raise RuntimeError(f"Template differs from the pinned resource: {path}")
+
+
+def ensure_fsaverage6_midthickness(root: Path) -> None:
+    """Create the 41k midthickness surfaces from pinned white and pial geometry."""
+    import nibabel as nib
+    import numpy as np
+
+    directory = Path(root) / "tpl-fsaverage"
+    for hemisphere in ("L", "R"):
+        white_path = directory / f"tpl-fsaverage_hemi-{hemisphere}_den-41k_white.surf.gii"
+        pial_path = directory / f"tpl-fsaverage_hemi-{hemisphere}_den-41k_pial.surf.gii"
+        target = directory / f"tpl-fsaverage_hemi-{hemisphere}_den-41k_midthickness.surf.gii"
+        white = nib.load(str(white_path))
+        pial = nib.load(str(pial_path))
+        white_points = white.get_arrays_from_intent("NIFTI_INTENT_POINTSET")
+        pial_points = pial.get_arrays_from_intent("NIFTI_INTENT_POINTSET")
+        if len(white_points) != 1 or len(pial_points) != 1:
+            raise RuntimeError("fsaverage6 white and pial surfaces require one coordinate array")
+        coordinates = (
+            np.asarray(white_points[0].data, dtype=np.float64)
+            + np.asarray(pial_points[0].data, dtype=np.float64)
+        ) / 2.0
+        if target.is_file():
+            existing = nib.load(str(target)).get_arrays_from_intent("NIFTI_INTENT_POINTSET")
+            if (
+                len(existing) != 1
+                or not np.allclose(existing[0].data, coordinates, rtol=0, atol=1e-5)
+                or existing[0].meta.get("AnatomicalStructureSecondary") != "MidThickness"
+            ):
+                raise RuntimeError(f"Derived fsaverage6 surface differs from its inputs: {target}")
+            continue
+        result = deepcopy(white)
+        pointset = result.get_arrays_from_intent("NIFTI_INTENT_POINTSET")[0]
+        pointset.data[:] = coordinates
+        pointset.meta["AnatomicalStructureSecondary"] = "MidThickness"
+        for data_array in result.darrays:
+            if "Name" in data_array.meta:
+                data_array.meta["Name"] = target.name
+        with atomic_output_path(target) as staged:
+            nib.save(result, str(staged))
 
 
 def install_runtime(*, offline=False) -> None:
@@ -249,8 +290,8 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) 
     check("MNI template", lambda: file("mni_template"))
     for space, pattern in (
         ("MNI152NLin2009cAsym", "*_label-GM_probseg.nii*"),
-        ("fsaverage", "*_hemi-L_den-164k_midthickness.surf.gii"),
-        ("fsaverage", "*_hemi-R_den-164k_midthickness.surf.gii"),
+        ("fsaverage", "*_hemi-L_den-41k_midthickness.surf.gii"),
+        ("fsaverage", "*_hemi-R_den-41k_midthickness.surf.gii"),
     ):
 
         def template_check(space=space, pattern=pattern):
@@ -496,6 +537,7 @@ def install_templates(*, offline=False) -> None:
                     "sha256": sha256(target),
                 },
             )
+        ensure_fsaverage6_midthickness(root)
 
 
 def install_oslom(*, offline=False) -> None:

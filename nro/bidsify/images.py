@@ -24,6 +24,7 @@ METADATA_FIELDS = {
     "EchoNumber",
     "FlipAngle",
     "MagneticFieldStrength",
+    "NonlinearGradientCorrection",
     "PhaseEncodingDirection",
     "TotalReadoutTime",
     "EffectiveEchoSpacing",

@@ -110,16 +110,13 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
             minimum_usable_runs=1,
             minimum_aggregate_retained_frames=4,
             temporal_block_size=4,
-            reliability_weighting=False,
-            reliability_vertex_block_size=8,
+            weighting="equal",
             global_signal_regression=False,
         ),
     )
 
     with caplog.at_level(logging.INFO, logger="nro.modules.microparcellation.module"):
         outputs = run(cfg)
-    assert outputs["scene"].is_file()
-    assert all(path.is_file() for path in outputs["scene_surfaces"])
     assert "borders" not in outputs
     mtimes = {
         path: path.stat().st_mtime_ns
@@ -136,9 +133,7 @@ def test_surface_module_uses_runner_and_skips_all_current_stages(
     shutil.rmtree(cfg.output.work_directory)
     cfg = replace(
         cfg,
-        connectivity=replace(
-            cfg.connectivity, temporal_block_size=6, reliability_vertex_block_size=2
-        ),
+        connectivity=replace(cfg.connectivity, temporal_block_size=6),
     )
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="nro.modules.microparcellation.module"):

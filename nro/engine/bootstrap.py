@@ -306,6 +306,11 @@ def _main(argv=None) -> None:
         action="store_true",
         help="Install Flywheel, dcm2bids, and DICOM Python dependencies",
     )
+    parser.add_argument(
+        "--without-marss",
+        action="store_true",
+        help="Omit the MARSS simultaneous-slice correction dependency",
+    )
     parser.add_argument("--dev", action="store_true", help="Include the locked test dependencies")
     parser.add_argument("--accept-qunex-license", action="store_true")
     parser.add_argument("--local", action="store_true", help="Do not require Slurm")
@@ -448,6 +453,7 @@ def _main(argv=None) -> None:
             "ready": False,
             "with_oslom": not args.without_oslom,
             "with_bidsify": args.with_bidsify or bool(existing and existing.get("with_bidsify")),
+            "with_marss": not args.without_marss,
             "dev": args.dev or bool(existing and existing.get("dev")),
             "local": args.local or bool(existing and existing.get("local")),
         }
@@ -469,6 +475,8 @@ def _main(argv=None) -> None:
             sync += ["--extra", "oslom"]
         if record["with_bidsify"]:
             sync += ["--extra", "bidsify"]
+        if record["with_marss"]:
+            sync += ["--extra", "marss"]
         if not record["dev"]:
             sync += ["--no-dev"]
         if args.offline:

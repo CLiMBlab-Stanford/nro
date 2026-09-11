@@ -18,6 +18,7 @@ from nro.modules.func.steps import (
     _create_t1_epi_vox_target_step,
     _create_target_readout_warp_step,
     _create_target_shift_step,
+    _create_topup_dfout_step,
     _normalized_topup_matrix,
     _pe_to_fsl_shift_direction,
     _resolve_fieldmapless_sdc_method,
@@ -76,6 +77,32 @@ def test_t1_epi_voxel_target_is_constructed_from_source_bold_grid(
         "2.100000",
         "2.200000",
         "2.300000",
+    )
+
+
+def test_topup_graph_uses_declared_geometry_for_future_inputs(tmp_path: Path) -> None:
+    result = _create_topup_dfout_step(
+        run_child=lambda *_args, **_kwargs: None,
+        se_a=tmp_path / "future_reference.nii.gz",
+        se_b=tmp_path / "future_synthetic_reference.nii.gz",
+        ped_a="j",
+        ped_b="j",
+        readout_time=0.05,
+        readout_time_b=0.0,
+        topup_dir=tmp_path / "topup",
+        topup_config="auto",
+        env={},
+        force=False,
+        spatial_shape=(3, 4, 5),
+        volumes_a=1,
+        volumes_b=1,
+    )
+
+    assert result.a_nvols == 1
+    assert result.b_nvols == 1
+    assert result.step.inputs == (
+        tmp_path / "future_reference.nii.gz",
+        tmp_path / "future_synthetic_reference.nii.gz",
     )
 
 

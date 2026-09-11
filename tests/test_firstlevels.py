@@ -11,6 +11,7 @@ from numpy.testing import assert_allclose
 
 from nro.configuration.store import ConfigStore
 from nro.engine.bids import discover_raw_runs
+from nro.engine.cifti import indexed_cifti_indices, load_indexed_cifti_map
 from nro.modules.firstlevels.compiler import compile_model, realize_run_node
 from nro.modules.firstlevels.contract import validate_completion
 from nro.modules.firstlevels.design import build_design as fit_design
@@ -373,13 +374,17 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
     assert any(
         o["contrast"] == "N" and o["reason"] == "missing_condition" for o in document["omissions"]
     )
-    assert not list(path.parent.glob("*run-02_contrast-N_*"))
-    assert (
-        list(path.parents[2].glob("node-subject/sub-01/*contrast-SvN_stat-t_*.nii.gz"))
-        if domain == "volume"
-        else list(
-            path.parents[2].glob("node-subject/sub-01/*contrast-SvN_hemi-L_stat-t_*.shape.gii")
-        )
+    subject_root = path.parents[2]
+    assert list(subject_root.glob("ses-01/task-langlocSN/node-run/*run-01_manifest.json"))
+    run_two = next(
+        subject_root.glob("ses-01/task-langlocSN/node-run/*run-02_stat-effect_*.dscalar.nii")
+    )
+    assert indexed_cifti_indices(run_two, "Contrast", "N") == ()
+    session_t = next(subject_root.glob("ses-01/task-langlocSN/node-session/*stat-t_*.dscalar.nii"))
+    subject_t = next(path.parents[1].glob("node-subject/*stat-t_*.dscalar.nii"))
+    assert len(indexed_cifti_indices(session_t, "Contrast", "SvN")) == 1
+    assert load_indexed_cifti_map(subject_t, "Contrast", "SvN").shape == (
+        16 if domain == "surface" else 8,
     )
     before = path.stat().st_mtime_ns
     run_module(**kwargs)
@@ -551,6 +556,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     )
     targets = [s for s in specs if s.module == "firstlevels"]
     assert len(targets) == 4
+    assert len({target.output_root for target in targets}) == 1
     assert {s.module for s in specs} == {"anat", "func", "firstlevels"}
     assert all(len(s.dependencies) == 3 for s in targets)
     assert {(s.entities["space"], s.entities["smoothing"]) for s in targets} == {
@@ -583,7 +589,7 @@ def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
     anatomy = root / "sub-01/anat/sub-01_T1w.nii.gz"
     anatomy.parent.mkdir(parents=True)
     nib.save(nib.Nifti1Image(np.ones((2, 2, 2), np.float32), np.eye(4)), anatomy)
-    directory = artifact_root(root, "main", "langlocSN/main", "T1w", 0) / "node-run/sub-01"
+    directory = artifact_root(root, "main", "01") / "task-langlocSN/node-run"
     directory.mkdir(parents=True)
     prefix = instance_prefix("01", "langlocSN/main", "T1w", 0)
     (directory / f"{prefix}_partial.txt").write_text("partial artifact")
@@ -924,8 +930,9 @@ def test_disjoint_conditions_produce_subject_contrast_but_no_run_contrasts(tmp_p
         work_root=tmp_path / "work",
     )
     result = json.loads(output.read_text())
-    assert not list(output.parent.glob("*contrast-*_stat-t_*.nii.gz"))
-    assert list(output.parents[2].glob("node-subject/sub-01/*contrast-SvN_stat-t_*.nii.gz"))
+    assert not list(output.parents[2].glob("ses-*/task-langlocSN/node-run/*stat-t_*.dscalar.nii"))
+    subject_t = next(output.parents[1].glob("node-subject/*stat-t_*.dscalar.nii"))
+    assert indexed_cifti_indices(subject_t, "Contrast", "SvN") == (0,)
     assert not list(output.parents[2].rglob("*contrast-nroEffect*"))
     assert sum(o["contrast"] == "SvN" for o in result["omissions"]) == 2
 

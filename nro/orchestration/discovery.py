@@ -87,7 +87,7 @@ def _recovery_target(path: Path, root: Path, derivative_class: str) -> _Recovery
             if session:
                 selected["ses"] = session
     if module not in {"anat", "func"}:
-        pair = _TARGET_RE.search(path.name) if module == "clean" else _TARGET_RE.search(parts[0])
+        pair = _TARGET_RE.search(path.name)
         if pair is None:
             return None
         selected.update(space=pair.group(1), smoothing=str(int(pair.group(2))))
@@ -109,11 +109,7 @@ def _unrecorded_targets(
     prefixes: dict[Path, set[str]] = {}
     for spec in owned:
         prefixes.setdefault(spec.output_root, set()).add(str(spec.output_prefix or ""))
-    complete_roots = {
-        spec.output_root
-        for spec in owned
-        if spec.module in {"anat", "dynconn", "microparcellation", "networks"}
-    }
+    complete_roots = {spec.output_root for spec in owned if spec.module == "anat"}
     targets: dict[_RecoveryTarget, list[Path]] = {}
     for derivative_class in DERIVATIVE_CLASSES:
         for directory in sorted(directories[derivative_class]):
@@ -122,10 +118,8 @@ def _unrecorded_targets(
                 continue
             if derivative_class in {"preprocessing", "clean"}:
                 subjects = root.glob("sub-*")
-            elif derivative_class == "firstlevels":
-                subjects = root.glob("space-*_smoothing-*mm/*/node-*/sub-*")
             else:
-                subjects = root.glob("space-*_smoothing-*mm/sub-*")
+                subjects = root.glob("sub-*")
             for subject in subjects:
                 for parent, children, filenames in os.walk(subject):
                     parent = Path(parent)

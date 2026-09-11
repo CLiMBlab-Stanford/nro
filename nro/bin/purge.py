@@ -152,14 +152,23 @@ def _instance_paths(
     if module == "anat":
         derivative_paths.append(output_root)
     elif module in {"dynconn", "microparcellation", "networks"}:
-        derivative_paths.append(output_root)
+        # Space and smoothing targets share the subject directory. The full
+        # output prefix identifies the files owned by this instance.
+        derivative_paths.extend(
+            _prefix_owned_paths(
+                output_root,
+                output_prefix,
+                entities=entities,
+                inventories=inventories,
+            )
+        )
     elif module == "firstlevels":
-        # A task root spans participants, variants and levels. Only this exact
-        # participant/model/target prefix is owned by the selected instance.
+        # A subject root spans tasks, variants, levels, and spatial targets.
+        # Only the selected instance's full prefix is owned here.
         derivative_paths.extend(
             path
-            for path in output_root.glob(f"node-*/{sub_id}/{output_prefix}_*")
-            if path.is_file()
+            for path in output_root.rglob(f"{output_prefix}_*")
+            if path.is_file() or path.is_symlink()
         )
     else:
         derivative_paths.extend(
@@ -196,7 +205,14 @@ def _instance_paths(
             run_prefix = output_prefix.removesuffix(f"_{filename_target}")
             work_paths.append(base / run_prefix / target)
         elif module in {"dynconn", "microparcellation", "networks"}:
-            work_paths.append(project_work_derivatives / relative_output)
+            target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
+            work_paths.append(
+                project_work_derivatives
+                / module
+                / str(instance["directory_label"])
+                / target
+                / sub_id
+            )
         elif module == "firstlevels":
             work_paths.append(
                 project_work_derivatives
@@ -313,10 +329,18 @@ def _purge_reserved_instances(
                 work_root=work_root,
                 inventories=inventories,
             )
+            derivative_roots = (
+                registry.paths.project_root / "derivatives",
+                registry.paths.control,
+            )
             for path in derivatives:
-                derivative_count += int(_remove_path(path, dry_run=dry_run))
+                prune_root = next(root for root in derivative_roots if _is_within(path, root))
+                derivative_count += int(_remove_path(path, dry_run=dry_run, prune_root=prune_root))
+            work_root_boundary = work_root / registry.paths.project / "derivatives"
             for path in work:
-                work_count += int(_remove_path(path, dry_run=dry_run))
+                work_count += int(
+                    _remove_path(path, dry_run=dry_run, prune_root=work_root_boundary)
+                )
 
         if not dry_run:
             db.execute(

@@ -17,6 +17,7 @@ from nro.engine.images import (
     sidecar_json_path,
 )
 from nro.engine.io import read_json, write_json
+from nro.engine.targets import is_fsaverage_space, is_surface_space
 from nro.engine.templates import find_fsaverage_surface
 
 next_step = new_step_counter()
@@ -56,7 +57,7 @@ def _resolve_surface_for_metric(
                 f"Missing fsnative midthickness surface in anatomical manifest: surfaces.{manifest_key}"
             )
         return surf
-    if space == "fsaverage":
+    if is_fsaverage_space(space):
         n_vertices = gifti_vertex_count(metric_path)
         key = (hemi, n_vertices)
         if key not in fsaverage_cache:
@@ -774,7 +775,7 @@ def _expected_input_groups(
         )
     for variant in variants:
         desc = str(variant["input_desc"])
-        is_surface = space in {"fsnative", "fsaverage"}
+        is_surface = is_surface_space(space)
         volumes = [] if is_surface else [func_dir / f"{run_stem}_space-{space}_{desc}_bold.nii.gz"]
         surfaces = (
             [func_dir / f"{run_stem}_space-{space}_hemi-L_{desc}_bold.func.gii"]

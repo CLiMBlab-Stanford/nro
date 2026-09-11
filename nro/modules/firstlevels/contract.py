@@ -5,6 +5,11 @@ from pathlib import Path
 
 from nro.configuration.schema import scientific_values
 from nro.configuration.store import fingerprint
+from nro.engine.cifti import (
+    INDEXED_CIFTI_SCHEMA,
+    indexed_cifti_sidecar,
+    validate_indexed_cifti_sidecar,
+)
 
 
 def definition_fingerprint(definition: dict) -> str:
@@ -37,10 +42,12 @@ def _matches_definition(manifest: dict, expected: dict) -> bool:
 def firstlevels_output_contract() -> dict:
     """Describe the substantive estimator, covariance and omission contracts."""
     return {
-        "layout": "task-level-subject-model-variant",
+        "layout": "subject-task-level-model-target-v3",
         "temporal_filtering": "none",
         "design_export": "compiled-task-model-and-retained-acquisition-rows",
         "statistics": ["effect", "variance", "t", "dof"],
+        "statistic_files": "one-indexed-dscalar-per-statistic",
+        "map_index_metadata": INDEXED_CIFTI_SCHEMA,
         "covariance": "original-run-grouped-gls",
         "degrees_of_freedom": "run-conditional-satterthwaite",
         "input_denoising": "without-aroma",
@@ -98,6 +105,12 @@ def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[
             item = Path(output)
             if not item.is_file() or not item.stat().st_size:
                 return False, f"Missing firstlevels output: {output}"
+            if item.name.endswith(".dscalar.nii"):
+                if indexed_cifti_sidecar(item) not in {
+                    Path(candidate) for candidate in value["public_outputs"]
+                }:
+                    return False, f"Missing indexed CIFTI sidecar inventory: {item}"
+                validate_indexed_cifti_sidecar(item)
         return True, "complete"
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         return False, str(error)

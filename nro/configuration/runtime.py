@@ -102,12 +102,14 @@ def configure_preprocessing(project: str, preprocessing_id: str, values: dict[st
             },
             "preprocess_anat": {
                 **values["anat"],
+                "fsaverage_template": values["fsaverage_template"],
                 **container_args,
                 "out_dir": None,
                 "work_dir": None,
             },
             "preprocess": {
                 **values["func"],
+                "fsaverage_template": values["fsaverage_template"],
                 **container_args,
                 "work_dir": None,
             },

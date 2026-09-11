@@ -14,6 +14,7 @@ import pytest
 from nro.configuration.site import settings
 from nro.orchestration import scheduler_implementation as implementation
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.execution_pins import capture_site
 from nro.orchestration.registry import Registry
 from nro.orchestration.releases import ReleaseStore
@@ -105,6 +106,26 @@ def test_different_checkout_submits_central_worker(central, monkeypatch, tmp_pat
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     assert json.loads(result.stdout)["worker"] == "central"
     implementation.run_local_worker(registry, memory_gb=2, drain_seconds=0)
+
+
+def test_bound_scheduler_reuses_snapshot_published_at_activation(central, monkeypatch):
+    registry, root, _ = central
+    record = implementation.activate(registry, root)
+    snapshot = ControlPaths(registry.paths.control).implementations / record["source_digest"]
+    assert snapshot.is_dir()
+
+    def unexpected_capture(*_args, **_kwargs):
+        raise AssertionError("routine scheduler selection must not recapture source")
+
+    monkeypatch.setattr(
+        "nro.orchestration.source_snapshots.SourceStore.capture", unexpected_capture
+    )
+    source, _, _ = implementation.capture_worker_implementation(
+        registry.paths.control, registry.paths.bids_root
+    )
+
+    assert source.root == snapshot
+    assert source.digest == record["source_digest"]
 
 
 def test_activation_requires_quiescence_and_changed_source_never_falls_back(central):

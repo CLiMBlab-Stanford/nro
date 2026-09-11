@@ -6,8 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.engine.paths import anatomical_manifest_path
-from nro.engine.targets import smoothing_entity_value, target_directory_name
+from nro.engine.targets import is_surface_space, smoothing_entity_value
 from nro.modules.dynconn.paths import output_paths
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -35,12 +34,10 @@ def plan_instances(
         .resolve()
     )
     base_prefix = str(values.get("prefix") or context.sub_id)
-    anat = upstream["anat"][0]
-    preprocessing_label = context.registered.directories["preprocessing"]
     result = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
-        output_root = output_base / target_directory_name(space, smoothing) / context.sub_id
+        output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
         clean = tuple(
             item.key
@@ -48,7 +45,7 @@ def plan_instances(
             if item.entities.get("space") == space
             and item.entities.get("smoothing") == str(smoothing)
         )
-        domain = "surface" if space in {"fsnative", "fsaverage"} else "volume"
+        domain = "surface" if is_surface_space(space) else "volume"
         result.append(
             InstanceSpec.create(
                 key=instance_key(
@@ -82,16 +79,8 @@ def plan_instances(
                     "--smoothing",
                     str(smoothing),
                 ),
-                dependencies=(*clean, anat.key),
-                input_paths=(
-                    *context.aggregate_source_inputs,
-                    anatomical_manifest_path(
-                        context.sub_id,
-                        project=context.project,
-                        preprocessing_id=preprocessing_label,
-                        bids_root=context.bids_root,
-                    ),
-                ),
+                dependencies=clean,
+                input_paths=context.aggregate_source_inputs,
                 output_root=output_root,
                 output_prefix=prefix,
                 output_format=descriptor.output_format,

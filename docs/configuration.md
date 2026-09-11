@@ -75,8 +75,7 @@ explicitly marked as execution-only:
 - Preprocessing thread settings, `force`, `verbose`, and `func.io_chunk_vols`.
 - Clean `force` and `verbose`.
 - Firstlevels `spatial_block_size`.
-- Microparcellation `overwrite`, `connectivity.temporal_block_size`, and
-  `connectivity.reliability_vertex_block_size`.
+- Microparcellation `overwrite` and `connectivity.temporal_block_size`.
 - Networks `overwrite` and `oslom.timeout_seconds`.
 
 Other settings remain scientific by default. In particular, random seeds,

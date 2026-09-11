@@ -24,8 +24,6 @@ from nro.engine.execution import (
 from nro.engine.images import (
     copy_or_convert_nifti,
     nifti_is_valid,
-    nifti_spatial_shape,
-    nifti_volume_count,
     nifti_zooms_xyz,
 )
 from nro.engine.io import atomic_output_path, read_json, write_json
@@ -665,6 +663,7 @@ def _create_robust_bold_reference_step(
     *,
     run_child: Callable[..., Optional[str]],
     epi_in: Path,
+    volume_count: int,
     run_stem: str,
     mc_dir: Path,
     env: dict[str, str],
@@ -681,7 +680,9 @@ def _create_robust_bold_reference_step(
     final_par = mc_dir / "motion.par"
     final_mats = mc_dir / f"{final_mc.name}.mat"
     final_matrices_complete = _motion_matrix_breadcrumb(final_mats)
-    nvols = nifti_volume_count(epi_in)
+    nvols = int(volume_count)
+    if nvols < 1:
+        raise ValueError("Robust BOLD reference construction requires at least one volume")
     expected_matrices = tuple(final_mats / f"MAT_{index:04d}" for index in range(nvols))
     confound_cfg = SETTINGS.get_confounds
     detection_kwargs = {
@@ -1684,12 +1685,20 @@ def _create_topup_dfout_step(
     topup_config: str,
     env: dict[str, str],
     force: bool,
+    spatial_shape: tuple[int, int, int],
+    volumes_a: int,
+    volumes_b: int,
     readout_time_b: Optional[float] = None,
 ) -> TopupDfOutputs:
     if topup_config.strip().lower() == "auto":
-        shape = nifti_spatial_shape(se_a)
-        topup_config = "b02b0_2.cnf" if all(size % 2 == 0 for size in shape) else "b02b0_1.cnf"
-        LOG.info("TOPUP configuration selected for image dimensions %s: %s", shape, topup_config)
+        topup_config = (
+            "b02b0_2.cnf" if all(size % 2 == 0 for size in spatial_shape) else "b02b0_1.cnf"
+        )
+        LOG.info(
+            "TOPUP configuration selected for image dimensions %s: %s",
+            spatial_shape,
+            topup_config,
+        )
     merged = topup_dir / "se_merged.nii.gz"
     datain = topup_dir / "acqparams.txt"
     out_prefix = topup_dir / "topup_results"
@@ -1703,8 +1712,10 @@ def _create_topup_dfout_step(
     result_manifest = topup_dir / "topup_outputs.json"
     topup_complete = topup_dir / "topup.complete"
 
-    a_nvols = nifti_volume_count(se_a)
-    b_nvols = nifti_volume_count(se_b)
+    a_nvols = int(volumes_a)
+    b_nvols = int(volumes_b)
+    if a_nvols < 1 or b_nvols < 1:
+        raise ValueError("TOPUP inputs must each contain at least one volume")
     total_nvols = int(a_nvols) + int(b_nvols)
     second_readout = float(readout_time if readout_time_b is None else readout_time_b)
     spec: dict[str, object] = {

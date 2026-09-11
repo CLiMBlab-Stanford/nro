@@ -13,18 +13,16 @@ MICROPARCELLATION_QUALITY_FIELDS = {
     "included_runs": "integer",
     "runwise_standardization": "boolean",
     "global_signal_regression": "boolean",
+    "weighting": "string",
     "variance_preserved": "number",
     "variance_lost": "number",
     "residual_sum_squares": "number",
     "total_sum_squares": "number",
-    "parcel_reliability": "mapping",
-    "parcel_reliability.maps": "string_list",
-    "parcel_reliability.mean": "number",
-    "parcel_reliability.minimum": "number",
-    "parcel_reliability.maximum": "number",
-    "parcel_reliability.median": "number",
-    "parcel_reliability.mean_effective_runs": "number",
-    "parcel_reliability.minimum_effective_runs": "number",
+    "parcel_support": "mapping",
+    "parcel_support.minimum_supporting_runs": "integer",
+    "parcel_support.mean_supporting_runs": "number",
+    "parcel_support.mean_effective_runs": "number",
+    "parcel_support.minimum_effective_runs": "number",
     "run_contributions": "list",
     "split_half": "mapping",
     "split_half.method": "string",
@@ -94,8 +92,6 @@ MICROPARCELLATION_MANIFEST_FIELDS = {
     "outputs.microparcels": "string",
     "outputs.connectivity": "string",
     "outputs.quality": "string",
-    "outputs.parcel_reliability": "string",
-    "outputs.scene": "string",
     "connectivity_encoding": "mapping",
     "connectivity_encoding.format": "string",
     "connectivity_encoding.dtype": "string",
@@ -112,7 +108,7 @@ MICROPARCELLATION_MANIFEST_FIELDS = {
 def microparcellation_output_contract() -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     return {
-        "layout": "target-subject-scene-v1",
+        "layout": "subject-microparcellation-v4",
         "publication_manifest_fields": dict(MICROPARCELLATION_MANIFEST_FIELDS),
         "quality_fields": dict(MICROPARCELLATION_QUALITY_FIELDS),
     }
@@ -125,6 +121,8 @@ def validate_microparcellation_quality(document: Mapping[str, object]) -> None:
         MICROPARCELLATION_QUALITY_FIELDS,
         label="Microparcellation quality metadata",
     )
+    if document["weighting"] not in {"equal", "precision"}:
+        raise ValueError(f"Unsupported microparcellation weighting: {document['weighting']}")
 
 
 def validate_microparcellation_manifest(document: Mapping[str, object]) -> None:

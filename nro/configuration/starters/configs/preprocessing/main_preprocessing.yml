@@ -1,3 +1,4 @@
+fsaverage_template: fsaverage6
 container:
   image: site:qunex
   engine: site:runtime
@@ -53,6 +54,8 @@ func:
   syn_refine_smoothing_sigmas: 2x1x0vox
   clean_ica_aroma: true
   ica_aroma_denoise_type: aggr
+  marss_mode: auto
+  marss_min_multiband_factor: 6
   sdc_from_sbref_pair: false
   nthreads: 8
   nthreads_divisor: 2
@@ -63,7 +66,7 @@ func:
     - T1w
     - fsnative
     - MNI152NLin2009cAsym
-    - fsaverage
+    - fsaverage6
   force: false
   verbose: false
 confounds:
@@ -73,6 +76,9 @@ confounds:
   acompcor_max_voxels: 20000
   fd_radius_mm: 50.0
   motion_outlier_fd_thresh: 1.0
+  dvars_statistical_alpha: 0.05
+  dvars_practical_threshold_percent: 5.0
+  dvars_power: 0.3333333333333333
   nonsteady_max_vols: 20
   nonsteady_rel_thresh: 0.05
   nonsteady_stable_run: 3

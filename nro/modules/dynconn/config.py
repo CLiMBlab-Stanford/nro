@@ -15,14 +15,13 @@ dynconn_default = partial(main_configuration_factory, "dynconn")
 
 @dataclass(frozen=True)
 class InputsConfig:
-    """Cleaned runs and target geometry selected for one output."""
+    """Cleaned runs and target identity selected for one output."""
 
     functional: tuple[tuple[Path, ...], ...]
     temporal_masks: tuple[Path, ...]
     domain: str
     space: str
     smoothing_mm: int = DEFAULT_SMOOTHING_MM
-    surface: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,12 +62,26 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class LowRankConfig:
+    """Scientific controls for the compressed correlation representation."""
+
+    dimensions: int = field(default_factory=dynconn_default("low_rank_options", "dimensions"))
+    oversampling: int = field(default_factory=dynconn_default("low_rank_options", "oversampling"))
+    power_iterations: int = field(
+        default_factory=dynconn_default("low_rank_options", "power_iterations")
+    )
+
+
+@dataclass(frozen=True)
 class ModuleConfig:
     """Complete dynamic-connectivity module configuration."""
 
     inputs: InputsConfig
     output: OutputConfig
     inclusion: InclusionConfig = field(default_factory=InclusionConfig)
+    low_rank: bool = field(default_factory=dynconn_default("low_rank"))
+    low_rank_options: LowRankConfig = field(default_factory=LowRankConfig)
+    weighting: str = field(default_factory=dynconn_default("weighting"))
 
 
 def validate_config(cfg: ModuleConfig) -> None:
@@ -80,8 +93,12 @@ def validate_config(cfg: ModuleConfig) -> None:
         raise ValueError("At least one cleaned functional run is required")
     if len(cfg.inputs.functional) != len(cfg.inputs.temporal_masks):
         raise ValueError("Each cleaned run must have one temporal-mask table")
-    if cfg.inputs.domain == "surface" and len(cfg.inputs.surface) != 2:
-        raise ValueError("Surface dynamic connectivity requires left and right geometry")
-    if cfg.inputs.domain == "volume" and cfg.inputs.surface:
-        raise ValueError("Volume dynamic connectivity does not accept surface geometry")
-    validate_parameters("dynconn", {"inclusion": asdict(cfg.inclusion)})
+    validate_parameters(
+        "dynconn",
+        {
+            "inclusion": asdict(cfg.inclusion),
+            "weighting": cfg.weighting,
+            "low_rank": cfg.low_rank,
+            "low_rank_options": asdict(cfg.low_rank_options),
+        },
+    )

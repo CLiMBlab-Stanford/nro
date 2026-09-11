@@ -236,9 +236,6 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     critical_errors: dict[tuple[str, int], dict] = {}
     from nro.bidsify.status import render as render_ingestion
     from nro.bidsify.status import selected_records
-
-    projects = selected_projects(bids_root, selection.projects)
-    selected_project_set = set(projects)
     from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
 
@@ -247,6 +244,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
+    projects = list(dict.fromkeys(selection.projects))
+    if not branch_execution:
+        projects = selected_projects(bids_root, projects)
+    selected_project_set = set(projects)
     visible_ids = None
     if branch_execution:
         from nro.orchestration.scheduler_client import status
@@ -269,6 +270,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             mode="verify" if args.verify else "cached" if args.cached else "preview",
         )
         rows, visible_ids = result["rows"], set(result["visible_ids"])
+        if not projects:
+            selected_project_set = {str(row["project"]) for row in rows if row["id"] in visible_ids}
         if args.verify:
             from nro.orchestration.branch_status import record_observations
 

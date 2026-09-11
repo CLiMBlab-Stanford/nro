@@ -63,10 +63,21 @@ by the projection constructor.
 
 ## Pooled connectivity
 
-For run $r$, let $Z_r$ contain retained, centered, sample-standardized signals
-after optional connectivity-stage global-signal regression. Let $q_{ri}$ be
-the reliability weight for location or parcel $i$. Define
-$A_{ri}=\sqrt{q_{ri}}Z_{ri}$. Accumulate:
+For run $r$, let $Z_r$ contain retained signals after optional
+connectivity-stage global-signal regression. Center and scale each valid
+location so that its temporal sum of squares is one. Let $\nu_r$ be the
+algebraic temporal rank reported by `clean`, minus one when connectivity-stage
+global-signal regression is used. Define normalized run weights:
+
+$$
+\alpha_r=
+\begin{cases}
+1/R & \text{for equal weighting},\\
+\nu_r/\sum_s\nu_s & \text{for precision weighting}.
+\end{cases}
+$$
+
+Scale each run as $A_r=\sqrt{\alpha_r}Z_r$ and accumulate:
 
 $$G=\sum_r A_r^T A_r,\qquad
 \rho_{ij}=\frac{G_{ij}}{\sqrt{G_{ii}G_{jj}}}.$$
@@ -77,15 +88,13 @@ Row-blocked matrix products avoid materializing a separate connectome for each
 run. Only one triangle is computed, and its values are mirrored so the
 accumulator is exactly symmetric. The two split-half accumulators remain in
 memory at float32 precision.
-Runs are standardized independently and contribute according to their retained
-lengths and spatial reliability. This is not an unweighted mean of run-wise
-Pearson or Fisher-z correlations. Undefined variance receives zero support;
-the saved diagonal is zeroed for downstream graph construction.
-
-Reliability weights compare connectivity profiles between the first-plus-fourth
-and second-plus-third temporal quarters of a run, with independent quarter
-standardization. Values are bounded to [0, 1]. The implementation uses temporal
-dual products and spatial blocks to avoid retaining full quarter connectomes.
+Runs are standardized independently. Precision weighting is linear in
+effective DOF because covariance sampling variance scales inversely with that
+quantity. It describes temporal information, not freedom from artifact or
+measurement noise. Run admission handles known quality failures before
+weighting. Undefined spatial variance receives zero support; the saved diagonal
+is zeroed for downstream graph construction. The estimator pools correlations
+directly and does not apply a Fisher transform.
 
 The public pconn uses int8 quantization with a scale of $1/127$. Thus finite
 correlations are represented approximately; percentile threshold ties can
@@ -110,12 +119,13 @@ probability. Seeds, growth attempts, and size mismatch are recorded.
 
 ## Connectome diagnostics
 
-Run contributions include retained frames, parcel reliability summaries, Gram
-trace/Frobenius norm, and relative diagonal weight. Parcel maps summarize mean,
-minimum, maximum, and effective number of supporting runs. Histogram summaries
-describe unique off-diagonal weights, while power iteration approximates the
-dominant eigenvalue fraction. Participation rank is based on trace squared
-over squared Frobenius norm, accounting for valid self-correlations.
+Run contributions include retained frames, effective DOF, normalized run
+weight, Gram trace/Frobenius norm, and relative diagonal weight. Parcel-support
+summaries report the number and weight-equivalent number of contributing runs.
+Histogram summaries describe unique off-diagonal weights, while power iteration
+approximates the dominant eigenvalue fraction. Participation rank is based on
+trace squared over squared Frobenius norm, accounting for valid
+self-correlations.
 Per-run Gram trace and Frobenius norm are computed through the temporal dual
 matrix. This gives the same quantities without retaining a run-level parcel
 matrix.

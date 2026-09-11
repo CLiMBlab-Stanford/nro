@@ -56,8 +56,9 @@ would redefine the same subject-level artifact.
    voxel dimensions to convert mm to standard deviations. The grid axes must
    be orthogonal; boundaries are zero-padded. For surfaces, use Workbench
    `-metric-smoothing -fwhm` with midthickness geometry. Native geometry comes
-   directly from `anat`; fsaverage geometry comes from TemplateFlow. Zero FWHM
-   skips smoothing. Anatomy is an explicit dependency and is not copied.
+   directly from `anat`; fsaverage and fsaverage6 geometry come from
+   TemplateFlow. Zero FWHM skips smoothing. Anatomy is an explicit dependency
+   and is not copied.
 3. Compile the task YAML and module configuration into Stats Models. Select
    continuous nuisance columns from confounds using `confounds_regex`. Event convolution uses Nilearn's SPM or Glover canonical
    HRF. Exclude the union of frames marked by `temporal_mask_regex` columns;
@@ -94,22 +95,31 @@ assumptions, weighting, and the limitations of conditional AR inference.
 
 ```text
 derivatives/firstlevels/FIRSTLEVEL_CONFIG_ID/
-  space-SPACE_smoothing-Nmm/TASK/
-    node-run/sub-ID/
-    node-session/sub-ID/
-    node-subject/sub-ID/
+  sub-ID/
+    ses-SESSION/task-TASK/node-run/
+    ses-SESSION/task-TASK/node-session/
+    task-TASK/
+      node-session/
+      node-subject/
 ```
 
 The configuration directory uses nro's lineage rules: it is normally the
 firstlevels configuration ID, with a distinct label when upstream choices would
-otherwise collide. Filenames include model variant, task, space, smoothing,
-Stats Models node name, and applicable run/session entities. Statistical maps
-also include `contrast-NAME_stat-{effect,variance,t,dof}`. Volumes use
-`_statmap.nii.gz`; each surface hemisphere uses `_statmap.shape.gii`. Internal primitive-effect records support aggregation without publishing
-additional maps for effects that the user did not request.
+otherwise collide. Run outputs and session maps use `ses-SESSION` when the
+source data have sessions. The task-level `node-session` directory contains the
+aggregate node's manifest; datasets without sessions also use it for maps.
+Filenames include model variant, task, space, smoothing, Stats Models node name,
+and applicable run/session entities. Each node target has one dense-scalar CIFTI
+for each available statistic: effect, variance, t, and degrees of freedom. The
+contrasts are named maps on the CIFTI scalar axis, so Workbench can page through
+them. A pass-through contrast has no t map and is omitted from the t-statistic
+CIFTI. Internal primitive-effect records support aggregation without publishing
+maps for effects that the user did not request.
 
-Each map's JSON sidecar identifies the model, contrast, estimation choices, and
-the linear recipe on source runs. Each fitted run saves a coefficient array, residual
+Each CIFTI has a JSON sidecar with zero-based map indices, per-map contrast
+metadata, and a reverse lookup from contrast name to map index. Downstream code
+can use `nro.engine.cifti.load_indexed_cifti_map` to select a contrast without
+parsing its display name. Each fitted run saves a coefficient array, residual
 variance map, noise-group map, small group covariance matrices, and AR grid as
 NumPy arrays. These permit later covariance-aware summaries without loading
 time courses or storing a map for every coefficient pair. They are public
@@ -129,12 +139,13 @@ model template. Model-set membership is excluded from these scientific records.
 The numerical design and its metadata describe the realized PCA fit.
 
 Node manifests list maps, compact fits, design files, contributing records, and
-omissions. The fixed `_desc-firstlevels_manifest.json` under `node-run/sub-ID`
+omissions. The fixed `_desc-firstlevels_manifest.json` under
+`task-TASK/node-run/`
 collects completion evidence for the instance. Deleting a declared output
 invalidates completion. Resumption checks the model/configuration and selected
 run set as well as file freshness. Artifacts from different variants or targets
-are isolated during purge. These names are BIDS-like, not a claim of validator
-compliance.
+are isolated during purge by their complete entity-decorated filename prefix.
+These names are BIDS-like, not a claim of validator compliance.
 
 ## Configuration
 

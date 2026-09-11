@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.paths import anatomical_manifest_path
-from nro.engine.targets import smoothing_entity_value, target_directory_name
+from nro.engine.targets import smoothing_entity_value
 from nro.modules.networks.labeling import reference_paths
 from nro.modules.networks.paths import fixed_output_paths
 from nro.orchestration.contracts import InstanceSpec
@@ -41,7 +41,7 @@ def plan_instances(
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
-        output_root = output_base / target_directory_name(space, smoothing) / context.sub_id
+        output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
         micro = next(
             instance for instance in upstream["microparcellation"] if instance.entities == entities

@@ -27,10 +27,8 @@ Direct anatomy dependencies supply native geometry and gray-matter support.
 1. Standardize admitted runs over retained frames. Optional additional global
    signal regression is applied for connectivity. Default clean already
    includes global signal; the connectivity switch is separately configurable.
-2. Estimate local neighbor correlations and reliability weights. Reliability
-   compares temporal subdivisions of each run in bounded spatial blocks.
-   Reliability weighting changes each location's contribution; it is not an
-   equal average of run-wise connectomes.
+2. Estimate local neighbor correlations. Runs are centered and standardized
+   independently, then pooled with equal or effective-DOF weights.
 3. Transform local similarities with the configured exponential temperature.
    Apply Loukas edge-based local-variation coarsening, contracting spatial
    neighbors through multiple levels while approximating a low-frequency
@@ -55,24 +53,22 @@ variance-retention denominators, quantization, and split allocation.
 
 ## Public artifacts
 
-The root is
-`derivatives/microparcellation/LINEAGE/space-SPACE_smoothing-Nmm/sub-ID/`.
-`PREFIX` includes subject, space, and smoothing. The fixed scientific outputs are:
+Outputs from every space and smoothing target share
+`derivatives/microparcellation/LINEAGE/sub-ID/`. `PREFIX` includes subject,
+space, and smoothing, which keeps targets distinct within that directory. The
+fixed scientific outputs are:
 
 | Suffix after `PREFIX` | Meaning |
 | --- | --- |
 | `_desc-microparcellation_dseg.dlabel.nii` | Parcel labels in CIFTI brain-model coordinates. |
 | `_connectivity.pconn.nii` | Parcel-by-parcel correlation matrix and parcel axis. |
-| `_desc-parcelReliability_stat.dscalar.nii` | Reliability information mapped to locations. |
 | `_desc-microparcellationQuality_metrics.json` | Variance retention, null statistics, and connectome diagnostics. |
 | `_desc-microparcellation_manifest.yaml` | Method, sources, admission, outputs, and completion. |
 | `_desc-microparcellationIndex_manifest.json` | Paths used by downstream discovery/viewing. |
 | `_desc-microparcellation_dseg.nii.gz` | Additional volume labels for volume targets. |
 
-Each subject directory also contains a relocatable Workbench scene. Surface
-scenes include white, pial, midthickness, and inflated geometry, with midthickness
-active by default. Volume scenes omit surfaces. No raw or anatomical volume is
-needed to open a network or microparcellation surface scene.
+Use `nro scene -m microparcellation` to create a Workbench view. The linked
+form reuses the source geometry and scientific outputs without copying them.
 
 ## Configuration
 
@@ -84,8 +80,9 @@ constructs owned paths. `overwrite` requests rebuilding module outputs.
 `coarsening.iterations` controls refinement; `exponential_temperature` scales
 similarities; `eigenvectors`, `max_levels`, and `eigensolver_tolerance` govern
 the spectral approximation. The connectivity thresholds are admission rules;
-`temporal_block_size` and `reliability_vertex_block_size` bound streaming chunks.
-`reliability_weighting` and `global_signal_regression` change the estimator.
+`temporal_block_size` bounds streaming chunks. `weighting` selects `precision`
+or `equal` run weights. `global_signal_regression` changes the estimator and
+reduces each run's connectivity DOF by one.
 `quality.random_seed` makes null generation repeatable;
 `region_growing_attempts` bounds null construction retries;
 `connectome_power_iterations` controls the spectral diagnostic approximation.

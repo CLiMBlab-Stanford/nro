@@ -18,8 +18,6 @@ from nro.modules.microparcellation.quality import spatial_null_partitions
 from nro.modules.microparcellation.statistics import (
     _accumulate_gram_rows,
     _normalize_symmetric_gram,
-    _profile_reliability,
-    _quarter_standardized,
     _run_gram_statistics,
     local_edge_correlations,
     make_parcel_mean_loader,
@@ -302,79 +300,18 @@ class ScientificAlgorithmTests(unittest.TestCase):
             path = write_hint(Path(d) / "hint.dat", [[2, 0], [1]])
             self.assertEqual(path.read_text(), "2 0\n1\n")
 
-    def test_profile_reliability_matches_explicit_split_connectomes(self):
-        rng = np.random.default_rng(20260826)
-        first = rng.normal(size=(11, 7)).astype(np.float32)
-        second = rng.normal(size=(13, 7)).astype(np.float32)
-        first = (first - first.mean(axis=0)) / first.std(axis=0, ddof=1)
-        second = (second - second.mean(axis=0)) / second.std(axis=0, ddof=1)
-
-        got = _profile_reliability(first, second, vertex_block_size=3)
-        first_connectome = np.corrcoef(first, rowvar=False)
-        second_connectome = np.corrcoef(second, rowvar=False)
-        expected = np.empty(7, dtype=np.float32)
-        for vertex in range(7):
-            keep = np.arange(7) != vertex
-            expected[vertex] = np.clip(
-                np.corrcoef(
-                    first_connectome[vertex, keep],
-                    second_connectome[vertex, keep],
-                )[0, 1],
-                0.0,
-                1.0,
-            )
-        np.testing.assert_allclose(got, expected, rtol=2e-5, atol=2e-5)
-
-        second[:, -1] = 0.0
-        got = _profile_reliability(first, second, vertex_block_size=3)
-        first_connectome = np.corrcoef(first[:, :-1], rowvar=False)
-        second_connectome = np.corrcoef(second[:, :-1], rowvar=False)
-        for vertex in range(6):
-            keep = np.arange(6) != vertex
-            expected[vertex] = np.clip(
-                np.corrcoef(
-                    first_connectome[vertex, keep],
-                    second_connectome[vertex, keep],
-                )[0, 1],
-                0.0,
-                1.0,
-            )
-        expected[-1] = 0.0
-        np.testing.assert_allclose(got, expected, rtol=2e-5, atol=2e-5)
-
-    def test_subnormal_quarter_variance_is_treated_as_zero(self):
-        data = np.column_stack(
-            (
-                np.arange(8, dtype=np.float32),
-                np.arange(8, dtype=np.float32) * np.float32(1e-20),
-            )
-        )
-        quarters, valid = _quarter_standardized(data, global_signal_regression=False)
-        self.assertTrue(all(item[0] and not item[1] for item in valid))
-        self.assertTrue(all(np.all(item[:, 1] == 0) for item in quarters))
-        self.assertTrue(all(np.all(np.isfinite(item)) for item in quarters))
-
-    def test_local_correlations_use_reliability_weighted_gram(self):
+    def test_local_correlations_use_linear_run_weights(self):
         rng = np.random.default_rng(31)
         runs = {
             "run1": rng.normal(size=(9, 4)).astype(np.float32),
             "run2": rng.normal(size=(15, 4)).astype(np.float32),
         }
-        qualities = (
-            np.array([1.0, 0.25, 0.7, 0.0], dtype=np.float32),
-            np.array([0.2, 0.9, 0.4, 1.0], dtype=np.float32),
-        )
+        weights = np.array([0.25, 0.75])
         edges = np.array([[0, 1], [0, 2], [1, 3]], dtype=np.int64)
 
-        with (
-            patch(
-                "nro.modules.microparcellation.statistics.load_functional",
-                side_effect=lambda path: runs[str(path[0])],
-            ),
-            patch(
-                "nro.modules.microparcellation.statistics._vertex_reliability",
-                side_effect=qualities,
-            ),
+        with patch(
+            "nro.modules.microparcellation.statistics.load_functional",
+            side_effect=lambda path: runs[str(path[0])],
         ):
             result = local_edge_correlations(
                 ((Path("run1"),), (Path("run2"),)),
@@ -382,7 +319,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 4,
                 3,
                 global_signal_regression=False,
-                reliability_vertex_block_size=2,
+                run_weights=weights,
             )
         got = result.correlations
         self.assertEqual(
@@ -391,15 +328,14 @@ class ScientificAlgorithmTests(unittest.TestCase):
         )
 
         gram = np.zeros((4, 4))
-        for data, quality in zip(runs.values(), qualities):
+        for data, weight in zip(runs.values(), weights):
             z = (data - data.mean(axis=0)) / data.std(axis=0, ddof=1)
-            weighted = z * np.sqrt(quality)[None, :]
-            gram += weighted.T @ weighted
+            gram += weight * (z.T @ z) / (len(data) - 1)
         denominator = np.sqrt(np.outer(np.diag(gram), np.diag(gram)))
         expected = gram / denominator
         np.testing.assert_allclose(got, expected[edges[:, 0], edges[:, 1]], atol=2e-6)
 
-    def test_reliability_weighting_can_be_disabled_in_both_passes(self):
+    def test_equal_run_weights_apply_in_both_passes(self):
         rng = np.random.default_rng(37)
         runs = {
             "run1": rng.normal(size=(9, 4)).astype(np.float32),
@@ -410,19 +346,9 @@ class ScientificAlgorithmTests(unittest.TestCase):
         labels = np.array([0, 0, 1, 1])
         mask = np.ones(4, dtype=bool)
 
-        with (
-            patch(
-                "nro.modules.microparcellation.statistics.load_functional",
-                side_effect=lambda path: runs[str(path[0])],
-            ),
-            patch(
-                "nro.modules.microparcellation.statistics._vertex_reliability",
-                side_effect=AssertionError("vertex reliability should be skipped"),
-            ),
-            patch(
-                "nro.modules.microparcellation.statistics._parcel_reliability",
-                side_effect=AssertionError("parcel reliability should be skipped"),
-            ),
+        with patch(
+            "nro.modules.microparcellation.statistics.load_functional",
+            side_effect=lambda path: runs[str(path[0])],
         ):
             local = local_edge_correlations(
                 files,
@@ -430,8 +356,7 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 4,
                 3,
                 global_signal_regression=False,
-                reliability_vertex_block_size=2,
-                reliability_weighting=False,
+                run_weights=np.array([0.5, 0.5]),
             ).correlations
             parcels = parcel_correlations(
                 files,
@@ -440,18 +365,18 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 3,
                 split_half_block_frames=128,
                 global_signal_regression=False,
-                reliability_vertex_block_size=2,
-                reliability_weighting=False,
+                run_weights=np.array([0.5, 0.5]),
+                effective_dof=np.array([8, 12]),
             ).correlations
 
         vertex_gram = np.zeros((4, 4))
         parcel_gram = np.zeros((2, 2))
         for data in runs.values():
             z = (data - data.mean(axis=0)) / data.std(axis=0, ddof=1)
-            vertex_gram += z.T @ z
+            vertex_gram += (z.T @ z) / (2 * (len(data) - 1))
             parcel_z = np.column_stack((z[:, :2].mean(axis=1), z[:, 2:].mean(axis=1)))
             parcel_z = (parcel_z - parcel_z.mean(axis=0)) / parcel_z.std(axis=0, ddof=1)
-            parcel_gram += parcel_z.T @ parcel_z
+            parcel_gram += (parcel_z.T @ parcel_z) / (2 * (len(data) - 1))
         vertex_expected = vertex_gram / np.sqrt(
             np.outer(np.diag(vertex_gram), np.diag(vertex_gram))
         )
@@ -462,28 +387,19 @@ class ScientificAlgorithmTests(unittest.TestCase):
         np.testing.assert_allclose(local, vertex_expected[edges[:, 0], edges[:, 1]], atol=2e-6)
         np.testing.assert_allclose(parcels, parcel_expected, atol=2e-6)
 
-    def test_parcel_correlations_use_reliability_weighted_gram(self):
+    def test_parcel_correlations_use_linear_run_weights(self):
         rng = np.random.default_rng(47)
         runs = {
             "run1": rng.normal(size=(10, 6)).astype(np.float32),
             "run2": rng.normal(size=(17, 6)).astype(np.float32),
         }
-        qualities = (
-            np.array([1.0, 0.3, 0.8], dtype=np.float32),
-            np.array([0.2, 1.0, 0.5], dtype=np.float32),
-        )
+        weights = np.array([0.2, 0.8])
         labels = np.array([0, 0, 1, 1, 2, 2])
         mask = np.ones(6, dtype=bool)
 
-        with (
-            patch(
-                "nro.modules.microparcellation.statistics.load_functional",
-                side_effect=lambda path: runs[str(path[0])],
-            ),
-            patch(
-                "nro.modules.microparcellation.statistics._parcel_reliability",
-                side_effect=qualities,
-            ),
+        with patch(
+            "nro.modules.microparcellation.statistics.load_functional",
+            side_effect=lambda path: runs[str(path[0])],
         ):
             result = parcel_correlations(
                 ((Path("run1"),), (Path("run2"),)),
@@ -492,28 +408,24 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 4,
                 split_half_block_frames=128,
                 global_signal_regression=False,
-                reliability_vertex_block_size=2,
+                run_weights=weights,
+                effective_dof=np.array([9, 16]),
             )
             got = result.correlations
 
         gram = np.zeros((3, 3))
-        for data, quality in zip(runs.values(), qualities):
+        for data, weight in zip(runs.values(), weights):
             z = (data - data.mean(axis=0)) / data.std(axis=0, ddof=1)
             parcels = np.column_stack([z[:, labels == parcel].mean(axis=1) for parcel in range(3)])
             parcels = (parcels - parcels.mean(axis=0)) / parcels.std(axis=0, ddof=1)
-            weighted = parcels * np.sqrt(quality)[None, :]
-            gram += weighted.T @ weighted
+            gram += weight * (parcels.T @ parcels) / (len(data) - 1)
         denominator = np.sqrt(np.outer(np.diag(gram), np.diag(gram)))
         expected = gram / denominator
         np.fill_diagonal(expected, 0.0)
         np.testing.assert_allclose(got, expected, atol=2e-6)
         np.testing.assert_allclose(
-            result.parcel_reliability_mean,
-            np.mean(qualities, axis=0),
-        )
-        np.testing.assert_allclose(
             result.parcel_effective_runs,
-            np.square(np.sum(qualities, axis=0)) / np.sum(np.square(qualities), axis=0),
+            np.full(3, 1 / np.sum(np.square(weights))),
             atol=1e-6,
         )
         np.testing.assert_array_equal(result.parcel_supporting_runs, [2, 2, 2])
@@ -543,8 +455,8 @@ class ScientificAlgorithmTests(unittest.TestCase):
                 4,
                 split_half_block_frames=128,
                 global_signal_regression=False,
-                reliability_vertex_block_size=2,
-                reliability_weighting=False,
+                run_weights=np.array([1.0]),
+                effective_dof=np.array([11]),
                 null_partitions=(np.array([0, 1, 0, 2, 1, 2]),),
             )
 

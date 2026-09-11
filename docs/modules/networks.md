@@ -2,7 +2,7 @@
 
 `networks` consumes matching CIFTI microparcel labels, parcel connectivity, and
 their manifest. It also depends directly on anatomy for reference-atlas
-projection. It does not copy anatomical volumes into the scene.
+projection.
 
 ## Common input preparation
 
@@ -84,13 +84,20 @@ A network can receive labels from several references. Unselected networks keep
 numeric identifiers. These are spatial heuristics, not functional localizer
 results or ground-truth labels. Correlations and ranks are retained.
 
-The root is `derivatives/networks/LINEAGE/space-SPACE_smoothing-Nmm/sub-ID/`.
+Outputs from every space and smoothing target share
+`derivatives/networks/LINEAGE/sub-ID/`. Their filenames include both entities.
 Public outputs include a multi-map `desc-networks_stat.dscalar.nii`, stability,
-homelessness, and overlap CIFTIs; per-network maps; label TSV/JSON; YAML
-publication manifest; JSON index; and a relocatable scene. Human-readable map
-names permit stepping through networks in Workbench. Surface geometry is copied
-from the source scene, but anatomical volumes and registration dependencies are
-not scene dependencies. See the [path contract](../autoapi/nro/modules/networks/paths/index.rst).
+homelessness, and overlap CIFTIs; label TSV/JSON; YAML publication manifest; and
+JSON index. Human-readable map names permit stepping through networks in
+Workbench. Each CIFTI has a JSON sidecar that maps zero-based map indices to
+metadata and provides reverse lookups. Network membership maps can be selected
+by their numeric network ID, numeric label, heuristic label, or display name.
+One map can therefore resolve from several labels such as `network005`,
+`lana002`, and `dna003`. Downstream code can use
+`nro.engine.cifti.load_indexed_cifti_map` instead of parsing display names. Use
+`nro scene -m networks` to build a linked or portable view. The network artifact
+does not copy the upstream microparcel connectivity matrix. See the
+[path contract](../autoapi/nro/modules/networks/paths/index.rst).
 
 ## Shipped configuration
 

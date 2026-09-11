@@ -1,4 +1,4 @@
 sphinx==8.2.3
 myst-parser==4.0.1
 sphinx-autoapi==3.8.0
-sphinx-rtd-theme==3.0.2
+shibuya==2026.7.12

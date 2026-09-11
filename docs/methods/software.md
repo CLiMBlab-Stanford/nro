@@ -21,6 +21,7 @@ the model format. FitLins is not a dependency.
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
 | ICA-AROMA | Motion-component classification and denoising. | [Upstream implementation](https://github.com/maartenmennes/ICA-AROMA) |
+| MARSS 1.0.2 | Native-space estimation and removal of signal shared by simultaneous slices. | [Official implementation](https://github.com/CNaP-Lab/MARSS) |
 | Workbench | Smoothing, surfaces, CIFTI, scenes. | [Workbench](https://www.humanconnectome.org/software/connectome-workbench) |
 | TemplateFlow | Local MNI references and fsaverage geometry. | [TemplateFlow](https://www.templateflow.org/) |
 | NumPy/SciPy | Streaming moments, sparse graphs, eigensolvers, projection. | [NumPy](https://numpy.org/doc/), [SciPy](https://docs.scipy.org/doc/scipy/) |
@@ -38,6 +39,14 @@ resources are reused, so those pins do not establish the versions of every
 executable already present at a site. Python versions are locked in `uv.lock`;
 TemplateFlow object versions/checksums are in the installed resource catalog.
 See [installation](../installation.md) for acquisition and verification.
+
+MARSS is an optional GPLv3 package invoked through a process boundary. Nro does
+not copy or modify its implementation. The integration follows Tubiolo,
+Williams, and Van Snellenberg (2024),
+[*Characterization and Mitigation of a Simultaneous Multi-Slice fMRI Artifact*](https://doi.org/10.1002/hbm.70066).
+The official package estimates and subtracts the artifact. Nro validates its
+outputs and replaces the full 4D artifact file with a slice-wise rank-one
+factorization whose reconstruction error is checked and recorded.
 
 ## Methods
 

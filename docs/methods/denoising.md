@@ -8,20 +8,23 @@ motivation and sources.
 Each run contains three independently numbered families of one-hot columns:
 
 - `extreme_fd_outlierNN` marks frames whose Power framewise displacement is
-  greater than 1 mm.
+  greater than 1 mm by default.
 - `dvars_outlierNN` marks frames that pass both Afyouni and Nichols' statistical
-  and practical criteria: an upper-tail DVARS test significant at a 5%
-  Bonferroni family-wise error rate within the run, and a change in percent
-  D-var greater than 5%.
+  and practical criteria. The defaults require an upper-tail DVARS test
+  significant at a 5% Bonferroni family-wise error rate within the run and a
+  change in percent D-var greater than 5%. An anomalous difference marks both
+  frames in the adjacent pair.
 - `motion_outlierNN` marks the unique union of the preceding two families.
 
 The two-part DVARS rule is intentional. Statistical significance alone can flag
 negligible changes in high-dimensional data, while an unstandardized fixed
 DVARS cutoff is sensitive to signal scaling and the run's baseline variability.
 Requiring both statistical and practical significance follows the proposal of
-Afyouni and Nichols ([2018](https://doi.org/10.1016/j.neuroimage.2017.12.098)). They noted that the 5% practical cutoff
-worked adequately in the HCP data they studied and might require recalibration
-for other data sources. These cutoffs should be validated on this project's data.
+Afyouni and Nichols ([2018](https://doi.org/10.1016/j.neuroimage.2017.12.098)).
+They noted that the 5% practical cutoff worked adequately in the HCP data they
+studied and might require recalibration for other data sources. The
+`dvars_statistical_alpha`, `dvars_practical_threshold_percent`, and
+`dvars_power` configuration keys control the test.
 
 For connectivity, the temporal mask is the row-wise union of
 `non_steady_state_outlierNN` and `motion_outlierNN`. The reason-specific FD and

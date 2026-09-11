@@ -9,6 +9,7 @@ from nro.bin.purge import main as purge_main
 from nro.configuration.store import ConfigStore
 from nro.engine.cli import page_text
 from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.purge_paths import _remove_path
 from nro.orchestration.registry import Registry, utcnow
 
 
@@ -58,6 +59,27 @@ def _instance_row(registry: Registry, module: str, run: str | None = None) -> di
         if row["module"] == module and (run is None or entities.get("run") == run):
             return row
     raise AssertionError(f"Missing instance {module=} {run=}")
+
+
+def test_remove_path_prunes_empty_parents_but_preserves_boundary(tmp_path: Path) -> None:
+    derivatives = tmp_path / "derivatives"
+    artifact = _write(derivatives / "module" / "main" / "sub-01" / "artifact.nii.gz")
+
+    assert _remove_path(artifact, dry_run=False, prune_root=derivatives)
+
+    assert derivatives.is_dir()
+    assert not (derivatives / "module").exists()
+
+
+def test_remove_path_stops_pruning_at_nonempty_directory(tmp_path: Path) -> None:
+    derivatives = tmp_path / "derivatives"
+    artifact = _write(derivatives / "module" / "main" / "sub-01" / "artifact.nii.gz")
+    retained = _write(artifact.parent / "retained.nii.gz")
+
+    assert _remove_path(artifact, dry_run=False, prune_root=derivatives)
+
+    assert artifact.parent.is_dir()
+    assert retained.is_file()
 
 
 def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, capsys) -> None:
@@ -394,6 +416,7 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
         for row in micro
         if json.loads(row["entities_json"]) == {"space": "fsnative", "smoothing": "2"}
     )
+    assert Path(selected["output_root"]) == Path(preserved["output_root"])
     selected_file = _write(
         Path(selected["output_root"]) / f"{selected['output_prefix']}_manifest.yaml"
     )
