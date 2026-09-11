@@ -222,7 +222,6 @@ def build_module(
         )
     )
 
-    runner.set_definition_inputs((configuration_snapshot,))
     dependency_check = opts.work_dir / "dependencies.complete"
 
     def check_dependencies() -> None:

@@ -714,6 +714,66 @@ def test_module_dag_contract_rejects_topology_change_for_same_signature(
         changed.reconcile_contract(contract, signature="source-and-workflow")
 
 
+def test_scientific_change_reruns_only_step_and_descendants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "current-steps.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    outputs = {name: tmp_path / f"{name}.txt" for name in ("first", "child", "independent")}
+    actions: list[str] = []
+
+    def construct(value: int) -> Runner:
+        runner = Runner(
+            module_name="Scoped invalidation",
+            container=None,
+            binds=(),
+            logger=logging.getLogger("test.runner.scoped-invalidation"),
+            next_step=count(1).__next__,
+        )
+
+        def write(name: str) -> None:
+            actions.append(name)
+            outputs[name].write_text(str(value))
+
+        runner.add_step(
+            Step.python(
+                name="First",
+                outputs=(outputs["first"],),
+                action=lambda: write("first"),
+                parameters={"value": value},
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Child",
+                inputs=(outputs["first"],),
+                outputs=(outputs["child"],),
+                action=lambda: write("child"),
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Independent",
+                outputs=(outputs["independent"],),
+                action=lambda: write("independent"),
+            )
+        )
+        return runner
+
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "first")
+    with construct(1).run_context() as runner:
+        runner.execute()
+    assert actions == ["first", "child", "independent"]
+
+    actions.clear()
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "second")
+    with construct(2).run_context() as runner:
+        states = runner.execute()
+
+    assert actions == ["first", "child"]
+    assert list(states.values())[-1].value == "fresh"
+
+
 def test_bound_module_contract_rejects_mutation_before_execution(
     tmp_path: Path,
 ) -> None:

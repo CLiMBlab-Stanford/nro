@@ -61,8 +61,11 @@ Pushing a version tag starts the GitHub Release workflow. It rejects a tag whose
 version differs from `pyproject.toml`, whose target is not on `main`, or whose name is
 not a plain semantic version prefixed by `v`. Release tags must be annotated. A valid
 tag creates a GitHub Release with generated notes and marks it as the latest release.
-Verify that the workflow succeeded. A tag without its GitHub Release is not a
-complete publication.
+After the workflow succeeds, edit the release so that it begins with a brief
+human-written summary of the important changes. Generated notes can follow the
+summary. Verify the workflow and the final release description. A tag without its
+GitHub Release, or a release containing only generated notes, is not a complete
+publication.
 
 Version changes, tags, and GitHub Releases remain separate from scientific freshness,
 which is based on artifact contracts and inputs.

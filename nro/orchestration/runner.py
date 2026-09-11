@@ -139,7 +139,6 @@ class Runner:
         self._logger = logger
         self._next_step = next_step
         self._graph = RunnerGraph(module_name)
-        self._definition_inputs: tuple[Path, ...] = ()
         self._step_log_separator = step_log_separator
         if self._container is None:
             return
@@ -166,13 +165,7 @@ class Runner:
             name = self._guess_step_name(step.command)
         if not name:
             raise ValueError("A Python or directory step must have a name.")
-        added = self._graph.add(
-            replace(
-                step,
-                name=name,
-                inputs=(*self._definition_inputs, *step.inputs),
-            )
-        )
+        added = self._graph.add(replace(step, name=name))
         self._declared_paths.extend((*added.inputs, *added.outputs))
         if added.cwd is not None:
             self._declared_paths.append(added.cwd)
@@ -184,12 +177,6 @@ class Runner:
             for path in (*step.outputs, step.directory, step.breadcrumb, step.cwd):
                 if path is not None:
                     self._execution_context.require_output(path)
-
-    def set_definition_inputs(self, inputs: Sequence[Path]) -> None:
-        """Set inputs inherited by subsequently added scientific steps."""
-        if self._graph.frozen:
-            raise RuntimeError("Cannot change definition inputs after the DAG is frozen.")
-        self._definition_inputs = tuple(Path(path) for path in inputs)
 
     def execute(self) -> dict[str, NodeState]:
         """Traverse one complete, frozen module DAG.
@@ -210,17 +197,16 @@ class Runner:
 
         ledger = os.environ.get("NRO_STEP_LEDGER")
         signature = os.environ.get("NRO_RUNNER_GRAPH_SIGNATURE", "direct")
+        changed_steps: frozenset[str] = frozenset()
         if ledger:
-            graph.bind_contract(
-                Path(ledger).with_name("runner-contract.json"),
-                signature=signature,
-            )
+            contract_path = Path(ledger).with_name("runner-contract.json")
+            changed_steps = graph.changed_steps(contract_path, signature=signature)
 
         states: dict[str, NodeState] = {}
         completion = [step for step in graph.ordered_steps() if step.completion_boundary]
         if len(completion) > 1:
             raise RuntimeError("A module DAG may declare at most one completion boundary.")
-        if completion:
+        if completion and not changed_steps:
             boundary = completion[0]
             boundary_run, boundary_reason = artifact_decision(
                 boundary.outputs,
@@ -253,13 +239,16 @@ class Runner:
             upstream_dirty = any(
                 states[parent] is NodeState.DIRTY for parent in graph.dependencies(step)
             )
+            declaration_changed = step.id in changed_steps
             should_run, reason = artifact_decision(
                 step.outputs,
-                step.force or upstream_dirty,
+                step.force or upstream_dirty or declaration_changed,
                 inputs=step.inputs,
             )
             if upstream_dirty:
                 reason = "Re-running because an upstream step produced new artifacts."
+            elif declaration_changed:
+                reason = "Re-running because this step's scientific declaration changed."
             graph.record_decision(step, should_run=should_run, reason=reason)
 
             if not should_run and step.validate is not None:

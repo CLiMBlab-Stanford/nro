@@ -13,6 +13,7 @@ import pandas as pd
 import yaml
 from scipy.ndimage import gaussian_filter
 
+from nro.configuration.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
@@ -383,7 +384,6 @@ def run_module(
     smoothing: int,
     work_root: Path,
     output_root: Path | None = None,
-    definition_inputs: tuple[Path, ...] = (),
     execution_context: ExecutionContext | None = None,
 ) -> Path:
     """Construct and execute one participant/task/model/space/smoothing DAG."""
@@ -413,7 +413,6 @@ def run_module(
         next_step=count(1).__next__,
         execution_context=execution_context,
     )
-    runner.set_definition_inputs(definition_inputs)
     definition = {"model": model, "config": config}
     base = {
         "model": model_id,
@@ -495,7 +494,14 @@ def run_module(
             base={**base, "node": root_node["Name"]},
             config=config,
         )
-        runner.add_step(step)
+        runner.add_step(
+            step.with_parameters(
+                {
+                    "model": model,
+                    "configuration": scientific_values("firstlevels", config),
+                }
+            )
+        )
         manifests.setdefault(root_node["Name"], []).extend(step.outputs)
     definition = {**definition, "runs": [run.stem for run in runs]}
     base = {

@@ -182,6 +182,7 @@ def _brain_extract_anat_copy(
         prepare=prepare,
         finalize=finalize,
         validate=validate,
+        parameters={"brain_extraction": "mri_synthstrip", "image": synthstrip_image},
     )
 
 
@@ -268,6 +269,7 @@ def _create_copy_or_average_step(
             force=force,
             step_name=f"Select Subject {modality} Image",
             validate=validate,
+            parameters={"selection_strategy": strategy},
         )
     else:
         tmp_dir = work_dir / f"robust_template_{modality}"
@@ -296,6 +298,7 @@ def _create_copy_or_average_step(
                 out_img.unlink(missing_ok=True),
             ),
             validate=validate,
+            parameters={"selection_strategy": strategy},
         )
     return step, out_meta
 

@@ -113,6 +113,9 @@ nro status -P example -p 01
 nro log -P example -p 01 -m anat -i
 ```
 
+By default, `nro status` quickly reports the registry's saved state. Run
+`nro status --update` when you need it to check files and update that state.
+
 Requesting a downstream endpoint automatically adds its dependencies. For
 example:
 

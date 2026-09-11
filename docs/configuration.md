@@ -153,7 +153,7 @@ scientific contract. Existing historical lineages can remain owned and usable
 without being requestable from the current workflow catalog.
 
 For development, change a named configuration and add a workflow that selects
-it. Review its effect on artifacts with `status --verify` or a deliberately
+it. Review its effect on artifacts with `status --update` or a deliberately
 scoped `run --no-submit`. Neither is a guarantee that no registry state changes:
 both perform writes. Keep shared workers stopped while changing shared code.
 

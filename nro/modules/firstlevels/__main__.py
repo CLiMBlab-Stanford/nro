@@ -72,7 +72,6 @@ def main(
         / "derivatives"
         / "firstlevels"
         / config_id,
-        definition_inputs=(runtime,),
         execution_context=execution_context,
     )
 

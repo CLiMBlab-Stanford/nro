@@ -26,6 +26,7 @@ def create_copy_file_step(
     force: bool,
     step_name: str,
     validate: Callable[[], tuple[bool, str]] | None = None,
+    parameters: object | None = None,
 ) -> Step:
     """Create an atomic file-copy step."""
     return Step.python(
@@ -35,6 +36,7 @@ def create_copy_file_step(
         force=force,
         action=lambda: atomic_copy_file(src, dst),
         validate=validate,
+        parameters=parameters,
     )
 
 

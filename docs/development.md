@@ -81,10 +81,10 @@ registration. It does not invent a historical code version.
 
 Branch-side compilation supplies scientific expectations. Scheduler assessment
 checks those registered contracts, filesystem evidence, and dependency generations.
-`status --verify` first recompiles registered selections in the invoking checkout
+`status --update` first recompiles registered selections in the invoking checkout
 without creating demand, then asks central code to assess the compiled results.
-Default status also previews code-defined processing-policy changes locally;
-`--cached` does neither. Historical lineages no longer represented by current
+Default status reads the current registry without recompiling definitions or
+checking the filesystem. Historical lineages no longer represented by current
 workflows retain their recorded contracts.
 `AssessmentSnapshot` captures a consistent graph; `AssessmentReport` returns its
 decisions. Publication rejects the entire report if relevant state changed.

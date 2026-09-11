@@ -48,8 +48,11 @@ authorized the certification it represents. Follow the complete policy in
 
 When the user explicitly authorizes publication of a release, publication is
 complete only after its annotated version tag and corresponding GitHub Release
-exist. Verify the automated release workflow after pushing the tag. Do not treat
-a Git tag alone as a published GitHub Release.
+exist. The GitHub Release must begin with a concise, human-written summary of
+the important changes. Generated notes may follow that summary, but they do not
+replace it. Verify the automated release workflow after pushing the tag, then
+add or confirm the summary before treating publication as complete. Do not
+treat a Git tag alone as a published GitHub Release.
 
 ## Writing
 

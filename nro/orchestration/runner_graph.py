@@ -20,6 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 
+from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json
 
 
@@ -40,6 +41,18 @@ class StepKind(str, Enum):
 
 Validator = Callable[[], tuple[bool, str]]
 Action = Callable[[], None]
+
+
+def _normalized_command(command: Sequence[str]) -> list[str]:
+    """Normalize equivalent long-option spellings for a scientific signature."""
+    normalized: list[str] = []
+    for token in (str(value) for value in command):
+        if token.startswith("--") and "=" in token:
+            option, value = token.split("=", 1)
+            normalized.extend((option, value))
+        else:
+            normalized.append(token)
+    return normalized
 
 
 def path_mtime(path: Path) -> float:
@@ -119,6 +132,20 @@ class Step:
     breadcrumb_text: str = "complete\n"
     reset_directory: bool = True
     completion_boundary: bool = False
+    scientific_signature: str = ""
+
+    @staticmethod
+    def _scientific_signature(parameters: object | None) -> str:
+        """Return a canonical signature for explicit scientific parameters."""
+        return "" if parameters is None else fingerprint(parameters)
+
+    def with_parameters(self, parameters: object) -> "Step":
+        """Return this declaration bound to additional scientific parameters."""
+        combined = {
+            "existing_signature": self.scientific_signature or None,
+            "parameters": parameters,
+        }
+        return replace(self, scientific_signature=fingerprint(combined))
 
     @classmethod
     def python(
@@ -133,6 +160,7 @@ class Step:
         validate: Optional[Validator] = None,
         after: Sequence[str] = (),
         completion_boundary: bool = False,
+        parameters: object | None = None,
     ) -> "Step":
         """Declare a Python action without executing it.
 
@@ -151,6 +179,7 @@ class Step:
             validate=validate,
             after=tuple(after),
             completion_boundary=bool(completion_boundary),
+            scientific_signature=cls._scientific_signature(parameters),
         )
 
     @classmethod
@@ -170,6 +199,7 @@ class Step:
         direct: bool = False,
         prepare: Optional[Action] = None,
         finalize: Optional[Action] = None,
+        parameters: object | None = None,
     ) -> "Step":
         """Declare an external command and its file boundary.
 
@@ -191,6 +221,7 @@ class Step:
             direct=bool(direct),
             prepare=prepare,
             finalize=finalize,
+            scientific_signature=cls._scientific_signature(parameters),
         )
 
     @classmethod
@@ -210,6 +241,7 @@ class Step:
         breadcrumb_text: str = "complete\n",
         reset_directory: bool = True,
         completion_boundary: bool = False,
+        parameters: object | None = None,
     ) -> "Step":
         """Declare a tool-owned directory with validated completion.
 
@@ -234,6 +266,7 @@ class Step:
             breadcrumb_text=breadcrumb_text,
             reset_directory=bool(reset_directory),
             completion_boundary=bool(completion_boundary),
+            scientific_signature=cls._scientific_signature(parameters),
         )
 
 
@@ -508,7 +541,7 @@ class RunnerGraph:
         return displayed
 
     def _contract_step(self, step: Step) -> dict[str, object]:
-        return {
+        contract: dict[str, object] = {
             "id": step.id,
             "name": step.name,
             "kind": step.kind.value,
@@ -516,6 +549,11 @@ class RunnerGraph:
             "outputs": [str(path.resolve(strict=False)) for path in step.outputs],
             "dependencies": list(self._dependencies[step.id]),
         }
+        if step.scientific_signature:
+            contract["scientific_signature"] = step.scientific_signature
+        if step.kind is StepKind.COMMAND:
+            contract["command_signature"] = fingerprint(_normalized_command(step.command))
+        return contract
 
     def contract_payload(self, *, signature: str) -> dict[str, object]:
         """Serialize frozen topology and the supplied substantive signature.
@@ -525,14 +563,14 @@ class RunnerGraph:
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before serialization.")
         return {
-            "version": 2,
+            "version": 3,
             "module": self.module_name,
             "signature": str(signature),
             "nodes": [self._contract_step(step) for step in self.ordered_steps()],
         }
 
     def bind_contract(self, path: Path, *, signature: str) -> None:
-        """Validate the complete graph against its prior substantive contract."""
+        """Validate immutable topology against its prior instance contract."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before binding its contract.")
         try:
@@ -541,12 +579,79 @@ class RunnerGraph:
             return
         if not isinstance(existing, dict) or existing.get("signature") != signature:
             return
+        if int(existing.get("version", 0) or 0) < 3:
+            # Version 2 had only a whole-DAG guard. Let the first version 3
+            # execution adopt node-level contracts without treating the
+            # contract-format migration as a scientific topology change.
+            return
         current = self.contract_payload(signature=signature)
-        if existing.get("module") != current["module"] or existing.get("nodes") != current["nodes"]:
+        structural_fields = {"id", "kind", "inputs", "outputs", "dependencies"}
+
+        def topology(nodes: object) -> object:
+            if not isinstance(nodes, list):
+                return nodes
+            return [
+                {key: node.get(key) for key in structural_fields}
+                for node in nodes
+                if isinstance(node, dict)
+            ]
+
+        if existing.get("module") != current["module"] or topology(
+            existing.get("nodes")
+        ) != topology(current["nodes"]):
             raise RuntimeError(
                 "Module DAG topology changed under an immutable source/workflow "
                 f"contract ({signature})."
             )
+
+    def changed_steps(self, path: Path, *, signature: str) -> frozenset[str]:
+        """Return nodes whose scientific declarations changed from the prior contract.
+
+        A new instance has no prior contract and therefore relies on ordinary
+        artifact freshness. When an instance contract changes, nodes are
+        compared independently so the runner can invalidate only changed nodes
+        and their descendants. The enclosing signature is intentionally not a
+        node-level freshness input.
+        """
+        if not self._frozen:
+            raise RuntimeError("Runner graph must be frozen before comparing contracts.")
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return frozenset()
+        if not isinstance(existing, dict):
+            return frozenset()
+        if existing.get("signature") == signature:
+            self.bind_contract(path, signature=signature)
+        old_nodes = existing.get("nodes")
+        if not isinstance(old_nodes, list):
+            return frozenset()
+        previous_version = int(existing.get("version", 0) or 0)
+        if previous_version < 3:
+            # Version 2 cannot identify the scientific parameters of one node.
+            # Adopt the new contract without guessing. Existing artifact and
+            # completion validators still govern this transition.
+            return frozenset()
+        previous = {
+            str(node.get("id")): node
+            for node in old_nodes
+            if isinstance(node, dict) and node.get("id")
+        }
+        changed: set[str] = set()
+        for step in self.ordered_steps():
+            current = self._contract_step(step)
+            old = previous.get(step.id)
+            if old is None:
+                changed.add(step.id)
+                continue
+            # Names are presentation. Commands contribute only their normalized
+            # signature; factories separately declare parameters used by Python
+            # actions and compound command steps.
+            comparable_old = {key: value for key, value in old.items() if key != "name"}
+            comparable_current = {key: value for key, value in current.items() if key != "name"}
+            if comparable_old != comparable_current:
+                changed.add(step.id)
+        return frozenset(changed)
 
     def reconcile_contract(self, path: Path, *, signature: str) -> dict[str, object]:
         """Validate prior topology, atomically save the contract, and return its payload."""
@@ -603,7 +708,7 @@ class RunnerGraph:
                 }
             )
         return {
-            "version": 2,
+            "version": 3,
             "module": self.module_name,
             "generated_at": time.time(),
             "nodes": nodes,
