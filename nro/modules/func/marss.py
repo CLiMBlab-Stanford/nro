@@ -625,7 +625,7 @@ def create_marss_step(
                 temporary_path = Path(temporary)
                 corrected = temporary_path / "corrected.nii.gz"
                 artifact = temporary_path / "artifact.nii.gz"
-                runner.run_direct(
+                runner.run_child(
                     (
                         sys.executable,
                         "-m",
@@ -643,13 +643,12 @@ def create_marss_step(
                         "--artifact",
                         str(artifact),
                     ),
-                    step_name="Official MARSS Correction",
-                    outputs=(corrected, artifact),
                     env={
                         **os.environ,
                         "MPLBACKEND": "Agg",
                         "MPLCONFIGDIR": str(temporary_path / "matplotlib"),
                     },
+                    direct=True,
                 )
                 factorization_error, correction_error, mean_artifact_variance = _compact_artifact(
                     source_bold,

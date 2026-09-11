@@ -138,7 +138,7 @@ def test_container_command_resolution_preserves_configured_path() -> None:
     calls: list[list[str]] = []
 
     class _ResolverRunner:
-        def run_out(self, command, **_kwargs) -> str:
+        def run_child(self, command, **_kwargs) -> str:
             calls.append([str(value) for value in command])
             return "__NRO_CMD__=/opt/fsl/bin/applywarp"
 
