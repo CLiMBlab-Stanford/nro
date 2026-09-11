@@ -210,8 +210,11 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
         if name == "main":
             visible.update(
                 row[0]
-                for row in db.execute("""SELECT i.id FROM instances i
-                LEFT JOIN instance_execution e ON e.instance_id=i.id WHERE e.instance_id IS NULL""")
+                for row in db.execute(
+                    """SELECT i.id FROM instances i
+                    LEFT JOIN instance_execution e ON e.instance_id=i.id
+                    WHERE e.instance_id IS NULL AND i.artifact_state!='missing'"""
+                )
             )
         workflows = {}
         for row in db.execute(

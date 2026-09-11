@@ -11,6 +11,8 @@ from nro.configuration.store import ConfigStore
 
 from .images import gifti_vertex_count
 
+FSAVERAGE_VERTEX_COUNTS = {"fsaverage": 163842, "fsaverage6": 40962}
+
 
 def templateflow_roots() -> tuple[Path, ...]:
     """Return existing local TemplateFlow trees in preference order."""
@@ -60,6 +62,26 @@ def find_fsaverage_surface(
         f"Could not find fsaverage hemisphere-{hemi} {surface} geometry with "
         f"{n_vertices} vertices under {locations}. Set TEMPLATEFLOW_HOME to a populated "
         "TemplateFlow resource directory."
+    )
+
+
+def find_fsaverage_template_surface(
+    *,
+    template: str,
+    hemi: str,
+    surface: str,
+    roots: tuple[Path, ...] | None = None,
+) -> Path:
+    """Find geometry for a supported fsaverage template in local TemplateFlow data."""
+    try:
+        n_vertices = FSAVERAGE_VERTEX_COUNTS[str(template)]
+    except KeyError as error:
+        raise ValueError(f"Unsupported fsaverage template: {template}") from error
+    return find_fsaverage_surface(
+        hemi=hemi,
+        surface=surface,
+        n_vertices=n_vertices,
+        roots=roots,
     )
 
 

@@ -597,6 +597,48 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
     assert snapshot[downstream.key]["root_failure_ids"] == ()
 
 
+def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    instance = _spec(
+        key="anat:" + "j" * 64,
+        module="anat",
+        lineage=registered.lineages["preprocessing"],
+        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        output=tmp_path / "outputs" / "anat.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        instances=(instance,),
+        terminal_instance_keys=(instance.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("failed-worker", resource_class="large")
+    claimed = registry.claim_ready_instance("failed-worker", ("large",))
+    assert claimed is not None
+    registry.finish_attempt(
+        claimed.attempt_id,
+        state="error",
+        error_type="RuntimeError",
+        error_message="historical failure",
+    )
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE requests SET state='cancelled'")
+        db.execute("UPDATE request_instances SET demand_state='cancelled'")
+        db.execute("UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user'")
+
+    row = registry.instance_status_snapshot()[0]
+    assert row["attempt_state"] == "error"
+    assert row["status"] == "Missing"
+    assert row["artifact_reason"] == "Purged by user"
+
+
 def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)

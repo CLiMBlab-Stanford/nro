@@ -129,7 +129,11 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     template.write_bytes(b"template")
     synthstrip = tmp_path / "synthstrip.sif"
     synthstrip.write_bytes(b"image")
-    monkeypatch.setattr(anat, "find_fsaverage_directory", lambda *a, **k: tmp_path / "fsaverage")
+    monkeypatch.setattr(
+        anat,
+        "find_fsaverage_template_surface",
+        lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
+    )
     base = context.paths.source_project("demo") / "derivatives/preprocessing/main"
     options = anat.Options(
         "demo",
