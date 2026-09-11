@@ -28,13 +28,13 @@ selected sources before comparing subjects with different acquisition schemes.
 3. Run FreeSurfer `recon-all` with a validated directory completion boundary.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric
-   values are in `nro.engine.freesurfer`; they are not learned tissue probabilities.
+   values are in `nro.modules.anat.constants`; they are not learned tissue probabilities.
 4. Convert FreeSurfer geometry to GIFTI and construct white, pial, inflated,
    and midthickness surfaces. Export sphere registrations and surface metrics.
    FSL/FreeSurfer coordinate transforms and Workbench surface operations place
    geometry in the requested native and template coordinate systems. The
-   packaged configuration uses the 41k-vertex-per-hemisphere `fsaverage6`
-   template.
+   packaged configuration uses the pinned 41k-vertex-per-hemisphere
+   `fsaverage6` geometry from the local TemplateFlow store.
 5. Register the subject anatomy to the configured MNI reference with ANTs SyN.
    Publish forward and inverse composite transforms and registration-check images.
    The fixed schedule is rigid and affine MI (32 bins, regular 25% sampling),

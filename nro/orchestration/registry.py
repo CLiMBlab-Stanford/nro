@@ -1507,6 +1507,10 @@ class Registry(WorkflowRegistry):
                 row["artifact_state"] != "fresh"
                 and row.get("attempt_state") == "error"
                 and not row.get("retry_requested")
+                and not (
+                    row["artifact_state"] == "missing"
+                    and row.get("artifact_reason") == "Purged by user"
+                )
             ):
                 roots.add(instance_id)
             for parent in parents.get(instance_id, ()):
@@ -1535,6 +1539,12 @@ class Registry(WorkflowRegistry):
                 state = "Running"
             elif attempt == "queued" or item.get("retry_requested"):
                 state = "Queued"
+            elif (
+                item["artifact_state"] == "missing"
+                and item.get("artifact_reason") == "Purged by user"
+                and not item.get("demanded")
+            ):
+                state = "Missing"
             elif attempt == "error":
                 state = "Error"
             elif item.get("demanded"):

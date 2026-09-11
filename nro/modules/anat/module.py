@@ -18,7 +18,6 @@ from nro.engine.execution import (
     ensure_directory,
     neuroimaging_environment,
 )
-from nro.engine.freesurfer import find_fsaverage_directory
 from nro.engine.io import read_json, require_nonempty_file, write_json
 from nro.engine.manifests import create_json_step
 from nro.engine.neuroimaging import create_n4_bias_correction_step
@@ -30,6 +29,7 @@ from nro.engine.paths import (
     resolve_project_path,
     resolve_project_work_path,
 )
+from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.anat.common import (
     AnatImage,
     load_anat_image,
@@ -789,18 +789,16 @@ def build_module(
         )
         exported_surfaces[f"{hemi}.midthickness"] = str(midthickness)
 
-    fsaverage_dir = find_fsaverage_directory(
-        runner,
-        environment=env,
-        subjects_directory=opts.freesurfer_subjects_dir,
-        template=opts.fsaverage_template,
-    )
     fsaverage_space = opts.fsaverage_template
     fsaverage_xfms: dict[str, str] = {}
     for hemi in ("lh", "rh"):
         hemi_label = _hemi_label(hemi)
         subject_registration = surface_dir / f"{hemi}.sphere.reg"
-        fsaverage_sphere = fsaverage_dir / "surf" / f"{hemi}.sphere"
+        fsaverage_sphere = find_fsaverage_template_surface(
+            template=fsaverage_space,
+            hemi=hemi_label,
+            surface="sphere",
+        )
         forward = (
             opts.out_dir
             / f"{opts.fs_subject}_from-fsnative_to-{fsaverage_space}_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
@@ -820,13 +818,11 @@ def build_module(
             )
         )
         runner.add_step(
-            _create_mri_conversion_step(
-                source=fsaverage_sphere,
-                output=inverse,
-                name=f"Export Hemisphere {hemi_label} {fsaverage_space}-to-fsnative Sphere",
-                env=env,
+            create_copy_file_step(
+                src=fsaverage_sphere,
+                dst=inverse,
                 force=opts.force,
-                executable="mris_convert",
+                step_name=f"Export Hemisphere {hemi_label} {fsaverage_space}-to-fsnative Sphere",
             )
         )
         for path, from_space, to_space, sources in (

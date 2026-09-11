@@ -93,7 +93,11 @@ def functional_case(tmp_path, monkeypatch):
         sdc_method="syn",
         output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
     )
-    monkeypatch.setattr(func, "find_fsaverage_directory", lambda *a, **k: tmp_path / "fsaverage")
+    monkeypatch.setattr(
+        func,
+        "find_fsaverage_template_surface",
+        lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
+    )
     return (
         func.Inputs(None, raw, None, None, epi_json=metadata),
         func.Options(**values),

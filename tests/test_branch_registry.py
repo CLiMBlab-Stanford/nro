@@ -8,9 +8,13 @@ from pathlib import Path
 
 import pytest
 
+from nro.configuration.store import ConfigStore
 from nro.orchestration import branches
 from nro.orchestration.branch_registry import BranchRegistry
+from nro.orchestration.branch_repair import _repair_records_locked
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.registry import Registry
 
 
 def test_checkouts_share_one_central_database(tmp_path, monkeypatch):
@@ -52,6 +56,99 @@ def test_branches_have_independent_science_and_no_pool_tables(tmp_path):
         "configuration_lineage_dependencies",
         "workflow_bindings",
     }
+
+
+def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp_path):
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "preprocessing")
+
+    def spec(key, output, dependencies=()):
+        return InstanceSpec.create(
+            key=key,
+            module="anat",
+            project="demo",
+            participant="01",
+            entities={},
+            scope="subject",
+            configuration_lineage_id=registered.lineages["preprocessing"],
+            config_fingerprint="test",
+            directory_label="main",
+            runtime_config=runtime,
+            command=("python", "-m", "nro.modules.anat"),
+            dependencies=dependencies,
+            input_paths=(),
+            output_root=output.parent,
+            output_prefix="sub-01",
+            expected_outputs=(output,),
+            output_format="test",
+            resource_class="small",
+        )
+
+    parent_output = tmp_path / "outputs" / "parent.txt"
+    downstream_output = tmp_path / "outputs" / "downstream.txt"
+    orphan_output = tmp_path / "outputs" / "orphan.txt"
+    instances = (
+        spec("parent", parent_output),
+        spec("downstream", downstream_output, ("parent",)),
+        spec("orphan", orphan_output),
+    )
+    downstream_output.parent.mkdir(parents=True)
+    downstream_output.write_text("present")
+    ids = registry.register_instances(instances)
+    store = BranchStore(registry.paths.control)
+    owner = store.initialize().topology.records["dev"].registry_id
+    with registry.connection(write=True) as db:
+        for item in instances:
+            contract = json.dumps({"key": item.key})
+            db.execute(
+                "INSERT INTO branch_instances VALUES (?,?,?,?)",
+                (owner, item.key, ids[item.key], contract),
+            )
+            db.execute(
+                "INSERT INTO compiled_revisions VALUES (?,?,?,?)",
+                (owner, item.key, 1, item.key),
+            )
+        repaired = _repair_records_locked(db, branch="dev", registry_id=owner)
+        mapped = {
+            row[0]
+            for row in db.execute(
+                "SELECT logical_key FROM branch_instances WHERE registry_id=?", (owner,)
+            )
+        }
+        revisions = {
+            row[0]
+            for row in db.execute(
+                "SELECT logical_key FROM compiled_revisions WHERE registry_id=?", (owner,)
+            )
+        }
+
+    assert {row["key"] for row in repaired} == {"parent", "downstream"}
+    assert mapped == revisions == {"parent", "downstream"}
+
+    legacy_parent_output = tmp_path / "outputs" / "legacy-parent.txt"
+    legacy_downstream_output = tmp_path / "outputs" / "legacy-downstream.txt"
+    legacy = (
+        spec("legacy-parent", legacy_parent_output),
+        spec("legacy-downstream", legacy_downstream_output, ("legacy-parent",)),
+    )
+    downstream_output.unlink()
+    legacy_downstream_output.write_text("present")
+    legacy_ids = registry.register_instances(legacy)
+    main_owner = store.read().topology.records["main"].registry_id
+    with registry.connection(write=True) as db:
+        repaired = _repair_records_locked(db, branch="main", registry_id=main_owner)
+        mapped = {
+            row[0]
+            for row in db.execute(
+                "SELECT logical_key FROM branch_instances WHERE registry_id=?", (main_owner,)
+            )
+        }
+
+    assert {row["key"] for row in repaired} == {"legacy-parent", "legacy-downstream"}
+    assert mapped == {"legacy-parent", "legacy-downstream"}
+    assert set(legacy_ids) == mapped
 
 
 def test_contract_revision_protects_edits_and_observations(tmp_path):

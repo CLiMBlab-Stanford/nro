@@ -2,12 +2,17 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from nro.engine.bids import BidsRun
 from nro.engine.clean_targets import expected_clean_target
 from nro.engine.surface_geometry import surface_geometry
 from nro.engine.targets import target_output_names
-from nro.engine.templates import find_fsaverage_surface, find_mni_gray_matter_mask
+from nro.engine.templates import (
+    find_fsaverage_surface,
+    find_fsaverage_template_surface,
+    find_mni_gray_matter_mask,
+)
 from nro.modules.microparcellation.__main__ import (
     infer_gray_matter_mask,
 )
@@ -109,6 +114,24 @@ def test_fsaverage_surface_is_resolved_from_local_templateflow(tmp_path: Path, m
     monkeypatch.setenv("TEMPLATEFLOW_HOME", str(templateflow.parent))
 
     assert find_fsaverage_surface(hemi="L", surface="pial", n_vertices=7) == expected
+
+
+def test_fsaverage_template_surface_uses_standard_density(tmp_path: Path) -> None:
+    directory = tmp_path / "tpl-fsaverage"
+    directory.mkdir()
+    expected = directory / "tpl-fsaverage_hemi-R_den-41k_sphere.surf.gii"
+    _write_surface(expected, 40962)
+
+    assert (
+        find_fsaverage_template_surface(
+            template="fsaverage6", hemi="R", surface="sphere", roots=(tmp_path,)
+        )
+        == expected
+    )
+    with pytest.raises(ValueError, match="Unsupported fsaverage template"):
+        find_fsaverage_template_surface(
+            template="fsaverage5", hemi="R", surface="sphere", roots=(tmp_path,)
+        )
 
 
 def test_mni_mask_falls_back_to_matching_local_templateflow_grid(

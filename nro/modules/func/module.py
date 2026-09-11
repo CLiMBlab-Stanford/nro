@@ -43,11 +43,11 @@ from nro.engine.bids import (
 )
 from nro.engine.execution import (
     collect_bind_directories,
+    create_copy_file_step,
     ensure_directory,
     neuroimaging_environment,
     require_existing_path,
 )
-from nro.engine.freesurfer import find_fsaverage_directory
 from nro.engine.images import (
     nifti_spatial_shape,
     nifti_stem,
@@ -84,6 +84,7 @@ from nro.engine.paths import (
     resolve_project_path,
     resolve_project_work_path,
 )
+from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.func.contracts import (
     MARSS_DIAGNOSTIC_METHOD,
     final_resampling_contract,
@@ -713,12 +714,6 @@ def build_module(
     LOG.info("Output spaces requested: %s", ", ".join(opts.output_spaces))
     fsnative_to_fsaverage_spheres: dict[str, Path] = {}
     if want_fsaverage:
-        fsaverage_dir = find_fsaverage_directory(
-            runner,
-            environment=env,
-            subjects_directory=subjects_dir,
-            template=fsaverage_space,
-        )
         sphere_work = surf_dir / "fsaverage_spheres"
         for hemi, hemi_label in (("lh", "L"), ("rh", "R")):
             subject_sphere = require_nested_manifest_output(
@@ -728,7 +723,11 @@ def build_module(
                 manifest_path=anat_manifest,
                 manifest_name="Anatomical",
             )
-            fsaverage_sphere = fsaverage_dir / "surf" / f"{hemi}.sphere"
+            fsaverage_sphere = find_fsaverage_template_surface(
+                template=fsaverage_space,
+                hemi=hemi_label,
+                surface="sphere",
+            )
             subject_output = sphere_work / (
                 f"subject_hemi-{hemi_label}_from-fsnative_to-{fsaverage_space}_sphere.surf.gii"
             )
@@ -742,11 +741,11 @@ def build_module(
                 )
             )
             runner.add_step(
-                _create_mris_convert_step(
-                    source=fsaverage_sphere,
-                    output=fsaverage_output,
-                    env=env,
+                create_copy_file_step(
+                    src=fsaverage_sphere,
+                    dst=fsaverage_output,
                     force=opts.force,
+                    step_name=f"Stage {fsaverage_space} Hemisphere {hemi_label} Sphere",
                 )
             )
             fsnative_to_fsaverage_spheres[f"{hemi_label}.current"] = subject_output
