@@ -50,6 +50,9 @@ nro status -P nptl -p t20
 nro run -P nptl -p t20 -m microparcellation
 ```
 
+By default, `nro status` quickly reports the registry's saved state. Run
+`nro status --update` when you need it to check files and update that state.
+
 Replace the example values with the project and participant you need. The
 planner adds upstream modules and reuses fresh results. Omitted selectors
 usually mean all matches. A bare `nro run` can request work across the lab, and

@@ -68,10 +68,9 @@ nro status -P nptl -p t20
 ```
 
 Replace `nptl` and `t20` with the project and participant you need. Participant
-labels may be given with or without the `sub-` prefix. Default status performs
-inexpensive freshness checks without changing the registry. Use
-`nro status --cached` for the saved registry state or `nro status --verify` for
-a full validation that updates it.
+labels may be given with or without the `sub-` prefix. By default, status reads
+the saved registry state without checking files. Use `nro status --update` for
+a full validation that updates the registry before reporting.
 
 Omitted selectors usually mean **all matching data**. During onboarding, always
 provide a project and participant. In particular, a bare `nro run` can request

@@ -244,7 +244,7 @@ the captured records before applying any decisions. A result computed before a
 concurrent completion cannot overwrite that newer completion.
 
 Assessment retries up to three times on conflict. Workers defer a persistently
-contended assessment until a later check-in; `status --verify` asks the user to
+contended assessment until a later check-in; `status --update` asks the user to
 retry. Unrelated work, heartbeats, and memory-limit changes do not force retries.
 The snapshot's comparison token coordinates publication and is not part of an
 artifact's scientific contract.

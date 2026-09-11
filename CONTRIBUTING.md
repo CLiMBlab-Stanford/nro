@@ -87,7 +87,9 @@ steps in the pull request.
 After merge, tag the release as `vMAJOR.MINOR.PATCH` and push the tag without moving
 or replacing an existing release. The tag workflow checks
 the package version and main ancestry, then creates the corresponding GitHub Release.
-Verify that the workflow succeeded before considering publication complete. Git
-versions record source releases; they do not participate in scientific artifact
-freshness. See the [release guide](docs/commands/releases.md) for publication and
-deployment.
+After the workflow succeeds, edit the GitHub Release so that it begins with a
+concise, human-written summary of the important changes. Generated notes may remain
+below the summary, but they are not a substitute for it. Verify both the workflow
+and the release description before considering publication complete. Git versions
+record source releases; they do not participate in scientific artifact freshness.
+See the [release guide](docs/commands/releases.md) for publication and deployment.

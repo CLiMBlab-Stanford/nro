@@ -364,7 +364,6 @@ def build_module(
             Step.python(
                 name="Resolve Volumetric CIFTI Format",
                 outputs=(volume_cifti_format,),
-                inputs=(config_snapshot,),
                 force=force,
                 action=lambda: atomic_write_text(volume_cifti_format, format_text),
                 validate=validate_volume_format,
@@ -397,7 +396,6 @@ def build_module(
             + temporal_masks
             + tuple(cfg.inputs.surface)
             + mask_inputs
-            + (config_snapshot,)
             + ((previous_labels_checkpoint,) if previous_labels_checkpoint is not None else ())
         )
         progress_label = f"Streaming coarsening pass {pass_index}/{len(step_targets)}"
@@ -476,6 +474,7 @@ def build_module(
                 inputs=correlation_inputs,
                 force=force,
                 action=calculate_correlations,
+                parameters=config_payload["connectivity"],
             )
         )
 
@@ -517,7 +516,6 @@ def build_module(
                 outputs=(labels_checkpoint,),
                 inputs=(
                     correlation_checkpoint,
-                    config_snapshot,
                     *(
                         (previous_labels_checkpoint,)
                         if previous_labels_checkpoint is not None
@@ -526,6 +524,7 @@ def build_module(
                 ),
                 force=force,
                 action=coarsen_step,
+                parameters=config_payload["coarsening"],
             )
         )
         previous_labels_checkpoint = labels_checkpoint
@@ -560,7 +559,6 @@ def build_module(
             inputs=(
                 source_inputs
                 + label_format_inputs
-                + (config_snapshot,)
                 + ((previous_labels_checkpoint,) if previous_labels_checkpoint is not None else ())
             ),
             force=force,
@@ -702,6 +700,10 @@ def build_module(
             inputs=functional_inputs + label_outputs + tuple(correlation_checkpoints),
             force=force,
             action=write_connectivity,
+            parameters={
+                "connectivity": config_payload["connectivity"],
+                "quality": config_payload["quality"],
+            },
         )
     )
 

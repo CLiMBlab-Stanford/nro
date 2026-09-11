@@ -93,6 +93,11 @@ runtime it receives exactly one decision: execute or skip. Closely related
 child commands may share a step only when they form one atomic artifact
 operation with one freshness and recovery boundary.
 
+Inputs create data-dependency edges. A step may also declare scientific
+parameters that affect its transform without naming a file. If an input or
+scientific declaration changes, the runner reruns that step and its descendants
+while leaving independent branches of the module graph untouched.
+
 ### Runner and runner graph
 
 The **runner** is the one shared instance-internal execution engine,

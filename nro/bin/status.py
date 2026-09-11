@@ -13,7 +13,7 @@ from nro.configuration.paths import BIDS_PATH
 from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
-from nro.orchestration.manifests import assess_registry, preview_registry
+from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
 
@@ -196,14 +196,8 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument("--bids-root", default=BIDS_PATH)
-    freshness = parser.add_mutually_exclusive_group()
-    freshness.add_argument(
-        "--cached",
-        action="store_true",
-        help="Report only the registry's saved state without checking the filesystem",
-    )
-    freshness.add_argument(
-        "--verify",
+    parser.add_argument(
+        "--update",
         action="store_true",
         help="Thoroughly reassess artifacts, update the registry, and report its new state",
     )
@@ -254,9 +248,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
 
         if bids_root != Path(values["bids"]).resolve():
             raise SystemExit("Branch status uses the shared site BIDS root")
-        from nro.orchestration.branch_status import preview, refresh
+        from nro.orchestration.branch_status import refresh
 
-        if args.verify:
+        if args.update:
             current = status(Path(values["registry"]), bids_root, checkout=CHECKOUT, mode="cached")
             visible = set(current["visible_ids"])
             try:
@@ -267,12 +261,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             Path(values["registry"]),
             bids_root,
             checkout=CHECKOUT,
-            mode="verify" if args.verify else "cached" if args.cached else "preview",
+            mode="verify" if args.update else "cached",
         )
         rows, visible_ids = result["rows"], set(result["visible_ids"])
         if not projects:
             selected_project_set = {str(row["project"]) for row in rows if row["id"] in visible_ids}
-        if args.verify:
+        if args.update:
             from nro.orchestration.branch_status import record_observations
 
             try:
@@ -292,8 +286,6 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 )
             except (ValueError, RuntimeError, OSError) as error:
                 print(f"WARNING: execution cache cleanup deferred: {error}", file=sys.stderr)
-        if not args.cached and not args.verify:
-            rows = preview(rows, visible_ids, result["dependencies"])
         from nro.bidsify.status import filter_records
 
         ingestion = filter_records(result.get("ingestion", []), selection)
@@ -301,24 +293,18 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         registry = Registry.for_project("", bids_root=bids_root)
         ingestion = selected_records(registry, selection)
         rows = []
-    if not branch_execution and registry.existing_database_path().is_file() and args.verify:
+    if not branch_execution and registry.existing_database_path().is_file() and args.update:
         from nro.orchestration.assessment import AssessmentConflict
 
         try:
             assess_registry(registry, projects=projects)
         except AssessmentConflict as error:
             raise SystemExit(
-                "Registry kept changing during verification; retry nro status --verify."
+                "Registry kept changing during the update; retry nro status --update."
             ) from error
         rows = registry.instance_status_snapshot(read_only=True)
-    elif not branch_execution and registry.existing_database_path().is_file() and args.cached:
-        rows = registry.instance_status_snapshot(read_only=True)
     elif not branch_execution and registry.existing_database_path().is_file():
-        projected = preview_registry(registry, projects=projects)
-        rows = registry.instance_status_snapshot(
-            read_only=True,
-            artifact_states=projected,
-        )
+        rows = registry.instance_status_snapshot(read_only=True)
     by_id = {int(row["id"]): row for row in rows}
     for row in rows:
         if visible_ids is not None and row["id"] not in visible_ids:

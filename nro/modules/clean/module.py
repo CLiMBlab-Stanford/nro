@@ -14,7 +14,6 @@ import json
 import logging
 import sys
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -467,8 +466,8 @@ def build_module(
     )
 
     def configured(step: Step) -> Step:
-        """Return a scientific step tied to the configuration snapshot."""
-        return replace(step, inputs=(configuration_snapshot, *step.inputs))
+        """Bind a scientific step to the resolved cleaning parameters."""
+        return step.with_parameters(configuration)
 
     selected_confounds_path = work_dir / "selected_confounds.tsv"
     task_regressors_path = work_dir / "task_regressors.tsv"

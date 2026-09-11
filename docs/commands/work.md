@@ -93,16 +93,15 @@ Report registered instances, including errors and blocked-dependency summaries.
 Source discovery alone does not create status rows; existing owned artifacts
 can be adopted without demand. An empty registry prints headers without rows.
 
-`--cached` uses saved state only. Default mode predicts reassessment with cheaper
-checks and does not persist it. `--verify` uses the full assessment method,
-updates the registry, and reports the result. `--cached` and `--verify` are
-mutually exclusive. Use `--json` for structured output or `--no-pager` to bypass
-`less`. The pager uses colors and pinned headers when supported.
+By default, status uses the saved registry state without checking files.
+`--update` performs the full assessment, updates the registry, and reports the
+result. Use `--json` for structured output or `--no-pager` to bypass `less`.
+The pager uses colors and pinned headers when supported.
 
-After central activation, verification first recompiles registered selections
+After central activation, `--update` first recompiles registered selections
 using the invoking checkout's scientific code, without creating demand. Central
 code then verifies the resulting contracts and filesystem evidence. Default
-status previews processing-policy changes locally without publishing them.
+status performs no recompilation or filesystem assessment.
 Historical lineages no longer represented by current workflows retain their
 registered contracts.
 
@@ -111,7 +110,7 @@ or an active or unresolved failed attempt, `Missing` means required outputs or
 completion evidence are absent. `Stale` means the result needs updating, for
 example because its contract or an upstream dependency changed. The JSON `reason`
 field gives the specific cause; `Stale` does not guarantee all files still exist.
-All three reporting modes use the same status labels. `Queued` indicates pending
+Both reporting modes use the same status labels. `Queued` indicates pending
 demanded work, while `Blocked` indicates work waiting on upstream errors.
 `Running` and `Error` describe current execution or an unresolved failed attempt.
 `Stopping` means cancellation is awaiting worker confirmation. `Stopped` means

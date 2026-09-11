@@ -160,6 +160,9 @@ nro status -P example -p 01
 nro log -P example -p 01 -m anat -i
 ```
 
+By default, `nro status` quickly reports the registry's saved state. Run
+`nro status --update` when you need it to check files and update that state.
+
 Once anatomical processing works, request a downstream endpoint such as
 `microparcellation`. Required functional preparation and cleaning are added
 automatically:

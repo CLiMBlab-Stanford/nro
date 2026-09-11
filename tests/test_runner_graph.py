@@ -128,3 +128,50 @@ def test_substantive_contract_ignores_command_rendering(tmp_path: Path) -> None:
         )
     )
     reformatted.freeze().bind_contract(contract, signature="same-data-and-workflow")
+    assert reformatted.changed_steps(contract, signature="new-data-and-workflow") == frozenset()
+
+
+def test_changed_steps_compares_scientific_declarations_independently(tmp_path: Path) -> None:
+    contract = tmp_path / "runner-contract.json"
+    first_output = tmp_path / "first.txt"
+    second_output = tmp_path / "second.txt"
+    original = RunnerGraph("test")
+    first = original.add(
+        Step.python(
+            name="First label",
+            outputs=(first_output,),
+            action=lambda: None,
+            parameters={"resolution": 1},
+        )
+    )
+    original.add(
+        Step.python(
+            name="Second",
+            outputs=(second_output,),
+            action=lambda: None,
+            parameters={"method": "same"},
+        )
+    )
+    original.freeze().reconcile_contract(contract, signature="old-instance")
+
+    current = RunnerGraph("test")
+    changed = current.add(
+        Step.python(
+            name="Renamed first label",
+            outputs=(first_output,),
+            action=lambda: None,
+            parameters={"resolution": 2},
+        )
+    )
+    current.add(
+        Step.python(
+            name="Second",
+            outputs=(second_output,),
+            action=lambda: None,
+            parameters={"method": "same"},
+        )
+    )
+    current.freeze()
+
+    assert first.id == changed.id
+    assert current.changed_steps(contract, signature="old-instance") == frozenset({changed.id})

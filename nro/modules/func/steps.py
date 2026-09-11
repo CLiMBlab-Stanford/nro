@@ -1167,6 +1167,12 @@ def _create_functional_reference_selection_step(
             force=force,
             action=select,
             validate=validate,
+            parameters={
+                "maximum_rotation_degrees": max_rotation_degrees,
+                "maximum_displacement_millimeters": max_displacement_mm,
+                "minimum_support_overlap": min_support_overlap,
+                "minimum_intensity_correlation": min_correlation,
+            },
         ),
         image=selected_image,
         epi_to_reference=epi_to_selected,
@@ -1590,6 +1596,10 @@ def _create_local_rigid_refinement_step(
         inputs=(moving, fixed),
         force=force,
         action=refine,
+        parameters={
+            "maximum_translation_millimeters": max_translation_mm,
+            "maximum_rotation_degrees": max_rotation_degrees,
+        },
     )
 
 

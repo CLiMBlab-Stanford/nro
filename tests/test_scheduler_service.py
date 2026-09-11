@@ -172,7 +172,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
             )
         )
     )
-    command = [sys.executable, "-m", "nro.bin.status", "--cached", "--json"]
+    command = [sys.executable, "-m", "nro.bin.status", "--json"]
     result = subprocess.run(
         command,
         cwd=feature,

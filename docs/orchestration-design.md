@@ -144,11 +144,20 @@ module may clear a directory it owns exclusively; when several space/smoothing
 instances share a subject directory, it clears and validates only files owned
 by the target prefix before writing a target-specific breadcrumb.
 
-The persisted topology contract is loaded before execution. Nodes and edges
-cannot vary with artifact freshness. A changed source-BIDS state may establish
-a new contract; a code edit alone cannot. Module completion is rejected if a
-planned node was not executed or skipped, if a step did not receive an exact
-freshness decision, or if declared outputs are absent.
+The persisted runner contract is loaded before execution. Nodes and edges
+cannot vary with artifact freshness. Each node also records its explicit
+scientific parameters and a normalized signature for an external command.
+When one node's scientific declaration changes, the runner reruns that node
+and follows the graph to invalidate its descendants. Independent nodes remain
+fresh. Presentation changes, such as a new step label or equivalent long-option
+spelling, do not invalidate outputs.
+
+A changed source-BIDS state may establish a new topology contract; a code edit
+alone cannot. Module completion is rejected if a planned node was not executed
+or skipped, if a step did not receive an exact freshness decision, or if
+declared outputs are absent. Modules must declare scientific parameters on the
+steps that use them. The runner has no facility for silently adding one
+configuration file as an input to every node.
 
 Missing private `WORK` intermediates do not stale an intact public boundary;
 the module recreates them if it later needs to run. Changed existing private
@@ -186,8 +195,7 @@ higher-tier workers may accept lower-tier instances.
 
 ## Observation and mutation
 
-`log` is observational. `status --cached` reads saved state, while the default
-status previews inexpensive reassessment without storing it. `status --verify`
+`log` is observational. By default, `status` reads saved state. `status --update`
 performs authoritative assessment and updates the registry; it can cancel an
 attempt whose registered contract has become obsolete. `run` and workers also
 assess artifacts and grow the worker pool. `set`, `stop`, `purge`, and

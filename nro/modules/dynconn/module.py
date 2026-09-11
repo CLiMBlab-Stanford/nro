@@ -238,10 +238,11 @@ def build_module(
     runner.add_step(
         Step.python(
             name="Assess Cleaned Runs",
-            inputs=(*source_inputs, config_snapshot),
+            inputs=source_inputs,
             outputs=(eligibility_path,),
             force=force,
             action=assess_runs,
+            parameters=asdict(cfg.inclusion),
         )
     )
 
@@ -464,6 +465,13 @@ def build_module(
             ),
             force=force,
             action=concatenate,
+            parameters={
+                "weighting": config_payload["weighting"],
+                "low_rank": config_payload["low_rank"],
+                **(
+                    {"low_rank_options": config_payload["low_rank_options"]} if cfg.low_rank else {}
+                ),
+            },
         )
     )
 

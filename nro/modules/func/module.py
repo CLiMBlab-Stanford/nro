@@ -516,7 +516,6 @@ def build_module(
             validate=validate_configuration,
         )
     )
-    runner.set_definition_inputs((configuration_snapshot,))
     fieldmap_pair_available = all(
         p is not None
         for p in (

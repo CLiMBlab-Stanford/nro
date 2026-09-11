@@ -234,12 +234,8 @@ def build_module(
 
     initialization_breadcrumb = work / "initialized.complete"
     validation_path = work / f"{cfg.output.prefix}_validated_config.json"
-    validation_text = (
-        json.dumps(
-            scientific_values("networks", asdict(cfg)), default=json_path_default, sort_keys=True
-        )
-        + "\n"
-    )
+    config_payload = scientific_values("networks", asdict(cfg))
+    validation_text = json.dumps(config_payload, default=json_path_default, sort_keys=True) + "\n"
 
     def validate_and_record_config() -> None:
         validate_config(cfg)
@@ -307,9 +303,10 @@ def build_module(
         Step.python(
             name="Load and Transform Network Inputs",
             outputs=(adjacency_path, input_state_path),
-            inputs=source_inputs + (validation_path, initialization_breadcrumb),
+            inputs=source_inputs + (initialization_breadcrumb,),
             force=bool(cfg.output.overwrite),
             action=transform_inputs,
+            parameters=config_payload["connectivity"],
         )
     )
 
@@ -373,6 +370,7 @@ def build_module(
                 inputs=(adjacency_path, input_state_path, network_validation_path),
                 force=bool(cfg.output.overwrite),
                 action=compute_ica,
+                parameters=config_payload["ica"],
             )
         )
     elif cfg.parcellation_strategy == "clustering":
@@ -415,6 +413,7 @@ def build_module(
                 inputs=(adjacency_path, input_state_path, network_validation_path),
                 force=bool(cfg.output.overwrite),
                 action=compute_clustering,
+                parameters=config_payload["clustering"],
             )
         )
     else:
@@ -463,9 +462,9 @@ def build_module(
             Step.python(
                 name="Resolve OSLOM Executable",
                 outputs=(executable_path,),
-                inputs=(validation_path,),
                 force=bool(cfg.output.overwrite),
                 action=resolve_executable,
+                parameters={"executable": cfg.oslom.executable},
             )
         )
         hint_path: Path | None = cfg.oslom.initial_partition
@@ -492,9 +491,15 @@ def build_module(
                 Step.python(
                     name="Resolve Network Initialization",
                     outputs=(hint_path, oslom_initialization_breadcrumb),
-                    inputs=(graph_path, adjacency_path, validation_path),
+                    inputs=(graph_path, adjacency_path),
                     force=bool(cfg.output.overwrite),
                     action=write_initial_partition,
+                    parameters={
+                        "initialization": cfg.oslom.initialization,
+                        "leiden_resolution": cfg.oslom.leiden_resolution,
+                        "leiden_iterations": cfg.oslom.leiden_iterations,
+                        "leiden_seed": cfg.oslom.leiden_seed,
+                    },
                 )
             )
         else:
@@ -503,7 +508,7 @@ def build_module(
                 Step.python(
                     name="Resolve Network Initialization",
                     outputs=(oslom_initialization_breadcrumb,),
-                    inputs=(graph_path, validation_path),
+                    inputs=(graph_path,),
                     force=bool(cfg.output.overwrite),
                     action=lambda: write_completion_breadcrumb(
                         oslom_initialization_breadcrumb,
@@ -555,6 +560,7 @@ def build_module(
                     action=execute_repetition,
                     validate=validate_repetition,
                     breadcrumb_text="OSLOM repetition complete\n",
+                    parameters=config_payload["oslom"],
                 )
             )
 
@@ -607,9 +613,10 @@ def build_module(
             Step.python(
                 name="Compute OSLOM Consensus",
                 outputs=(network_state_path, assignments_path),
-                inputs=tuple(repetition_breadcrumbs) + (input_state_path, validation_path),
+                inputs=tuple(repetition_breadcrumbs) + (input_state_path,),
                 force=bool(cfg.output.overwrite),
                 action=compute_consensus,
+                parameters=config_payload["oslom"],
             )
         )
 
@@ -677,6 +684,7 @@ def build_module(
             ),
             force=bool(cfg.output.overwrite),
             action=compute_labels,
+            parameters=config_payload["labeling"],
         )
     )
 
@@ -941,6 +949,10 @@ def build_module(
             breadcrumb_text="Networks directory publication complete\n",
             reset_directory=False,
             completion_boundary=completion_boundary,
+            parameters={
+                "consensus": config_payload["consensus"],
+                "parcellation_strategy": cfg.parcellation_strategy,
+            },
         )
     )
     outputs["manifest"] = manifest_path

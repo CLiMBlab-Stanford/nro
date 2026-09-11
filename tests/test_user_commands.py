@@ -322,7 +322,7 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
 
     monkeypatch.setattr(scheduler_client, "status", scheduler_status)
 
-    status_main(["--bids-root", str(bids), "--cached", "--json"])
+    status_main(["--bids-root", str(bids), "--json"])
 
     report = json.loads(capsys.readouterr().out)
     assert calls == ["cached"]
@@ -768,7 +768,7 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
 
     stop_main(["-p", "01", "-m", "anat", "-P", "demo", "--bids-root", str(bids)])
     assert "Cancelled" in capsys.readouterr().out
-    for mode in (["--cached"], [], ["--verify"], ["--cached"], []):
+    for mode in ([], ["--update"], []):
         status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json", *mode])
         rows = json.loads(capsys.readouterr().out)["instances"]
         assert {row["status"] for row in rows} == {"Missing", "Stale"}
@@ -905,7 +905,7 @@ def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
     assert registry.paths.control.stat().st_mtime_ns == control_mtime
 
 
-def test_status_cached_preview_and_verify_have_distinct_freshness_semantics(
+def test_status_default_is_cached_and_update_persists_assessment(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -936,17 +936,12 @@ def test_status_cached_preview_and_verify_have_distinct_freshness_semantics(
             (row["id"],),
         )
 
-    status_main(["-P", "demo", "--bids-root", str(bids), "--cached", "--json"])
+    status_main(["-P", "demo", "--bids-root", str(bids), "--json"])
     cached = json.loads(capsys.readouterr().out)["instances"]
     assert cached[0]["status"] == "Success"
-
-    status_main(["-P", "demo", "--bids-root", str(bids), "--json"])
-    preview = json.loads(capsys.readouterr().out)["instances"]
-    assert preview[0]["status"] == "Queued"
-    assert preview[0]["reason"] != "Cached success"
     assert registry.instance_rows()[0]["artifact_state"] == "fresh"
 
-    status_main(["-P", "demo", "--bids-root", str(bids), "--verify", "--json"])
+    status_main(["-P", "demo", "--bids-root", str(bids), "--update", "--json"])
     capsys.readouterr()
     assert registry.instance_rows()[0]["artifact_state"] == "missing"
 

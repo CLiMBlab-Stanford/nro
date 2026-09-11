@@ -74,10 +74,10 @@ formatting, scheduler resources, Git identity, and source-capture paths are not
 freshness inputs. The filesystem remains authoritative for whether outputs
 exist and satisfy their contracts.
 
-`nro status --cached` reports saved state. The default status previews
-inexpensive reassessment without storing it. `nro status --verify` performs the
-authoritative assessment and updates the registry; it may cancel an active
-attempt whose contract is obsolete. See [instance planning and
+By default, `nro status` reports saved state without checking files.
+`nro status --update` performs the authoritative assessment and updates the
+registry; it may cancel an active attempt whose contract is obsolete. See
+[instance planning and
 execution](instance-lifecycle.md) for the complete state model.
 
 ## Direct module execution

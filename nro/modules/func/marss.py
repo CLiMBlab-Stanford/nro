@@ -784,5 +784,10 @@ def create_marss_step(
         action=run_stage,
         validate=validate,
         force=force,
+        parameters={
+            "mode": mode,
+            "minimum_multiband_factor": min_multiband_factor,
+            "diagnostic_method": MARSS_DIAGNOSTIC_METHOD,
+        },
     )
     return step, outputs
