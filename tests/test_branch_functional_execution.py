@@ -79,6 +79,7 @@ def functional_case(tmp_path, monkeypatch):
         if field.name in cfg["func"]
     }
     values.update(
+        fsaverage_template=cfg["fsaverage_template"],
         out_dir=logical.parent / "ses-1/func",
         work_dir=paths.work / "demo/derivatives/preprocessing/main/sub-1/ses-1/func/run",
         project="demo",
@@ -90,7 +91,7 @@ def functional_case(tmp_path, monkeypatch):
         synbold_disco_license=tmp_path / "license",
         synbold_disco_engine="singularity",
         sdc_method="syn",
-        output_spaces=("T1w", "fsnative", "fsaverage", "MNI152NLin2009cAsym"),
+        output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
     )
     monkeypatch.setattr(func, "find_fsaverage_directory", lambda *a, **k: tmp_path / "fsaverage")
     return (
@@ -128,6 +129,7 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     )
     graph = job._graph.freeze()
     assert any(image in step.inputs for step in graph.steps)
+    assert any("space-fsaverage6" in path.name for step in graph.steps for path in step.outputs)
     for step in graph.steps:
         for path in step.outputs:
             context.require_output(path)
@@ -149,6 +151,70 @@ def test_functional_graph_rejects_unselected_anatomy(functional_case):
     with pytest.raises(ValueError, match="not selected"):
         func.build_module(inputs, options, execution_context=replace(context, inputs=()))
     assert not context.paths.output_project("demo").exists()
+
+
+def test_fieldmapless_synbold_graph_accepts_missing_sbref(functional_case):
+    inputs, options, context, _, _ = functional_case
+    options.synbold_disco_license.write_text("test license")
+
+    job = func.build_module(
+        inputs,
+        replace(options, sdc_method="synbold_disco"),
+        execution_context=context,
+    )
+
+    steps = job._graph.freeze().steps
+    selection = next(
+        step for step in steps if step.name == "Select Functional Registration Reference"
+    )
+    assert inputs.sbref is None
+    assert any(step.name == "TOPUP Distortion Estimation Directory" for step in steps)
+    assert (
+        selection.outputs[0]
+        in next(
+            step for step in steps if step.name == "TOPUP Distortion Estimation Directory"
+        ).inputs
+    )
+
+
+def test_marss_precedes_the_ordinary_reference_and_resampling_graph(functional_case):
+    inputs, options, context, _, _ = functional_case
+    job = func.build_module(
+        inputs,
+        replace(options, marss_mode="diagnose"),
+        execution_context=context,
+    )
+    steps = job._graph.freeze().steps
+    names = [step.name for step in steps]
+    correction_index = names.index("Diagnose and Correct Simultaneous-Slice Artifact")
+    reference_index = names.index("Robust BOLD Reference and Motion Correction")
+    resampling_index = next(
+        index for index, name in enumerate(names) if name.startswith("Resample BOLD (")
+    )
+    assert names.index("Estimate Native Motion for MARSS") < correction_index
+    assert correction_index < reference_index < resampling_index
+    selected_native = next(
+        path
+        for path in steps[correction_index].outputs
+        if path.name.endswith("_desc-marss_bold.nii.gz")
+    )
+    assert selected_native in steps[reference_index].inputs
+
+
+def test_debug_truncation_and_marss_construct_a_fixed_graph(functional_case):
+    inputs, options, context, _, _ = functional_case
+    job = func.build_module(
+        inputs,
+        replace(options, debug_first_nvols=3, marss_mode="auto"),
+        execution_context=context,
+    )
+    steps = job._graph.freeze().steps
+    reference = next(
+        step for step in steps if step.name == "Robust BOLD Reference and Motion Correction"
+    )
+
+    assert any(path.name.endswith("_desc-marss_bold.nii.gz") for path in reference.inputs)
+    assert not any(path.exists() for path in reference.inputs)
 
 
 def test_functional_graph_rejects_project_mismatch(functional_case):

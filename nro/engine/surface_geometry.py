@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from nro.engine.images import surface_timeseries_shape
+from nro.engine.targets import is_fsaverage_space
 from nro.engine.templates import find_fsaverage_surface
 
 
@@ -111,7 +112,7 @@ def surface_geometry(
 
     if space == "fsnative":
         return anatomical_surface_paths(anat_path, participant, surface, space)
-    if space != "fsaverage":
+    if not is_fsaverage_space(space):
         raise FileNotFoundError(f"Unsupported configured surface space: {space}")
     _, vertex_counts = surface_timeseries_shape(functional_pair)
     hemispheres = tuple(

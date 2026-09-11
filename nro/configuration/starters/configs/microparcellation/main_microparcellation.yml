@@ -22,8 +22,7 @@ connectivity:
   minimum_usable_runs: 2
   minimum_aggregate_retained_frames: 1100
   temporal_block_size: 128
-  reliability_weighting: true
-  reliability_vertex_block_size: 8192
+  weighting: precision
   global_signal_regression: true
 quality:
   split_half_block_frames: 128

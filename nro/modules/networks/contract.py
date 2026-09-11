@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from nro.engine.artifact_metadata import validate_metadata_fields
+from nro.engine.cifti import INDEXED_CIFTI_SCHEMA
 
 NETWORK_LABEL_METADATA_FIELDS = {
     "method": "string",
@@ -32,10 +33,9 @@ NETWORK_MANIFEST_FIELDS = {
     "anatomical_labeling_provenance": "nullable_mapping",
     "outputs": "mapping",
     "outputs.membership": "string",
-    "outputs.network_maps": "mapping",
+    "outputs.membership_metadata": "string",
     "outputs.network_labels": "string",
     "outputs.network_labels_metadata": "string",
-    "outputs.scene": "string",
     "config": "mapping",
     "configuration_fingerprint": "nullable_string",
     "interpretation": "string",
@@ -46,7 +46,8 @@ NETWORK_MANIFEST_FIELDS = {
 def networks_output_contract() -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     return {
-        "layout": "target-subject-scene-v1",
+        "layout": "subject-networks-v5",
+        "map_index_metadata": INDEXED_CIFTI_SCHEMA,
         "publication_manifest_fields": dict(NETWORK_MANIFEST_FIELDS),
         "label_metadata_fields": dict(NETWORK_LABEL_METADATA_FIELDS),
     }

@@ -73,7 +73,7 @@ different branches without importing their modules into the scheduler. See
 
 Names preserve BIDS entities when practical, but working derivatives are not
 claimed to be BIDS-validator compliant. In particular, `smoothing` is an nro
-filename entity, and subject-level CIFTI scenes use an nro-specific layout.
+filename entity, and generated Workbench scenes use an nro-specific layout.
 Do not infer metadata from a directory name when a manifest supplies it.
 
 The default deployment uses Slurm, Singularity or Apptainer, and shared storage.

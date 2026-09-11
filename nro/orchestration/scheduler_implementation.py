@@ -12,7 +12,7 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.execution_pins import capture_site
 from nro.orchestration.releases import ReleaseStore
-from nro.orchestration.source_snapshots import SourceStore, source_fingerprint
+from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore, source_fingerprint
 
 
 def implementation_path(control: Path) -> Path:
@@ -60,13 +60,16 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
             )
             if busy:
                 raise ValueError(f"Cannot activate the scheduler during {busy}")
+            source = SourceStore(ControlPaths(registry.paths.control).implementations).capture(
+                checkout
+            )
             record = dict(
                 protocol=1,
                 checkout=str(checkout),
                 python=str(python),
                 site=str(site),
                 release=release,
-                source_digest=source_fingerprint(checkout),
+                source_digest=source.digest,
             )
             path = implementation_path(registry.paths.control)
             if path.is_symlink():
@@ -84,9 +87,11 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
 def capture_worker_implementation(control: Path, bids_root: Path):
     """Capture the designated orchestration source, interpreter, and resolved site.
 
-    Call while holding the execution-cache publication lock. Once a site has a
-    binding, an unavailable or modified installation is an error; the caller's
-    development checkout is never a substitute.
+    Call while holding the execution-cache publication lock. Activation has
+    already published the content-addressed source snapshot, so routine calls
+    reuse it without rescanning or copying the checkout. The source launcher
+    verifies the snapshot before executing it. The caller's development
+    checkout is never a substitute.
     """
     path = implementation_path(control)
     if not path.exists():
@@ -106,6 +111,13 @@ def capture_worker_implementation(control: Path, bids_root: Path):
         or record["protocol"] != 1
     ):
         raise ValueError("Unsupported scheduler installation binding")
+    digest = record["source_digest"]
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError("Scheduler installation has an invalid source digest")
     for key in ("checkout", "python", "site"):
         if not isinstance(record[key], str) or not Path(record[key]).is_absolute():
             raise ValueError("Scheduler installation paths must be absolute")
@@ -132,9 +144,11 @@ def capture_worker_implementation(control: Path, bids_root: Path):
     ):
         raise ValueError("The designated scheduler site changed")
     paths = ControlPaths(control)
-    source = SourceStore(paths.implementations).capture(checkout)
-    if source.digest != record["source_digest"]:
-        raise ValueError("The designated scheduler source changed")
+    source = SourceSnapshot(paths.implementations / digest, digest)
+    if not source.root.is_dir():
+        raise ValueError("The designated scheduler source snapshot is unavailable")
+    if not (source.root / "nro/orchestration/source_launcher.py").is_file():
+        raise ValueError("The designated scheduler source snapshot is incomplete")
     site = capture_site(paths.execution_sites, values)
     if releases.require_approved(checkout) != record["release"]:
         raise ValueError("Scheduler source changed during capture")

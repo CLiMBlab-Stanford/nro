@@ -16,6 +16,7 @@ from scipy.ndimage import gaussian_filter
 from nro.engine.bids import BidsRun, resolve_bids_table
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
+from nro.engine.targets import is_surface_space
 from nro.engine.templates import find_fsaverage_surface
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
@@ -47,7 +48,7 @@ def functional_paths(
     relative = run.path.parent.relative_to(project_root)
     directory = project_root / "derivatives" / "preprocessing" / preprocessing_id / relative
     description = "preprocNoAROMA" if aroma_enabled else "preproc"
-    if space in {"fsnative", "fsaverage"}:
+    if is_surface_space(space):
         return tuple(
             directory / f"{run.stem}_space-{space}_hemi-{h}_desc-{description}_bold.func.gii"
             for h in ("L", "R")
@@ -71,16 +72,23 @@ def _write_manifest(
     atomic_write_json(path, value)
     # Only superseded files explicitly owned by this node's prior inventory may
     # disappear when an effect becomes unavailable. Never scan/delete by suffix.
+    subject_root = next(
+        parent
+        for parent in path.parents
+        if parent.name == f"sub-{str(base['participant']).removeprefix('sub-')}"
+    )
     for old in set(previous.get("public_outputs", [])) - set(value["public_outputs"]):
         candidate = Path(old)
-        if candidate.parent == path.parent and candidate.name.startswith(base["prefix"] + "_"):
+        if candidate.is_relative_to(subject_root) and candidate.name.startswith(
+            base["prefix"] + "_"
+        ):
             candidate.unlink(missing_ok=True)
 
 
 def _publish_records(
     records: list, sources: dict, prefix: Path, geometry: dict, base: dict, config: dict
 ) -> list[Path]:
-    outputs = []
+    grouped: dict[Path, list[dict]] = {}
     for record in records:
         if record.get("internal"):
             continue
@@ -95,14 +103,29 @@ def _publish_records(
             and value is not None
             and f"_{key}-{value}" not in prefix.name
         )
-        destination = prefix.with_name(f"{prefix.name}{extra}_contrast-{record['name']}")
-        maps = evaluate_maps(record["recipe"], sources, block_size=config["spatial_block_size"])
-        if record["test"] == "pass":
-            maps = {key: maps[key] for key in ("effect", "variance", "dof")}
+        destination = prefix.with_name(f"{prefix.name}{extra}")
+        if base["node"] == "session" and (session := entities.get("ses")):
+            task_directory = prefix.parent.parent
+            destination = (
+                task_directory.parent
+                / f"ses-{session}"
+                / task_directory.name
+                / prefix.parent.name
+                / destination.name
+            )
+        grouped.setdefault(destination, []).append(record)
+
+    outputs = []
+    for destination, selected_records in grouped.items():
+        evaluated = []
+        for record in selected_records:
+            maps = evaluate_maps(record["recipe"], sources, block_size=config["spatial_block_size"])
+            if record["test"] == "pass":
+                maps = {key: maps[key] for key in ("effect", "variance", "dof")}
+            evaluated.append((record, maps))
         metadata = {
             "Model": base["model"],
             "Node": base["node"],
-            "Contrast": record["name"],
             "Space": base["space"],
             "SmoothingFWHMmm": base["smoothing"],
             "DegreesOfFreedomMethod": "conditional-GLS; independent-run Satterthwaite",
@@ -112,9 +135,8 @@ def _publish_records(
             "InvalidLocations": "NaN t/DOF where variance is zero",
             "InputDenoising": "without ICA-AROMA",
             "InferenceLimitations": "Conditional on estimated AR groups and, if selected, precision weights; approximate t reference",
-            "LinearRecipe": record["recipe"],
         }
-        outputs.extend(write_statmaps(destination, maps, geometry, metadata))
+        outputs.extend(write_statmaps(destination, evaluated, geometry, metadata))
     return outputs
 
 
@@ -376,7 +398,7 @@ def run_module(
         task_definition, model_id, config, sessions=any("ses" in run.entities for run in runs)
     )
     validate_run_groups(runs, model["Nodes"][0], participant)
-    root = output_root or artifact_root(project_root, config_id, model_id, space, smoothing)
+    root = output_root or artifact_root(project_root, config_id, participant)
     if execution_context is not None:
         if project_root != execution_context.paths.source_project(execution_context.project):
             raise ValueError("Firstlevels project differs from its execution context")

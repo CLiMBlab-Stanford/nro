@@ -142,7 +142,7 @@ def make_target_config(
         target,
         _target_module_config(
             target,
-            output_base / target_dir / subject_id,
+            output_base / subject_id,
             work_base / target_dir / subject_id,
             target_prefix,
             config,
@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     )
     micro_prefix = str(micro_config.get("prefix") or participant_id)
     micro_target, micro_target_prefix = target_output_names(micro_prefix, args.space, smoothing_mm)
-    micro_subject = micro_base / micro_target / participant_id
+    micro_subject = micro_base / participant_id
     from nro.modules.microparcellation.paths import output_paths as micro_output_paths
 
     micro_paths = micro_output_paths(micro_subject, micro_target_prefix)

@@ -1,7 +1,7 @@
 # nro
 
 `nro` processes anatomical and functional MRI from BIDS datasets. It produces
-preprocessed images, cleaned time courses, dynamic-connectivity scenes, small
+preprocessed images, cleaned time courses, dynamic-connectivity series, small
 brain parcels, and individualized functional networks. Users request results;
 the orchestration layer finds their dependencies and distributes ready work
 across a site-wide Slurm worker pool.
@@ -36,7 +36,7 @@ The arrows show dependencies:
                     │              └──► [microparcellation] ──► [networks]
                     └──► [firstlevels]
 
-[anat] ── "direct anatomical inputs" ──► {dynconn, networks, firstlevels}
+[anat] ── "direct anatomical inputs" ──► {networks, firstlevels}
 ```
 
 Version 0.0.1 is the first release. nro follows
@@ -133,17 +133,14 @@ nro status -P example
 nro log -p 01 -P example -m func -i
 ```
 
-Open the Workbench scene stored with a completed subject-level derivative:
+Create one Workbench scene from matching completed derivatives:
 
 ```bash
-nro wb_view microparcellation -p 01 -P example
-nro wb_view dynconn -p 01 -P example -s fsnative -S 2
-nro wb_view networks -p 01 -P example -s fsnative -S 2
+nro scene -p 01 -P example -s fsnative -S 2 --open
 ```
 
-Microparcellation and network artifacts are grouped first by space and
-smoothing, then by participant. Each participant directory contains its
-scientific outputs and a relocatable Workbench scene.
+The default scene links to its source derivatives. Add `--publish` to copy its
+inputs into a portable scene directory.
 
 Common controls are:
 

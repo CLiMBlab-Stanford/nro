@@ -9,6 +9,7 @@ from nro.engine.artifact_metadata import validate_metadata_fields
 ANATOMICAL_MANIFEST_FIELDS = {
     "subject": "string",
     "fs_subject": "string",
+    "fsaverage_template": "string",
     "selection_strategy": "string",
     "inputs": "mapping",
     "inputs.t1w": "string_list",

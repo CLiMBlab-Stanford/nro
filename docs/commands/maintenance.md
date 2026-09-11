@@ -23,6 +23,7 @@ the caller's launcher unless `--maintain` is given. See the
 | `--offline` | Forbid new resource downloads; require cached/installed dependencies. |
 | `--without-oslom` | Omit OSLOM and its Python dependencies for this invocation. |
 | `--with-bidsify` | Include Flywheel, dcm2bids, and DICOM dependencies. |
+| `--without-marss` | Omit the official MARSS package and its Python dependencies. |
 | `--dev` | Include locked test dependencies. |
 | `--accept-qunex-license` | Acknowledge terms for unattended image acquisition. |
 | `--local` | Do not require Slurm. |
@@ -82,7 +83,9 @@ prevents repair from discarding the barrier while files might still be changing.
 Deletion is destructive and does not move files to trash. A bare invocation
 selects every controlled derivative owned by the current branch across all
 projects, including historical lineages. Inherited outputs are excluded. Force
-does not mean it is safe to delete a shared user's needed work.
+does not mean it is safe to delete a shared user's needed work. After removing
+selected files, purge also removes empty parent directories within the controlled
+derivative, WORK, control, and log trees. It preserves the roots of those trees.
 
 Use `--cache` to remove unused executable-source snapshots and captured site
 settings across the shared installation:

@@ -16,6 +16,7 @@ from nro.engine.cleaned_timeseries import (
     load_cleaned_run_metadata,
     load_retained_frame_mask,
 )
+from nro.engine.connectivity import connectivity_run_weights
 from nro.engine.images import (
     load_surface_timeseries,
     sidecar_json_path,
@@ -29,8 +30,11 @@ from nro.orchestration.runtime import selected_configuration_fingerprint
 
 from .config import ModuleConfig, validate_config
 from .contract import dynconn_output_contract, validate_dynconn_manifest
+from .low_rank import fit_low_rank_correlation, pseudo_timeseries_block
 from .paths import output_paths
-from .scene import surface_output_paths, write_surface_scene, write_volume_scene
+
+TEMPORAL_BLOCK_FRAMES = 32
+SPATIAL_BLOCK_LOCATIONS = 65_536
 
 
 def _flatten(groups: tuple[tuple[Path, ...], ...]) -> tuple[Path, ...]:
@@ -45,6 +49,50 @@ def _repetition_time(sidecar: Path) -> float:
     return float(value)
 
 
+def _retained_blocks(
+    cfg: ModuleConfig,
+    included: list[dict[str, object]],
+    *,
+    spatial_shape: tuple[int, ...],
+    reference_affine: np.ndarray | None,
+):
+    for record in included:
+        run = cfg.inputs.functional[int(record["run_index"])]
+        metadata = load_cleaned_run_metadata(run)
+        retained = np.flatnonzero(load_retained_frame_mask(metadata))
+        if cfg.inputs.domain == "surface":
+            _, vertex_counts = surface_timeseries_shape(run)
+            if vertex_counts != spatial_shape:
+                raise ValueError(f"Cleaned surface geometry differs across runs: {run}")
+            data = load_surface_timeseries(run)
+            if data.shape != (metadata.total_frames, sum(vertex_counts)):
+                raise ValueError(f"Cleaned surface dimensions disagree with metadata: {run}")
+        else:
+            import nibabel as nib
+
+            image = nib.load(str(run[0]))
+            if tuple(image.shape[:3]) != spatial_shape or not np.allclose(
+                image.affine, reference_affine
+            ):
+                raise ValueError(f"Cleaned volume grids differ across runs: {run[0]}")
+            volume = np.asarray(image.dataobj, dtype=np.float32)
+            if volume.shape[-1] != metadata.total_frames:
+                raise ValueError(f"Cleaned volume dimensions disagree with metadata: {run[0]}")
+            data = np.moveaxis(volume, -1, 0).reshape(metadata.total_frames, -1)
+        data = np.asarray(data[retained], dtype=np.float32)
+        if not np.all(np.isfinite(data)):
+            raise ValueError(f"Cleaned data contain non-finite values: {run}")
+        mean = np.mean(data, axis=0, dtype=np.float64).astype(np.float32)
+        data -= mean
+        sum_squares = np.einsum("ti,ti->i", data, data, dtype=np.float64)
+        valid = sum_squares > 0
+        data[:, valid] /= np.sqrt(sum_squares[valid]).astype(np.float32)
+        data[:, ~valid] = 0.0
+        data *= np.sqrt(np.float32(record["normalized_weight"]))
+        for start in range(0, len(data), TEMPORAL_BLOCK_FRAMES):
+            yield data[start : start + TEMPORAL_BLOCK_FRAMES]
+
+
 def build_module(
     cfg: ModuleConfig,
     runner: Runner,
@@ -57,9 +105,6 @@ def build_module(
     out, work = cfg.output.directory, cfg.output.work_directory
     force = bool(cfg.output.overwrite)
     paths = output_paths(out, cfg.output.prefix, cfg.inputs.domain)
-    packaged_surfaces = (
-        surface_output_paths(out, cfg.output.prefix) if cfg.inputs.domain == "surface" else ()
-    )
     functional_inputs = _flatten(cfg.inputs.functional)
     functional_sidecars = tuple(
         dict.fromkeys(sidecar_json_path(path) for path in functional_inputs)
@@ -68,7 +113,6 @@ def build_module(
         *functional_inputs,
         *functional_sidecars,
         *cfg.inputs.temporal_masks,
-        *cfg.inputs.surface,
     )
     initialized = work / "initialized.complete"
 
@@ -91,6 +135,9 @@ def build_module(
         {
             "inputs": asdict(cfg.inputs),
             "inclusion": asdict(cfg.inclusion),
+            "weighting": cfg.weighting,
+            "low_rank": cfg.low_rank,
+            "low_rank_options": asdict(cfg.low_rank_options),
             "output_prefix": cfg.output.prefix,
         },
     )
@@ -128,6 +175,7 @@ def build_module(
 
     def assess_runs() -> None:
         included, skipped = [], []
+        included_metadata = []
         repetition_times = set()
         for index, (run, expected_mask) in enumerate(
             zip(cfg.inputs.functional, cfg.inputs.temporal_masks)
@@ -146,12 +194,14 @@ def build_module(
                 "temporal_mask": str(metadata.temporal_mask_file),
                 "total_frames": metadata.total_frames,
                 "retained_frames": metadata.retained_frames,
+                "algebraic_temporal_rank": metadata.algebraic_temporal_rank,
             }
             if reasons:
                 skipped.append({**record, "reasons": list(reasons)})
             else:
                 repetition_times.add(_repetition_time(metadata.sidecars[0]))
                 included.append(record)
+                included_metadata.append(metadata)
         retained = sum(int(record["retained_frames"]) for record in included)
         if len(included) < cfg.inclusion.minimum_usable_runs:
             raise ValueError(
@@ -165,6 +215,10 @@ def build_module(
             )
         if len(repetition_times) != 1:
             raise ValueError("Included runs must have one common RepetitionTime for concatenation")
+        weights = connectivity_run_weights(included_metadata, weighting=cfg.weighting)
+        for record, weight in zip(included, weights):
+            record["effective_dof"] = weight.effective_dof
+            record["normalized_weight"] = weight.normalized_weight
         start = 0
         for record in included:
             stop = start + int(record["retained_frames"])
@@ -191,11 +245,128 @@ def build_module(
         )
     )
 
+    low_rank_summary = work / "low-rank-summary.json"
+
     def concatenate() -> None:
         eligibility = json.loads(eligibility_path.read_text(encoding="utf-8"))
         included = eligibility["included"]
         n_frames = int(eligibility["concatenated_frames"])
         selected = [cfg.inputs.functional[int(record["run_index"])] for record in included]
+        if cfg.low_rank:
+            import nibabel as nib
+
+            if cfg.inputs.domain == "surface":
+                _, vertex_counts = surface_timeseries_shape(selected[0])
+                n_locations = sum(vertex_counts)
+                spatial_layout = vertex_counts
+                published_spatial_shape = (n_locations,)
+                first = None
+                reference_affine = None
+            else:
+                first = nib.load(str(selected[0][0]))
+                spatial_layout = tuple(int(value) for value in first.shape[:3])
+                published_spatial_shape = spatial_layout
+                n_locations = int(np.prod(spatial_layout))
+                vertex_counts = ()
+                reference_affine = first.affine
+
+            def blocks():
+                return _retained_blocks(
+                    cfg,
+                    included,
+                    spatial_shape=spatial_layout,
+                    reference_affine=reference_affine,
+                )
+
+            fit = fit_low_rank_correlation(
+                blocks,
+                n_locations=n_locations,
+                dimensions=cfg.low_rank_options.dimensions,
+                oversampling=cfg.low_rank_options.oversampling,
+                power_iterations=cfg.low_rank_options.power_iterations,
+            )
+            if fit.input_frames != n_frames:
+                raise RuntimeError(
+                    f"Low-rank input yielded {fit.input_frames} frames; expected {n_frames}"
+                )
+            matrix_path = work / "low-rank-timeseries.float32.dat"
+            matrix = np.memmap(
+                matrix_path,
+                mode="w+",
+                dtype=np.float32,
+                shape=(
+                    (fit.synthetic_frames, n_locations)
+                    if cfg.inputs.domain == "surface"
+                    else (*published_spatial_shape, fit.synthetic_frames)
+                ),
+            )
+            flat_volume = (
+                matrix.reshape(n_locations, fit.synthetic_frames)
+                if cfg.inputs.domain == "volume"
+                else None
+            )
+            for start in range(0, n_locations, SPATIAL_BLOCK_LOCATIONS):
+                stop = min(start + SPATIAL_BLOCK_LOCATIONS, n_locations)
+                samples = pseudo_timeseries_block(fit, start, stop)
+                if flat_volume is None:
+                    matrix[:, start:stop] = samples
+                else:
+                    flat_volume[start:stop] = samples.T
+            matrix.flush()
+            with atomic_output_path(paths["timeseries"]) as staged:
+                if cfg.inputs.domain == "surface":
+                    axis = None
+                    structures = (
+                        "CIFTI_STRUCTURE_CORTEX_LEFT",
+                        "CIFTI_STRUCTURE_CORTEX_RIGHT",
+                    )
+                    for name, count in zip(structures, vertex_counts):
+                        part = nib.cifti2.BrainModelAxis.from_surface(
+                            np.arange(count), count, name=name
+                        )
+                        axis = part if axis is None else axis + part
+                    series = nib.cifti2.SeriesAxis(
+                        0.0,
+                        1.0,
+                        fit.synthetic_frames,
+                        unit="SECOND",
+                    )
+                    header = nib.cifti2.Cifti2Header.from_axes((series, axis))
+                    nib.save(
+                        nib.Cifti2Image(matrix, header=header, dtype=np.float32),
+                        str(staged),
+                    )
+                else:
+                    assert first is not None
+                    header = first.header.copy()
+                    header.set_data_dtype(np.float32)
+                    header.set_zooms((*header.get_zooms()[:3], 1.0))
+                    header.set_xyzt_units(t="sec")
+                    nib.save(nib.Nifti1Image(matrix, first.affine, header=header), str(staged))
+            del matrix
+            matrix_path.unlink(missing_ok=True)
+            write_json_atomic(
+                low_rank_summary,
+                {
+                    "method": "randomized spectral approximation of weighted run correlations",
+                    "requested_dimensions": fit.requested_dimensions,
+                    "dimensions": fit.dimensions,
+                    "oversampling": cfg.low_rank_options.oversampling,
+                    "power_iterations": cfg.low_rank_options.power_iterations,
+                    "random_seed": fit.random_seed,
+                    "input_frames": fit.input_frames,
+                    "synthetic_frames": fit.synthetic_frames,
+                    "spatial_locations": n_locations,
+                    "valid_locations": fit.valid_locations,
+                    "zero_variance_locations": n_locations - fit.valid_locations,
+                    "realized_rank": fit.realized_rank,
+                    "retained_variance_fraction": fit.retained_variance_fraction,
+                    "eigenvalues": [float(value) for value in fit.eigenvalues],
+                    "standardization": "centered and unit sum of squares per spatial location",
+                    "synthetic_basis": "orthonormal zero-mean Helmert contrasts",
+                },
+            )
+            return
         if cfg.inputs.domain == "surface":
             _, vertex_counts = surface_timeseries_shape(selected[0])
             matrix_path = work / "concatenated.float32.dat"
@@ -205,16 +376,17 @@ def build_module(
                 dtype=np.float32,
                 shape=(n_frames, sum(vertex_counts)),
             )
-            for record, run in zip(included, selected):
-                metadata = load_cleaned_run_metadata(run)
-                data = load_surface_timeseries(run)
-                if data.shape != (metadata.total_frames, sum(vertex_counts)):
-                    raise ValueError(f"Cleaned surface dimensions disagree with metadata: {run}")
-                if not np.all(np.isfinite(data)):
-                    raise ValueError(f"Cleaned surface data contain non-finite values: {run}")
-                matrix[int(record["start_frame"]) : int(record["stop_frame"])] = data[
-                    load_retained_frame_mask(metadata)
-                ]
+            cursor = 0
+            for block in _retained_blocks(
+                cfg,
+                included,
+                spatial_shape=vertex_counts,
+                reference_affine=None,
+            ):
+                matrix[cursor : cursor + len(block)] = block
+                cursor += len(block)
+            if cursor != n_frames:
+                raise RuntimeError(f"Weighted input yielded {cursor} frames; expected {n_frames}")
             matrix.flush()
             import nibabel as nib
 
@@ -252,19 +424,18 @@ def build_module(
                 dtype=np.float32,
                 shape=(*shape, n_frames),
             )
-            for record, run in zip(included, selected):
-                metadata = load_cleaned_run_metadata(run)
-                image = nib.load(str(run[0]))
-                if tuple(image.shape[:3]) != shape or not np.allclose(image.affine, first.affine):
-                    raise ValueError(f"Cleaned volume grids differ across runs: {run[0]}")
-                data = np.asarray(image.dataobj, dtype=np.float32)
-                if data.shape != (*shape, metadata.total_frames):
-                    raise ValueError(f"Cleaned volume dimensions disagree with metadata: {run[0]}")
-                if not np.all(np.isfinite(data)):
-                    raise ValueError(f"Cleaned volume data contain non-finite values: {run[0]}")
-                matrix[..., int(record["start_frame"]) : int(record["stop_frame"])] = data[
-                    ..., load_retained_frame_mask(metadata)
-                ]
+            flat = matrix.reshape(-1, n_frames)
+            cursor = 0
+            for block in _retained_blocks(
+                cfg,
+                included,
+                spatial_shape=shape,
+                reference_affine=first.affine,
+            ):
+                flat[:, cursor : cursor + len(block)] = block.T
+                cursor += len(block)
+            if cursor != n_frames:
+                raise RuntimeError(f"Weighted input yielded {cursor} frames; expected {n_frames}")
             matrix.flush()
             header = first.header.copy()
             header.set_data_dtype(np.float32)
@@ -282,44 +453,54 @@ def build_module(
 
     runner.add_step(
         Step.python(
-            name="Concatenate Retained Time Series",
+            name=(
+                "Fit Low-Rank Dynamic-Connectivity Representation"
+                if cfg.low_rank
+                else "Concatenate Retained Time Series"
+            ),
             inputs=(*source_inputs, eligibility_path),
-            outputs=(paths["timeseries"],),
+            outputs=(
+                (paths["timeseries"], low_rank_summary) if cfg.low_rank else (paths["timeseries"],)
+            ),
             force=force,
             action=concatenate,
         )
     )
 
-    def package_scene() -> None:
-        if cfg.inputs.domain == "surface":
-            write_surface_scene(out, cfg.output.prefix, paths["timeseries"], cfg.inputs.surface)
-        else:
-            write_volume_scene(out, cfg.output.prefix, paths["timeseries"])
-
-    runner.add_step(
-        Step.python(
-            name="Package Workbench Dynamic-Connectivity Scene",
-            inputs=(paths["timeseries"], *cfg.inputs.surface),
-            outputs=(paths["scene"], *packaged_surfaces),
-            force=force,
-            action=package_scene,
-        )
-    )
-
     def write_manifest() -> None:
+        current_outputs = set(paths.values())
+        for path in out.iterdir():
+            if (
+                path.name.startswith(f"{cfg.output.prefix}_")
+                and path not in current_outputs
+                and (path.is_file() or path.is_symlink())
+            ):
+                path.unlink()
         eligibility = json.loads(eligibility_path.read_text(encoding="utf-8"))
+        compression = (
+            json.loads(low_rank_summary.read_text(encoding="utf-8")) if cfg.low_rank else None
+        )
         import nibabel as nib
 
         image = nib.load(str(paths["timeseries"]))
         spatial_shape = list(image.shape[1:] if cfg.inputs.domain == "surface" else image.shape[:3])
+        published_frames = int(image.shape[0] if cfg.inputs.domain == "surface" else image.shape[3])
         payload = {
             "domain": cfg.inputs.domain,
             "space": cfg.inputs.space,
             "smoothing_fwhm_mm": cfg.inputs.smoothing_mm,
+            "representation": "low_rank" if cfg.low_rank else "full",
+            "weighting": cfg.weighting,
             "repetition_time_seconds": eligibility["repetition_time_seconds"],
+            "series_axis_interpretation": (
+                "synthetic low-rank coordinates"
+                if cfg.low_rank
+                else "weighted standardized retained acquisition frames"
+            ),
             "spatial_shape": spatial_shape,
-            "source_surfaces": [str(path) for path in cfg.inputs.surface],
             "concatenated_frames": eligibility["concatenated_frames"],
+            "published_frames": published_frames,
+            "low_rank": compression,
             "functional_runs": {
                 "inclusion_policy": asdict(cfg.inclusion),
                 "minimum_usable_runs": cfg.inclusion.minimum_usable_runs,
@@ -329,10 +510,16 @@ def build_module(
             },
             "outputs": {
                 "timeseries": str(paths["timeseries"]),
-                "scene": str(paths["scene"]),
-                "surfaces": [str(path) for path in packaged_surfaces],
             },
-            "config": scientific_values("dynconn", {"inclusion": asdict(cfg.inclusion)}),
+            "config": scientific_values(
+                "dynconn",
+                {
+                    "inclusion": asdict(cfg.inclusion),
+                    "weighting": cfg.weighting,
+                    "low_rank": cfg.low_rank,
+                    "low_rank_options": asdict(cfg.low_rank_options),
+                },
+            ),
             "configuration_fingerprint": selected_configuration_fingerprint(),
             "output_metadata_contract": dynconn_output_contract(),
         }
@@ -343,8 +530,7 @@ def build_module(
             payload = yaml.safe_load(paths["manifest"].read_text(encoding="utf-8"))
             validate_dynconn_manifest(payload)
             complete = all(
-                path.is_file() and path.stat().st_size
-                for path in (paths["timeseries"], paths["scene"], *packaged_surfaces)
+                path.is_file() and path.stat().st_size for path in (paths["timeseries"],)
             )
         except (OSError, TypeError, ValueError, yaml.YAMLError):
             complete = False
@@ -358,11 +544,10 @@ def build_module(
         Step.python(
             name="Write Dynamic-Connectivity Manifest",
             inputs=(
-                paths["scene"],
                 paths["timeseries"],
-                *packaged_surfaces,
                 eligibility_path,
                 config_snapshot,
+                *((low_rank_summary,) if cfg.low_rank else ()),
             ),
             outputs=(paths["manifest"],),
             force=force,
@@ -371,4 +556,4 @@ def build_module(
             completion_boundary=completion_boundary,
         )
     )
-    return {**paths, "surfaces": packaged_surfaces}
+    return paths

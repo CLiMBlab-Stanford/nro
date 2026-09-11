@@ -13,9 +13,12 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from nro.configuration.paths import WB_COMMAND_PATH
 from nro.configuration.schema import scientific_values
-from nro.engine.cifti import load_dlabel
+from nro.engine.cifti import (
+    load_dlabel,
+    validate_indexed_cifti_sidecar,
+    write_indexed_cifti_sidecar,
+)
 from nro.engine.images import write_cifti_dense_scalar
 from nro.engine.io import (
     atomic_save_npz,
@@ -23,7 +26,6 @@ from nro.engine.io import (
     json_path_default,
     manifest_value,
 )
-from nro.engine.workbench import package_surface_families
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
@@ -47,8 +49,7 @@ from .labeling import (
 )
 from .leiden import leiden_partition, write_hint
 from .oslom import parse_tp, resolve_oslom_executable, run_oslom, write_oslom_graph
-from .paths import fixed_output_paths, network_descriptor, network_map_path
-from .scene import write_network_scene
+from .paths import fixed_output_paths
 
 LOG = logging.getLogger(__name__)
 
@@ -686,30 +687,23 @@ def build_module(
     overlap_path = paths["overlap"]
     labels_tsv_path = paths["network_labels"]
     labels_json_path = paths["network_labels_metadata"]
-    scene_path = out / f"{cfg.output.prefix}_desc-networks_scene.scene"
-    scene_connectivity_path = out / f"{cfg.output.prefix}_connectivity.pconn.nii"
-    if cfg.inputs.domain == "surface":
-        scene_supporting_files = tuple(
-            out / f"{cfg.output.prefix}_hemi-{hemi}_desc-{kind}_surface.surf.gii"
-            for hemi in ("L", "R")
-            for kind in ("pial", "midthickness", "white", "inflated")
-        )
-    else:
-        scene_supporting_files = (out / f"{cfg.output.prefix}_desc-microparcellation_dseg.nii.gz",)
     outputs: NetworkOutputs = {
         "membership": membership_path,
+        "membership_metadata": paths["membership_metadata"],
         **(
-            {"stability": stability_path, "homeless": homeless_path, "overlap": overlap_path}
+            {
+                "stability": stability_path,
+                "stability_metadata": paths["stability_metadata"],
+                "homeless": homeless_path,
+                "homeless_metadata": paths["homeless_metadata"],
+                "overlap": overlap_path,
+                "overlap_metadata": paths["overlap_metadata"],
+            }
             if cfg.parcellation_strategy == "oslom" and cfg.oslom.repetitions > 1
             else {}
         ),
         "network_labels": labels_tsv_path,
         "network_labels_metadata": labels_json_path,
-        "scene": scene_path,
-        "scene_supporting_files": (
-            scene_connectivity_path,
-            *scene_supporting_files,
-        ),
     }
 
     def write_publication() -> None:
@@ -747,30 +741,44 @@ def build_module(
         write_cifti_dense_scalar(
             membership_path, cfg.inputs.microparcels, network_arrays, map_names
         )
-        candidate_by_network: dict[int, list[str]] = {}
+        candidate_by_network: dict[int, list[dict]] = {}
         for record in label_records:
-            candidate_by_network.setdefault(int(record["network"]), []).append(
-                str(record["candidate"])
-            )
-        network_paths: dict[str, Path] = {}
-        for network, values in enumerate(network_arrays, start=1):
-            candidates = candidate_by_network.get(network) or [None]
-            for candidate in candidates:
-                descriptor = network_descriptor(candidate, network)
-                path = network_map_path(out, cfg.output.prefix, descriptor)
-                write_cifti_dense_scalar(
-                    path,
-                    cfg.inputs.microparcels,
-                    [values],
-                    [descriptor],
-                )
-                network_paths[descriptor] = path
+            candidate_by_network.setdefault(int(record["network"]), []).append(record)
+        indexed_networks = [
+            {
+                "Name": map_names[network - 1],
+                "Network": network,
+                "Labels": [
+                    f"network{network:03d}",
+                    *[str(record["candidate"]) for record in candidate_by_network.get(network, [])],
+                ],
+                "Candidates": candidate_by_network.get(network, []),
+            }
+            for network in range(1, len(network_arrays) + 1)
+        ]
+        common_index_metadata = {
+            "Module": "networks",
+            "Space": cfg.inputs.space,
+            "SmoothingFWHMmm": cfg.inputs.smoothing_mm,
+        }
+        write_indexed_cifti_sidecar(
+            membership_path,
+            indexed_networks,
+            lookup_fields=("Network", "Labels", "Name"),
+            metadata={**common_index_metadata, "Statistic": "membership"},
+        )
         if cfg.parcellation_strategy == "oslom" and cfg.oslom.repetitions > 1:
             write_cifti_dense_scalar(
                 stability_path,
                 cfg.inputs.microparcels,
                 [vertex_stability[:, index] for index in range(vertex_stability.shape[1])],
                 map_names,
+            )
+            write_indexed_cifti_sidecar(
+                stability_path,
+                indexed_networks,
+                lookup_fields=("Network", "Labels", "Name"),
+                metadata={**common_index_metadata, "Statistic": "stability"},
             )
             write_cifti_dense_scalar(
                 homeless_path,
@@ -781,11 +789,26 @@ def build_module(
                 ],
                 ["Homeless stability", "Homeless binary"],
             )
+            write_indexed_cifti_sidecar(
+                homeless_path,
+                [
+                    {"Name": "Homeless stability", "Measure": "homeless_stability"},
+                    {"Name": "Homeless binary", "Measure": "homeless_binary"},
+                ],
+                lookup_fields=("Measure", "Name"),
+                metadata={**common_index_metadata, "Statistic": "homelessness"},
+            )
             write_cifti_dense_scalar(
                 overlap_path,
                 cfg.inputs.microparcels,
                 [vertex_overlap],
                 ["Overlap stability"],
+            )
+            write_indexed_cifti_sidecar(
+                overlap_path,
+                [{"Name": "Overlap stability", "Measure": "overlap_stability"}],
+                lookup_fields=("Measure", "Name"),
+                metadata={**common_index_metadata, "Statistic": "overlap"},
             )
         with labels_tsv_path.open("w", encoding="utf-8", newline="") as stream:
             writer = csv.DictWriter(
@@ -814,43 +837,7 @@ def build_module(
             labels_json_path,
             json.dumps(label_metadata, indent=2) + "\n",
         )
-        if cfg.inputs.domain == "surface":
-            packaged_surfaces = package_surface_families(
-                out,
-                cfg.output.prefix,
-                cfg.inputs.source_surfaces,
-                runner=runner,
-                executable=str(WB_COMMAND_PATH),
-            )
-            write_network_scene(
-                scene_path,
-                domain="surface",
-                membership=membership_path,
-                connectivity=cfg.inputs.connectivity,
-                scene_surfaces=packaged_surfaces,
-            )
-        else:
-            micro_manifest = (
-                yaml.safe_load(cfg.inputs.microparcellation_manifest.read_text(encoding="utf-8"))
-                or {}
-            )
-            micro_outputs = micro_manifest.get("outputs") or {}
-            label_value = micro_outputs.get("microparcels_volume")
-            if not label_value:
-                raise ValueError(
-                    "Volumetric microparcellation manifest lacks outputs.microparcels_volume"
-                )
-            label_volume = Path(str(label_value)).expanduser()
-            if not label_volume.is_absolute():
-                label_volume = cfg.inputs.microparcellation_manifest.parent / label_volume
-            write_network_scene(
-                scene_path,
-                domain="volume",
-                membership=membership_path,
-                connectivity=cfg.inputs.connectivity,
-                label_volume=label_volume,
-            )
-        publication_outputs = {**outputs, "network_maps": network_paths}
+        publication_outputs = dict(outputs)
         manifest = {
             "domain": cfg.inputs.domain,
             "space": cfg.inputs.space,
@@ -915,7 +902,10 @@ def build_module(
             validate_network_manifest(manifest)
             label_metadata = json.loads(labels_json_path.read_text(encoding="utf-8"))
             validate_network_label_metadata(label_metadata)
-        except (OSError, yaml.YAMLError, TypeError, ValueError):
+            for name, output in (manifest.get("outputs") or {}).items():
+                if name in {"membership", "stability", "homeless", "overlap"}:
+                    validate_indexed_cifti_sidecar(Path(output))
+        except (OSError, yaml.YAMLError, TypeError, ValueError, KeyError):
             return False, f"Networks publication manifest is unreadable: {manifest_path}"
         valid, reason, _recorded_outputs = validate_recorded_publication(
             manifest,

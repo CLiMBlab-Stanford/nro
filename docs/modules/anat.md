@@ -32,7 +32,9 @@ selected sources before comparing subjects with different acquisition schemes.
 4. Convert FreeSurfer geometry to GIFTI and construct white, pial, inflated,
    and midthickness surfaces. Export sphere registrations and surface metrics.
    FSL/FreeSurfer coordinate transforms and Workbench surface operations place
-   geometry in the requested native and template coordinate systems.
+   geometry in the requested native and template coordinate systems. The
+   packaged configuration uses the 41k-vertex-per-hemisphere `fsaverage6`
+   template.
 5. Register the subject anatomy to the configured MNI reference with ANTs SyN.
    Publish forward and inverse composite transforms and registration-check images.
    The fixed schedule is rigid and affine MI (32 bins, regular 25% sampling),
@@ -47,7 +49,8 @@ selected sources before comparing subjects with different acquisition schemes.
 
 The default container is QuNex, with a separate SynthStrip image. Host and
 container paths are translated through `Runner`; the configured FreeSurfer
-license is bound into processing. No anatomy is duplicated into network scenes.
+license is bound into processing. Linked scenes refer to these surfaces directly;
+published scenes copy them only when requested.
 
 ## Public artifacts
 
@@ -64,7 +67,9 @@ Required metadata includes `inputs`, `selection_strategy`, `outputs`,
 
 ## Configuration
 
-`anat.selection_strategy` controls acquisition combination. `mni_template`
+`fsaverage_template` selects either `fsaverage6`, the packaged default, or the
+full-resolution `fsaverage` surface target. `anat.selection_strategy` controls
+acquisition combination. `mni_template`
 selects the registration target; `synthstrip_container` selects brain extraction.
 `freesurfer_subjects_dir` and `fs_subject` override FreeSurfer storage and identity.
 `nthreads`, `nthreads_divisor`, and `nthreads_min` determine tool thread allocation;
@@ -74,7 +79,7 @@ environment isolation, and inner setup command for preprocessing.
 
 ```{literalinclude} ../../nro/configuration/starters/configs/preprocessing/main_preprocessing.yml
 :language: yaml
-:start-at: container:
+:start-at: fsaverage_template:
 :end-before: func:
 ```
 

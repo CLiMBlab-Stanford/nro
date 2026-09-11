@@ -1,8 +1,13 @@
 input_filter: {}
-surface: pial
 output_dir: null
 prefix: null
 overwrite: false
+weighting: precision
+low_rank: true
+low_rank_options:
+  dimensions: 1000
+  oversampling: 16
+  power_iterations: 1
 inclusion:
   minimum_retained_frames: 100
   minimum_retained_fraction: 0.7

@@ -176,7 +176,11 @@ def create_store(root: Path | None = None) -> Path:
         prefix=".nro-definitions-", dir=destination.parent
     ) as temporary:
         staged = Path(temporary) / "store"
-        shutil.copytree(STARTERS, staged)
+        shutil.copytree(
+            STARTERS,
+            staged,
+            ignore=shutil.ignore_patterns("*.swp", "*.swo", "*~", ".DS_Store", "__pycache__"),
+        )
         (staged / "gitignore").rename(staged / ".gitignore")
         for kind in DERIVATIVE_CLASSES:
             directory = staged / "configs" / kind

@@ -32,7 +32,7 @@ COMMAND_HELP = {
     "set": "Update live planner settings.",
     "status": "Report derivative status.",
     "stop": "Cancel derivative demand or stop workers.",
-    "wb_view": "Open Workbench scenes stored with completed derivatives.",
+    "scene": "Create combined Workbench scenes from completed derivatives.",
 }
 
 
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
         "purge",
         "bidsify",
         "promote",
-        "wb_view",
+        "scene",
         "qc",
         "publish",
     }:

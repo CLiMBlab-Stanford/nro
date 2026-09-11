@@ -131,7 +131,7 @@ def test_microparcellation_recovery_does_not_plan_networks(tmp_path, monkeypatch
     sources(bids)
     write(
         bids
-        / "demo/derivatives/microparcellation/main/space-fsnative_smoothing-2mm/sub-01"
+        / "demo/derivatives/microparcellation/main/sub-01"
         / "sub-01_space-fsnative_smoothing-2mm_partial.txt"
     )
     registry = Registry.for_project("demo", bids_root=bids)

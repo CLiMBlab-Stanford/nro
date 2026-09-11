@@ -8,7 +8,7 @@ from typing import Iterable
 
 from nro.engine.bids import BidsRun
 from nro.engine.paths import clean_session_dir, clean_subject_dir
-from nro.engine.targets import smoothing_entity_value
+from nro.engine.targets import is_surface_space, smoothing_entity_value
 from nro.orchestration.execution_context import ExecutionContext
 
 
@@ -40,7 +40,7 @@ def expected_clean_target(
     bids_root = None if execution_context is None else execution_context.paths.bids
     if not source_runs:
         raise FileNotFoundError("No source-BIDS runs were selected for the multirun target")
-    domain = "surface" if space in {"fsnative", "fsaverage"} else "volume"
+    domain = "surface" if is_surface_space(space) else "volume"
     smoothing = smoothing_entity_value(smoothing_mm)
     functionals, temporal_masks = [], []
     for run in source_runs:

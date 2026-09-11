@@ -65,8 +65,7 @@ def test_split_half_block_frames_is_scientific():
 
 @pytest.mark.parametrize("run_count", [1, 2])
 @pytest.mark.parametrize("gsr", [False, True])
-@pytest.mark.parametrize("weighted", [False, True])
-def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, gsr, weighted):
+def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, gsr):
     rng = np.random.default_rng(827)
     labels = np.repeat(np.arange(6), 2)
     mask = np.ones(len(labels), dtype=bool)
@@ -80,11 +79,13 @@ def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, 
         ).astype(np.float32)
     edges = np.column_stack((np.arange(len(labels) - 1), np.arange(1, len(labels))))
 
-    def compute(temporal, spatial):
+    run_weights = np.arange(1, run_count + 1, dtype=np.float64)
+    run_weights /= run_weights.sum()
+
+    def compute(temporal):
         options = dict(
             global_signal_regression=gsr,
-            reliability_weighting=weighted,
-            reliability_vertex_block_size=spatial,
+            run_weights=run_weights,
             load_run=runs.__getitem__,
         )
         local = local_edge_correlations(files, edges, len(labels), temporal, **options)
@@ -94,14 +95,15 @@ def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, 
             mask,
             temporal,
             split_half_block_frames=19,
+            effective_dof=np.arange(10, 10 + run_count),
             null_partitions=(np.roll(labels, 1),),
             **options,
         )
         return local, parcels
 
-    expected_local, expected = compute(31, 5)
-    for temporal, spatial in ((1, 1), (7, 3), (128, 64), (1024, 1024)):
-        local, actual = compute(temporal, spatial)
+    expected_local, expected = compute(31)
+    for temporal in (1, 7, 128, 1024):
+        local, actual = compute(temporal)
         np.testing.assert_allclose(
             local.correlations, expected_local.correlations, atol=3e-6, rtol=2e-5
         )
@@ -109,7 +111,6 @@ def test_connectivity_and_quality_are_independent_of_execution_tiles(run_count, 
             "correlations",
             "variance_preserved",
             "null_variance_preserved",
-            "parcel_reliability_mean",
             "parcel_effective_runs",
             "total_sum_squares",
             "residual_sum_squares",

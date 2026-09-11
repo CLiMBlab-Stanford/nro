@@ -28,7 +28,7 @@ class LocalCorrelationResult:
 
 @dataclass(frozen=True)
 class ParcelCorrelationResult:
-    """Parcel connectivity, validity, reliability, and accumulated quality statistics."""
+    """Parcel connectivity, support, and accumulated quality statistics."""
 
     correlations: np.ndarray
     variance_preserved: float
@@ -36,9 +36,6 @@ class ParcelCorrelationResult:
     total_sum_squares: float
     null_variance_preserved: tuple[float, ...]
     null_residual_sum_squares: tuple[float, ...]
-    parcel_reliability_mean: np.ndarray
-    parcel_reliability_minimum: np.ndarray
-    parcel_reliability_maximum: np.ndarray
     parcel_supporting_runs: np.ndarray
     parcel_effective_runs: np.ndarray
     run_contributions: tuple[dict[str, float | int], ...]
@@ -369,132 +366,6 @@ def _standardized_block(
     return standardized
 
 
-def _quarter_standardized(
-    data: np.ndarray,
-    *,
-    global_signal_regression: bool,
-    node_weights: np.ndarray | None = None,
-) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    quarters = np.array_split(data, 4, axis=0)
-    if any(len(quarter) < 2 for quarter in quarters):
-        raise ValueError("Split-half reliability requires at least eight timepoints per run")
-    standardized = []
-    valid_quarters = []
-    for quarter in quarters:
-        mean, beta, global_signal, inv_sd = _standardization_parameters(
-            quarter,
-            np.ones(quarter.shape[1], dtype=bool),
-            len(quarter),
-            global_signal_regression=global_signal_regression,
-            node_weights=node_weights,
-        )
-        z = _standardized_block(quarter, mean, beta, global_signal, inv_sd)
-        valid = inv_sd > 0
-        standardized.append(z)
-        valid_quarters.append(valid)
-    return standardized, valid_quarters
-
-
-def _profile_reliability(
-    first: np.ndarray,
-    second: np.ndarray,
-    *,
-    vertex_block_size: int,
-) -> np.ndarray:
-    """Exact row-wise correlation of two connectomes via temporal dual matrices."""
-    n_nodes = first.shape[1]
-    if second.shape[1] != n_nodes:
-        raise ValueError("Split connectomes have different node counts")
-    first_ss = np.einsum("ti,ti->i", first, first)
-    second_ss = np.einsum("ti,ti->i", second, second)
-    common_valid = (
-        np.isfinite(first_ss)
-        & np.isfinite(second_ss)
-        & (first_ss > FLOAT32_TINY)
-        & (second_ss > FLOAT32_TINY)
-    )
-    valid_count = int(common_valid.sum())
-    if valid_count < 3:
-        return np.zeros(n_nodes, dtype=np.float32)
-    first_u = np.divide(
-        first,
-        np.sqrt(first_ss)[None, :],
-        out=np.zeros_like(first),
-        where=first_ss[None, :] > 0,
-    )
-    second_u = np.divide(
-        second,
-        np.sqrt(second_ss)[None, :],
-        out=np.zeros_like(second),
-        where=second_ss[None, :] > 0,
-    )
-    first_u[:, ~common_valid] = 0.0
-    second_u[:, ~common_valid] = 0.0
-
-    first_sum = first_u.T @ first_u.sum(axis=1)
-    second_sum = second_u.T @ second_u.sum(axis=1)
-    first_kernel = first_u @ first_u.T
-    second_kernel = second_u @ second_u.T
-    cross_kernel = first_u @ second_u.T
-    first_square = np.empty(n_nodes, dtype=np.float32)
-    second_square = np.empty(n_nodes, dtype=np.float32)
-    cross = np.empty(n_nodes, dtype=np.float32)
-    for start in range(0, n_nodes, vertex_block_size):
-        stop = min(start + vertex_block_size, n_nodes)
-        first_block = first_u[:, start:stop]
-        second_block = second_u[:, start:stop]
-        first_square[start:stop] = np.einsum("ti,ti->i", first_block, first_kernel @ first_block)
-        second_square[start:stop] = np.einsum(
-            "ti,ti->i", second_block, second_kernel @ second_block
-        )
-        cross[start:stop] = np.einsum("ti,ti->i", first_block, cross_kernel @ second_block)
-
-    first_diagonal = common_valid.astype(np.float32)
-    second_diagonal = common_valid.astype(np.float32)
-    first_sum -= first_diagonal
-    second_sum -= second_diagonal
-    first_square -= first_diagonal
-    second_square -= second_diagonal
-    cross -= first_diagonal * second_diagonal
-    profile_size = np.float32(valid_count - 1)
-    covariance = cross - first_sum * second_sum / profile_size
-    first_variance = np.maximum(first_square - first_sum * first_sum / profile_size, 0.0)
-    second_variance = np.maximum(second_square - second_sum * second_sum / profile_size, 0.0)
-    denominator = np.sqrt(first_variance * second_variance)
-    quality = np.divide(
-        covariance,
-        denominator,
-        out=np.zeros(n_nodes, dtype=np.float32),
-        where=denominator > 0,
-    )
-    quality[~common_valid] = 0.0
-    return np.nan_to_num(np.clip(quality, 0.0, 1.0), copy=False)
-
-
-def _vertex_reliability(
-    data: np.ndarray,
-    active: np.ndarray,
-    *,
-    global_signal_regression: bool,
-    vertex_block_size: int,
-    node_weights: np.ndarray | None = None,
-) -> np.ndarray:
-    quarters, valid_quarters = _quarter_standardized(
-        data[:, active],
-        global_signal_regression=global_signal_regression,
-        node_weights=None if node_weights is None else node_weights[active],
-    )
-    first = np.concatenate((quarters[0], quarters[3]), axis=0)
-    second = np.concatenate((quarters[1], quarters[2]), axis=0)
-    reliable_vertices = np.logical_and.reduce(valid_quarters)
-    first[:, ~reliable_vertices] = 0.0
-    second[:, ~reliable_vertices] = 0.0
-    active_quality = _profile_reliability(first, second, vertex_block_size=vertex_block_size)
-    quality = np.zeros(data.shape[1], dtype=np.float32)
-    quality[active] = active_quality
-    return quality
-
-
 def _parcel_membership(
     labels: np.ndarray, valid: np.ndarray, count: int
 ) -> tuple[sparse.csr_matrix, np.ndarray]:
@@ -537,32 +408,6 @@ def make_parcel_mean_loader(
     return load_parcel_run, masses
 
 
-def _parcel_reliability(
-    data: np.ndarray,
-    labels: np.ndarray,
-    *,
-    global_signal_regression: bool,
-    vertex_block_size: int,
-) -> np.ndarray:
-    count = int(labels.max()) + 1
-    quarters, valid_quarters = _quarter_standardized(
-        data, global_signal_regression=global_signal_regression
-    )
-    parcel_quarters = []
-    valid_parcels = []
-    for quarter, valid in zip(quarters, valid_quarters):
-        membership, valid_parcel = _parcel_membership(labels, valid, count)
-        parcel_quarters.append(np.asarray((membership.T @ quarter.T).T, dtype=np.float32))
-        valid_parcels.append(valid_parcel)
-    first = np.concatenate((parcel_quarters[0], parcel_quarters[3]), axis=0)
-    second = np.concatenate((parcel_quarters[1], parcel_quarters[2]), axis=0)
-    reliable_parcels = np.logical_and.reduce(valid_parcels)
-    first[:, ~reliable_parcels] = 0.0
-    second[:, ~reliable_parcels] = 0.0
-    quality = _profile_reliability(first, second, vertex_block_size=vertex_block_size)
-    return quality
-
-
 def local_edge_correlations(
     files: tuple[tuple[Path, ...], ...],
     edges: np.ndarray,
@@ -570,8 +415,7 @@ def local_edge_correlations(
     block_size: int,
     *,
     global_signal_regression: bool,
-    reliability_vertex_block_size: int,
-    reliability_weighting: bool = True,
+    run_weights: np.ndarray,
     mask: np.ndarray | None = None,
     load_run=None,
     node_weights: np.ndarray | None = None,
@@ -583,8 +427,15 @@ def local_edge_correlations(
     vertex_diagonal = np.zeros(n_vertices, dtype=np.float64)
     active = np.ones(n_vertices, dtype=bool) if mask is None else mask
     total_runs = len(files)
+    run_weights = np.asarray(run_weights, dtype=np.float64)
+    if (
+        run_weights.shape != (total_runs,)
+        or np.any(~np.isfinite(run_weights) | (run_weights < 0))
+        or run_weights.sum() <= 0
+    ):
+        raise ValueError("Run weights must be finite, nonnegative, and aligned with input runs")
     included_runs = []
-    for run_index, path in enumerate(files, start=1):
+    for run_index, (path, run_weight) in enumerate(zip(files, run_weights), start=1):
         data = load_run(path)
         if len(data) < 2:
             raise ValueError(
@@ -601,19 +452,8 @@ def local_edge_correlations(
             global_signal_regression=global_signal_regression,
             node_weights=node_weights,
         )
-        valid = inv_sd > 0
-        valid_active = active & valid
-        if reliability_weighting:
-            quality = _vertex_reliability(
-                data,
-                active,
-                global_signal_regression=global_signal_regression,
-                vertex_block_size=reliability_vertex_block_size,
-                node_weights=node_weights,
-            )
-        else:
-            quality = np.ones(n_vertices, dtype=np.float32)
-        quality[~valid_active] = 0.0
+        valid = active & (inv_sd > 0)
+        scale = float(run_weight) / (len(data) - 1)
         edge_cross = np.zeros(len(edges), dtype=np.float64)
         vertex_ss = np.zeros(n_vertices, dtype=np.float64)
         for start in range(0, len(data), block_size):
@@ -632,9 +472,8 @@ def local_edge_correlations(
                 dtype=np.float64,
             )
             vertex_ss += np.einsum("tv,tv->v", standardized, standardized, dtype=np.float64)
-        root_quality = np.sqrt(quality)
-        edge_gram += root_quality[edges[:, 0]] * root_quality[edges[:, 1]] * edge_cross
-        vertex_diagonal += quality * vertex_ss
+        edge_gram += scale * edge_cross
+        vertex_diagonal += scale * valid * vertex_ss
         _log_run_progress(progress_label, run_index, total_runs)
     denominator = np.sqrt(vertex_diagonal[edges[:, 0]] * vertex_diagonal[edges[:, 1]])
     if not included_runs:
@@ -658,8 +497,8 @@ def parcel_correlations(
     *,
     split_half_block_frames: int,
     global_signal_regression: bool,
-    reliability_vertex_block_size: int,
-    reliability_weighting: bool = True,
+    run_weights: np.ndarray,
+    effective_dof: np.ndarray,
     connectome_power_iterations: int = 20,
     load_run=None,
     null_partitions: tuple[np.ndarray, ...] = (),
@@ -685,11 +524,9 @@ def parcel_correlations(
     ]
     half_runs: list[list[int]] = [[], []]
     split_block_size_used: int | None = None
-    reliability_sum = np.zeros(count, dtype=np.float64)
-    reliability_square_sum = np.zeros(count, dtype=np.float64)
-    reliability_minimum = np.full(count, np.inf, dtype=np.float32)
-    reliability_maximum = np.zeros(count, dtype=np.float32)
     supporting_runs = np.zeros(count, dtype=np.int32)
+    supported_weight = np.zeros(count, dtype=np.float64)
+    supported_weight_squares = np.zeros(count, dtype=np.float64)
     run_contributions: list[dict[str, float | int]] = []
     null_labels = tuple(np.asarray(value, dtype=np.int64) for value in null_partitions)
     if any(value.shape != active_labels.shape for value in null_labels):
@@ -700,7 +537,19 @@ def parcel_correlations(
     residual_sum_squares = 0.0
     null_residual_sum_squares = np.zeros(len(null_labels), dtype=np.float64)
     total_runs = len(files)
-    for run_index, path in enumerate(files, start=1):
+    run_weights = np.asarray(run_weights, dtype=np.float64)
+    effective_dof = np.asarray(effective_dof, dtype=np.int64)
+    if (
+        run_weights.shape != (total_runs,)
+        or effective_dof.shape != (total_runs,)
+        or np.any(~np.isfinite(run_weights) | (run_weights < 0))
+        or np.any(effective_dof <= 0)
+        or run_weights.sum() <= 0
+    ):
+        raise ValueError("Run weights and effective DOF must align with input runs")
+    for run_index, (path, run_weight, run_dof) in enumerate(
+        zip(files, run_weights, effective_dof), start=1
+    ):
         data = load_run(path)
         if data.shape[1] != mask.size:
             raise ValueError(f"Spatial node count mismatch in {path}")
@@ -728,16 +577,6 @@ def parcel_correlations(
                     np.bincount(null[valid_vertices], minlength=count).astype(np.float32),
                 )
             )
-        if reliability_weighting:
-            quality = _parcel_reliability(
-                active_data,
-                active_labels,
-                global_signal_regression=global_signal_regression,
-                vertex_block_size=reliability_vertex_block_size,
-            )
-        else:
-            quality = np.ones(count, dtype=np.float32)
-        quality[~valid_parcels] = 0.0
         parcel_timecourses = np.empty((len(data), count), dtype=np.float32)
         for start in range(0, len(data), block_size):
             stop = min(start + block_size, len(data))
@@ -779,22 +618,17 @@ def parcel_correlations(
         parcel_timecourses -= parcel_timecourses.mean(axis=0)
         parcel_ss = np.einsum("tp,tp->p", parcel_timecourses, parcel_timecourses)
         valid_parcel_variance = _valid_variance(parcel_ss, len(data))
-        quality[~valid_parcel_variance] = 0.0
         supported = valid_parcels & valid_parcel_variance
-        reliability_sum += quality
-        reliability_square_sum += np.square(quality, dtype=np.float64)
-        reliability_minimum[supported] = np.minimum(
-            reliability_minimum[supported], quality[supported]
-        )
-        reliability_maximum = np.maximum(reliability_maximum, quality)
         supporting_runs += supported.astype(np.int32)
+        supported_weight[supported] += run_weight
+        supported_weight_squares[supported] += run_weight * run_weight
         parcel_scale = np.zeros(count, dtype=np.float32)
         parcel_scale[valid_parcel_variance] = np.sqrt(
             np.float32(len(data) - 1) / parcel_ss[valid_parcel_variance]
         )
         parcel_timecourses *= parcel_scale[None, :]
-        parcel_timecourses *= np.sqrt(quality)[None, :]
-        parcel_timecourses[:, quality <= 0] = 0.0
+        parcel_timecourses *= np.sqrt(np.float32(run_weight / (len(data) - 1)))
+        parcel_timecourses[:, ~supported] = 0.0
         if not np.all(np.isfinite(parcel_timecourses)):
             raise ValueError(f"Non-finite weighted parcel timecourses in {path}")
         LOG.info(
@@ -807,10 +641,8 @@ def parcel_correlations(
             {
                 "run": run_index,
                 "retained_frames": len(data),
-                "mean_parcel_reliability": float(quality.mean()),
-                "median_parcel_reliability": float(np.median(quality)),
-                "minimum_parcel_reliability": float(quality.min()),
-                "maximum_parcel_reliability": float(quality.max()),
+                "effective_dof": int(run_dof),
+                "normalized_weight": float(run_weight),
                 "gram_trace": run_trace,
                 "gram_frobenius_norm": run_frobenius,
             }
@@ -881,18 +713,11 @@ def parcel_correlations(
         for residual in null_residual_sum_squares
     )
     null_residuals = tuple(float(residual) for residual in null_residual_sum_squares)
-    parcel_reliability_mean = np.divide(
-        reliability_sum,
-        supporting_runs,
-        out=np.zeros(count, dtype=np.float64),
-        where=supporting_runs > 0,
-    ).astype(np.float32)
-    reliability_minimum[~np.isfinite(reliability_minimum)] = 0.0
     parcel_effective_runs = np.divide(
-        np.square(reliability_sum),
-        reliability_square_sum,
+        np.square(supported_weight),
+        supported_weight_squares,
         out=np.zeros(count, dtype=np.float64),
-        where=reliability_square_sum > 0,
+        where=supported_weight_squares > 0,
     ).astype(np.float32)
     total_trace = sum(float(record["gram_trace"]) for record in run_contributions)
     for record in run_contributions:
@@ -906,9 +731,6 @@ def parcel_correlations(
         total_sum_squares=total_sum_squares,
         null_variance_preserved=null_scores,
         null_residual_sum_squares=null_residuals,
-        parcel_reliability_mean=parcel_reliability_mean,
-        parcel_reliability_minimum=reliability_minimum,
-        parcel_reliability_maximum=reliability_maximum,
         parcel_supporting_runs=supporting_runs,
         parcel_effective_runs=parcel_effective_runs,
         run_contributions=tuple(run_contributions),

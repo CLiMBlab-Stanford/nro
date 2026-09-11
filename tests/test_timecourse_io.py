@@ -21,6 +21,9 @@ configure(
             "acompcor_max_voxels": 20000,
             "fd_radius_mm": 50.0,
             "motion_outlier_fd_thresh": 1.0,
+            "dvars_statistical_alpha": 0.05,
+            "dvars_practical_threshold_percent": 5.0,
+            "dvars_power": 1.0 / 3.0,
             "nonsteady_max_vols": 20,
             "nonsteady_rel_thresh": 0.05,
             "nonsteady_stable_run": 3,
@@ -124,6 +127,9 @@ def test_confounds_loads_epi_once(
                     "acompcor_max_voxels": 20000,
                     "fd_radius_mm": 50.0,
                     "motion_outlier_fd_thresh": 1.0,
+                    "dvars_statistical_alpha": 0.05,
+                    "dvars_practical_threshold_percent": 5.0,
+                    "dvars_power": 1.0 / 3.0,
                     "nonsteady_max_vols": 20,
                     "nonsteady_rel_thresh": 0.05,
                     "nonsteady_stable_run": 3,
@@ -193,3 +199,22 @@ def test_confounds_loads_epi_once(
     assert not any("outlier" in column for column in selected.columns)
     assert "framewise_displacement" not in selected.columns
     assert not any(column.startswith("a_comp_cor") for column in selected.columns)
+    assert {"dvars", "dvars_p_value", "dvars_delta_percent"}.issubset(confounds.columns)
+
+
+def test_dvars_marks_both_frames_around_an_anomalous_difference() -> None:
+    rng = np.random.default_rng(19)
+    data = rng.normal(size=(10, 10, 4, 40)).astype(np.float32)
+    data[..., 20] += 50.0
+
+    metrics = get_confounds_module._dvars_metrics(
+        data,
+        np.ones(data.shape[:3], dtype=bool),
+        statistical_alpha=0.05,
+        practical_threshold_percent=5.0,
+        power=1.0 / 3.0,
+    )
+
+    assert metrics["outlier_indices"] == [19, 20, 21]
+    assert np.isnan(metrics["dvars"][0])
+    assert np.isfinite(metrics["dvars"][1:]).all()

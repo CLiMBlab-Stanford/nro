@@ -5,8 +5,9 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
+from nro.engine.cifti import write_indexed_cifti_sidecar
 from nro.engine.images import load_gifti_timeseries
-from nro.engine.io import atomic_output_path, atomic_write_json
+from nro.engine.io import atomic_output_path
 
 from .statistics import RunFit
 
@@ -32,46 +33,71 @@ def read_timeseries(paths: tuple[Path, ...]) -> tuple[np.ndarray, dict]:
     }
 
 
+def _brain_model_axis(geometry: dict):
+    if geometry["domain"] == "volume":
+        reference = geometry["reference"]
+        return nib.cifti2.BrainModelAxis.from_mask(
+            np.ones(geometry["shape"], dtype=bool),
+            affine=reference.affine,
+            name="CIFTI_STRUCTURE_OTHER",
+        )
+    axis = None
+    for structure, count in zip(
+        ("CIFTI_STRUCTURE_CORTEX_LEFT", "CIFTI_STRUCTURE_CORTEX_RIGHT"),
+        geometry["counts"],
+    ):
+        candidate = nib.cifti2.BrainModelAxis.from_surface(np.arange(count), count, name=structure)
+        axis = candidate if axis is None else axis + candidate
+    return axis
+
+
 def write_statmaps(
-    prefix: Path, maps: dict[str, np.ndarray], geometry: dict, metadata: dict
+    prefix: Path,
+    records: list[tuple[dict, dict[str, np.ndarray]]],
+    geometry: dict,
+    metadata: dict,
 ) -> list[Path]:
-    """Write effect/variance/t/DOF maps and matching sidecars in source geometry."""
+    """Write one indexed CIFTI per available statistic and a sidecar for each."""
     outputs = []
-    for statistic, values in maps.items():
-        if geometry["domain"] == "volume":
-            reference = geometry["reference"]
-            header = reference.header.copy()
-            header.set_data_dtype(np.float32)
-            header.set_intent("none")
-            image = nib.Nifti1Image(
-                np.asarray(values, np.float32).reshape(geometry["shape"]), reference.affine, header
-            )
-            targets = [(prefix.with_name(f"{prefix.name}_stat-{statistic}_statmap.nii.gz"), image)]
-        else:
-            targets = []
-            start = 0
-            for hemisphere, count in zip(("L", "R"), geometry["counts"]):
-                array = nib.gifti.GiftiDataArray(
-                    np.asarray(values[start : start + count], np.float32)
-                )
-                targets.append(
-                    (
-                        prefix.with_name(
-                            f"{prefix.name}_hemi-{hemisphere}_stat-{statistic}_statmap.shape.gii"
-                        ),
-                        nib.GiftiImage(darrays=[array]),
-                    )
-                )
-                start += count
-        for path, image in targets:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with atomic_output_path(path) as staged:
-                nib.save(image, staged)
-            sidecar = path.with_name(
-                path.name.removesuffix(".nii.gz").removesuffix(".shape.gii") + ".json"
-            )
-            atomic_write_json(sidecar, {**metadata, "Statistic": statistic})
-            outputs.extend((path, sidecar))
+    statistics = tuple(
+        name
+        for name in ("effect", "variance", "t", "dof")
+        if any(name in maps for _, maps in records)
+    )
+    brain_axis = _brain_model_axis(geometry)
+    for statistic in statistics:
+        selected = [(record, maps[statistic]) for record, maps in records if statistic in maps]
+        map_metadata = [
+            {
+                "Name": str(record["name"]),
+                "Contrast": str(record["name"]),
+                "Test": str(record["test"]),
+                "Entities": dict(record["entities"]),
+                "LinearRecipe": record["recipe"],
+            }
+            for record, _values in selected
+        ]
+        names = [record["Name"] for record in map_metadata]
+        if len(set(names)) != len(names):
+            raise ValueError(f"Duplicate contrast names in one {statistic} CIFTI")
+        values = np.vstack([np.asarray(array, dtype=np.float32) for _record, array in selected])
+        scalar_axis = nib.cifti2.ScalarAxis(names)
+        image = nib.Cifti2Image(
+            values,
+            header=nib.cifti2.Cifti2Header.from_axes((scalar_axis, brain_axis)),
+            dtype=np.float32,
+        )
+        path = prefix.with_name(f"{prefix.name}_stat-{statistic}_statmap.dscalar.nii")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with atomic_output_path(path) as staged:
+            nib.save(image, staged)
+        sidecar = write_indexed_cifti_sidecar(
+            path,
+            map_metadata,
+            lookup_fields=("Contrast",),
+            metadata={**metadata, "Statistic": statistic},
+        )
+        outputs.extend((path, sidecar))
     return outputs
 
 

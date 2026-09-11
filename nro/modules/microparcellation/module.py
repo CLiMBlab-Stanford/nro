@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from nro.configuration.paths import WB_COMMAND_PATH
 from nro.configuration.schema import scientific_values
 from nro.engine.bids import parse_bids_entities
 from nro.engine.cifti import load_dlabel
@@ -24,11 +23,11 @@ from nro.engine.cleaned_timeseries import (
     load_cleaned_run_metadata,
     load_retained_frame_mask,
 )
+from nro.engine.connectivity import connectivity_run_weights
 from nro.engine.images import (
     gifti_vertex_count,
     load_surface_timeseries,
     sidecar_json_path,
-    write_cifti_dense_scalar,
 )
 from nro.engine.io import (
     atomic_save_npy,
@@ -59,11 +58,6 @@ from .contract import (
 )
 from .paths import output_paths
 from .quality import spatial_null_partitions
-from .scene import (
-    surface_scene_output_paths,
-    write_volume_workbench_scene,
-    write_workbench_scene,
-)
 from .statistics import (
     local_edge_correlations,
     make_parcel_mean_loader,
@@ -143,30 +137,17 @@ def build_module(
     dlabel_path = paths["microparcels"]
     pconn_path = paths["connectivity"]
     quality_path = paths["quality"]
-    parcel_reliability_path = paths["parcel_reliability"]
     label_volume_path = paths["microparcels_volume"]
     outputs: dict[str, Path | tuple[Path, ...]] = {
         "microparcels": dlabel_path,
         "connectivity": pconn_path,
         "quality": quality_path,
-        "parcel_reliability": parcel_reliability_path,
     }
     if cfg.inputs.domain == "surface":
         label_outputs = (dlabel_path,)
-        scene_path, scene_surfaces, scene_sources = surface_scene_output_paths(
-            out,
-            cfg.output.prefix,
-            cfg.inputs.surface,
-        )
-        outputs["scene"] = scene_path
-        outputs["scene_surfaces"] = scene_surfaces
     else:
         outputs["microparcels_volume"] = label_volume_path
         label_outputs = (label_volume_path, dlabel_path)
-        scene_path = out / f"{cfg.output.prefix}_desc-microparcellation_scene.scene"
-        scene_surfaces = ()
-        scene_sources = ()
-        outputs["scene"] = scene_path
 
     fixed_public_outputs = tuple(
         path
@@ -244,6 +225,13 @@ def build_module(
                 f"{cfg.connectivity.minimum_aggregate_retained_frames}"
             )
         return np.asarray(included, dtype=np.int64), excluded
+
+    def weights_for_indices(indices: np.ndarray):
+        return connectivity_run_weights(
+            [run_metadata(cfg.inputs.functional[int(index)]) for index in indices],
+            weighting=cfg.connectivity.weighting,
+            global_signal_regression=cfg.connectivity.global_signal_regression,
+        )
 
     def retained_run_loader(run: tuple[Path, ...], *, base_loader=None) -> np.ndarray:
         loader = load_surface_timeseries if base_loader is None else base_loader
@@ -436,6 +424,8 @@ def build_module(
             else:
                 eligible, exclusions = cleaning_eligibility()
                 step_files = tuple(cfg.inputs.functional[int(index)] for index in eligible)
+                included = eligible
+            run_weights = weights_for_indices(included)
             LOG.info(
                 "%s: correlations for %d edges among %d regions (target %d)",
                 progress,
@@ -450,8 +440,9 @@ def build_module(
                 cfg.connectivity.temporal_block_size,
                 mask=np.ones(current_count, dtype=bool),
                 global_signal_regression=cfg.connectivity.global_signal_regression,
-                reliability_vertex_block_size=cfg.connectivity.reliability_vertex_block_size,
-                reliability_weighting=cfg.connectivity.reliability_weighting,
+                run_weights=np.asarray(
+                    [record.normalized_weight for record in run_weights], dtype=np.float64
+                ),
                 load_run=step_loader,
                 node_weights=node_masses,
                 progress_label=progress,
@@ -604,6 +595,7 @@ def build_module(
         labels = load_final_labels()
         included_indices, _ = read_run_eligibility()
         active_stage_files = tuple(cfg.inputs.functional[int(index)] for index in included_indices)
+        run_weights = weights_for_indices(included_indices)
         nulls = spatial_null_partitions(
             labels,
             mask,
@@ -619,8 +611,12 @@ def build_module(
             mask,
             cfg.connectivity.temporal_block_size,
             global_signal_regression=cfg.connectivity.global_signal_regression,
-            reliability_vertex_block_size=cfg.connectivity.reliability_vertex_block_size,
-            reliability_weighting=cfg.connectivity.reliability_weighting,
+            run_weights=np.asarray(
+                [record.normalized_weight for record in run_weights], dtype=np.float64
+            ),
+            effective_dof=np.asarray(
+                [record.effective_dof for record in run_weights], dtype=np.int64
+            ),
             connectome_power_iterations=cfg.quality.connectome_power_iterations,
             split_half_block_frames=cfg.quality.split_half_block_frames,
             load_run=retained_loader,
@@ -638,31 +634,6 @@ def build_module(
         temporary = temporary_sibling(pconn_path)
         write_pconn(temporary, adjacency, parcel_axis)
         temporary.replace(pconn_path)
-        reliability_arrays = []
-        for parcel_values in (
-            result.parcel_reliability_mean,
-            result.parcel_reliability_minimum,
-            result.parcel_reliability_maximum,
-            result.parcel_supporting_runs,
-            result.parcel_effective_runs,
-        ):
-            spatial_values = np.zeros(len(labels), dtype=np.float32)
-            spatial_values[mask] = np.asarray(parcel_values, dtype=np.float32)[labels[mask]]
-            reliability_arrays.append(spatial_values)
-        temporary_reliability = temporary_sibling(parcel_reliability_path)
-        write_cifti_dense_scalar(
-            temporary_reliability,
-            dlabel_path,
-            reliability_arrays,
-            [
-                "Mean run reliability",
-                "Minimum run reliability",
-                "Maximum run reliability",
-                "Supporting runs",
-                "Effective contributing runs",
-            ],
-        )
-        temporary_reliability.replace(parcel_reliability_path)
         null_scores = np.asarray(result.null_variance_preserved, dtype=np.float64)
         null_records = [
             {
@@ -696,22 +667,14 @@ def build_module(
             "included_runs": len(active_stage_files),
             "runwise_standardization": True,
             "global_signal_regression": cfg.connectivity.global_signal_regression,
+            "weighting": cfg.connectivity.weighting,
             "variance_preserved": result.variance_preserved,
             "variance_lost": 1.0 - result.variance_preserved,
             "residual_sum_squares": result.residual_sum_squares,
             "total_sum_squares": result.total_sum_squares,
-            "parcel_reliability": {
-                "maps": [
-                    "Mean run reliability",
-                    "Minimum run reliability",
-                    "Maximum run reliability",
-                    "Supporting runs",
-                    "Effective contributing runs",
-                ],
-                "mean": float(result.parcel_reliability_mean.mean()),
-                "minimum": float(result.parcel_reliability_mean.min()),
-                "maximum": float(result.parcel_reliability_mean.max()),
-                "median": float(np.median(result.parcel_reliability_mean)),
+            "parcel_support": {
+                "minimum_supporting_runs": int(result.parcel_supporting_runs.min()),
+                "mean_supporting_runs": float(result.parcel_supporting_runs.mean()),
                 "mean_effective_runs": float(result.parcel_effective_runs.mean()),
                 "minimum_effective_runs": float(result.parcel_effective_runs.min()),
             },
@@ -735,41 +698,10 @@ def build_module(
     runner.add_step(
         Step.python(
             name="Stream Final Microparcel Connectivity",
-            outputs=(pconn_path, parcel_reliability_path, quality_path),
+            outputs=(pconn_path, quality_path),
             inputs=functional_inputs + label_outputs + tuple(correlation_checkpoints),
             force=force,
             action=write_connectivity,
-        )
-    )
-
-    def write_scene() -> None:
-        out.mkdir(parents=True, exist_ok=True)
-        if cfg.inputs.domain == "surface":
-            write_workbench_scene(
-                out,
-                cfg.output.prefix,
-                cfg.inputs.surface,
-                dlabel_path,
-                pconn_path,
-                runner=runner,
-                executable=str(WB_COMMAND_PATH),
-            )
-        else:
-            write_volume_workbench_scene(
-                out,
-                cfg.output.prefix,
-                label_volume_path,
-                dlabel_path,
-                pconn_path,
-            )
-
-    runner.add_step(
-        Step.python(
-            name="Package Microparcellation Workbench Scene",
-            outputs=(scene_path, *scene_surfaces),
-            inputs=(*label_outputs, pconn_path, *scene_sources),
-            force=force,
-            action=write_scene,
         )
     )
 

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.engine.targets import smoothing_entity_value, target_directory_name
+from nro.engine.targets import smoothing_entity_value
 from nro.modules.microparcellation.paths import output_paths
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -36,7 +36,7 @@ def plan_instances(
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
-        output_root = output_base / target_directory_name(space, smoothing) / context.sub_id
+        output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
         dependencies = tuple(
             instance.key

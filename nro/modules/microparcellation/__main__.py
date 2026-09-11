@@ -183,7 +183,7 @@ def make_target_config(
             volume_connectivity=int(config.get("volume_connectivity", 6)),
         ),
         output=OutputConfig(
-            directory=output_base / target_name / sub_id,
+            directory=output_base / sub_id,
             work_directory=work_base / target_name / sub_id,
             prefix=target_prefix,
             overwrite=config["overwrite"] if overwrite is None else overwrite,

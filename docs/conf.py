@@ -10,7 +10,7 @@ release = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml")
 ]["version"]
 version = release
 extensions = ["myst_parser", "autoapi.extension", "sphinx.ext.napoleon", "sphinx.ext.mathjax"]
-html_theme = "sphinx_rtd_theme"
+html_theme = "shibuya"
 exclude_patterns = ["_build", "requirements.txt"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
 myst_heading_anchors = 3

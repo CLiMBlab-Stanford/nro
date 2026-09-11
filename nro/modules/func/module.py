@@ -6,6 +6,8 @@ Run a full preprocessing sequence for one BOLD run:
   with explicit warp outputs (topup --dfout/--jacout).
 - Construct a robust BOLD reference with provisional motion correction, then estimate the final
   MCFLIRT transforms directly from the raw BOLD to that reference.
+- Optionally diagnose and remove signal shared by simultaneous multiband slices in native space
+  with the official MARSS implementation before the ordinary preprocessing graph.
 - Qualify an available SBRef against the robust BOLD reference; use the robust reference when the
   SBRef is absent or fails metadata, geometry, transform, overlap, or similarity checks.
 - Derive a target-acquisition warp from TOPUP's Hz field using the functional readout time, keep
@@ -47,7 +49,9 @@ from nro.engine.execution import (
 )
 from nro.engine.freesurfer import find_fsaverage_directory
 from nro.engine.images import (
+    nifti_spatial_shape,
     nifti_stem,
+    nifti_volume_count,
     sidecar_json_path,
     uncompressed_nifti_path,
 )
@@ -81,12 +85,14 @@ from nro.engine.paths import (
     resolve_project_work_path,
 )
 from nro.modules.func.contracts import (
+    MARSS_DIAGNOSTIC_METHOD,
     final_resampling_contract,
     final_resampling_metadata,
     functional_output_contract,
     validate_functional_image_sidecar,
     validate_functional_manifest,
 )
+from nro.modules.func.marss import create_marss_motion_step, create_marss_step
 from nro.modules.func.resolver import (
     ResolvedFuncRun,
     resolve_func_run_request,
@@ -220,6 +226,9 @@ class Options:
     syn_refine_smoothing_sigmas: str
     clean_ica_aroma: bool
     ica_aroma_denoise_type: str
+    marss_mode: str
+    marss_min_multiband_factor: int
+    fsaverage_template: str
     bbregister_surf: str
     bbregister_init: str
     bbregister_dof: int
@@ -243,7 +252,7 @@ class Options:
 
 def _functional_config_payload(opts: Options) -> dict[str, object]:
     """Canonical output-affecting configuration recorded by every new run."""
-    return {
+    payload = {
         "output_grid": opts.output_grid,
         "topup_config": opts.topup_config,
         "ica_aroma_cmd": str(opts.ica_aroma_cmd) if opts.ica_aroma_cmd else None,
@@ -264,6 +273,7 @@ def _functional_config_payload(opts: Options) -> dict[str, object]:
         "bbregister_dof": int(opts.bbregister_dof),
         "debug_first_nvols": int(opts.debug_first_nvols),
         "output_spaces": list(opts.output_spaces),
+        "fsaverage_template": opts.fsaverage_template,
         "final_resampling": final_resampling_contract(),
         "sdc_method": opts.sdc_method,
         "synbold_disco_image": str(opts.synbold_disco_image),
@@ -277,6 +287,12 @@ def _functional_config_payload(opts: Options) -> dict[str, object]:
         "sbref_min_support_overlap": float(opts.sbref_min_support_overlap),
         "sbref_min_intensity_correlation": float(opts.sbref_min_intensity_correlation),
     }
+    if opts.marss_mode != "off":
+        payload["marss_mode"] = opts.marss_mode
+        payload["marss_diagnostic_method"] = MARSS_DIAGNOSTIC_METHOD
+    if opts.marss_mode == "auto":
+        payload["marss_min_multiband_factor"] = int(opts.marss_min_multiband_factor)
+    return payload
 
 
 def _normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
@@ -287,6 +303,7 @@ def _normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
         "mni": "MNI152NLin2009cAsym",
         "mni152nlin2009casym": "MNI152NLin2009cAsym",
         "fsaverage": "fsaverage",
+        "fsaverage6": "fsaverage6",
     }
     out: list[str] = []
     for raw in values:
@@ -297,7 +314,7 @@ def _normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
         if canon is None:
             raise SystemExit(
                 "Unknown output space "
-                f"{raw!r}. Expected one of: T1w, fsnative, MNI152NLin2009cAsym, fsaverage"
+                f"{raw!r}. Expected T1w, fsnative, MNI152NLin2009cAsym, or an fsaverage template"
             )
         if canon not in out:
             out.append(canon)
@@ -577,6 +594,9 @@ def build_module(
     run_stem = nifti_stem(inputs.epi)
     run_base = run_stem[: -len("_bold")] if run_stem.endswith("_bold") else run_stem
     run_prefix = f"{run_base}_space-T1w"
+    source_volume_count = nifti_volume_count(inputs.epi)
+    source_spatial_shape = nifti_spatial_shape(inputs.epi)
+    processing_volume_count = source_volume_count
     func_dir = opts.out_dir
     fmap_dir = func_dir.parent / "fmap"
     sdc_dir = opts.work_dir / "sdc"
@@ -590,6 +610,7 @@ def build_module(
     debug_epi: Optional[Path] = None
     if int(opts.debug_first_nvols) > 0:
         n = int(opts.debug_first_nvols)
+        processing_volume_count = min(n, source_volume_count)
         debug_dir = opts.work_dir / "debug"
         debug_epi = debug_dir / f"{run_stem}_first{n:04d}.nii.gz"
         debug_cmd = ["fslroi", str(inputs.epi), str(debug_epi), "0", str(n)]
@@ -606,9 +627,43 @@ def build_module(
         )
         epi_for_proc = debug_epi
 
+    marss_outputs = None
+    marss_mode = str(opts.marss_mode).strip().lower()
+    if marss_mode not in {"off", "diagnose", "auto"}:
+        raise SystemExit(
+            f"Unsupported MARSS mode {opts.marss_mode!r}; expected off, diagnose, or auto."
+        )
+    if marss_mode != "off":
+        marss_dir = opts.work_dir / "marss"
+        motion_step, marss_motion = create_marss_motion_step(
+            run_child=runner.run_child,
+            source_bold=epi_for_proc,
+            work_dir=marss_dir / "motion",
+            env=env,
+            force=opts.force,
+        )
+        runner.add_step(motion_step)
+        marss_step, marss_outputs = create_marss_step(
+            runner=runner,
+            source_bold=epi_for_proc,
+            metadata=epi_input_meta,
+            metadata_sources=epi_metadata_sources,
+            motion_parameters=marss_motion,
+            work_dir=marss_dir,
+            artifact_dir=opts.out_dir,
+            run_stem=run_base,
+            mode=marss_mode,
+            min_multiband_factor=int(opts.marss_min_multiband_factor),
+            chunk_volumes=max(1, int(opts.io_chunk_vols)),
+            force=opts.force,
+        )
+        runner.add_step(marss_step)
+        epi_for_proc = marss_outputs.bold
+
     robust_reference_step = _create_robust_bold_reference_step(
         run_child=runner.run_child,
         epi_in=epi_for_proc,
+        volume_count=processing_volume_count,
         run_stem=run_stem,
         mc_dir=mc_dir,
         env=env,
@@ -642,7 +697,17 @@ def build_module(
     want_t1 = "T1w" in requested_spaces
     want_mni = "MNI152NLin2009cAsym" in requested_spaces
     want_fsnative = "fsnative" in requested_spaces
-    want_fsaverage = "fsaverage" in requested_spaces
+    requested_fsaverage = sorted(
+        space for space in requested_spaces if space.startswith("fsaverage")
+    )
+    if requested_fsaverage and requested_fsaverage != [opts.fsaverage_template]:
+        raise SystemExit(
+            "Functional output spaces request "
+            + ", ".join(requested_fsaverage)
+            + f", but preprocessing selects {opts.fsaverage_template}."
+        )
+    fsaverage_space = opts.fsaverage_template
+    want_fsaverage = fsaverage_space in requested_spaces
     compute_t1 = True
     need_surface_outputs = want_fsnative or want_fsaverage
     LOG.info("Output spaces requested: %s", ", ".join(opts.output_spaces))
@@ -652,6 +717,7 @@ def build_module(
             runner,
             environment=env,
             subjects_directory=subjects_dir,
+            template=fsaverage_space,
         )
         sphere_work = surf_dir / "fsaverage_spheres"
         for hemi, hemi_label in (("lh", "L"), ("rh", "R")):
@@ -664,9 +730,9 @@ def build_module(
             )
             fsaverage_sphere = fsaverage_dir / "surf" / f"{hemi}.sphere"
             subject_output = sphere_work / (
-                f"subject_hemi-{hemi_label}_from-fsnative_to-fsaverage_sphere.surf.gii"
+                f"subject_hemi-{hemi_label}_from-fsnative_to-{fsaverage_space}_sphere.surf.gii"
             )
-            fsaverage_output = sphere_work / f"fsaverage_hemi-{hemi_label}_sphere.surf.gii"
+            fsaverage_output = sphere_work / f"{fsaverage_space}_hemi-{hemi_label}_sphere.surf.gii"
             runner.add_step(
                 _create_mris_convert_step(
                     source=subject_sphere,
@@ -709,15 +775,19 @@ def build_module(
     }
     preproc_fsaverage = {
         "L": func_dir
-        / _with_suffix(f"{run_base}_space-fsaverage_hemi-L", "_desc-preproc_bold.func.gii"),
+        / _with_suffix(f"{run_base}_space-{fsaverage_space}_hemi-L", "_desc-preproc_bold.func.gii"),
         "R": func_dir
-        / _with_suffix(f"{run_base}_space-fsaverage_hemi-R", "_desc-preproc_bold.func.gii"),
+        / _with_suffix(f"{run_base}_space-{fsaverage_space}_hemi-R", "_desc-preproc_bold.func.gii"),
     }
     preproc_fsaverage_noaroma = {
         "L": func_dir
-        / _with_suffix(f"{run_base}_space-fsaverage_hemi-L", "_desc-preprocNoAROMA_bold.func.gii"),
+        / _with_suffix(
+            f"{run_base}_space-{fsaverage_space}_hemi-L", "_desc-preprocNoAROMA_bold.func.gii"
+        ),
         "R": func_dir
-        / _with_suffix(f"{run_base}_space-fsaverage_hemi-R", "_desc-preprocNoAROMA_bold.func.gii"),
+        / _with_suffix(
+            f"{run_base}_space-{fsaverage_space}_hemi-R", "_desc-preprocNoAROMA_bold.func.gii"
+        ),
     }
     epi_t1 = uncompressed_nifti_path(
         reg_dir / _with_suffix(run_prefix, "_desc-preproc_bold.nii.gz")
@@ -947,6 +1017,9 @@ def build_module(
                 topup_config=opts.topup_config,
                 env=env,
                 force=opts.force,
+                spatial_shape=source_spatial_shape,
+                volumes_a=1,
+                volumes_b=1,
             )
             runner.add_step(topup_native.step)
             se2sbref_mat = opts.work_dir / "pose" / f"se2{reg_ref_tag}_6dof.mat"
@@ -1027,6 +1100,9 @@ def build_module(
                 topup_config=opts.topup_config,
                 env=env,
                 force=opts.force,
+                spatial_shape=nifti_spatial_shape(se_a),
+                volumes_a=nifti_volume_count(se_a),
+                volumes_b=nifti_volume_count(se_b),
             )
             runner.add_step(topup_native.step)
             if reg_ref_ped == ped_a:
@@ -2127,7 +2203,7 @@ def build_module(
     if want_fsnative:
         log_space_sequence.append("fsnative")
     if want_fsaverage:
-        log_space_sequence.append("fsaverage")
+        log_space_sequence.append(fsaverage_space)
     if want_mni:
         log_space_sequence.append("MNI152NLin2009cAsym")
     LOG.info("Output spaces execution order: %s", ", ".join(log_space_sequence))
@@ -2653,7 +2729,7 @@ def build_module(
                     else {}
                 ),
                 **(
-                    {"fsaverage": {hemi: str(path) for hemi, path in preproc_fsaverage.items()}}
+                    {fsaverage_space: {hemi: str(path) for hemi, path in preproc_fsaverage.items()}}
                     if want_fsaverage
                     else {}
                 ),
@@ -2678,7 +2754,7 @@ def build_module(
                 ),
                 **(
                     {
-                        "fsaverage": {
+                        fsaverage_space: {
                             hemi: str(path) for hemi, path in preproc_fsaverage_noaroma.items()
                         }
                     }
@@ -2712,6 +2788,15 @@ def build_module(
         anat_brain_mask_in_t1,
         *([reg_mni_qc_out] if want_mni else []),
         *([melodic_ic_t1_out] if opts.clean_ica_aroma else []),
+        *(
+            [
+                marss_outputs.loadings,
+                marss_outputs.mean_absolute_artifact,
+                marss_outputs.slice_score_map,
+            ]
+            if marss_outputs is not None
+            else []
+        ),
     ]
     if not use_syn_fallback:
         public_images.extend(
@@ -2725,7 +2810,18 @@ def build_module(
             public_images.extend((fmap_synbold_ref_out, fmap_synbold_rigid_out))
     public_images = list(dict.fromkeys(public_images))
     metadata_outputs = tuple(sidecar_json_path(path) for path in public_images)
-    public_files = tuple(public_images) + (confounds_tsv, confounds_json)
+    marss_public_files = (
+        (
+            marss_outputs.metadata,
+            marss_outputs.timecourses,
+            marss_outputs.correlations_before,
+            marss_outputs.correlations_after,
+            marss_outputs.heatmap,
+        )
+        if marss_outputs is not None
+        else ()
+    )
+    public_files = tuple(public_images) + (confounds_tsv, confounds_json, *marss_public_files)
 
     publication_identity = {
         "manifest_version": 2,
@@ -2752,6 +2848,9 @@ def build_module(
 
     def publication_payload() -> dict[str, object]:
         selection = read_json(selected_reference.metadata)
+        multiband_artifact = (
+            read_json(marss_outputs.metadata) if marss_outputs is not None else None
+        )
         motion_indices: list[int] = []
         classified = aroma_t1_dir / "aroma" / "classified_motion_ICs.txt"
         if opts.clean_ica_aroma and classified.is_file():
@@ -2781,6 +2880,11 @@ def build_module(
                 "method": "ICA-AROMA" if opts.clean_ica_aroma else None,
                 "mode": opts.ica_aroma_denoise_type if opts.clean_ica_aroma else None,
                 "removed_noise_ic_indices": motion_indices,
+                **(
+                    {"simultaneous_slice_artifact": multiband_artifact}
+                    if multiband_artifact is not None
+                    else {}
+                ),
             },
         }
 
@@ -3010,6 +3114,18 @@ def _build_argparser() -> argparse.ArgumentParser:
         choices=["nonaggr", "aggr", "both"],
         default=cfg.ica_aroma_denoise_type,
     )
+    p.add_argument(
+        "--marss-mode",
+        choices=["off", "diagnose", "auto"],
+        default=cfg.marss_mode,
+        help="Diagnose or correct the native simultaneous-slice artifact before resampling.",
+    )
+    p.add_argument(
+        "--marss-min-multiband-factor",
+        type=int,
+        default=int(cfg.marss_min_multiband_factor),
+        help="Minimum multiband factor corrected by MARSS auto mode.",
+    )
 
     p.add_argument(
         "--project",
@@ -3021,6 +3137,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         default=SETTINGS.common.preprocessing_id,
         help="Preprocessing collection name under derivatives/preprocessing/.",
     )
+    p.add_argument("--fsaverage-template", default=cfg.fsaverage_template)
     p.add_argument("--sub-id", required=True, help="Subject identifier, e.g. sub-c001")
     p.add_argument("--ses-id", default=None, help="Optional session identifier, e.g. ses-ex31524")
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
@@ -3047,7 +3164,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--output-spaces",
         nargs="+",
         default=list(cfg.output_spaces),
-        help="Subset of output spaces to generate. Choices: T1w fsnative MNI152NLin2009cAsym fsaverage",
+        help="Subset of output spaces to generate, including the configured fsaverage template.",
     )
     p.add_argument("--verbose", action="store_true", default=cfg.verbose)
 
@@ -3069,6 +3186,8 @@ def main(
 ) -> None:
     """Parse CLI arguments and run the functional module."""
     args = _build_argparser().parse_args(argv)
+    if int(args.marss_min_multiband_factor) < 2:
+        raise SystemExit("--marss-min-multiband-factor must be at least 2")
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -3246,6 +3365,9 @@ def main(
         syn_refine_smoothing_sigmas=str(args.syn_refine_smoothing_sigmas),
         clean_ica_aroma=not bool(args.no_ica_aroma),
         ica_aroma_denoise_type=str(args.ica_aroma_denoise_type),
+        marss_mode=str(args.marss_mode),
+        marss_min_multiband_factor=int(args.marss_min_multiband_factor),
+        fsaverage_template=str(args.fsaverage_template),
         bbregister_surf=str(args.bbregister_surf),
         bbregister_init=str(args.bbregister_init),
         bbregister_dof=int(args.bbregister_dof),

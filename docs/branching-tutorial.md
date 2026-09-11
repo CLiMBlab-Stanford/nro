@@ -198,8 +198,8 @@ gh pr merge --merge dev
 cd /path/to/nro-main
 git fetch origin
 git merge --ff-only origin/main
-git tag -a v0.0.6 -m "nro 0.0.6"
-git push origin v0.0.6
+git tag -a v0.1.0 -m "nro 0.1.0"
+git push origin v0.1.0
 ```
 
 Pushing a valid version tag starts the GitHub Release workflow. Confirm that the

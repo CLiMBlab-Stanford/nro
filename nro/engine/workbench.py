@@ -5,13 +5,8 @@ from __future__ import annotations
 import base64
 import lzma
 import os
-import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
-
-if TYPE_CHECKING:
-    from nro.orchestration.runner import Runner
-
+from typing import Iterable
 
 SURFACE_TYPES = ("pial", "midthickness", "white", "inflated")
 SURFACE_SCENE_TEMPLATE = Path(__file__).with_name("workbench_montage.scene.in")
@@ -82,95 +77,6 @@ def surface_inventory(paths: Iterable[Path]) -> dict[tuple[str, str], Path]:
             f"missing={missing}, extra={extra}"
         )
     return inventory
-
-
-def surface_spec_entries(inventory: dict[tuple[str, str], Path]) -> str:
-    """Render Workbench spec-file entries for packaged surfaces."""
-    entries = []
-    for index, ((hemisphere, _kind), path) in enumerate(inventory.items()):
-        structure = "CORTEX_LEFT" if hemisphere == "L" else "CORTEX_RIGHT"
-        entries.append(
-            f'''                                    <Element Index="{index}">
-                                        <Object Type="class" Class="SpecFileDataFile" Name="specFileDataFile" Version="1">
-                                            <Object Type="enumeratedType" Name="dataFileType">SURFACE</Object>
-                                            <Object Type="enumeratedType" Name="structure">{structure}</Object>
-                                            <Object Type="pathName" Name="fileName">{path.name}</Object>
-                                            <Object Type="boolean" Name="selected">true</Object>
-                                        </Object>
-                                    </Element>'''
-        )
-    return "\n".join(entries)
-
-
-def packaged_surface_paths(directory: Path, prefix: str) -> tuple[Path, ...]:
-    """Return the ordered bilateral display-surface destinations."""
-    return tuple(
-        Path(directory) / f"{prefix}_hemi-{hemisphere}_desc-{kind}_surface.surf.gii"
-        for hemisphere in ("L", "R")
-        for kind in SURFACE_TYPES
-    )
-
-
-def package_surface_families(
-    directory: Path,
-    prefix: str,
-    surface_paths: tuple[Path, ...],
-    *,
-    runner: Runner | None = None,
-    executable: str | None = None,
-) -> tuple[Path, ...]:
-    """Copy bilateral display surfaces, generating optional surfaces if absent."""
-    if len(surface_paths) != 2:
-        raise ValueError("Surface packaging requires left and right geometry")
-    directory = Path(directory)
-    families = tuple(
-        surface_family(Path(path), required=("pial", "white")) for path in surface_paths
-    )
-    destinations = packaged_surface_paths(directory, prefix)
-    inventory = dict(
-        zip(
-            ((hemisphere, kind) for hemisphere in ("L", "R") for kind in SURFACE_TYPES),
-            destinations,
-        )
-    )
-    for hemisphere, family in zip(("L", "R"), families):
-        for kind, source in family.items():
-            if source is not None:
-                shutil.copyfile(source, inventory[(hemisphere, kind)])
-
-        if family["midthickness"] is None:
-            if runner is None or executable is None:
-                raise FileNotFoundError(f"Missing midthickness surface for hemisphere {hemisphere}")
-            runner.run_child(
-                [
-                    executable,
-                    "-surface-average",
-                    str(inventory[(hemisphere, "midthickness")]),
-                    "-surf",
-                    str(inventory[(hemisphere, "pial")]),
-                    "-surf",
-                    str(inventory[(hemisphere, "white")]),
-                ]
-            )
-        if family["inflated"] is None:
-            if runner is None or executable is None:
-                raise FileNotFoundError(f"Missing inflated surface for hemisphere {hemisphere}")
-            very_inflated = (
-                directory / f".{prefix}_hemi-{hemisphere}_desc-veryInflated_surface.surf.gii"
-            )
-            try:
-                runner.run_child(
-                    [
-                        executable,
-                        "-surface-generate-inflated",
-                        str(inventory[(hemisphere, "midthickness")]),
-                        str(inventory[(hemisphere, "inflated")]),
-                        str(very_inflated),
-                    ]
-                )
-            finally:
-                very_inflated.unlink(missing_ok=True)
-    return destinations
 
 
 def decode_scene_template(path: Path) -> str:

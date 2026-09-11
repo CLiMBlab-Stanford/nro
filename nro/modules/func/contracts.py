@@ -9,6 +9,7 @@ from nro.engine.artifact_metadata import validate_metadata_fields
 FINAL_RESAMPLING_TOOL = "AFNI 3dNwarpApply"
 FINAL_RESAMPLING_INTERPOLATION = "wsinc5"
 FINAL_WARP_INTERPOLATION = "linear"
+MARSS_DIAGNOSTIC_METHOD = "equal_target_slice_fisher_z_v1"
 
 FUNCTIONAL_MANIFEST_FIELDS = {
     "manifest_version": "integer",
@@ -87,6 +88,9 @@ def functional_output_contract() -> dict[str, object]:
     return {
         "publication_manifest_fields": dict(FUNCTIONAL_MANIFEST_FIELDS),
         "image_sidecar_fields": dict(FUNCTIONAL_IMAGE_SIDECAR_FIELDS),
+        "marss": {
+            "diagnostic_method": MARSS_DIAGNOSTIC_METHOD,
+        },
     }
 
 

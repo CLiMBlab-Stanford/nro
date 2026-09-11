@@ -15,14 +15,17 @@ def find_fsaverage_directory(
     *,
     environment: dict[str, str],
     subjects_directory: Path,
+    template: str,
 ) -> Path:
-    """Find fsaverage on the host or in the runner's active container."""
-    local_subject = Path(subjects_directory) / "fsaverage"
+    """Find the selected fsaverage template on the host or in the active container."""
+    if template not in {"fsaverage", "fsaverage6"}:
+        raise ValueError(f"Unsupported fsaverage template: {template}")
+    local_subject = Path(subjects_directory) / template
     if local_subject.exists():
         return local_subject
     freesurfer_home = os.environ.get("FREESURFER_HOME", "").strip()
     if freesurfer_home and not runner.using_container():
-        installed = Path(freesurfer_home) / "subjects" / "fsaverage"
+        installed = Path(freesurfer_home) / "subjects" / template
         if installed.exists():
             return installed
     if runner.using_container():
@@ -30,9 +33,9 @@ def find_fsaverage_directory(
             [
                 "bash",
                 "-lc",
-                f'if [ -d "$SUBJECTS_DIR/fsaverage" ]; then printf "{_FSAVERAGE_MARKER}%s" "$SUBJECTS_DIR/fsaverage"; '
-                'elif [ -n "${FREESURFER_HOME:-}" ] && [ -d "$FREESURFER_HOME/subjects/fsaverage" ]; then '
-                f'printf "{_FSAVERAGE_MARKER}%s" "$FREESURFER_HOME/subjects/fsaverage"; fi',
+                f'if [ -d "$SUBJECTS_DIR/{template}" ]; then printf "{_FSAVERAGE_MARKER}%s" "$SUBJECTS_DIR/{template}"; '
+                f'elif [ -n "${{FREESURFER_HOME:-}}" ] && [ -d "$FREESURFER_HOME/subjects/{template}" ]; then '
+                f'printf "{_FSAVERAGE_MARKER}%s" "$FREESURFER_HOME/subjects/{template}"; fi',
             ],
             env=environment,
             quiet=True,
@@ -43,4 +46,4 @@ def find_fsaverage_directory(
             discovered = cleaned[marker_index + len(_FSAVERAGE_MARKER) :].strip()
             if discovered:
                 return Path(discovered)
-    raise SystemExit("Could not locate fsaverage under SUBJECTS_DIR or FREESURFER_HOME.")
+    raise SystemExit(f"Could not locate {template} under SUBJECTS_DIR or FREESURFER_HOME.")

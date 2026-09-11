@@ -150,6 +150,7 @@ THREADS = {
 
 SCHEMAS = {
     "preprocessing": {
+        "fsaverage_template": enum("fsaverage", "fsaverage6"),
         "container": CONTAINER,
         "anat": {
             **THREADS,
@@ -187,6 +188,8 @@ SCHEMAS = {
             },
             "clean_ica_aroma": BOOL,
             "ica_aroma_denoise_type": enum("nonaggr", "aggr", "both"),
+            "marss_mode": enum("off", "diagnose", "auto"),
+            "marss_min_multiband_factor": Field("int", minimum=2),
             "sdc_from_sbref_pair": BOOL,
             "debug_first_nvols": NONNEGATIVE_INT,
             "io_chunk_vols": EXEC_COUNT,
@@ -199,6 +202,9 @@ SCHEMAS = {
             "acompcor_max_voxels": COUNT,
             "fd_radius_mm": POSITIVE,
             "motion_outlier_fd_thresh": POSITIVE,
+            "dvars_statistical_alpha": FRACTION,
+            "dvars_practical_threshold_percent": POSITIVE,
+            "dvars_power": POSITIVE,
             "nonsteady_max_vols": NONNEGATIVE_INT,
             "nonsteady_rel_thresh": FRACTION,
             "nonsteady_stable_run": COUNT,
@@ -264,8 +270,7 @@ SCHEMAS = {
             "minimum_usable_runs": COUNT,
             "minimum_aggregate_retained_frames": Field("int", minimum=2),
             "temporal_block_size": EXEC_COUNT,
-            "reliability_weighting": BOOL,
-            "reliability_vertex_block_size": EXEC_COUNT,
+            "weighting": enum("precision", "equal"),
             "global_signal_regression": BOOL,
         },
         "quality": {
@@ -278,10 +283,16 @@ SCHEMAS = {
     },
     "dynconn": {
         "input_filter": Field("filter"),
-        "surface": enum("pial", "midthickness", "white", "inflated"),
         "output_dir": OPTIONAL_TEXT,
         "prefix": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
+        "weighting": enum("precision", "equal"),
+        "low_rank": BOOL,
+        "low_rank_options": {
+            "dimensions": COUNT,
+            "oversampling": NONNEGATIVE_INT,
+            "power_iterations": NONNEGATIVE_INT,
+        },
         "inclusion": {
             "minimum_retained_frames": Field("int", minimum=2),
             "minimum_retained_fraction": FRACTION,
@@ -387,19 +398,23 @@ def normalize_fields(
 
 
 def _relationships(kind: str, values: dict) -> None:
-    if kind == "clean":
+    if kind == "preprocessing":
+        selected = values["fsaverage_template"]
+        requested = sorted(
+            space for space in values["func"]["output_spaces"] if space.startswith("fsaverage")
+        )
+        if requested and requested != [selected]:
+            raise DefinitionError(
+                "preprocessing.func.output_spaces must use the selected "
+                f"preprocessing.fsaverage_template ({selected})"
+            )
+    elif kind == "clean":
         low, high = values["low_pass"], values["high_pass"]
         if low is not None and high is not None and high >= low:
             raise DefinitionError("clean.high_pass must be below clean.low_pass")
     elif kind == "firstlevels":
         if len(set(values["ar_grid"])) != len(values["ar_grid"]):
             raise DefinitionError("firstlevels.ar_grid must contain distinct coefficients")
-    elif kind == "microparcellation":
-        connectivity = values["connectivity"]
-        if connectivity["reliability_weighting"] and connectivity["minimum_retained_frames"] < 8:
-            raise DefinitionError(
-                "connectivity.minimum_retained_frames must be at least 8 for quarter-split reliability"
-            )
     elif kind == "networks":
         oslom = values["oslom"]
         if (
@@ -475,4 +490,14 @@ def scientific_values(kind: str, values: dict) -> dict:
             **schema,
             "output": {"overwrite": EXEC_BOOL, "work_directory": Field("str", execution=True)},
         }
-    return select(schema, values)
+    result = select(schema, values)
+    if kind == "preprocessing":
+        func = result.get("func")
+        if isinstance(func, dict):
+            if func.get("marss_mode") == "off":
+                func.pop("marss_mode", None)
+            if func.get("marss_mode") != "auto":
+                func.pop("marss_min_multiband_factor", None)
+    if kind == "dynconn" and result.get("low_rank") is False:
+        result.pop("low_rank_options", None)
+    return result

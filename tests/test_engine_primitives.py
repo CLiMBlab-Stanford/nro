@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from nro.engine.cleaned_timeseries import (
     load_cleaned_run_metadata,
     load_retained_frame_mask,
 )
+from nro.engine.connectivity import connectivity_run_weights
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import flatten_paths, manifest_value
 
@@ -133,6 +135,23 @@ def test_cleaned_run_contract_drives_inclusion_and_temporal_mask(tmp_path: Path)
     np.testing.assert_array_equal(
         load_retained_frame_mask(metadata),
         np.asarray([True, False, True, True]),
+    )
+
+
+def test_connectivity_weights_are_equal_or_linear_in_effective_dof(tmp_path: Path) -> None:
+    first = load_cleaned_run_metadata(_write_cleaned_run_contract(tmp_path))
+    second = replace(first, algebraic_temporal_rank=20)
+
+    equal = connectivity_run_weights((first, second), weighting="equal")
+    precision = connectivity_run_weights(
+        (first, second), weighting="precision", global_signal_regression=True
+    )
+
+    assert [item.normalized_weight for item in equal] == [0.5, 0.5]
+    assert [item.effective_dof for item in precision] == [39, 19]
+    np.testing.assert_allclose(
+        [item.normalized_weight for item in precision],
+        np.asarray([39, 19]) / 58,
     )
 
 

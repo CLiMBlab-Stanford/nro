@@ -77,17 +77,17 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ),
         ("microparcellation", {"mask": 42}, "mask"),
         ("microparcellation", {"input_filter": {"task": False}}, "task"),
-        (
-            "microparcellation",
-            {"connectivity": {"minimum_retained_frames": 4}},
-            "minimum_retained_frames",
-        ),
         ("firstlevels", {"ar_grid": [0, 0]}, "ar_grid"),
         ("firstlevels", {"ar_grid": [1]}, "ar_grid"),
         ("firstlevels", {"aggregation_weighting": "unknown"}, "aggregation_weighting"),
         ("firstlevels", {"low_pass": 0.1}, "low_pass"),
         ("preprocessing", {"func": {"bbregister_dof": 5}}, "bbregister_dof"),
         ("preprocessing", {"func": {"output_spaces": []}}, "output_spaces"),
+        (
+            "preprocessing",
+            {"func": {"output_spaces": ["fsaverage"]}},
+            "fsaverage_template",
+        ),
     ],
 )
 def test_store_and_authoring_share_semantic_errors(store, kind, values, field):
@@ -184,6 +184,75 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     assert scientific_values("firstlevels", values) != scientific_values(
         "firstlevels", {**values, "aggregation_weighting": "equal"}
     )
+    dynconn = store.load_configuration("dynconn", "main").values
+    changed_options = {
+        **dynconn,
+        "low_rank_options": {
+            **dynconn["low_rank_options"],
+            "dimensions": dynconn["low_rank_options"]["dimensions"] + 1,
+        },
+    }
+    assert dynconn["low_rank"] is True
+    assert dynconn["weighting"] == "precision"
+    assert dynconn["low_rank_options"]["dimensions"] == 1000
+    assert "random_seed" not in dynconn["low_rank_options"]
+    assert scientific_values("dynconn", dynconn) != scientific_values("dynconn", changed_options)
+    assert scientific_values("dynconn", dynconn) != scientific_values(
+        "dynconn", {**dynconn, "weighting": "equal"}
+    )
+    assert scientific_values("dynconn", {**dynconn, "low_rank": False}) == scientific_values(
+        "dynconn", {**changed_options, "low_rank": False}
+    )
+    microparcellation = store.load_configuration("microparcellation", "main").values
+    assert microparcellation["connectivity"]["weighting"] == "precision"
+    equal_microparcellation = {
+        **microparcellation,
+        "connectivity": {
+            **microparcellation["connectivity"],
+            "weighting": "equal",
+        },
+    }
+    assert scientific_values("microparcellation", microparcellation) != scientific_values(
+        "microparcellation", equal_microparcellation
+    )
+
+
+def test_marss_cutoff_is_scientific_only_when_auto_mode_uses_it(store):
+    defaults = store.load_configuration("preprocessing", "main")
+    changed_auto = store.load_configuration(
+        "preprocessing",
+        "main",
+        document={
+            **defaults.values,
+            "func": {
+                **defaults.values["func"],
+                "marss_min_multiband_factor": 5,
+            },
+        },
+    )
+    assert defaults.scientific_fingerprint != changed_auto.scientific_fingerprint
+
+    diagnose = store.load_configuration(
+        "preprocessing",
+        "main",
+        document={
+            **defaults.values,
+            "func": {**defaults.values["func"], "marss_mode": "diagnose"},
+        },
+    )
+    changed_diagnose = store.load_configuration(
+        "preprocessing",
+        "main",
+        document={
+            **diagnose.values,
+            "func": {
+                **diagnose.values["func"],
+                "marss_min_multiband_factor": 5,
+            },
+        },
+    )
+    assert diagnose.fingerprint != changed_diagnose.fingerprint
+    assert diagnose.scientific_fingerprint == changed_diagnose.scientific_fingerprint
 
 
 def test_bids_filter_sets_normalize_without_losing_absence_semantics(store):

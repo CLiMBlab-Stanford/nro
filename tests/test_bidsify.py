@@ -643,7 +643,14 @@ def test_raw_anatomy_never_reaches_shared_staging(ingestion, monkeypatch, tmp_pa
                 output / "converted.nii.gz",
             )
             (output / "converted.json").write_text(
-                json.dumps({"PatientName": "private", "SeriesNumber": 1})
+                json.dumps(
+                    {
+                        "PatientName": "private",
+                        "SeriesNumber": 1,
+                        "MagneticFieldStrength": 7,
+                        "NonlinearGradientCorrection": True,
+                    }
+                )
             )
         else:
             assert Path(argv[argv.index("-i") + 1]).is_relative_to(raw_root)
@@ -656,6 +663,8 @@ def test_raw_anatomy_never_reaches_shared_staging(ingestion, monkeypatch, tmp_pa
     shared = tmp_path / "shared"
     result = images.prepare_image(row, item, shared, SimpleNamespace(download=download))
     assert "PatientName" not in result
+    assert result["MagneticFieldStrength"] == 7
+    assert result["NonlinearGradientCorrection"] is True
     assert not (raw_root / "a").exists()
     assert np.all(np.asanyarray(nib.load(shared / "a/image.nii.gz").dataobj) == 2)
     assert list(shared.rglob("*.dcm")) == []

@@ -56,7 +56,11 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
         if not runs:
             continue
         for space, smoothing in context.target_pairs:
-            root = artifact_root(context.project_root, directory, model_id, space, smoothing)
+            root = artifact_root(
+                context.project_root,
+                directory,
+                context.participant,
+            )
             prefix = instance_prefix(context.participant, model_id, space, smoothing)
             entities = {
                 "task": model_id.split("/")[0],

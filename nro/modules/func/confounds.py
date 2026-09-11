@@ -4,10 +4,10 @@ Assemble a confounds TSV broadly compatible with common fMRIPrep-style regressor
 
 Compute six MCFLIRT motion parameters, mean white-matter/CSF/global signals,
 and the derivatives and squared terms of the nine base signals. Also export
-Power framewise displacement, aCompCor components, and early non-steady-state
-flags. The functional workflow augments these with numbered FD/DVARS outlier
-families. Column availability does not determine clean-regressor selection;
-the clean configuration owns that choice.
+Power framewise displacement, aCompCor components, DVARS diagnostics, and
+numbered non-steady-state, extreme-FD, DVARS, and combined motion outliers.
+Column availability does not determine clean-regressor selection; the clean
+configuration owns that choice.
 """
 
 from __future__ import annotations
@@ -230,6 +230,116 @@ def _spike_regressors(t: int, idxs: list[int], prefix: str) -> dict[str, np.ndar
     return out
 
 
+def _dvars_metrics(
+    epi_4d: np.ndarray,
+    brain_mask: np.ndarray,
+    *,
+    statistical_alpha: float,
+    practical_threshold_percent: float,
+    power: float,
+) -> dict[str, object]:
+    """Compute Afyouni-Nichols DVARS inference without copying the 4D image."""
+    from scipy.stats import chi2
+
+    if epi_4d.ndim != 4:
+        raise ValueError(f"epi_4d must be 4D, got {epi_4d.shape}")
+    if brain_mask.shape != epi_4d.shape[:3]:
+        raise ValueError(
+            f"brain mask shape {brain_mask.shape} does not match EPI spatial shape "
+            f"{epi_4d.shape[:3]}"
+        )
+    if not 0.0 < float(statistical_alpha) < 1.0:
+        raise ValueError("DVARS statistical alpha must be between zero and one")
+    if float(practical_threshold_percent) < 0.0:
+        raise ValueError("DVARS practical threshold cannot be negative")
+    if float(power) <= 0.0:
+        raise ValueError("DVARS power transformation must be positive")
+
+    frames = int(epi_4d.shape[3])
+    finite_mask = np.asarray(brain_mask, dtype=bool).copy()
+    for frame in range(frames):
+        finite_mask &= np.isfinite(epi_4d[..., frame])
+    voxel_count = int(np.count_nonzero(finite_mask))
+    if voxel_count == 0:
+        raise SystemExit("Brain mask contains no voxels with a finite complete time course")
+
+    dvars = np.full(frames, np.nan, dtype=np.float64)
+    p_values = np.full(frames, np.nan, dtype=np.float64)
+    delta_percent = np.full(frames, np.nan, dtype=np.float64)
+    if frames < 2:
+        return {
+            "dvars": dvars,
+            "p_values": p_values,
+            "delta_percent": delta_percent,
+            "outlier_indices": [],
+            "voxel_count": voxel_count,
+            "null_mean": None,
+            "null_sd": None,
+            "spatial_degrees_of_freedom": None,
+        }
+
+    # DVARS is indexed to the later member of each adjacent frame pair. The
+    # cited censoring rule marks both members when a pair is anomalous.
+    dvars_squared = np.empty(frames - 1, dtype=np.float64)
+    for frame in range(1, frames):
+        difference = np.subtract(epi_4d[..., frame], epi_4d[..., frame - 1], dtype=np.float64)
+        dvars_squared[frame - 1] = np.mean(np.square(difference[finite_mask]), dtype=np.float64)
+    dvars[1:] = np.sqrt(dvars_squared)
+
+    temporal_sum = np.zeros(epi_4d.shape[:3], dtype=np.float64)
+    temporal_sum_squares = np.zeros(epi_4d.shape[:3], dtype=np.float64)
+    for frame in range(frames):
+        values = np.asarray(epi_4d[..., frame], dtype=np.float64)
+        temporal_sum += values
+        temporal_sum_squares += np.square(values)
+    centered_sum_squares = temporal_sum_squares - np.square(temporal_sum) / float(frames)
+    average_variance = float(
+        np.sum(centered_sum_squares[finite_mask], dtype=np.float64) / float(voxel_count * frames)
+    )
+    average_variance = max(average_variance, 0.0)
+
+    transformed = np.power(dvars_squared, float(power))
+    transformed_median = float(np.median(transformed))
+    null_mean = float(np.median(dvars_squared))
+    lower_quartile = float(np.percentile(transformed, 25.0))
+    transformed_half_iqr_sd = 2.0 * (transformed_median - lower_quartile) / 1.349
+    null_sd = (
+        float(
+            (1.0 / float(power))
+            * np.power(transformed_median, 1.0 / float(power) - 1.0)
+            * transformed_half_iqr_sd
+        )
+        if transformed_median > 0.0
+        else 0.0
+    )
+
+    spatial_dof: float | None = None
+    if null_mean > 0.0 and null_sd > 0.0 and np.isfinite(null_sd):
+        spatial_dof = 2.0 * np.square(null_mean) / np.square(null_sd)
+        scale = 2.0 * null_mean / np.square(null_sd)
+        p_values[1:] = chi2.sf(scale * dvars_squared, spatial_dof)
+    if average_variance > 0.0 and np.isfinite(average_variance):
+        delta_percent[1:] = (dvars_squared - null_mean) / (4.0 * average_variance) * 100.0
+
+    pair_outliers = np.flatnonzero(
+        (p_values[1:] < float(statistical_alpha) / float(frames - 1))
+        & (delta_percent[1:] > float(practical_threshold_percent))
+    )
+    outlier_indices = sorted(
+        {int(frame) for pair in pair_outliers.tolist() for frame in (pair, pair + 1)}
+    )
+    return {
+        "dvars": dvars,
+        "p_values": p_values,
+        "delta_percent": delta_percent,
+        "outlier_indices": outlier_indices,
+        "voxel_count": voxel_count,
+        "null_mean": null_mean,
+        "null_sd": null_sd,
+        "spatial_degrees_of_freedom": spatial_dof,
+    }
+
+
 def get_confounds(
     *,
     epi: Path,
@@ -245,6 +355,9 @@ def get_confounds(
     acompcor_max_voxels: Optional[int] = None,
     fd_radius_mm: Optional[float] = None,
     motion_outlier_fd_thresh: Optional[float] = None,
+    dvars_statistical_alpha: Optional[float] = None,
+    dvars_practical_threshold_percent: Optional[float] = None,
+    dvars_power: Optional[float] = None,
     nonsteady_max_vols: Optional[int] = None,
     nonsteady_rel_thresh: Optional[float] = None,
     nonsteady_stable_run: Optional[int] = None,
@@ -270,6 +383,15 @@ def get_confounds(
         if motion_outlier_fd_thresh is None
         else motion_outlier_fd_thresh
     )
+    dvars_statistical_alpha = float(
+        cfg.dvars_statistical_alpha if dvars_statistical_alpha is None else dvars_statistical_alpha
+    )
+    dvars_practical_threshold_percent = float(
+        cfg.dvars_practical_threshold_percent
+        if dvars_practical_threshold_percent is None
+        else dvars_practical_threshold_percent
+    )
+    dvars_power = float(cfg.dvars_power if dvars_power is None else dvars_power)
     nonsteady_max_vols = int(
         cfg.nonsteady_max_vols if nonsteady_max_vols is None else nonsteady_max_vols
     )
@@ -361,6 +483,16 @@ def get_confounds(
 
     fd = _fd_power(par, radius_mm=float(fd_radius_mm))
     cols["framewise_displacement"] = fd
+    dvars_metrics = _dvars_metrics(
+        epi_4d,
+        brain_mask,
+        statistical_alpha=dvars_statistical_alpha,
+        practical_threshold_percent=dvars_practical_threshold_percent,
+        power=dvars_power,
+    )
+    cols["dvars"] = np.asarray(dvars_metrics["dvars"], dtype=np.float64)
+    cols["dvars_p_value"] = np.asarray(dvars_metrics["p_values"], dtype=np.float64)
+    cols["dvars_delta_percent"] = np.asarray(dvars_metrics["delta_percent"], dtype=np.float64)
 
     nonsteady_idx = _nonsteady_spikes(
         gs,
@@ -370,7 +502,11 @@ def get_confounds(
     )
     cols.update(_spike_regressors(t, nonsteady_idx, prefix="non_steady_state_outlier"))
 
-    motion_idx = [int(i) for i in np.flatnonzero(fd > float(motion_outlier_fd_thresh)).tolist()]
+    extreme_fd_idx = [int(i) for i in np.flatnonzero(fd > float(motion_outlier_fd_thresh)).tolist()]
+    dvars_idx = [int(index) for index in dvars_metrics["outlier_indices"]]
+    motion_idx = sorted(set(extreme_fd_idx) | set(dvars_idx))
+    cols.update(_spike_regressors(t, extreme_fd_idx, prefix="extreme_fd_outlier"))
+    cols.update(_spike_regressors(t, dvars_idx, prefix="dvars_outlier"))
     cols.update(_spike_regressors(t, motion_idx, prefix="motion_outlier"))
 
     try:
@@ -393,8 +529,10 @@ def get_confounds(
         ordered.append(base + "_power2")
         ordered.append(base + "_derivative1_power2")
     ordered += [f"a_comp_cor_{i:02d}" for i in range(acomps.shape[1])]
-    ordered += ["framewise_displacement"]
+    ordered += ["framewise_displacement", "dvars", "dvars_p_value", "dvars_delta_percent"]
     ordered += sorted([k for k in cols.keys() if k.startswith("non_steady_state_outlier")])
+    ordered += sorted([k for k in cols.keys() if k.startswith("extreme_fd_outlier")])
+    ordered += sorted([k for k in cols.keys() if k.startswith("dvars_outlier")])
     ordered += sorted([k for k in cols.keys() if k.startswith("motion_outlier")])
 
     df = pd.DataFrame({k: cols[k] for k in ordered if k in cols})
@@ -417,6 +555,9 @@ def get_confounds(
         "parameters": {
             "fd_radius_mm": float(fd_radius_mm),
             "motion_outlier_fd_thresh": float(motion_outlier_fd_thresh),
+            "dvars_statistical_alpha": float(dvars_statistical_alpha),
+            "dvars_practical_threshold_percent": float(dvars_practical_threshold_percent),
+            "dvars_power": float(dvars_power),
             "n_acompcor": int(n_acompcor),
             "acompcor_max_voxels": int(acompcor_max_voxels),
             "nonsteady_max_vols": int(nonsteady_max_vols),
@@ -424,9 +565,18 @@ def get_confounds(
             "nonsteady_stable_run": int(nonsteady_stable_run),
         },
         "columns": list(df.columns),
+        "dvars": {
+            "finite_brain_voxels": int(dvars_metrics["voxel_count"]),
+            "null_mean_dvars_squared": dvars_metrics["null_mean"],
+            "null_sd_dvars_squared": dvars_metrics["null_sd"],
+            "spatial_degrees_of_freedom": dvars_metrics["spatial_degrees_of_freedom"],
+            "outlier_frames": dvars_idx,
+        },
         "notes": [
             "rot_* are in radians as reported by MCFLIRT; trans_* are in mm.",
             "framewise_displacement uses Power-style FD with fixed head radius.",
+            "DVARS inference uses the transformed chi-squared, median expected-value, and half-IQR variance estimates described by Afyouni and Nichols (2018).",
+            "A significant DVARS difference marks both frames in the adjacent pair.",
             "global_signal is computed within brain_mask_in_epi when provided; otherwise it falls back to an aseg-derived brain mask (aseg!=0) resampled to the EPI grid.",
             "white_matter and csf are mean signals from FreeSurfer aseg tissue labels resampled to the EPI grid.",
             "The six motion and three mean-signal regressors include derivative1, power2, and derivative1_power2 expansions for the Satterthwaite 36-parameter model.",
@@ -492,7 +642,25 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--motion-outlier-fd-thresh",
         type=float,
         default=cfg.motion_outlier_fd_thresh,
-        help="FD threshold for motion_outlier spikes (default: 0.5)",
+        help="FD threshold in mm for extreme-FD outliers (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--dvars-statistical-alpha",
+        type=float,
+        default=cfg.dvars_statistical_alpha,
+        help="DVARS family-wise statistical alpha (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--dvars-practical-threshold-percent",
+        type=float,
+        default=cfg.dvars_practical_threshold_percent,
+        help="Minimum change in percent D-var (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--dvars-power",
+        type=float,
+        default=cfg.dvars_power,
+        help="DVARS power transformation (default: %(default)s)",
     )
     ap.add_argument(
         "--nonsteady-max-vols",
@@ -529,6 +697,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         acompcor_max_voxels=int(args.acompcor_max_voxels),
         fd_radius_mm=float(args.fd_radius_mm),
         motion_outlier_fd_thresh=float(args.motion_outlier_fd_thresh),
+        dvars_statistical_alpha=float(args.dvars_statistical_alpha),
+        dvars_practical_threshold_percent=float(args.dvars_practical_threshold_percent),
+        dvars_power=float(args.dvars_power),
         nonsteady_max_vols=int(args.nonsteady_max_vols),
         nonsteady_rel_thresh=float(args.nonsteady_rel_thresh),
         nonsteady_stable_run=int(args.nonsteady_stable_run),

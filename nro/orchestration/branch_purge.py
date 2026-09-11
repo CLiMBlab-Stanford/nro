@@ -121,12 +121,33 @@ def purge(
             with registry.connection(write=not dry_run) as db:
                 validate(db)
                 for kind, counter in (("public", "derivative_paths"), ("private", "work_paths")):
-                    paths = sorted(
-                        {Path(raw) for item in plan for raw in item[kind]},
-                        key=lambda path: len(path.parts),
-                    )
-                    for path in paths:
-                        counts[counter] += int(_remove_path(path, dry_run=dry_run))
+                    targets: dict[Path, Path] = {}
+                    for item in plan:
+                        context = ExecutionContext.from_dict(owned[item["id"]]["execution_context"])
+                        project = owned[item["id"]]["project"]
+                        roots = (
+                            (
+                                context.paths.output_project(project) / "derivatives",
+                                registry.paths.control,
+                            )
+                            if kind == "public"
+                            else (context.paths.private_project(project) / "derivatives",)
+                        )
+                        for raw in item[kind]:
+                            path = Path(raw)
+                            targets[path] = next(
+                                root
+                                for root in roots
+                                if path.resolve().is_relative_to(root.resolve())
+                            )
+                    for path in sorted(targets, key=lambda value: len(value.parts)):
+                        counts[counter] += int(
+                            _remove_path(
+                                path,
+                                dry_run=dry_run,
+                                prune_root=targets[path],
+                            )
+                        )
                 if not dry_run:
                     db.executemany(
                         "UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",

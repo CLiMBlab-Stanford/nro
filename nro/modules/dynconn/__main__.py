@@ -15,9 +15,7 @@ from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
 from nro.engine.io import flatten_paths
-from nro.engine.paths import preprocessing_subject_anat_dir
 from nro.engine.publication import write_json_atomic
-from nro.engine.surface_geometry import surface_geometry
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
@@ -32,7 +30,7 @@ from nro.orchestration.runtime import (
     selected_configuration_fingerprint,
 )
 
-from .config import InclusionConfig, InputsConfig, ModuleConfig, OutputConfig
+from .config import InclusionConfig, InputsConfig, LowRankConfig, ModuleConfig, OutputConfig
 from .module import build_module
 from .paths import output_paths
 
@@ -64,25 +62,6 @@ def make_target_config(
     if execution_context is not None:
         output_base = execution_context.output_path(output_base)
         work_base = execution_context.output_path(work_base, private=True)
-    surfaces: tuple[Path, ...] = ()
-    if clean_target.domain == "surface":
-        anat_dir = preprocessing_subject_anat_dir(
-            sub_id,
-            project=project,
-            preprocessing_id=config["preprocessing_directory"],
-            bids_root=bids_root,
-        )
-        if execution_context is not None and clean_target.space == "fsnative":
-            anat_dir = execution_context.input_path(
-                anat_dir / f"{sub_id}_desc-preprocessAnat_manifest.json"
-            ).parent
-        surfaces = surface_geometry(
-            anat_dir,
-            participant,
-            config["surface"],
-            clean_target.space,
-            clean_target.functional[0],
-        )
     target, prefix = target_output_names(
         config.get("prefix") or sub_id,
         clean_target.space,
@@ -95,15 +74,17 @@ def make_target_config(
             domain=clean_target.domain,
             space=clean_target.space,
             smoothing_mm=clean_target.smoothing_mm,
-            surface=surfaces,
         ),
         output=OutputConfig(
-            directory=output_base / target / sub_id,
+            directory=output_base / sub_id,
             work_directory=work_base / target / sub_id,
             prefix=prefix,
             overwrite=config["overwrite"] if overwrite is None else overwrite,
         ),
         inclusion=InclusionConfig(**config["inclusion"]),
+        low_rank=config["low_rank"],
+        low_rank_options=LowRankConfig(**config["low_rank_options"]),
+        weighting=config["weighting"],
     )
 
 

@@ -11,6 +11,11 @@ from scipy import sparse
 
 import nro.modules.networks.__main__ as networks_main
 from nro.configuration.store import ConfigStore
+from nro.engine.cifti import (
+    indexed_cifti_indices,
+    load_indexed_cifti_map,
+    write_indexed_cifti_sidecar,
+)
 from nro.engine.images import write_cifti_dense_scalar
 from nro.modules.microparcellation.cifti import write_pconn, write_volume_dlabel
 from nro.modules.networks.clustering import clustering_membership
@@ -33,8 +38,6 @@ from nro.modules.networks.labeling import (
     rank_reference_candidates,
 )
 from nro.modules.networks.module import _load_inputs, run
-from nro.modules.networks.paths import network_descriptor
-from nro.modules.networks.scene import write_network_scene
 from nro.modules.networks.targets import discover_microparcellation_targets
 
 
@@ -147,7 +150,7 @@ def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path)
     assert targets[1].source_surfaces == ()
 
 
-def test_network_config_uses_target_then_subject_directories(tmp_path: Path, monkeypatch) -> None:
+def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, monkeypatch) -> None:
     subject = tmp_path / "project" / "derivatives" / "microparcellation" / "main" / "sub-01"
     manifest = _manifest(subject, "fsnative", "surface")
     monkeypatch.setattr(networks_main, "BIDS_PATH", str(tmp_path))
@@ -159,9 +162,7 @@ def test_network_config_uses_target_then_subject_directories(tmp_path: Path, mon
     )
 
     assert (target.space, target.smoothing_mm) == ("fsnative", 2)
-    assert cfg.output.directory == (
-        tmp_path / "project/derivatives/networks/main/space-fsnative_smoothing-2mm/sub-01"
-    )
+    assert cfg.output.directory == tmp_path / "project/derivatives/networks/main/sub-01"
     assert cfg.output.work_directory.parts[-3:] == (
         "main",
         "space-fsnative_smoothing-2mm",
@@ -208,7 +209,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         "feature/networks", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV"
     )
     dev = BranchPaths("dev", paths.bids, paths.work, paths.development)
-    relative = Path("derivatives/microparcellation/main/space-T1w_smoothing-2mm/sub-01")
+    relative = Path("derivatives/microparcellation/main/sub-01")
     upstream = dev.output_project("demo") / relative
     manifest = _manifest(upstream, "T1w", "volume")
     prefix = "sub-01_space-T1w_smoothing-2mm"
@@ -306,15 +307,37 @@ def test_volumetric_network_scalars_reuse_microparcellation_brain_model(
     output = write_cifti_dense_scalar(
         tmp_path / "network.dscalar.nii",
         reference,
-        [np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32)],
-        ["network_001_binary"],
+        [
+            np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+            np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        ],
+        ["Network 001 | lana002, dna003", "Network 002"],
+    )
+    write_indexed_cifti_sidecar(
+        output,
+        [
+            {
+                "Name": "Network 001 | lana002, dna003",
+                "Network": 1,
+                "Labels": ["network001", "lana002", "dna003"],
+            },
+            {"Name": "Network 002", "Network": 2, "Labels": ["network002"]},
+        ],
+        lookup_fields=("Network", "Labels"),
     )
 
     image = nib.load(output)
     assert isinstance(image.header.get_axis(0), nib.cifti2.ScalarAxis)
     assert isinstance(image.header.get_axis(1), nib.cifti2.BrainModelAxis)
-    assert image.header.get_axis(0).name.tolist() == ["network_001_binary"]
-    np.testing.assert_array_equal(np.asarray(image.dataobj), [[0.0, 1.0, 1.0, 0.0]])
+    assert image.header.get_axis(0).name.tolist() == [
+        "Network 001 | lana002, dna003",
+        "Network 002",
+    ]
+    assert indexed_cifti_indices(output, "Labels", "dna003") == (0,)
+    np.testing.assert_array_equal(
+        load_indexed_cifti_map(output, "Network", 2),
+        [1.0, 0.0, 0.0, 1.0],
+    )
 
 
 def test_candidate_labels_rank_each_reference_independently() -> None:
@@ -328,8 +351,6 @@ def test_candidate_labels_rank_each_reference_independently() -> None:
     assert {record["network"] for record in records if record["similarity_rank"] == 1} == {1}
     assert "lana001" in names[0] and "aud001" in names[0]
     assert names[2] == "Network 003"
-    assert network_descriptor("lana001", 1) == "networkLANA001"
-    assert network_descriptor(None, 5) == "network005"
 
 
 def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> None:
@@ -428,39 +449,6 @@ def test_native_reference_projection_loads_ants_composite_transform(
     np.testing.assert_array_equal(projected["test"], reference_data[mask])
 
 
-def test_surface_network_scene_copies_display_surfaces_without_source_references(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "micro"
-    output = tmp_path / "networks"
-    source.mkdir()
-    output.mkdir()
-    surfaces = []
-    for hemi in ("L", "R"):
-        for kind in ("pial", "midthickness", "white", "inflated"):
-            path = source / f"sub-01_space-fsnative_hemi-{hemi}_{kind}.surf.gii"
-            path.write_text(f"{hemi} {kind}\n", encoding="utf-8")
-            surfaces.append(path)
-    connectivity = source / "source.pconn.nii"
-    membership = output / "sub-01_space-fsnative_desc-membership_network.dscalar.nii"
-    connectivity.write_bytes(b"pconn")
-    membership.write_bytes(b"dscalar")
-
-    scene, assets = write_network_scene(
-        output / "sub-01_space-fsnative_desc-networks_scene.scene",
-        domain="surface",
-        membership=membership,
-        connectivity=connectivity,
-        scene_surfaces=tuple(surfaces),
-    )
-
-    text = scene.read_text(encoding="utf-8")
-    assert len(assets) == 10
-    assert all(path.is_file() for path in assets)
-    assert str(source.resolve()) not in text
-    assert "sub-01_space-fsnative_hemi-L_desc-midthickness_surface.surf.gii" in text
-
-
 def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, monkeypatch) -> None:
     mask = np.ones((2, 2, 2), dtype=bool)
     labels = np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int64)
@@ -522,20 +510,19 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
     membership = nib.load(outputs["membership"])
     assert membership.shape == (2, 8)
     assert membership.header.get_axis(0).name.tolist() == ["Network 001", "Network 002"]
-    assert outputs["scene"].is_file()
-    assert all(path.is_file() for path in outputs["scene_supporting_files"])
     manifest = yaml.safe_load(outputs["manifest"].read_text())
     assert manifest["domain"] == "volume"
     assert manifest["space"] == "T1w"
     assert manifest["n_surface_vertices"] is None
     assert manifest["n_gray_matter_voxels"] == 8
-    assert {
-        descriptor: Path(path).name
-        for descriptor, path in manifest["outputs"]["network_maps"].items()
-    } == {
-        "network001": "sub-01_space-T1w_desc-network001_stat.dscalar.nii",
-        "network002": "sub-01_space-T1w_desc-network002_stat.dscalar.nii",
-    }
+    assert "network_maps" not in manifest["outputs"]
+    assert Path(manifest["outputs"]["membership_metadata"]) == outputs["membership_metadata"]
+    assert indexed_cifti_indices(outputs["membership"], "Network", 1) == (0,)
+    assert indexed_cifti_indices(outputs["membership"], "Labels", "network002") == (1,)
+    np.testing.assert_array_equal(
+        load_indexed_cifti_map(outputs["membership"], "Labels", "network001"),
+        np.asarray(membership.dataobj)[0],
+    )
     shutil.rmtree(cfg.output.work_directory)
     monkeypatch.setattr(
         "nro.modules.networks.module._load_inputs",

@@ -225,8 +225,7 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
             minimum_usable_runs=1,
             minimum_aggregate_retained_frames=4,
             temporal_block_size=4,
-            reliability_weighting=False,
-            reliability_vertex_block_size=8,
+            weighting="equal",
             global_signal_regression=False,
         ),
     )
@@ -278,20 +277,12 @@ def test_volumetric_module_writes_gray_matter_labels_and_connectivity(
     assert quality["null_baseline"]["seed"] == 1
     assert len(quality["null_baseline"]["parcellations"]) == 5
     assert outputs["quality"].is_file()
-    reliability = nib.load(outputs["parcel_reliability"])
-    assert reliability.shape == (5, 8)
-    assert reliability.header.get_axis(0).name.tolist() == [
-        "Mean run reliability",
-        "Minimum run reliability",
-        "Maximum run reliability",
-        "Supporting runs",
-        "Effective contributing runs",
-    ]
+    assert quality["weighting"] == "equal"
+    assert quality["parcel_support"]["minimum_supporting_runs"] == 2
     assert len(quality["run_contributions"]) == 2
     assert quality["split_half"]["method"] == "whole runs"
     assert quality["connectome"]["unique_edges"] == 3
     assert len(quality["connectome"]["encoded_histogram"]["counts"]) == 255
-    assert outputs["scene"].is_file()
 
 
 def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
@@ -337,8 +328,7 @@ def _small_resumable_volume_config(tmp_path: Path) -> tuple[ModuleConfig, Path]:
                 minimum_usable_runs=1,
                 minimum_aggregate_retained_frames=4,
                 temporal_block_size=4,
-                reliability_weighting=False,
-                reliability_vertex_block_size=8,
+                weighting="equal",
                 global_signal_regression=False,
             ),
         ),

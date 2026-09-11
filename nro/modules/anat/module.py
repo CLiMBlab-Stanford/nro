@@ -99,6 +99,7 @@ class Options:
     work_dir: Path
     freesurfer_subjects_dir: Path
     fs_subject: str
+    fsaverage_template: str
     selection_strategy: str
     mni_template: Path
     container: Optional[ContainerSpec]
@@ -195,7 +196,6 @@ def build_module(
         "fs_subject": opts.fs_subject,
         "mni_template": str(opts.mni_template),
         "synthstrip_image": str(opts.synthstrip_image),
-        "configuration_fingerprint": selected_configuration_fingerprint(),
     }
     configuration_snapshot = opts.work_dir / "configuration.json"
 
@@ -204,7 +204,10 @@ def build_module(
             current = read_json(configuration_snapshot)
         except (OSError, ValueError, TypeError):
             return False, "Anatomical configuration snapshot is missing or unreadable."
-        if current != configuration:
+        # Only settings that govern the core anatomical steps belong to this
+        # comparison. Other preprocessing settings must not invalidate them.
+        effective = {key: current.get(key) for key in configuration}
+        if effective != configuration:
             return False, "Anatomical configuration changed."
         return True, "Anatomical configuration is unchanged."
 
@@ -790,7 +793,9 @@ def build_module(
         runner,
         environment=env,
         subjects_directory=opts.freesurfer_subjects_dir,
+        template=opts.fsaverage_template,
     )
+    fsaverage_space = opts.fsaverage_template
     fsaverage_xfms: dict[str, str] = {}
     for hemi in ("lh", "rh"):
         hemi_label = _hemi_label(hemi)
@@ -798,17 +803,17 @@ def build_module(
         fsaverage_sphere = fsaverage_dir / "surf" / f"{hemi}.sphere"
         forward = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-fsnative_to-fsaverage_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
+            / f"{opts.fs_subject}_from-fsnative_to-{fsaverage_space}_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
         )
         inverse = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-fsaverage_to-fsnative_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
+            / f"{opts.fs_subject}_from-{fsaverage_space}_to-fsnative_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
         )
         runner.add_step(
             _create_mri_conversion_step(
                 source=subject_registration,
                 output=forward,
-                name=f"Export Hemisphere {hemi_label} fsnative-to-fsaverage Sphere",
+                name=f"Export Hemisphere {hemi_label} fsnative-to-{fsaverage_space} Sphere",
                 env=env,
                 force=opts.force,
                 executable="mris_convert",
@@ -818,7 +823,7 @@ def build_module(
             _create_mri_conversion_step(
                 source=fsaverage_sphere,
                 output=inverse,
-                name=f"Export Hemisphere {hemi_label} fsaverage-to-fsnative Sphere",
+                name=f"Export Hemisphere {hemi_label} {fsaverage_space}-to-fsnative Sphere",
                 env=env,
                 force=opts.force,
                 executable="mris_convert",
@@ -828,12 +833,12 @@ def build_module(
             (
                 forward,
                 "fsnative",
-                "fsaverage",
+                fsaverage_space,
                 (subject_registration, fsaverage_sphere),
             ),
             (
                 inverse,
-                "fsaverage",
+                fsaverage_space,
                 "fsnative",
                 (fsaverage_sphere, subject_registration),
             ),
@@ -851,31 +856,37 @@ def build_module(
                     },
                 )
             )
-        fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_fsaverage"] = str(forward)
-        fsaverage_xfms[f"hemi-{hemi_label}_fsaverage_to_fsnative"] = str(inverse)
+        fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_{fsaverage_space}"] = str(forward)
+        fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_fsnative"] = str(inverse)
 
     t1_fsaverage_xfms: dict[str, str] = {}
     for hemi_label in ("L", "R"):
-        fsnative_to_fsaverage = Path(fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_fsaverage"])
-        fsaverage_to_fsnative = Path(fsaverage_xfms[f"hemi-{hemi_label}_fsaverage_to_fsnative"])
+        fsnative_to_fsaverage = Path(
+            fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_{fsaverage_space}"]
+        )
+        fsaverage_to_fsnative = Path(
+            fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_fsnative"]
+        )
         forward = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-T1w_to-fsaverage_hemi-{hemi_label}_mode-image+surface_xfm.json"
+            / f"{opts.fs_subject}_from-T1w_to-{fsaverage_space}_hemi-{hemi_label}_mode-image+surface_xfm.json"
         )
         inverse = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-fsaverage_to-T1w_hemi-{hemi_label}_mode-surface+image_xfm.json"
+            / f"{opts.fs_subject}_from-{fsaverage_space}_to-T1w_hemi-{hemi_label}_mode-surface+image_xfm.json"
         )
         runner.add_step(
             create_json_step(
-                step_name=(f"Write Hemisphere {hemi_label} T1w-to-fsaverage Transform Metadata"),
+                step_name=(
+                    f"Write Hemisphere {hemi_label} T1w-to-{fsaverage_space} Transform Metadata"
+                ),
                 path=forward,
                 payload={
                     "Type": "chain",
                     "Format": "surface",
                     "Hemisphere": hemi_label,
                     "From": "T1w",
-                    "To": "fsaverage",
+                    "To": fsaverage_space,
                     "Steps": [str(fsnative_to_fsaverage)],
                 },
                 inputs=(fsnative_to_fsaverage,),
@@ -884,13 +895,15 @@ def build_module(
         )
         runner.add_step(
             create_json_step(
-                step_name=(f"Write Hemisphere {hemi_label} fsaverage-to-T1w Transform Metadata"),
+                step_name=(
+                    f"Write Hemisphere {hemi_label} {fsaverage_space}-to-T1w Transform Metadata"
+                ),
                 path=inverse,
                 payload={
                     "Type": "chain",
                     "Format": "surface",
                     "Hemisphere": hemi_label,
-                    "From": "fsaverage",
+                    "From": fsaverage_space,
                     "To": "T1w",
                     "Steps": [str(fsaverage_to_fsnative)],
                 },
@@ -898,8 +911,8 @@ def build_module(
                 force=opts.force,
             )
         )
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_t1_to_fsaverage"] = str(forward)
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_fsaverage_to_t1"] = str(inverse)
+        t1_fsaverage_xfms[f"hemi-{hemi_label}_t1_to_{fsaverage_space}"] = str(forward)
+        t1_fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_t1"] = str(inverse)
 
     mni_brain_template = Path(
         str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
@@ -1025,6 +1038,7 @@ def build_module(
     manifest = {
         "subject": inputs.sub_id,
         "fs_subject": opts.fs_subject,
+        "fsaverage_template": opts.fsaverage_template,
         "selection_strategy": opts.selection_strategy,
         "inputs": {
             "t1w": [str(item.image) for item in inputs.t1w],
@@ -1053,6 +1067,7 @@ def build_module(
             "configuration": {
                 "selection_strategy": opts.selection_strategy,
                 "fs_subject": opts.fs_subject,
+                "fsaverage_template": opts.fsaverage_template,
                 "mni_template": str(opts.mni_template),
                 "synthstrip_image": (
                     str(opts.synthstrip_image) if opts.synthstrip_image is not None else None
@@ -1135,6 +1150,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--preprocessing-id", default=SETTINGS.common.preprocessing_id)
     p.add_argument("--sub-id", required=True)
     p.add_argument("--fs-subject", default=cfg.fs_subject)
+    p.add_argument("--fsaverage-template", default=cfg.fsaverage_template)
     p.add_argument("--t1w", action="append", default=[], type=Path)
     p.add_argument("--t2w", action="append", default=[], type=Path)
     p.add_argument(
@@ -1233,6 +1249,7 @@ def main(
             work_dir=work_dir,
             freesurfer_subjects_dir=subjects_dir,
             fs_subject=str(args.fs_subject or args.sub_id),
+            fsaverage_template=str(args.fsaverage_template),
             selection_strategy=str(args.selection_strategy),
             mni_template=mni_template,
             container=container,
