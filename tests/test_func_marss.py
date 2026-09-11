@@ -1,4 +1,6 @@
 import json
+import logging
+from itertools import count
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,6 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+import nro.modules.func.marss as marss
 from nro.modules.func.marss import (
     _apply_correction,
     _compact_artifact,
@@ -15,6 +18,7 @@ from nro.modules.func.marss import (
     slice_correlation_diagnostics,
 )
 from nro.modules.func.marss_worker import _publish_nifti
+from nro.orchestration.runner import Runner
 
 
 def metadata(*, slices=12, factor=3):
@@ -152,7 +156,7 @@ def test_diagnose_mode_aliases_input_and_keeps_fixed_outputs(tmp_path):
     save_bold(bold, rng.normal(size=(3, 3, 6, 30)))
     np.savetxt(motion, np.zeros((30, 6)))
     sidecar.write_text(json.dumps(metadata(slices=6)))
-    runner = SimpleNamespace(run_direct=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
+    runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
         runner=runner,
@@ -191,7 +195,7 @@ def test_auto_mode_diagnoses_but_does_not_correct_multiband_two(tmp_path):
     motion = tmp_path / "motion.par"
     save_bold(bold, data)
     np.savetxt(motion, np.zeros((volumes, 6)))
-    runner = SimpleNamespace(run_direct=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
+    runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
         runner=runner,
@@ -222,7 +226,7 @@ def test_auto_mode_passes_through_when_diagnostic_metadata_are_unavailable(tmp_p
     motion = tmp_path / "motion.par"
     save_bold(bold, rng.normal(size=(3, 3, 5, 20)))
     np.savetxt(motion, np.zeros((20, 6)))
-    runner = SimpleNamespace(run_direct=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
+    runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
         runner=runner,
@@ -246,6 +250,64 @@ def test_auto_mode_passes_through_when_diagnostic_metadata_are_unavailable(tmp_p
     assert result["Applied"] is False
     assert result["Decision"] == "diagnostic_unavailable"
     assert all(path.exists() for path in step.outputs)
+
+
+def test_auto_correction_runs_inside_the_declared_marss_step(tmp_path, monkeypatch):
+    rng = np.random.default_rng(12)
+    bold = tmp_path / "source.nii.gz"
+    motion = tmp_path / "motion.par"
+    save_bold(bold, rng.normal(size=(2, 2, 12, 24)))
+    np.savetxt(motion, np.zeros((24, 6)))
+    runner = Runner(
+        module_name="MARSS test",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.func.marss-runner"),
+        next_step=count(1).__next__,
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run_child(command, **kwargs) -> None:
+        command = [str(value) for value in command]
+        calls.append((command, kwargs))
+        corrected = Path(command[command.index("--corrected") + 1])
+        artifact = Path(command[command.index("--artifact") + 1])
+        source = nib.load(str(bold))
+        corrected.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(source, corrected)
+        save_bold(artifact, np.zeros(source.shape, dtype=np.float32))
+
+    monkeypatch.setattr(runner, "run_child", run_child)
+    monkeypatch.setattr(marss, "_package_version", lambda: marss.MARSS_PACKAGE_VERSION)
+    monkeypatch.setattr(marss.importlib.util, "find_spec", lambda _name: object())
+    step, outputs = create_marss_step(
+        runner=runner,
+        source_bold=bold,
+        metadata=metadata(slices=12, factor=6),
+        metadata_sources=(),
+        motion_parameters=motion,
+        work_dir=tmp_path / "work",
+        artifact_dir=tmp_path / "public",
+        run_stem="sub-01_task-rest",
+        mode="auto",
+        min_multiband_factor=6,
+        chunk_volumes=8,
+        force=False,
+    )
+    runner.add_step(step)
+
+    with runner.run_context():
+        runner.execute()
+
+    assert len(calls) == 1
+    assert calls[0][0][:3] == [
+        str(Path(marss.sys.executable)),
+        "-m",
+        "nro.modules.func.marss_worker",
+    ]
+    assert calls[0][1]["direct"] is True
+    assert outputs.bold.exists()
+    assert step.validate is not None and step.validate()[0]
 
 
 def test_marss_worker_preserves_nifti_compression_declared_by_destination(tmp_path):

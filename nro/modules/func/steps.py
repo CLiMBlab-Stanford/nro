@@ -2418,17 +2418,20 @@ def _resolve_container_command_for_wrapper(
     if resolved is None:
         return None
     resolved_path = Path(resolved)
-    versioned_out = runner.run_out(
-        [
-            "bash",
-            "-lc",
-            (
-                f"find /opt/fsl -maxdepth 3 -type f -path '*/bin/{command}' 2>/dev/null | "
-                "sort -r || true"
-            ),
-        ],
-        env=env,
-        quiet=True,
+    versioned_out = (
+        runner.run_child(
+            [
+                "bash",
+                "-lc",
+                (
+                    f"find /opt/fsl -maxdepth 3 -type f -path '*/bin/{command}' 2>/dev/null | "
+                    "sort -r || true"
+                ),
+            ],
+            env=env,
+            capture_stdout=True,
+        )
+        or ""
     )
     versioned_candidates: list[Path] = []
     for raw_line in _strip_ansi(versioned_out).splitlines():
@@ -2443,18 +2446,21 @@ def _resolve_container_command_for_wrapper(
             if runner_path_exists(runner, env, candidate):
                 return candidate_str
 
-    probe = runner.run_out(
-        [
-            "bash",
-            "-lc",
-            (
-                f"if [ -f {shlex_quote(str(resolved_path))} ]; then "
-                f"sed -n '1,5p' {shlex_quote(str(resolved_path))}; "
-                "fi"
-            ),
-        ],
-        env=env,
-        quiet=True,
+    probe = (
+        runner.run_child(
+            [
+                "bash",
+                "-lc",
+                (
+                    f"if [ -f {shlex_quote(str(resolved_path))} ]; then "
+                    f"sed -n '1,5p' {shlex_quote(str(resolved_path))}; "
+                    "fi"
+                ),
+            ],
+            env=env,
+            capture_stdout=True,
+        )
+        or ""
     )
     cleaned = _strip_ansi(probe)
     pattern = re.compile(rf"(/[^\"' \t]+/{re.escape(command)})")

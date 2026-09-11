@@ -50,14 +50,17 @@ def runner_path_exists(
     if not runner.using_container():
         return path.exists()
     marker = "__NRO_EXISTS__"
-    output = runner.run_out(
-        [
-            "bash",
-            "-lc",
-            f"if [ -e {shlex.quote(str(path))} ]; then printf {marker}; fi",
-        ],
-        env=env,
-        quiet=True,
+    output = (
+        runner.run_child(
+            [
+                "bash",
+                "-lc",
+                f"if [ -e {shlex.quote(str(path))} ]; then printf {marker}; fi",
+            ],
+            env=env,
+            capture_stdout=True,
+        )
+        or ""
     )
     return marker in strip_ansi(output)
 
@@ -73,10 +76,13 @@ def resolve_runner_command(
         f"(cmd=$(command -v {shlex.quote(name)} 2>/dev/null) && printf '{marker}%s' \"$cmd\")"
         for name in names
     )
-    output = runner.run_out(
-        ["bash", "-c", probes + " || true"],
-        env=env,
-        quiet=True,
+    output = (
+        runner.run_child(
+            ["bash", "-c", probes + " || true"],
+            env=env,
+            capture_stdout=True,
+        )
+        or ""
     )
     for line in strip_ansi(output).splitlines():
         marker_index = line.find(marker)
