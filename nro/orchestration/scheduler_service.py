@@ -114,7 +114,8 @@ def _admit(
 
     The transport holds the cache publication lock until this call returns.
     Scientific revisions reject delayed requests from another checkout of the
-    same branch. Git is consulted only to authorize the submitting checkout.
+    same branch. Central registration authorizes the checkout, while the source
+    digest binds the request to the captured implementation.
     """
     branches = BranchStore(registry.paths.control)
     source = SourceSnapshot(Path(payload["source"]["root"]), payload["source"]["digest"])
@@ -135,7 +136,15 @@ def _admit(
     if context.project != registry.paths.project:
         raise ValueError("Compiled request belongs to another project")
     specs = tuple(decode_spec(value) for value in payload["specifications"])
-    contracts = scientific_contracts(specs)
+    contracts = payload.get("contracts")
+    if contracts is None:
+        contracts = scientific_contracts(specs)
+    elif (
+        not isinstance(contracts, dict)
+        or set(contracts) != {spec.key for spec in specs}
+        or not all(isinstance(value, dict) for value in contracts.values())
+    ):
+        raise ValueError("Scientific contracts must cover the complete request")
     if set(payload["revisions"]) != set(contracts):
         raise ValueError("Scientific revisions must cover the complete request")
     if assess:
@@ -143,13 +152,18 @@ def _admit(
 
         assess_registry(registry, projects=(context.project,), compiled=True)
     if payload["branch"] == "main":
-        from nro.orchestration.releases import ReleaseStore
+        from nro.orchestration.scheduler_implementation import implementation_path
 
-        if ReleaseStore(branches).require_approved(checkout) != payload["release"]:
+        active = json.loads(implementation_path(registry.paths.control).read_text())
+        if (
+            Path(str(active.get("checkout", ""))).resolve() != checkout.resolve()
+            or active.get("release") != payload["release"]
+            or active.get("source_digest") != source.digest
+        ):
             raise ValueError("Main request does not match its approved release")
     with branches._lock():
         topology = branches.read().topology
-        name = topology.require_checkout(checkout)
+        name = topology.registered_checkout(checkout)
         if (
             name != payload["branch"]
             or topology.records[name].registry_id != payload["registry_id"]
@@ -185,7 +199,7 @@ def _admit(
 def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
     """Supply central workers only for requests owned by the authorized checkout."""
     branches = BranchStore(registry.paths.control)
-    name = branches.read().topology.require_checkout(checkout)
+    name = branches.read().topology.registered_checkout(checkout)
     owner = branches.read().topology.records[name].registry_id
     with registry.connection() as db:
         for request_id in request_ids:
@@ -235,7 +249,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
     """Report this branch's registered selections, retaining upstream error details."""
     branches = BranchStore(registry.paths.control)
     topology = branches.read().topology
-    name = topology.require_checkout(checkout)
+    name = topology.registered_checkout(checkout)
     owner = topology.records[name].registry_id
     from nro.bidsify.store import IngestionStore
 
@@ -319,7 +333,7 @@ def stop(registry, *, checkout: Path, selection: dict) -> dict:
     """Cancel selected branch demand without cancelling another branch's requests."""
     branches = BranchStore(registry.paths.control)
     topology = branches.read().topology
-    name = topology.require_checkout(checkout)
+    name = topology.registered_checkout(checkout)
     return registry.request_cancellation(
         **selection, branch_registry_id=topology.records[name].registry_id
     )
@@ -329,7 +343,7 @@ def logs(registry, *, checkout: Path, selection: dict, instance_level: bool) -> 
     """Resolve logs of selected branch artifacts or the workers that executed them."""
     from nro.engine.cli import matches_instance_selectors
 
-    name = BranchStore(registry.paths.control).read().topology.require_checkout(checkout)
+    name = BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
     report = status(registry, checkout=checkout, mode="cached")
     visible = set(report["visible_ids"])
     requested_modules = set(selection["modules"])
@@ -386,7 +400,7 @@ def logs(registry, *, checkout: Path, selection: dict, instance_level: bool) -> 
 
 def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None) -> dict:
     """Apply explicit lab-wide pool controls from an authorized checkout."""
-    BranchStore(registry.paths.control).read().topology.require_checkout(checkout)
+    BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
     if operation == "concurrency":
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError("Concurrency must be a positive integer")
@@ -402,7 +416,7 @@ def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None
 
 def require_environment_idle(registry, *, checkout: Path, environment: Path) -> dict:
     """Reject maintenance while any demanded recipe or attempt uses this environment."""
-    BranchStore(registry.paths.control).read().topology.require_checkout(checkout)
+    BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
     if not environment.is_absolute():
         raise ValueError("Environment path must be absolute")
     with registry.connection() as db:
@@ -512,7 +526,7 @@ def main() -> None:
                 dry_run=message["dry_run"],
             )
         elif message["operation"] == "cache":
-            BranchStore(registry.paths.control).read().topology.require_checkout(
+            BranchStore(registry.paths.control).read().topology.registered_checkout(
                 Path(message["checkout"])
             )
             from nro.orchestration.execution_cache import collect_cache
@@ -568,7 +582,7 @@ def main() -> None:
             )
         elif message["operation"] == "publish":
             topology = BranchStore(registry.paths.control).read().topology
-            name = topology.require_checkout(Path(message["checkout"]))
+            name = topology.registered_checkout(Path(message["checkout"]))
             with registry.connection() as db:
                 owner = db.execute(
                     "SELECT registry_id FROM request_owners WHERE request_id=?",

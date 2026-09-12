@@ -160,6 +160,7 @@ def admit_plan(
                 spec.key: recorded[spec.key].revision
                 for spec in (plan.specifications or tuple(item.spec for item in plan.instances))
             },
+            contracts={item.spec.key: item.contract for item in plan.instances},
             terminals=list(plan.terminals),
             inherit=plan.inherit,
             workflow=export_workflow(scientific, registered),

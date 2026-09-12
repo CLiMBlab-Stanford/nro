@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from nro.orchestration.artifact_resolution import (
     ArtifactCandidate,
@@ -60,6 +60,7 @@ def resolve_branch_plan(
     *,
     validate: Callable[[ArtifactCandidate], bool],
     inherit: bool = True,
+    contracts: Mapping[str, dict] | None = None,
 ) -> BranchPlan:
     """Select fresh ancestors and trim computations hidden behind reused outputs.
 
@@ -87,7 +88,14 @@ def resolve_branch_plan(
             raise ValueError("Requested graph lacks a required dependency")
         closure.add(key)
         pending.extend(by_key[key].dependencies)
-    contracts = scientific_contracts(tuple(by_key[key] for key in sorted(closure)))
+    if contracts is None:
+        contracts = scientific_contracts(tuple(by_key[key] for key in sorted(closure)))
+    else:
+        contracts = dict(contracts)
+        if set(contracts) != closure or not all(
+            isinstance(value, dict) for value in contracts.values()
+        ):
+            raise ValueError("Precompiled contracts must cover the requested graph")
     covered: set[str] = set()
     pending = [parent for key in terminals for parent in by_key[key].dependencies]
     while pending:

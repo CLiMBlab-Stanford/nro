@@ -35,7 +35,9 @@ def register_requests(
     control = Path(values["registry"])
     branches = BranchStore(control)
     topology = branches.read().topology
-    name = topology.require_checkout(CHECKOUT)
+    name = topology.registered_checkout(CHECKOUT)
+    if name != "main":
+        name = topology.require_checkout(CHECKOUT)
     owner = topology.records[name].registry_id
     if scientific.record.registry_id != owner:
         raise ValueError("Scientific registry belongs to another checkout")
@@ -43,7 +45,8 @@ def register_requests(
         tuple(plan.instances.values()),
         expected_revisions={key: expected_revisions.get(key) for key in plan.instances},
     )
-    revisions = {row.key: row.revision for row in recorded}
+    records = {row.key: row for row in recorded}
+    revisions = {key: row.revision for key, row in records.items()}
     paths = BranchPaths(
         name, Path(values["bids"]), Path(values["work"]), Path(values["development"])
     )
@@ -72,6 +75,7 @@ def register_requests(
                 ).as_dict(),
                 specifications=[encode_spec(spec) for spec in request.instances],
                 revisions={spec.key: revisions[spec.key] for spec in request.instances},
+                contracts={spec.key: records[spec.key].contract for spec in request.instances},
                 terminals=list(request.terminal_keys),
                 inherit=inherit,
                 workflow=export_workflow(scientific, request.registered),

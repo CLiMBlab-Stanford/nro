@@ -21,6 +21,26 @@ def test_branch_ids_preserve_distinctions():
     assert ids[0] == "dev"
 
 
+def test_branch_validation_is_cached(monkeypatch):
+    import nro.orchestration.branches as branches
+
+    calls = []
+    branches._validated_branch_id.cache_clear()
+
+    class Result:
+        returncode = 0
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(branches.subprocess, "run", run)
+    assert branch_id("feature/cache-test") == "feature%2Fcache-test"
+    assert branch_id("feature/cache-test") == "feature%2Fcache-test"
+    assert len(calls) == 1
+    branches._validated_branch_id.cache_clear()
+
+
 @pytest.mark.parametrize("name", ["", "../bad", "a..b", "a b", "-dev", "HEAD", "a@{b", "a" * 201])
 def test_invalid_branch_ids(name):
     with pytest.raises(ValueError):
@@ -72,6 +92,7 @@ def test_main_branch_name_alone_grants_no_authority(tmp_path, monkeypatch):
         tree.require_checkout(root)
     tree = tree.authorize_checkout("main", root)
     assert tree.require_checkout(root) == "main"
+    assert tree.registered_checkout(root) == "main"
     current[0] = tmp_path / "personal"
     with pytest.raises(ValueError, match="not authorized"):
         tree.require_checkout(current[0])

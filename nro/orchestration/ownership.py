@@ -208,6 +208,56 @@ def write_instance_ownership(
     return receipt_path
 
 
+def missing_instance_ownership(
+    registry: "Registry", instance_ids: Iterable[int]
+) -> tuple[int, ...]:
+    """Return fresh instances whose public recovery records are incomplete."""
+    selected = tuple(sorted(set(instance_ids)))
+    if not selected:
+        return ()
+    rows = []
+    with registry.connection() as db:
+        for offset in range(0, len(selected), 500):
+            batch = selected[offset : offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                dict(row)
+                for row in db.execute(
+                    f"""SELECT i.id,i.instance_key,i.module,i.project,
+                               c.derivative_class,c.directory_label,e.context_json
+                        FROM instances i
+                        JOIN configuration_lineages c ON c.id=i.configuration_lineage_id
+                        LEFT JOIN instance_execution e ON e.instance_id=i.id
+                        WHERE i.id IN ({placeholders})""",
+                    batch,
+                )
+            )
+    missing = []
+    lineages: dict[Path, bool] = {}
+    for row in rows:
+        project_root = registry.paths.bids_root / row["project"]
+        if row["context_json"]:
+            from nro.orchestration.execution_context import ExecutionContext
+
+            context = ExecutionContext.from_dict(json.loads(row["context_json"]))
+            project_root = context.paths.output_project(row["project"])
+        lineage = lineage_record_path(project_root, row["derivative_class"], row["directory_label"])
+        receipt = instance_record_path(
+            project_root,
+            row["derivative_class"],
+            row["directory_label"],
+            row["module"],
+            row["instance_key"],
+        )
+        lineage_exists = lineages.get(lineage)
+        if lineage_exists is None:
+            lineage_exists = lineage.is_file()
+            lineages[lineage] = lineage_exists
+        if not lineage_exists or not receipt.is_file():
+            missing.append(row["id"])
+    return tuple(missing)
+
+
 def read_ownership_records(
     bids_root: Path, projects: Iterable[str]
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:

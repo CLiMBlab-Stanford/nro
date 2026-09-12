@@ -130,11 +130,11 @@ def capture_worker_implementation(control: Path, bids_root: Path):
         or str(Path(installed["environment"]) / "bin/python") != record["python"]
         or installed["site"] != record["site"]
         or not Path(record["python"]).is_file()
-        or (installed.get("release") is not None and installed.get("release") != record["release"])
+        or installed.get("release") != record["release"]
     ):
         raise ValueError("The designated scheduler installation changed or is unavailable")
     releases = ReleaseStore(BranchStore(control))
-    if releases.require_approved(checkout) != record["release"]:
+    if releases.require_recorded(checkout, record["release"], check_head=True) != record["release"]:
         raise ValueError(
             "Scheduler release changed; activate it explicitly after draining the pool"
         )
@@ -151,8 +151,6 @@ def capture_worker_implementation(control: Path, bids_root: Path):
     if not (source.root / "nro/orchestration/source_launcher.py").is_file():
         raise ValueError("The designated scheduler source snapshot is incomplete")
     site = capture_site(paths.execution_sites, values)
-    if releases.require_approved(checkout) != record["release"]:
-        raise ValueError("Scheduler source changed during capture")
     return source, site, Path(record["python"])
 
 

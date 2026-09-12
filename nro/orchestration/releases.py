@@ -283,3 +283,17 @@ class ReleaseStore:
             if len(matches) != 1:
                 raise ValueError("Main source has no matching installed release record")
             return matches[0]
+
+    def require_recorded(self, checkout: Path, expected: dict, *, check_head: bool = False) -> dict:
+        """Match an installed release record, optionally checking the current Git commit."""
+        checkout = Path(checkout).expanduser().resolve()
+        with self.branches._lock():
+            snapshot = self.branches.read()
+            if snapshot.topology.registered_checkout(checkout) != "main":
+                raise ValueError("Production release source must be an authorized main checkout")
+            matches = [row for row in self._read() if row == expected]
+            if len(matches) != 1:
+                raise ValueError("Main source has no matching installed release record")
+        if check_head and _git(checkout, "rev-parse", "HEAD") != expected["commit"]:
+            raise ValueError("Main checkout changed; rerun shared installation maintenance")
+        return matches[0]

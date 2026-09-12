@@ -46,6 +46,7 @@ def test_scene_parser_uses_shared_selectors() -> None:
 def test_scene_viewer_uses_an_x11_slurm_allocation(monkeypatch) -> None:
     calls = []
     monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
 
@@ -58,6 +59,24 @@ def test_scene_viewer_uses_an_x11_slurm_allocation(monkeypatch) -> None:
     assert "--account=lab" in argv
     assert argv[-2:] == ["/opt/workbench/wb_view", "/data/example.scene"]
     assert options == {"check": True}
+
+
+def test_scene_viewer_reuses_an_existing_slurm_allocation(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setenv("SLURM_JOB_ID", "1234")
+    monkeypatch.setattr(
+        shutil, "which", lambda _name: pytest.fail("existing allocations do not invoke srun")
+    )
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+
+    run_x11(
+        ["/opt/workbench/wb_view", "/data/example.scene"],
+        partition="interactive",
+        account="lab",
+    )
+
+    assert calls == [(["/opt/workbench/wb_view", "/data/example.scene"], {"check": True})]
 
 
 def test_scene_viewer_requires_an_x11_display(monkeypatch) -> None:
