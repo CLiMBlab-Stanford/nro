@@ -13,17 +13,19 @@ instances from the site-wide registry. Within each instance, a shared `Runner`
 owns a graph of `Step` declarations and executes them in dependency order.
 
 ```text
-anat ──► func ──► clean ──┬─► dynconn
-  │                       └─► microparcellation ──► networks
-  └──────────── anatomical geometry and transforms ─────────►
+anat ──► func ──┬─► clean ──┬─► dynconn
+  │             │           └─► microparcellation ──► networks
+  │             └─► firstlevels
+  └── direct anatomical inputs ──► {clean, networks, firstlevels}
 ```
 
 The sequence is not a chain of monolithic cluster jobs. There are many run-wise
 `func` and `clean` instances, followed by subject-level aggregation. From
 `clean` onward, space and smoothing are independent scheduling entities.
-The module pages specify additional direct anatomy dependencies.
+The module pages specify how `clean`, `networks`, and `firstlevels` use their
+direct anatomy dependencies.
 
-`firstlevels` forms a separate branch from `func`, with a direct `anat`
+`firstlevels` follows a separate path from `func`, with a direct `anat`
 dependency for geometry. One participant/model/space/smoothing instance fits its
 runs independently and follows its Stats Models graph to publish within-subject
 summaries. It does not consume `clean` or run population-level analyses.

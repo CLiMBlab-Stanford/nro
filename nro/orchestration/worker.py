@@ -29,7 +29,12 @@ from nro.orchestration.execution import (
 )
 from nro.orchestration.execution_cache import cleanup_cache
 from nro.orchestration.manifests import assess_registry, record_completion
-from nro.orchestration.registry import Registry, ensure_shared_directory, utcnow
+from nro.orchestration.registry import (
+    Registry,
+    RegistryLockTimeout,
+    ensure_shared_directory,
+    utcnow,
+)
 from nro.orchestration.scheduler_implementation import validate_worker_script
 
 COMPATIBLE = {
@@ -37,6 +42,7 @@ COMPATIBLE = {
     "medium": ("medium", "small"),
     "small": ("small",),
 }
+HEARTBEAT_INTERVAL = 30.0
 
 
 def _append_event(registry: Registry, instance: ExecutionEnvelope, event: dict) -> None:
@@ -543,6 +549,15 @@ class Worker:
                     return self.stop_requested or scheduler_cancelled, scheduler_cancelled
 
                 self.registry.record_attempt_process(attempt_id, -1)
+                last_heartbeat = 0.0
+
+                def heartbeat() -> None:
+                    nonlocal last_heartbeat
+                    now = time.monotonic()
+                    if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                        self.registry.heartbeat_worker(self.worker_id, state="running")
+                        last_heartbeat = now
+
                 result = self.launcher.run(
                     instance,
                     stdout=log,
@@ -559,9 +574,7 @@ class Worker:
                     },
                     poll_interval=self.poll_interval,
                     cancellation_state=cancellation_state,
-                    heartbeat=lambda: self.registry.heartbeat_worker(
-                        self.worker_id, state="running"
-                    ),
+                    heartbeat=heartbeat,
                     process_started=lambda group: self.registry.record_attempt_process(
                         attempt_id, group
                     ),
@@ -690,6 +703,19 @@ class Worker:
                 self.registry,
                 instance,
                 {"event": "attempt_cancelled", "attempt_id": attempt_id, "error": str(error)},
+            )
+        except RegistryLockTimeout as error:
+            message = f"Registry temporarily unavailable: {error}"
+            self.registry.finish_attempt(
+                attempt_id,
+                state="cancelled",
+                error_type="RegistryUnavailable",
+                error_message=message,
+            )
+            _append_event(
+                self.registry,
+                instance,
+                {"event": "attempt_cancelled", "attempt_id": attempt_id, "error": message},
             )
         except BaseException as error:
             message = f"{type(error).__name__}: {error}"

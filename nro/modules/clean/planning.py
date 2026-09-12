@@ -31,6 +31,7 @@ def plan_instances(
 ) -> tuple[InstanceSpec, ...]:
     """Construct requested space/smoothing instances for each selected run."""
     func_by_prefix = {instance.output_prefix: instance for instance in upstream["func"]}
+    anat = upstream["anat"][0]
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     runtime_config = context.runtime_config(descriptor.configuration_class)
@@ -75,7 +76,7 @@ def plan_instances(
                         str(smoothing),
                         *run_arguments(run),
                     ),
-                    dependencies=(func_by_prefix[run.stem].key,),
+                    dependencies=(func_by_prefix[run.stem].key, anat.key),
                     input_paths=clean_direct_inputs(run, clean_values),
                     output_root=output_root,
                     output_prefix=prefix,

@@ -16,7 +16,12 @@ from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.manifests import assess_registry, file_record
 from nro.orchestration.publish import publish
-from nro.orchestration.registry import Registry, RegistryLock, discover_registry_projects
+from nro.orchestration.registry import (
+    Registry,
+    RegistryLock,
+    RegistryLockTimeout,
+    discover_registry_projects,
+)
 from nro.orchestration.worker import Worker
 
 
@@ -300,6 +305,62 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     rows = {row["module"]: row for row in registry.instance_rows()}
     assert states[rows["anat"]["id"]][0] == "stale"
     assert states[rows["networks"]["id"]][0] == "stale"
+
+
+def test_registry_lock_timeout_cancels_and_retries_scientific_work(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import nro.orchestration.worker as worker_module
+
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    output = tmp_path / "outputs" / "network.txt"
+    instance = _spec(
+        key="networks:" + "c" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=output,
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(instance,),
+        terminal_instance_keys=(instance.key,),
+        concurrency=1,
+        partition=None,
+    )
+    original = worker_module.record_completion
+    calls = 0
+
+    def intermittent_completion(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RegistryLockTimeout("busy")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "record_completion", intermittent_completion)
+
+    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
+
+    row = registry.instance_rows()[0]
+    assert row["artifact_state"] == "fresh"
+    with registry.connection() as db:
+        attempts = list(
+            db.execute(
+                "SELECT state,error_type FROM attempts WHERE instance_id=? ORDER BY id",
+                (row["id"],),
+            )
+        )
+    assert [tuple(attempt) for attempt in attempts] == [
+        ("cancelled", "RegistryUnavailable"),
+        ("success", None),
+    ]
 
 
 def test_resumed_instance_reuses_one_fixed_instance_log(tmp_path: Path) -> None:
@@ -637,6 +698,61 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     assert row["attempt_state"] == "error"
     assert row["status"] == "Missing"
     assert row["artifact_reason"] == "Purged by user"
+
+
+def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    upstream = _spec(
+        key="anat:" + "k" * 64,
+        module="anat",
+        lineage=registered.lineages["preprocessing"],
+        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        output=tmp_path / "outputs" / "anat.txt",
+    )
+    downstream = _spec(
+        key="networks:" + "l" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "networks.txt",
+        dependencies=(upstream.key,),
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        instances=(upstream, downstream),
+        terminal_instance_keys=(downstream.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("failed-worker", resource_class="large")
+    claimed = registry.claim_ready_instance("failed-worker", ("large",))
+    assert claimed is not None and claimed.instance_key == upstream.key
+    registry.finish_attempt(
+        claimed.attempt_id,
+        state="error",
+        error_type="RuntimeError",
+        error_message="rebuild failure",
+    )
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user' "
+            "WHERE instance_key=?",
+            (upstream.key,),
+        )
+
+    snapshot = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
+    root_id = snapshot[upstream.key]["id"]
+    assert snapshot[upstream.key]["status"] == "Error"
+    assert snapshot[upstream.key]["root_failure_ids"] == (root_id,)
+    assert snapshot[downstream.key]["status"] == "Blocked"
+    assert snapshot[downstream.key]["root_failure_ids"] == (root_id,)
 
 
 def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:

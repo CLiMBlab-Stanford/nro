@@ -292,10 +292,18 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
         "entities_json": "{}",
         "workflow_ids": "main",
         "root_failure_ids": (),
-        "status": "Success",
+        "status": "Error",
+        "error_message": "direct failure",
+        "log_path": None,
         "artifact_reason": "Current",
         "current_generation": 1,
         "memory_gb": 2,
+    }
+    second_row = {
+        **row,
+        "id": 2,
+        "participant": "02",
+        "error_message": "second direct failure",
     }
 
     monkeypatch.setattr(site, "CHECKOUT", checkout)
@@ -314,8 +322,8 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
     def scheduler_status(*_args, **kwargs):
         calls.append(kwargs["mode"])
         return {
-            "rows": [row],
-            "visible_ids": [1],
+            "rows": [row, second_row],
+            "visible_ids": [1, 2],
             "dependencies": [],
             "ingestion": [],
         }
@@ -326,7 +334,11 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
 
     report = json.loads(capsys.readouterr().out)
     assert calls == ["cached"]
-    assert [item["project"] for item in report["instances"]] == ["demo"]
+    assert [item["project"] for item in report["instances"]] == ["demo", "demo"]
+    assert [item["message"] for item in report["errors"]] == [
+        "direct failure",
+        "second direct failure",
+    ]
 
 
 def test_run_repair_rebuilds_registry_and_discovers_source_tree(

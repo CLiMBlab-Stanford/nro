@@ -124,7 +124,7 @@ BUILTIN_MODULES = (
         scope="run",
         output_format="BIDS cleaned functional images and module manifest",
         resource_class="medium",
-        upstream_modules=("func",),
+        upstream_modules=("func", "anat"),
         plan=plan_clean_instances,
         processing_contract=_clean_processing_contract,
     ),
