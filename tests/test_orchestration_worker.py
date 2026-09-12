@@ -1318,6 +1318,19 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
     assert tuple(attempt) == ("cancel_requested", "WorkerTerminated")
     assert registry.instance_rows()[0]["demanded"] == 1
 
+    finalized = registry.confirm_worker_shutdown(("alice-worker",))
+
+    assert finalized == {"workers": 1, "attempts": 1, "ingestion": 0}
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='alice-worker'").fetchone()[0] == (
+            "terminated"
+        )
+        assert (
+            db.execute("SELECT state FROM attempts WHERE id=?", (claimed.attempt_id,)).fetchone()[0]
+            == "cancelled"
+        )
+    assert registry.instance_rows()[0]["demanded"] == 1
+
 
 def test_repair_shutdown_covers_all_users_and_blocks_late_workers(tmp_path: Path) -> None:
     bids = tmp_path / "bids"

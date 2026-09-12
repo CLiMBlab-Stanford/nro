@@ -128,7 +128,8 @@ def prepare_pool(
     if failures:
         raise RuntimeError("Could not stop worker allocation(s): " + "; ".join(failures))
     wait_for_worker_shutdown(registry)
-    return {**summary, "action": action, "stopped_jobs": stopped}
+    finalized = registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
+    return {**summary, "action": action, "stopped_jobs": stopped, "finalized": finalized}
 
 
 def publish(checkout: Path, registry: Registry) -> dict:
