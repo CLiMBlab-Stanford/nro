@@ -16,7 +16,7 @@ from nro.engine.bids import (
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
 from nro.engine.io import flatten_paths
-from nro.engine.paths import preprocessing_subject_anat_dir
+from nro.engine.paths import anatomical_manifest_path
 from nro.engine.publication import write_json_atomic
 from nro.engine.surface_geometry import surface_geometry
 from nro.engine.targets import (
@@ -77,13 +77,12 @@ def infer_gray_matter_mask(
         raise ValueError(
             "participant and preprocessing_directory are required for a native-space mask"
         )
-    anat_dir = preprocessing_subject_anat_dir(
+    manifest_path = anatomical_manifest_path(
         f"sub-{participant}",
         project=project,
         preprocessing_id=preprocessing_directory,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
-    manifest_path = Path(anat_dir) / f"sub-{participant}_desc-preprocessAnat_manifest.json"
     if execution_context is not None:
         manifest_path = execution_context.input_path(manifest_path)
     if not manifest_path.is_file():
@@ -138,16 +137,15 @@ def make_target_config(
         output_base = execution_context.output_path(output_base)
         work_base = execution_context.output_path(work_base, private=True)
     if target.domain == "surface":
-        anat_path = preprocessing_subject_anat_dir(
+        manifest_path = anatomical_manifest_path(
             sub_id,
             project=project,
             preprocessing_id=config["preprocessing_directory"],
             bids_root=None if execution_context is None else execution_context.paths.bids,
         )
         if execution_context is not None and target.space == "fsnative":
-            anat_path = execution_context.input_path(
-                anat_path / f"{sub_id}_desc-preprocessAnat_manifest.json"
-            ).parent
+            manifest_path = execution_context.input_path(manifest_path)
+        anat_path = manifest_path.parent
         surfaces = surface_geometry(
             anat_path,
             participant,

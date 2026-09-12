@@ -77,7 +77,7 @@ def test_cli_can_register_without_participant_and_infer_session(
         return next(answers)
 
     monkeypatch.setattr(cli, "ask", answer)
-    cli.main(["--server", "cni", "-P", "demo", "--bids-root", str(root), "--no-submit"])
+    cli.main(["--server", "cni", "-P", "demo", "--no-submit"])
     (row,) = IngestionStore(registry).rows()
     assert row["participant"] is None
     assert row["session"] == ("ex123" if configured else None)
@@ -326,8 +326,6 @@ def test_rebidsify_cannot_redirect_external_session(tmp_path, monkeypatch):
                 "-P",
                 "different",
                 "--rebidsify",
-                "--bids-root",
-                str(root),
                 "--no-submit",
             ]
         )
@@ -356,7 +354,7 @@ def test_external_rebidsify_retains_subject_and_session(tmp_path, monkeypatch, p
     )
     answers = iter(["all", participant, "y"])
     monkeypatch.setattr(cli, "ask", lambda *_: next(answers))
-    args = ["--server", "cni", "-P", "demo", "--rebidsify", "--bids-root", str(root), "--no-submit"]
+    args = ["--server", "cni", "-P", "demo", "--rebidsify", "--no-submit"]
     if participant == "t20":
         cli.main(args)
         (row,) = IngestionStore(registry).rows()
@@ -415,6 +413,19 @@ def test_cli_only_contacts_selected_flywheel_project(tmp_path, monkeypatch, caps
         return SimpleNamespace(sessions=SimpleNamespace(iter=lambda: iter([session])))
 
     monkeypatch.setattr(cli, "load_config", lambda _: config)
+    site_values, site_sources = cli.settings()
+    monkeypatch.setattr(
+        cli,
+        "settings",
+        lambda: (
+            {
+                **site_values,
+                "flywheel_server": "cni",
+                "flywheel_project": "test/demo",
+            },
+            site_sources,
+        ),
+    )
     monkeypatch.setattr(cli.Registry, "for_project", lambda *a, **k: registry)
     monkeypatch.setattr(
         cli,
@@ -427,14 +438,21 @@ def test_cli_only_contacts_selected_flywheel_project(tmp_path, monkeypatch, caps
         raise EOFError
 
     monkeypatch.setattr(cli, "ask", answer)
-    argv = ["-P", "destination", "--bids-root", str(root), "--no-submit"]
-    if not mapped:
-        argv += ["--server", "cni", "--flywheel-project", "test/demo"]
+    argv = ["-P", "destination", "--no-submit"]
     cli.main(argv)
     assert calls == ["test/demo"]
     output = capsys.readouterr().out
     assert "selected-session" in output and "another/lab" not in output
     assert "BIDS project: destination" in output
+
+
+def test_bidsify_parser_accepts_short_flywheel_selectors() -> None:
+    from nro.bin.bidsify import build_parser
+
+    args = build_parser().parse_args(["-f", "cni", "-F", "group/project"])
+
+    assert args.flywheel_server == "cni"
+    assert args.flywheel_project == "group/project"
 
 
 def test_cli_omits_existing_before_prompting_and_writes_no_records(tmp_path, monkeypatch, capsys):
@@ -455,7 +473,7 @@ def test_cli_omits_existing_before_prompting_and_writes_no_records(tmp_path, mon
     monkeypatch.setattr(
         cli, "ask", lambda *a: pytest.fail("An existing external session was offered")
     )
-    cli.main(["--server", "cni", "-P", "demo", "--bids-root", str(root), "--no-submit"])
+    cli.main(["--server", "cni", "-P", "demo", "--no-submit"])
     assert "Omitted 1 sessions already bidsified" in capsys.readouterr().out
     assert IngestionStore(registry).rows() == []
 
@@ -481,6 +499,6 @@ def test_cli_rebidsify_lists_existing_before_mapping(tmp_path, monkeypatch, caps
         raise EOFError
 
     monkeypatch.setattr(cli, "ask", cancel)
-    cli.main(["--server", "cni", "-P", "demo", "--bids-root", str(root), "--rebidsify"])
+    cli.main(["--server", "cni", "-P", "demo", "--rebidsify"])
     output = capsys.readouterr().out
     assert "already bidsified" in output and str(target) in output

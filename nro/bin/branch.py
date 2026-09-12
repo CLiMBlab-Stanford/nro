@@ -7,7 +7,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import checkout_identity
 from nro.orchestration.control_paths import ControlPaths
@@ -26,9 +25,6 @@ def build_parser(*, prog: str = "nro branch") -> argparse.ArgumentParser:
         "--checkout", type=Path, default=Path.cwd(), help="Checkout to register or inspect"
     )
     parser.add_argument("--parent", help="Registered parent; new feature branches default to dev")
-    parser.add_argument(
-        "--bids-root", type=Path, default=BIDS_PATH, help="Select the shared registry context"
-    )
     parser.add_argument("--json", action="store_true")
     definitions = parser.add_mutually_exclusive_group()
     definitions.add_argument(
@@ -89,7 +85,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro branch") -> None:
         parser.error("reparent requires --parent")
     if args.parent and args.action not in {"register", "reparent"}:
         parser.error("--parent applies only to register and reparent")
-    paths = RegistryPaths.for_project("", bids_root=args.bids_root)
+    from nro.configuration.site import bids_root
+
+    paths = RegistryPaths.for_project("", bids_root=bids_root())
     store = BranchStore(paths.control)
     try:
         if args.action == "list":

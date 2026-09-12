@@ -42,7 +42,6 @@ engine. Their remaining options are command-specific.
 | `--task TASK ...` | Tasks; intersects `--run task=...` when both are supplied. |
 | `--model MODEL ...` | Firstlevels variants or qualified `TASK/VARIANT` IDs. |
 | `--model-set SET ...` | Memberships declared in task YAML. |
-| `--bids-root PATH` | Override the directory containing projects. |
 
 Run selectors combine different keys with AND and values for a key with OR.
 Space and smoothing values expand as a cross-product. Run selectors describe
@@ -65,3 +64,4 @@ See [task models](../task-models.md) for examples and freshness rules.
 
 All commands support `-h`/`--help`. Parse failures and operational errors exit
 nonzero. Progress/errors may go to stderr even when a command offers `--json`.
+Commands always use the BIDS root from the global site configuration.

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Sequence
 
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
-from nro.orchestration.source_launcher import verify_source
+from nro.orchestration.source_launcher import verify_manifest, verify_source
 
 
 def _digest(value: dict) -> str:
@@ -76,11 +76,28 @@ class SourceSnapshot:
         """Reject missing, added, modified, or symlinked source files."""
         verify_source(self.root, self.digest)
 
-    def command(self, command: Sequence[str], *, site: Path | None = None) -> tuple[str, ...]:
+    def verify_manifest(self) -> None:
+        """Validate the snapshot identity and launcher without reading package data."""
+        verify_manifest(self.root, self.digest)
+
+    def supports_manifest_only(self) -> bool:
+        """Return whether this verified launcher supports lightweight validation."""
+        self.verify_manifest()
+        launcher = self.root / "nro/orchestration/source_launcher.py"
+        return b"MANIFEST_ONLY_PROTOCOL = 1" in launcher.read_bytes()
+
+    def command(
+        self,
+        command: Sequence[str],
+        *,
+        site: Path | None = None,
+        manifest_only: bool = False,
+    ) -> tuple[str, ...]:
         """Bind a Python -m nro command to this source tree, retaining its arguments.
 
-        The launcher verifies source and, when supplied, the resolved site file
-        before running nro. The caller must separately select the Python environment.
+        The launcher verifies the full source by default. Administrative callers may
+        validate only the manifest and launcher for a previously published read-only
+        snapshot. The caller must separately select the Python environment.
         """
         if len(command) < 3 or command[1] != "-m" or not command[2].startswith("nro."):
             raise ValueError("Expected a Python -m nro command")
@@ -89,9 +106,11 @@ class SourceSnapshot:
             raise ValueError("Source snapshot has no execution launcher")
         site_path = str(site.resolve()) if site is not None else "-"
         site_digest = _entry(site)["sha256"] if site is not None else "-"
+        prefix = (str(command[0]), str(launcher))
+        if manifest_only:
+            prefix += ("--manifest-only",)
         return (
-            str(command[0]),
-            str(launcher),
+            *prefix,
             self.digest,
             site_path,
             site_digest,
@@ -112,7 +131,7 @@ class SourceStore:
         """Select a snapshot store without reading or creating it."""
         self.root = Path(root).expanduser().resolve()
 
-    def capture(self, checkout: Path) -> SourceSnapshot:
+    def capture(self, checkout: Path, *, expected_digest: str | None = None) -> SourceSnapshot:
         """Copy source, detect edits during capture, and atomically publish it.
 
         Source files are made read-only to prevent accidental in-place edits.
@@ -123,6 +142,13 @@ class SourceStore:
         checkout = Path(checkout).expanduser().resolve()
         if self.root.is_relative_to(checkout / "nro"):
             raise ValueError("Source store cannot be inside the captured package")
+        if expected_digest is not None:
+            snapshot = SourceSnapshot(self.root / expected_digest, expected_digest)
+            if snapshot.root.is_dir():
+                if source_fingerprint(checkout) != expected_digest:
+                    raise ValueError("Source changed during capture; retry after edits finish")
+                snapshot.verify_manifest()
+                return snapshot
         paths = _files(checkout)
         ensure_shared_directory(self.root)
         with tempfile.TemporaryDirectory(prefix=".capture-", dir=self.root) as temporary:

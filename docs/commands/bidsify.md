@@ -43,7 +43,7 @@ scripts. Use the cluster's approved credential-management procedure.
 ## Select, review, and publish
 
 ```bash
-nro bidsify --server mysite --flywheel-project group/study -P example
+nro bidsify -f mysite -F group/study -P example
 nro status -P example
 nro bidsify --request REQUEST_ID
 ```
@@ -52,17 +52,19 @@ nro bidsify --request REQUEST_ID
 names its source on Flywheel. These names need not match:
 
 ```bash
-nro bidsify --server cni --flywheel-project cashain/climblab -P climblab_multisession
+nro bidsify -f cni -F cashain/climblab -P climblab_multisession
 ```
 
 A configured `project_sources` mapping lists the sources allowed for the
 BIDS project, including sources at different scanning sites. Nro selects the
 sole matching source or asks the user to choose one by server/project name or
-number. `--server` and `--flywheel-project` narrow that choice. This selection happens
-before any sessions are listed. Only that Flywheel project is queried; sessions
-from other projects are not pooled into the list. Explicit selectors that
-match none of the configured sources are rejected. Without a mapping, all
-configured server/project pairs are available for selection.
+number. `-f`/`--flywheel-server` and `-F`/`--flywheel-project` narrow that
+choice. If either option is omitted, bidsify uses its corresponding site
+default when configured. This selection happens before any sessions are listed.
+Only that Flywheel project is queried; sessions from other projects are not
+pooled into the list. Explicit selectors that match none of the configured
+sources are rejected. Without a mapping, all configured server/project pairs
+are available for selection.
 
 Saved requests are offered for the selected server and destination BIDS
 project; the source selector controls new session discovery. `--request`
@@ -78,20 +80,21 @@ data already stored in another project are also omitted by default.
    they agree; otherwise the wizard asks for it. Supply the participant label
    if known, or press Enter to leave it pending. Confirm the inspection
    request. No images are downloaded during inspection.
-2. A worker inventories DICOM files. On the next invocation, confirm each
-   acquisition's type and BIDS entities. For task BOLD, select a suggested
-   `TASK/VARIANT` from the [standard event store](../event-files.md), or supply an events TSV, and
-   confirm that it contains no identifying text. Uncertain acquisitions can be
-   deferred or explicitly ignored. Type `skip` to leave the current session
-   for later, or `q` to exit; completed acquisition decisions remain saved.
-3. A worker downloads and converts the selected images. Anatomy is stripped
-   locally before reaching shared staging. The next review shows converted
-   metadata, asks for any missing BIDS labels, and requests an SBRef and opposite-encoding fieldmap pair for each
-   BOLD acquisition. Numbered candidates must have compatible geometry,
-   encoding, and readout time. Explicit `none` is allowed. Task events can be
-   corrected at this review, including timing that exceeds the converted run.
-   Missing identity does not prevent image preparation. Leave a label pending
-   to retain the sanitized images and resume review later.
+2. Workers inventory the DICOM files, then download and convert them in
+   node-local temporary storage. dcm2niix supplies the initial type. Anatomy is
+   stripped before reaching shared staging. These stages require no terminal
+   interaction.
+3. The next invocation shows the converted metadata and proposed type for each
+   acquisition. Supported non-derived guesses are accepted automatically.
+   Confirm proposed ignores or replace them with a supported type, then supply
+   BIDS entities. For task BOLD, select a suggested `TASK/VARIANT` from the
+   [standard event store](../event-files.md), or supply an events TSV and
+   confirm that it contains no identifying text. The wizard also requests an
+   SBRef and opposite-encoding fieldmap pair for each BOLD acquisition.
+   Numbered candidates must have compatible geometry, encoding, and readout
+   time. Explicit `none` is allowed. Missing identity does not prevent image
+   preparation. Type `skip` to leave the session for later, or `q` to exit;
+   completed decisions remain saved.
 4. A worker organizes the sanitized images through dcm2bids, writes the reviewed
    reference associations, and runs the validator. Failure prevents approval.
 5. The next invocation lists the validated files and their SHA-256 hashes.
@@ -154,16 +157,18 @@ Preprocessing does not replace these choices with temporal matching.
 
 | Option | Meaning |
 | --- | --- |
-| `--server NAME` | Profile name, such as `cni` or `lucas`. |
+| `-f`, `--flywheel-server NAME` | Profile name, such as `cni` or `lucas`. |
 | `-P`, `--project NAME` | One destination BIDS project. |
-| `--flywheel-project GROUP/PROJECT` | One configured source Flywheel project for new sessions. |
+| `-F`, `--flywheel-project GROUP/PROJECT` | One configured source Flywheel project for new sessions. |
 | `-p`, `--participant LABEL ...` | Filter saved requests; a single label also supplies the default for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
 | `--session ID ...` | Filter by remote session IDs, not BIDS session labels. |
 | `--request ID` | Resume one saved request without listing remote sessions. |
 | `--config PATH` | Complete ingestion profile YAML for new requests. |
 | `--rebidsify` | Include sessions already in BIDS, regardless of which tool produced them, and permit a replacement proposal. Approval is still required. |
 | `--no-submit` | Do not supply new workers. Existing workers may still claim queued stages. |
-| `--bids-root PATH` | Override the directory containing destination projects. |
+
+The global site configuration selects the BIDS root. Bidsification cannot
+publish to a different root for one invocation.
 
 Matching a remote session to an existing `sub-…/ses-…` directory is sufficient to
 treat it as already bidsified. nro does not validate externally produced data,
@@ -215,7 +220,7 @@ so later profile edits apply to new requests, not an in-progress conversion.
 | `validator` | Command argument list. The staged dataset path is appended. Nonzero exit blocks publication. |
 | `memory_gb`, `cpus`, `hours` | Worker allocation settings; defaults 32 GiB, 2 CPUs, 12 hours. |
 | `concurrency` | Requested shared limit; default 50. `nro set concurrency=N` updates active ingestion and derivative requests. |
-| `protocols` | Ordered regular-expression suggestions with `pattern`, `datatype`, and `suffix`. The first match is proposed; the operator must confirm it. |
+| `protocols` | Ordered metadata refinements with `pattern`, `datatype`, and `suffix`. The first rule matching `SeriesDescription`, `ProtocolName`, or `SequenceName` applies after dcm2niix supplies a supported `BidsGuess`. |
 | `event_rules` | Additional `task` and absolute glob `pattern` pairs for candidates outside the catalog. All matches are shown; no ambiguous candidate is selected automatically. |
 | `session_rules` | Explicit remote-identity rules for recognizing existing raw BIDS subjects/sessions. Empty in new stores. |
 
@@ -236,7 +241,7 @@ project_sources:
 ```
 
 Then `nro bidsify -P climblab_multisession` offers the two sources.
-Adding `--server cni` selects the CNI source without another prompt.
+Adding `-f cni` selects the CNI source without another prompt.
 Mappings are site-specific; new stores leave them empty. Multiple BIDS datasets
 may draw different sessions from the same source project, but a source session
 has only one destination. An unmapped BIDS dataset requires source selection
@@ -292,24 +297,29 @@ validate the dataset; approval relies on its exit status.
 
 Shared staging is organized as `STAGING/REQUEST_ID/`, with sanitized helpers,
 reviewed events, generated dcm2bids configurations, and a proposed `bids/` tree.
-Raw anatomical archives, DICOMs, converted full-head images, and skull-stripping
-intermediates use only:
+Raw archives, DICOMs, initial converted images, and skull-stripping intermediates
+use only:
 
 ```text
 /tmp/nro/bidsify/SERVER/REMOTE_SESSION_ID/REQUEST_ID/ACQUISITION_ID/
 ```
 
-The acquisition classification is a privacy decision made before transfer.
-Unknown types are not downloaded. Incorrectly classifying anatomy as functional
-would route its source to shared staging; review this step carefully.
-Anatomical staging rejects symlinks, world access, and ownership outside the
+`dcm2niix` derives `BidsGuess` from DICOM metadata during conversion. nro accepts
+supported non-derived guesses, then applies configured metadata rules for known
+refinements such as distinguishing an SBRef from BOLD data. Missing, derived,
+discarded, and unsupported guesses are proposed as ignored. The wizard reports
+each such decision and asks the user to confirm or replace it. An override
+causes preparation to run again before conversion continues.
+
+Temporary staging rejects symlinks, world access, and ownership outside the
 executing user or shared group. Administrators must provision a suitable shared
-group if several users need access. Other raw acquisition files use shared
-staging and are removed after conversion.
+group if several users need access. Raw acquisition files never enter shared
+staging. Accepted helper images and an allowlist of metadata enter shared
+staging only after conversion, sanitization, and skull stripping when needed.
 
 Successful preparation and handled failures remove raw acquisition files.
 Cancellation runs cleanup where the process can handle the termination signal.
-A forced kill or node failure can leave anatomy on that node's `/tmp`; a later
+A forced kill or node failure can leave raw data on that node's `/tmp`; a later
 attempt on another node cannot clean the old node. The saved request records
 the worker hostname. Site-managed temporary cleanup is still required. `/tmp`
 does not guarantee a retention interval, exclusion from backups, or secure

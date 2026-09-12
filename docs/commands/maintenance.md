@@ -97,9 +97,9 @@ nro purge --cache --force
 ```
 
 This mode ignores all artifact selectors, including project, participant,
-module, and workflow. `--bids-root` still selects the registry context. It does
-not remove derivatives, logs, definitions, container images, or dependency
-downloads, and cannot be combined with `--logs`.
+module, and workflow. It uses the BIDS and registry roots from the global site
+configuration. It does not remove derivatives, logs, definitions, container
+images, or dependency downloads, and cannot be combined with `--logs`.
 
 Cache cleanup is conservative: outstanding demand, attempts, workers, scheduler
 submissions, or queued/running ingestion defer collection across the whole
@@ -120,8 +120,9 @@ nro publish REQUEST_ID /destination -P PROJECT
 
 Assess a completed request, copy terminal public files to a staging directory,
 verify checksums, embed recursive provenance, and recheck source generations
-before publishing. `destination` must not already exist. `--bids-root` overrides
-the source root. `--no-validate` skips the optional external BIDS validator.
+before publishing. `destination` must not already exist. The source root comes
+from the global site configuration. `--no-validate` skips the optional external
+BIDS validator.
 Otherwise the validator runs only if available on PATH.
 
 Publication writes `dataset_description.json` and `.nro-publication.json`.

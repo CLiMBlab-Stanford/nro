@@ -15,11 +15,26 @@ from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.source_snapshots import SourceSnapshot
 
 
-def admit(registry, payload: dict, *, checkout: Path, site_values: dict) -> str:
+def admit(
+    registry,
+    payload: dict,
+    *,
+    checkout: Path,
+    site_values: dict,
+    assess: bool = True,
+    source_verified: bool = False,
+) -> str:
     """Keep an installed environment out of maintenance until demand is published."""
     record_path = checkout / ".nro-installation.json"
     if not record_path.exists():
-        return _admit(registry, payload, checkout=checkout, site_values=site_values)
+        return _admit(
+            registry,
+            payload,
+            checkout=checkout,
+            site_values=site_values,
+            assess=assess,
+            source_verified=source_verified,
+        )
     lock = checkout / ".nro-install.lock"
     if not lock.is_file():
         raise ValueError("Installed checkout lacks its maintenance lock; rerun installation")
@@ -33,10 +48,68 @@ def admit(registry, payload: dict, *, checkout: Path, site_values: dict) -> str:
             raise ValueError("The submitting installation is not ready")
         if str(Path(record["environment"]) / "bin/python") != payload["python"]:
             raise ValueError("Request interpreter does not match the installed environment")
-        return _admit(registry, payload, checkout=checkout, site_values=site_values)
+        return _admit(
+            registry,
+            payload,
+            checkout=checkout,
+            site_values=site_values,
+            assess=assess,
+            source_verified=source_verified,
+        )
 
 
-def _admit(registry, payload: dict, *, checkout: Path, site_values: dict) -> str:
+def admit_many(registry, entries: list[dict], *, checkout: Path, site_values: dict) -> list[str]:
+    """Admit one invocation's requests after one source check and registry assessment."""
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Admission batch must contain at least one request")
+    projects = []
+    sources = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"project", "payload"}:
+            raise ValueError("Invalid admission batch entry")
+        project, payload = entry["project"], entry["payload"]
+        if not isinstance(project, str) or not project or payload.get("project") != project:
+            raise ValueError("Admission batch project does not match its payload")
+        projects.append(project)
+        descriptor = payload.get("source")
+        if not isinstance(descriptor, dict) or set(descriptor) != {"root", "digest"}:
+            raise ValueError("Admission batch has an invalid source")
+        sources[(descriptor["root"], descriptor["digest"])] = SourceSnapshot(
+            Path(descriptor["root"]), descriptor["digest"]
+        )
+    for source in sources.values():
+        source.verify_manifest()
+    from nro.orchestration.manifests import assess_registry
+
+    assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=True)
+    from nro.orchestration.registry import Registry
+
+    return [
+        admit(
+            Registry.for_project(
+                entry["project"],
+                bids_root=registry.paths.bids_root,
+                registry_path=registry.paths.control,
+            ),
+            entry["payload"],
+            checkout=checkout,
+            site_values=site_values,
+            assess=False,
+            source_verified=True,
+        )
+        for entry in entries
+    ]
+
+
+def _admit(
+    registry,
+    payload: dict,
+    *,
+    checkout: Path,
+    site_values: dict,
+    assess: bool = True,
+    source_verified: bool = False,
+) -> str:
     """Validate and admit a detached graph without opening its scientific registry.
 
     The transport holds the cache publication lock until this call returns.
@@ -45,7 +118,8 @@ def _admit(registry, payload: dict, *, checkout: Path, site_values: dict) -> str
     """
     branches = BranchStore(registry.paths.control)
     source = SourceSnapshot(Path(payload["source"]["root"]), payload["source"]["digest"])
-    source.verify()
+    if not source_verified:
+        source.verify()
     if type(payload.get("demand", True)) is not bool:
         raise ValueError("Demand must be a boolean")
     if type(payload["concurrency"]) is not int or payload["concurrency"] < 1:
@@ -64,9 +138,10 @@ def _admit(registry, payload: dict, *, checkout: Path, site_values: dict) -> str
     contracts = scientific_contracts(specs)
     if set(payload["revisions"]) != set(contracts):
         raise ValueError("Scientific revisions must cover the complete request")
-    from nro.orchestration.manifests import assess_registry
+    if assess:
+        from nro.orchestration.manifests import assess_registry
 
-    assess_registry(registry, projects=(context.project,), compiled=True)
+        assess_registry(registry, projects=(context.project,), compiled=True)
     if payload["branch"] == "main":
         from nro.orchestration.releases import ReleaseStore
 
@@ -254,20 +329,26 @@ def logs(registry, *, checkout: Path, selection: dict, instance_level: bool) -> 
     """Resolve logs of selected branch artifacts or the workers that executed them."""
     from nro.engine.cli import matches_instance_selectors
 
+    name = BranchStore(registry.paths.control).read().topology.require_checkout(checkout)
     report = status(registry, checkout=checkout, mode="cached")
     visible = set(report["visible_ids"])
+    requested_modules = set(selection["modules"])
+    bidsify_selected = "bidsify" in requested_modules
+    scientific_modules = requested_modules - {"bidsify"}
+    scientific_selected = not requested_modules or bool(scientific_modules)
     selected = [
         row
         for row in report["rows"]
-        if row["id"] in visible
+        if scientific_selected
+        and row["id"] in visible
         and all(
             not selection[key] or row[field] in selection[key]
             for key, field in (
                 ("projects", "project"),
                 ("participants", "participant"),
-                ("modules", "module"),
             )
         )
+        and (not scientific_modules or row["module"] in scientific_modules)
         and (
             not selection["workflows"]
             or set(selection["workflows"]).intersection(row["workflow_ids"].split(","))
@@ -285,6 +366,21 @@ def logs(registry, *, checkout: Path, selection: dict, instance_level: bool) -> 
                     JOIN workers w ON w.id=a.worker_id WHERE w.slurm_job_id IS NOT NULL""")
                 if row["instance_id"] in ids
             ]
+    if bidsify_selected and not selection["workflows"] and set(selection["selectors"]) <= {"ses"}:
+        from nro.bidsify.store import IngestionStore
+
+        sessions = selection["selectors"].get("ses", ())
+        store = IngestionStore(registry, branch=name)
+        paths.extend(
+            str(store.root / f"{row['id']}.log")
+            for row in report["ingestion"]
+            if (
+                not selection.get("ingestion_projects")
+                or row["project"] in selection["ingestion_projects"]
+            )
+            and (not selection["participants"] or row["participant"] in selection["participants"])
+            and (not sessions or row["session"] in sessions)
+        )
     return {"paths": sorted(set(paths))}
 
 
@@ -358,6 +454,15 @@ def main() -> None:
                 registry, message["payload"], checkout=Path(message["checkout"]), site_values=values
             )
             result = {"request_id": request_id}
+        elif message["operation"] == "admit_many":
+            result = {
+                "request_ids": admit_many(
+                    registry,
+                    message["entries"],
+                    checkout=Path(message["checkout"]),
+                    site_values=values,
+                )
+            }
         elif message["operation"] == "supply":
             result = supply(
                 registry,

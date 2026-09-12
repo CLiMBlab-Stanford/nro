@@ -498,7 +498,14 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         by_module["anat"][0].key,
     )
     assert by_module["microparcellation"][0].entities == {"space": "fsnative", "smoothing": "2"}
-    assert by_module["microparcellation"][0].dependencies == (by_module["clean"][0].key,)
+    assert by_module["microparcellation"][0].dependencies == (
+        by_module["clean"][0].key,
+        by_module["anat"][0].key,
+    )
+    assert any(
+        path.name == "sub-01_desc-preprocessAnat_manifest.json"
+        for path in by_module["microparcellation"][0].input_paths
+    )
     assert by_module["microparcellation"][0].instance_contract["processing"] == {
         "output_metadata": microparcellation_output_contract()
     }
@@ -641,6 +648,40 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         (item.entities["space"], item.entities["smoothing"]): item.key
         for item in by_module["clean"]
     }
+    anat_key = by_module["anat"][0].key
     for item in by_module["microparcellation"]:
         pair = (item.entities["space"], item.entities["smoothing"])
-        assert item.dependencies == (clean_keys[pair],)
+        assert item.dependencies == (clean_keys[pair], anat_key)
+
+
+@pytest.mark.parametrize("space", ["MNI152NLin2009cAsym", "fsaverage6"])
+def test_template_microparcellation_does_not_add_an_unused_anatomy_edge(
+    tmp_path: Path, space: str
+) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(workflow)
+
+    instances = build_subject_instances(
+        project="demo",
+        participant="01",
+        module="microparcellation",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+        spaces=(space,),
+        smoothing_levels=(2,),
+    )
+    anatomy = next(item for item in instances if item.module == "anat")
+    clean = next(item for item in instances if item.module == "clean")
+    micro = next(item for item in instances if item.module == "microparcellation")
+
+    assert micro.dependencies == (clean.key,)
+    assert anatomy.key not in micro.dependencies
+    assert not any("preprocessAnat_manifest" in path.name for path in micro.input_paths)

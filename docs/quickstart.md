@@ -49,6 +49,9 @@ every setting. In particular:
 - `license` must name an existing FreeSurfer license.
 - `runtime` selects Singularity or Apptainer.
 - `partition` and `account` must match the Slurm site. Enter `-` for no account.
+- `viewing_partition` selects the Slurm partition for X11 scene-viewing jobs.
+- `flywheel_server` and `flywheel_project` may select the usual ingestion
+  source. Enter `-` to leave either value unset.
 
 The Slurm fields are unused with `--local`. Review the linked QuNex terms before
 approving downloads. Setup creates an editable `.nro-env`, obtains missing

@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.configuration.store import ConfigStore
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.orchestration.catalog import MODULES, normalize_module, terminal_modules
@@ -74,7 +73,6 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
         planner_defaults=True,
         default_modules=terminal_modules(),
     )
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     from nro.configuration.site import settings
 
     site, _ = settings()
@@ -138,16 +136,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
     args = build_parser(prog=prog).parse_args(argv)
-    from nro.configuration.site import installation_record
+    from nro.configuration import site
 
-    record = installation_record()
+    record = site.installation_record()
     if record.get("mode") in {"shared", "branch"} and not record.get("ready") and not args.repair:
         raise SystemExit("The installation is undergoing setup or maintenance")
     try:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    bids_root = site.bids_root()
     if args.repair:
         explicit_selections = {
             "--participant": args.participant,
@@ -167,18 +165,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 "--repair covers all projects and cannot be combined with selection options: "
                 + ", ".join(supplied)
             )
-        from nro.configuration.site import CHECKOUT, settings
         from nro.orchestration.scheduler_implementation import implementation_path
 
-        values = settings()[0]
+        values = site.settings()[0]
         if (
             record.get("mode") == "branch"
             or implementation_path(Path(values["registry"])).is_file()
         ):
             from nro.orchestration.branch_repair import repair_checkout
-
-            if bids_root != Path(values["bids"]).resolve():
-                raise SystemExit("Branch repair uses the shared site BIDS root")
 
             def confirm(activity):
                 print(
@@ -195,7 +189,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
             try:
                 result = repair_checkout(
-                    Path(values["registry"]), bids_root, CHECKOUT, confirm=confirm
+                    Path(values["registry"]), bids_root, site.CHECKOUT, confirm=confirm
                 )
             except (ValueError, RuntimeError, OSError) as error:
                 raise SystemExit(str(error)) from error
@@ -299,19 +293,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if not projects:
         raise SystemExit(f"No BIDS projects were found under {bids_root}")
 
-    from nro.configuration.site import CHECKOUT, settings
     from nro.orchestration.scheduler_implementation import implementation_path
 
-    values = settings()[0]
+    values = site.settings()[0]
     branch_execution = (
         record.get("mode") == "branch" or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution:
         from nro.orchestration.branch_store import BranchStore
 
-        if bids_root != Path(values["bids"]).resolve():
-            raise SystemExit("Branch execution uses the shared site BIDS root")
-        registry = BranchStore(Path(values["registry"])).registry_for_checkout(CHECKOUT)
+        registry = BranchStore(Path(values["registry"])).registry_for_checkout(site.CHECKOUT)
         new_registry = False
     else:
         registry = Registry.for_project(projects[0], bids_root=bids_root)
@@ -394,7 +385,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         result = supply(
             Path(values["registry"]),
             bids_root,
-            checkout=CHECKOUT,
+            checkout=site.CHECKOUT,
             request_ids=request_ids,
             options={
                 key: getattr(args, key)

@@ -205,7 +205,11 @@ def test_release_cli_requires_flags_before_writes(tmp_path):
     from nro.bin.release import main
 
     with pytest.raises(SystemExit) as error:
-        main(["0.0.1", "--bids-root", str(tmp_path / "BIDS")])
+        main(
+            [
+                "0.0.1",
+            ]
+        )
     assert error.value.code == 2
     assert list(tmp_path.iterdir()) == []
 
@@ -221,8 +225,6 @@ def test_release_cli_rejects_mixed_bootstrap_and_pr_attestation(tmp_path):
                 "--pr",
                 "example#1",
                 "--attest-merged",
-                "--bids-root",
-                str(tmp_path / "BIDS"),
             ]
         )
     assert error.value.code == 2

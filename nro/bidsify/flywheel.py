@@ -3,7 +3,6 @@
 import hashlib
 import logging
 import os
-import re
 from pathlib import Path
 
 from .errors import BidsificationError
@@ -84,14 +83,12 @@ class FlywheelSource:
             ) from None
         return result
 
-    def inventory(self, session_id: str, rules: list[dict]) -> list[dict]:
-        """List DICOM files and proposed types without downloading image data."""
+    def inventory(self, session_id: str) -> list[dict]:
+        """List DICOM files without guessing their BIDS types from source labels."""
         result = []
         try:
             session = self.client.get_session(session_id)
             for acquisition in session.acquisitions.iter():
-                matches = [r for r in rules if re.search(r["pattern"], acquisition.label or "")]
-                kind = (matches[0]["datatype"], matches[0]["suffix"]) if matches else (None, None)
                 for file in acquisition.files or []:
                     if file.type != "dicom":
                         continue
@@ -103,11 +100,12 @@ class FlywheelSource:
                             "acquisition": acquisition.id,
                             "file_token": hashlib.sha256(file.name.encode()).hexdigest(),
                             "bytes": int(file.size or 0),
-                            "datatype": kind[0],
-                            "suffix": kind[1],
+                            "datatype": None,
+                            "suffix": None,
                             "source_revision": _revision(file),
                             "confirmed": False,
                             "entities": {},
+                            "entities_confirmed": False,
                             "events": None,
                         }
                     )

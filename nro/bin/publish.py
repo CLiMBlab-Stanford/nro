@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.orchestration.publish import publish
 from nro.orchestration.registry import Registry
 
@@ -16,7 +15,6 @@ def build_parser(*, prog: str = "nro.bin.publish") -> argparse.ArgumentParser:
     parser.add_argument("request")
     parser.add_argument("destination")
     parser.add_argument("-P", "--project", required=True)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--no-validate", action="store_true")
     return parser
 
@@ -38,8 +36,6 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.publish") -> Non
     ):
         from nro.orchestration.scheduler_client import maintenance
 
-        if Path(args.bids_root).resolve() != Path(values["bids"]).resolve():
-            raise SystemExit("Branch publication uses the shared site BIDS root")
         result = maintenance(
             Path(values["registry"]),
             Path(values["bids"]),
@@ -52,7 +48,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.publish") -> Non
         )
         print(f"Published immutable derivative snapshot: {result['destination']}")
         return
-    registry = Registry.for_project(args.project, bids_root=args.bids_root)
+    registry = Registry.for_project(args.project, bids_root=Path(values["bids"]))
     destination = publish(
         registry,
         request_id=args.request,

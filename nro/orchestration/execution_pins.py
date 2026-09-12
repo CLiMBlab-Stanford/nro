@@ -44,7 +44,9 @@ def capture_execution(
     """
     paths = ControlPaths(control)
     paths.require_current_layout()
-    source = SourceStore(paths.implementations).capture(Path(__file__).resolve().parents[2])
+    source = SourceStore(paths.implementations).capture(
+        Path(__file__).resolve().parents[2], expected_digest=expected_source
+    )
     if expected_source is not None and source.digest != expected_source:
         raise ValueError("Source changed during planning; retry the request after edits finish")
     values = dict(site_values) if site_values is not None else settings()[0]

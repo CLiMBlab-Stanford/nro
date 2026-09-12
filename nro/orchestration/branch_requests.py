@@ -52,7 +52,6 @@ def register_requests(
         from nro.orchestration.releases import ReleaseStore
 
         release = ReleaseStore(branches).require_approved(CHECKOUT)
-    results = []
     with cache_lock(control):
         source, site = capture_execution(
             control,
@@ -61,6 +60,7 @@ def register_requests(
             site_values=dict(plan.site_settings),
         )
         central = command(control, paths.bids)
+        entries = []
         for request in plan.requests:
             payload = dict(
                 protocol=1,
@@ -84,14 +84,13 @@ def register_requests(
                 release=release,
                 demand=demand,
             )
-            result = exchange(
-                central,
-                dict(
-                    operation="admit",
-                    checkout=str(CHECKOUT),
-                    project=request.project,
-                    payload=payload,
-                ),
-            )
-            results.append(result["request_id"])
-    return results
+            entries.append(dict(project=request.project, payload=payload))
+        result = exchange(
+            central,
+            dict(
+                operation="admit_many",
+                checkout=str(CHECKOUT),
+                entries=entries,
+            ),
+        )
+    return result["request_ids"]

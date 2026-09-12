@@ -7,6 +7,7 @@ import pytest
 
 import nro.cli as cli
 from nro.bin.run import build_parser as run_parser
+from nro.configuration.site import ENVIRONMENT_KEYS
 
 ROOT = Path(__file__).parents[1]
 
@@ -61,3 +62,11 @@ def test_pyproject_defines_only_the_single_nro_console_script() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
     assert metadata["project"]["scripts"] == {"nro": "nro.cli:main"}
+
+
+def test_public_commands_cannot_override_the_site_bids_root() -> None:
+    sources = list((ROOT / "nro" / "bin").glob("*.py"))
+    sources.append(ROOT / "nro" / "configuration" / "authoring.py")
+
+    assert all("--bids-root" not in path.read_text() for path in sources)
+    assert "NRO_BIDS_PATH" not in ENVIRONMENT_KEYS

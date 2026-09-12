@@ -215,17 +215,31 @@ coordinated maintenance window; neither installation nor registry repair silentl
 moves or adopts the old store.
 
 The site file accepts `definitions`, `bids`, `work`, `registry`, `images`, `templates`,
-`workbench`, `oslom`, `license`, `runtime`, `partition`, `account`, and `binds`.
+`workbench`, `oslom`, `license`, `runtime`, `partition`, `viewing_partition`, `account`,
+`flywheel_server`, `flywheel_project`, and `binds`.
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
 `synthstrip`, `synbold`, and `mni_template` can override individual resources
 otherwise derived from their parent directories. `binds` is a TOML list.
 Generic defaults omit CLIMBLAB's `/juice6` bind.
 
-Personal installations also honor `NRO_BIDS_PATH`, `NRO_WORK_PATH`,
-`NRO_WB_COMMAND`, `TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Shared installations
-use the site file for these values. `nro paths show` reports each value's
-source. The engine supplies the FreeSurfer license and thread settings to
-processing commands.
+`partition` routes scientific workers. `viewing_partition` separately routes
+the X11 allocations created by `nro scene --open`; CLIMBLAB uses
+`dev-interactive`. Viewer allocations do not enter nro's worker pool or shared
+concurrency accounting.
+
+`flywheel_server` and `flywheel_project` are optional defaults for
+`nro bidsify`. The project uses the `GROUP/PROJECT` form. Command-line values
+override these defaults for one invocation. For example:
+
+```bash
+nro paths set flywheel_server=cni flywheel_project=cashain/climblab
+```
+
+Personal installations also honor `NRO_WORK_PATH`, `NRO_WB_COMMAND`,
+`TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Every installation reads the BIDS root
+from its site file. Shared installations use the site file for all paths.
+`nro paths show` reports each value's source. The engine supplies the
+FreeSurfer license and thread settings to processing commands.
 
 Scientific YAML uses explicit `site:KEY` resource references. Resolution with
 the unmodified CLIMBLAB defaults preserves existing workflow fingerprints.

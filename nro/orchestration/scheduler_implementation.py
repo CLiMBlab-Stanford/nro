@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -192,10 +193,23 @@ def require_worker_source(control: Path) -> None:
     if not path.exists():
         return
     record = json.loads(path.read_text())
+    launched_root = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
+    launched_digest = os.environ.get("NRO_EXECUTION_SOURCE_DIGEST")
+    package_root = Path(__file__).resolve().parents[2]
+    if launched_root is not None or launched_digest is not None:
+        expected_root = ControlPaths(control).implementations / record["source_digest"]
+        if (
+            launched_digest == record["source_digest"]
+            and launched_root == str(expected_root)
+            and package_root == expected_root
+            and str(Path(sys.executable)) == record["python"]
+        ):
+            return
+        raise ValueError("Worker did not start from the active central implementation")
     if (
         path.is_symlink()
         or str(Path(sys.executable)) != record["python"]
-        or source_fingerprint(Path(__file__).resolve().parents[2]) != record["source_digest"]
+        or source_fingerprint(package_root) != record["source_digest"]
     ):
         raise ValueError("Start workers through nro run using the active central implementation")
 

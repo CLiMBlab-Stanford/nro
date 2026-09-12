@@ -16,7 +16,11 @@ def command(control: Path, bids_root: Path) -> tuple[str, ...]:
     if not implementation_path(control).is_file():
         raise ValueError("Activate an approved main scheduler before submitting branch work")
     source, site, python = capture_worker_implementation(control, bids_root)
-    return source.command((str(python), "-m", "nro.orchestration.scheduler_service"), site=site)
+    return source.command(
+        (str(python), "-m", "nro.orchestration.scheduler_service"),
+        site=site,
+        manifest_only=source.supports_manifest_only(),
+    )
 
 
 def exchange(command: tuple[str, ...], message: dict, *, descriptors: tuple[int, ...] = ()) -> dict:

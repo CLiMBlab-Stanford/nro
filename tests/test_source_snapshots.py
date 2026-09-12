@@ -55,6 +55,42 @@ def test_snapshot_launcher_imports_captured_not_live_code(tmp_path):
     assert not list(snapshot.root.rglob("__pycache__"))
 
 
+def test_manifest_only_launcher_avoids_reading_unrelated_package_data(tmp_path):
+    root = source(tmp_path)
+    snapshot = SourceStore(tmp_path / "snapshots").capture(root)
+    command = snapshot.command((sys.executable, "-m", "nro.probe"), manifest_only=True)
+    assert command[2] == "--manifest-only"
+    (snapshot.root / "nro/resource.txt").chmod(0o644)
+    (snapshot.root / "nro/resource.txt").write_text("changed")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "original"
+
+
+def test_expected_capture_reuses_published_snapshot_without_copying(tmp_path, monkeypatch):
+    root = source(tmp_path)
+    store = SourceStore(tmp_path / "snapshots")
+    snapshot = store.capture(root)
+
+    def unexpected_copy(*_args, **_kwargs):
+        raise AssertionError("existing snapshots must not be copied again")
+
+    monkeypatch.setattr(shutil, "copyfile", unexpected_copy)
+    assert store.capture(root, expected_digest=snapshot.digest) == snapshot
+    (root / "nro/probe.py").write_text('print("edited")\n')
+    with pytest.raises(ValueError, match="changed during capture"):
+        store.capture(root, expected_digest=snapshot.digest)
+
+
+def test_manifest_only_capability_is_detected_from_verified_launcher(tmp_path):
+    root = source(tmp_path)
+    store = SourceStore(tmp_path / "snapshots")
+    assert store.capture(root).supports_manifest_only()
+    launcher = root / "nro/orchestration/source_launcher.py"
+    launcher.write_text(launcher.read_text().replace("MANIFEST_ONLY_PROTOCOL = 1", ""))
+    assert not store.capture(root).supports_manifest_only()
+
+
 @pytest.mark.parametrize("mutation", ["changed", "extra", "symlink", "missing", "bytecode"])
 def test_verification_rejects_source_changes_at_launch(tmp_path, mutation):
     root = source(tmp_path)
@@ -130,7 +166,10 @@ def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
     assert capture_site(tmp_path / "sites", values) == site
     command = snapshot.command((sys.executable, "-m", "nro.probe"), site=site)
     result = subprocess.run(
-        command, env={"NRO_BIDS_PATH": str(tmp_path / "wrong-BIDS")}, text=True, capture_output=True
+        command,
+        env={"NRO_SITE_CONFIG": str(tmp_path / "wrong-site.toml")},
+        text=True,
+        capture_output=True,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == values["bids"]

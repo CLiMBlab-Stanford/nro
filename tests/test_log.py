@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import nro.bin.log as log_cli
+from nro.bidsify.store import IngestionStore
 from nro.configuration.store import ConfigStore
+from nro.engine.cli import core_selection
+from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.planner import build_subject_instances
 from nro.orchestration.registry import Registry, utcnow
+from nro.orchestration.scheduler_service import logs as scheduler_logs
 
 
 def _write(path: Path, text: str = "log\n") -> Path:
@@ -149,9 +154,84 @@ def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkey
             "-r",
             "run=1",
             "-i",
-            "--bids-root",
-            str(bids),
         ]
     )
 
     assert commands == [["/usr/bin/less", "-R", "--", str(func_instance.resolve())]]
+
+
+def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, monkeypatch) -> None:
+    _bids, registry, *_ = _registry_with_logs(tmp_path)
+    store = IngestionStore(registry)
+    store.root.mkdir(parents=True, exist_ok=True)
+    request_id = "request-01"
+    (store.root / f"{request_id}.json").write_text(
+        json.dumps(
+            {
+                "id": request_id,
+                "project": "demo",
+                "participant": "01",
+                "session": "visit1",
+            }
+        )
+    )
+    request_log = _write(store.root / f"{request_id}.log", "ingestion\n")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(log_cli.shutil, "which", lambda _command: "/usr/bin/less")
+    monkeypatch.setattr(
+        log_cli.subprocess,
+        "run",
+        lambda command, *, check: commands.append(command),
+    )
+
+    log_cli.main(["-m", "bidsify", "-P", "demo", "-p", "01", "-r", "ses=visit1"])
+
+    assert commands == [["/usr/bin/less", "-R", "--", str(request_log.resolve())]]
+    selection = core_selection(log_cli.build_parser().parse_args(["-m", "bidsify"]))
+    assert log_cli.collect_bidsify_log_paths(registry, selection) == [request_log.resolve()]
+
+
+def test_scheduler_resolves_branch_bidsification_logs(tmp_path: Path, monkeypatch) -> None:
+    registry = Registry.for_project("", bids_root=tmp_path / "bids")
+    branches = BranchStore(registry.paths.control)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr(
+        "nro.orchestration.branches.checkout_identity",
+        lambda _checkout: (checkout, "main", "revision"),
+    )
+    branches.authorize_checkout("main", checkout, revision=branches.initialize().revision)
+    store = IngestionStore(registry)
+    store.root.mkdir(parents=True, exist_ok=True)
+    request_id = "request-01"
+    (store.root / f"{request_id}.json").write_text(
+        json.dumps(
+            {
+                "id": request_id,
+                "server": "cni",
+                "project": "demo",
+                "participant": "01",
+                "session": "visit1",
+                "state": "failed",
+                "stage": "convert",
+                "issues": [],
+            }
+        )
+    )
+    request_log = _write(store.root / f"{request_id}.log")
+
+    result = scheduler_logs(
+        registry,
+        checkout=checkout,
+        selection={
+            "projects": [],
+            "ingestion_projects": [],
+            "participants": ["01"],
+            "modules": ["bidsify"],
+            "workflows": [],
+            "selectors": {"ses": ("visit1",)},
+        },
+        instance_level=False,
+    )
+
+    assert result == {"paths": [str(request_log)]}

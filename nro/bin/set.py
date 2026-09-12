@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.orchestration.registry import Registry
 
 
@@ -15,7 +14,6 @@ def build_parser(*, prog: str = "nro.bin.set") -> argparse.ArgumentParser:
     """Construct the set parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("assignments", nargs="+", metavar="NAME=VALUE")
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -57,19 +55,17 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
         else:
             print("No supported registry settings were provided.")
         return
-    bids_root = Path(args.bids_root).expanduser().resolve()
     from nro.configuration import site
     from nro.orchestration.scheduler_implementation import implementation_path
 
     values = site.settings()[0]
+    bids_root = site.bids_root()
     if (
         site.installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     ):
         from nro.orchestration.scheduler_client import pool_operation
 
-        if bids_root != Path(values["bids"]).resolve():
-            raise SystemExit("Pool settings use the shared site BIDS root")
         updated_requests = pool_operation(
             Path(values["registry"]),
             bids_root,

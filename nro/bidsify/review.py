@@ -138,6 +138,8 @@ def choose_indices(answer: str, length: int) -> list[int]:
 
 
 def _entities(answer: str) -> dict:
+    if not answer:
+        return {}
     pairs = [part.split("=", 1) for part in answer.split()]
     if any(len(pair) != 2 for pair in pairs):
         raise ValueError("Use key=value for each entity")
@@ -238,6 +240,8 @@ def _references(
 def wizard(store, record: dict, *, review_token: str) -> dict:
     """Review one leased session, committing decisions and events after each acquisition."""
     prepared = record["stage"] == "convert"
+    if not prepared:
+        raise ValueError("Acquisition review starts after metadata preparation")
     if prepared:
         for field in ("participant", "session"):
             if record[field] is not None:
@@ -256,25 +260,87 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
                     break
                 except ValueError as error:
                     print(str(error))
-    source = None
-    if not prepared:
-        from .flywheel import FlywheelSource
-
-        source = FlywheelSource(record["config"]["servers"][record["server"]])
+    requires_preparation = False
     for index in range(len(record["acquisitions"])):
         event_files = {}
         item = deepcopy(record["acquisitions"][index])
         print(f"\nAcquisition {index + 1}: {item['id']}")
-        if source is not None:
-            print("Remote acquisition: " + source.describe(item))
         if prepared:
             print(json.dumps(item.get("metadata", {}), indent=2))
-            if item["suffix"] != "bold":
+            classification = item.get("classification", {})
+            guess = classification.get("bids_guess")
+            print(
+                "Classification: "
+                + (
+                    f"{item['datatype']}/{item['suffix']}"
+                    if item.get("datatype") != "ignore"
+                    else "ignore"
+                )
+                + (f" (BidsGuess: {'/'.join(guess)})" if guess else "")
+            )
+            print("Reason: " + classification.get("reason", "classification needs review"))
+            item_requires_preparation = False
+            if not item.get("confirmed"):
+                answer = ask(
+                    "Confirm ignore, or replace with anat/T1w, anat/T2w, func/bold, "
+                    "func/sbref, or fmap/epi",
+                    "ignore",
+                )
+                if answer == "ignore":
+                    item["confirmed"] = True
+                else:
+                    kind = tuple(answer.split("/"))
+                    if kind not in ALLOWED_TYPES - {("ignore", "ignore")}:
+                        print("Unsupported type; left unresolved.")
+                        continue
+                    item["datatype"], item["suffix"] = kind
+                    item["classification_override"] = list(kind)
+                    item["confirmed"] = True
+                    item_requires_preparation = True
+                    requires_preparation = True
+            if item["datatype"] == "ignore":
+                record["acquisitions"][index] = item
+                record["approval"] = None
+                record["issues"] = issues(record, prepared=True)
+                record = store.update(
+                    record,
+                    expected_revision=record["revision"],
+                    review_token=review_token,
+                )
                 continue
-            if item["entities"].get("task") != "rest":
+            if not item.get("entities_confirmed"):
+                while True:
+                    entities = ask(
+                        "BIDS entities as key=value (task/run/acq/dir/echo); s to defer",
+                        " ".join(f"{k}={v}" for k, v in item["entities"].items()),
+                    )
+                    try:
+                        if entities != "s":
+                            parsed = _entities(entities)
+                        break
+                    except ValueError as error:
+                        print(str(error))
+                if entities == "s":
+                    continue
+                item["entities"] = parsed
+                item["entities_confirmed"] = True
+            if item["suffix"] != "bold" or item_requires_preparation:
+                pass
+            elif item["entities"].get("task") != "rest":
                 text = _events(record, item)
                 if text is not None:
                     event_files[item["id"]] = text
+            if item["suffix"] != "bold" or item_requires_preparation:
+                record["acquisitions"][index] = item
+                record["approval"] = None
+                record["issues"] = issues(record, prepared=True)
+                record = store.update(
+                    record,
+                    expected_revision=record["revision"],
+                    review_token=review_token,
+                    event_files=event_files,
+                )
+                continue
             refs = [
                 a for a in record["acquisitions"] if a["suffix"] == "sbref" and compatible(item, a)
             ]
@@ -292,43 +358,6 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
             )
             if answer is not None:
                 item["fieldmaps"] = answer
-        else:
-            answer = ask(
-                "Type: anat/T1w, anat/T2w, func/bold, func/sbref, fmap/epi, ignore, or s",
-                f"{item['datatype']}/{item['suffix']}" if item["datatype"] else "",
-            )
-            if answer == "s":
-                continue
-            kind = ("ignore", "ignore") if answer == "ignore" else tuple(answer.split("/"))
-            if kind not in ALLOWED_TYPES:
-                print("Unsupported type; left unresolved.")
-                continue
-            item["datatype"], item["suffix"] = kind
-            if kind[0] != "ignore":
-                print(
-                    "Confirm classification before download: raw anatomy is permitted only in /tmp."
-                )
-                if ask("Confirmed? y/N", "n").lower() != "y":
-                    continue
-                while True:
-                    entities = ask(
-                        "BIDS entities as key=value (task/run/acq/dir/echo); s to defer",
-                        " ".join(f"{k}={v}" for k, v in item["entities"].items()),
-                    )
-                    try:
-                        if entities != "s":
-                            parsed = _entities(entities)
-                        break
-                    except ValueError as error:
-                        print(str(error))
-                if entities == "s":
-                    continue
-                item["entities"] = parsed
-                if kind == ("func", "bold") and parsed.get("task") != "rest":
-                    text = _events(record, item)
-                    if text is not None:
-                        event_files[item["id"]] = text
-            item["confirmed"] = True
         record["acquisitions"][index] = item
         record["approval"] = None
         record["issues"] = issues(record, prepared=prepared)
@@ -339,8 +368,10 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
             event_files=event_files,
         )
     record["issues"] = issues(record, prepared=prepared)
-    if not record["issues"]:
-        record.update(state="queued", stage="convert" if prepared else "prepare")
+    if requires_preparation:
+        record.update(state="queued", stage="prepare", issues=[])
+    elif not record["issues"]:
+        record.update(state="queued", stage="convert")
     else:
         print("\nStill unresolved:\n" + "\n".join(record["issues"]))
     return store.update(record, expected_revision=record["revision"], review_token=review_token)

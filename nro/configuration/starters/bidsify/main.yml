@@ -8,7 +8,7 @@ memory_gb: 32
 cpus: 2
 hours: 12
 concurrency: 50
-# Acquisition review confirms each classification before transfer.
+# These rules refine supported BidsGuess types using dcm2niix sidecar metadata.
 protocols:
   - {pattern: '(?i)(t1.*mprage|bravo|t1w)', datatype: anat, suffix: T1w}
   - {pattern: '(?i)(t2.*space|cube|t2w)', datatype: anat, suffix: T2w}

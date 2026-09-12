@@ -566,7 +566,6 @@ class Worker:
                         "NRO_INSTANCE_ID": str(instance.instance_id),
                         "NRO_ATTEMPT_ID": str(attempt_id),
                         "NRO_STEP_LEDGER": str(step_ledger),
-                        "NRO_BIDS_PATH": str(self.registry.paths.bids_root),
                         "NRO_WORKER_MEMORY_GB": str(self.memory_gb),
                         "NRO_RUNTIME_CONFIG": str(instance.execution.runtime_config),
                         "NRO_CONFIGURATION_FINGERPRINT": instance.config_fingerprint,

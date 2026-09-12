@@ -9,7 +9,6 @@ import sys
 from collections import deque
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
@@ -195,7 +194,6 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
     """Construct the status parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument(
         "--update",
         action="store_true",
@@ -221,7 +219,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    from nro.configuration import site
+
+    bids_root = site.bids_root()
     participants = set(selection.participants)
     selectors = selection.instance_entities
     modules = set(selection.modules)
@@ -230,12 +230,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     critical_errors: dict[tuple[str, int], dict] = {}
     from nro.bidsify.status import render as render_ingestion
     from nro.bidsify.status import selected_records
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
 
-    values = settings()[0]
+    values = site.settings()[0]
     branch_execution = (
-        installation_record().get("mode") == "branch"
+        site.installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
     projects = list(dict.fromkeys(selection.projects))
@@ -244,14 +243,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     selected_project_set = set(projects)
     visible_ids = None
     if branch_execution:
+        from nro.orchestration.branch_status import refresh
         from nro.orchestration.scheduler_client import status
 
-        if bids_root != Path(values["bids"]).resolve():
-            raise SystemExit("Branch status uses the shared site BIDS root")
-        from nro.orchestration.branch_status import refresh
-
         if args.update:
-            current = status(Path(values["registry"]), bids_root, checkout=CHECKOUT, mode="cached")
+            current = status(
+                Path(values["registry"]), bids_root, checkout=site.CHECKOUT, mode="cached"
+            )
             visible = set(current["visible_ids"])
             try:
                 refresh([row for row in current["rows"] if row["id"] in visible], selection)
@@ -260,7 +258,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         result = status(
             Path(values["registry"]),
             bids_root,
-            checkout=CHECKOUT,
+            checkout=site.CHECKOUT,
             mode="verify" if args.update else "cached",
         )
         rows, visible_ids = result["rows"], set(result["visible_ids"])
@@ -279,7 +277,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 maintenance(
                     Path(values["registry"]),
                     bids_root,
-                    checkout=CHECKOUT,
+                    checkout=site.CHECKOUT,
                     operation="cache",
                     dry_run=False,
                     approved=None,

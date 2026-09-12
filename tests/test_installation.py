@@ -104,6 +104,16 @@ def test_invalid_path_update_is_atomic(isolated_site):
         edit_settings(["work=relative/path"])
 
 
+def test_flywheel_defaults_are_optional_validated_site_settings(isolated_site):
+    edit_settings(["flywheel_server=cni", "flywheel_project=group/project"])
+    values, _sources = site.settings()
+    assert values["flywheel_server"] == "cni"
+    assert values["flywheel_project"] == "group/project"
+
+    with pytest.raises(ValueError, match="GROUP/PROJECT"):
+        edit_settings(["flywheel_project=project-only"])
+
+
 @pytest.mark.parametrize("shared", [False, True])
 def test_interactive_generic_defaults_preserve_explicit_paths(
     isolated_site, tmp_path, monkeypatch, shared
@@ -114,12 +124,12 @@ def test_interactive_generic_defaults_preserve_explicit_paths(
         site_setup, "installation_record", lambda: {"mode": "shared" if shared else "personal"}
     )
     save_settings(isolated_site, {"work": "/configured/work"})
-    monkeypatch.setenv("NRO_BIDS_PATH", "/configured/BIDS")
     _, sources = site.settings()
     proposed = site_setup.interactive_defaults(sources)
     assert proposed["images"] == str(tmp_path / "home/nro/images")
     assert proposed["registry"] == str(tmp_path / "home/nro/.nro")
-    assert "work" not in proposed and "bids" not in proposed
+    assert "work" not in proposed
+    assert proposed["bids"] == str(tmp_path / "home/nro/bids")
     assert proposed["binds"] == []
 
 
@@ -171,7 +181,6 @@ def test_shared_site_ignores_personal_environment(isolated_site, monkeypatch):
         site, "installation_record", lambda: {"mode": "shared", "site": str(isolated_site)}
     )
     monkeypatch.setattr("nro.engine.site_setup.installation_record", site.installation_record)
-    monkeypatch.setenv("NRO_BIDS_PATH", "/personal/BIDS")
     assert site.settings()[0]["bids"] == "/shared/BIDS"
     with pytest.raises(ValueError, match="maintain"):
         edit_settings(["bids=/other"])

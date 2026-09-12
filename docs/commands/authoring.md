@@ -35,8 +35,9 @@ nro create model newtask/alternative --from newtask/main
 Without `--from` or `--file`, creation discovers source BOLD runs bearing the
 task label and resolves their inherited event tables. Omitted project and
 participant selectors mean all matches beneath the configured BIDS root;
-`--bids-root` can override that root. Alternatively, pass one or more local
-tables with `--events FILE ...`. Event files are read, but images are not.
+the command does not accept a per-invocation root. Alternatively, pass one or
+more local tables with `--events FILE ...`. Event files are read, but images
+are not.
 
 The initializer prefers `trial_type` as the condition column. If there is no
 common `trial_type`, it asks for a common column; `--conditions COLUMN` supplies

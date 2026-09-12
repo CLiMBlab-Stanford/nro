@@ -141,13 +141,17 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
     with cache_lock(registry.paths.control):
         result = scheduler_client.exchange(
             scheduler_client.command(registry.paths.control, paths.bids),
-            dict(operation="admit", project="demo", checkout=str(feature), payload=payload),
+            dict(
+                operation="admit_many",
+                checkout=str(feature),
+                entries=[dict(project="demo", payload=payload)],
+            ),
         )
     scheduler_client.supply(
         registry.paths.control,
         paths.bids,
         checkout=feature,
-        request_ids=[result["request_id"]],
+        request_ids=result["request_ids"],
         options={"local": True, "memory": 32, "drain_minutes": 0, "worker_poll_interval": 0.01},
     )
     report = scheduler_client.status(
@@ -210,7 +214,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
         capture_output=True,
     )
     assert json.loads(result.stdout)["repaired"]
-    assert len(science.instances()) == 1
+    assert science.instances() == ()
     assert (science.root / "registry-before-repair.sqlite3").is_file()
     from nro.bidsify.config import load_config
     from nro.bidsify.store import IngestionStore
