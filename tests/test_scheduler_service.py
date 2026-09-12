@@ -51,7 +51,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
     branches = BranchStore(registry.paths.control)
     branches.authorize_checkout("main", root, revision=branches.initialize().revision)
-    ReleaseStore(branches).approve(root, "0.0.1", pr="test#1", attest_merged=True)
+    release = ReleaseStore(branches).approve(root, "0.0.1", pr="test#1", attest_merged=True)
     values = {
         **settings()[0],
         "registry": str(registry.paths.control),
@@ -71,6 +71,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
                 checkout=str(root),
                 environment=str(environment),
                 site=str(site),
+                release=release,
             )
         )
     )
@@ -118,6 +119,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
         processing={},
     )
     science.record_graph((spec,), expected_revisions={spec.key: None})
+    contract = science.instances()[0].contract
     source = SourceStore(tmp_path / "source").capture(feature)
     payload = dict(
         protocol=1,
@@ -127,6 +129,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
         context=ExecutionContext(paths, "demo", spec.key, ()).as_dict(),
         specifications=[encode_spec(spec)],
         revisions={spec.key: 1},
+        contracts={spec.key: contract},
         terminals=[spec.key],
         inherit=True,
         workflow=export_workflow(science, registered),

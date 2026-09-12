@@ -10,16 +10,16 @@ import re
 import subprocess
 import uuid
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 from urllib.parse import quote
 
 
-def branch_id(name: str) -> str:
-    """Encode a valid Git branch name as a collision-free directory component."""
-    if not isinstance(name, str) or not name or name.startswith("-") or name == "HEAD":
-        raise ValueError("Expected a named Git branch")
+@lru_cache(maxsize=256)
+def _validated_branch_id(name: str) -> str:
+    """Validate and encode one branch name for this process."""
     result = subprocess.run(
         ["git", "check-ref-format", f"refs/heads/{name}"], capture_output=True, text=True
     )
@@ -29,6 +29,13 @@ def branch_id(name: str) -> str:
     if len(encoded.encode()) > 200:
         raise ValueError("Encoded branch name exceeds the supported directory length")
     return encoded
+
+
+def branch_id(name: str) -> str:
+    """Encode a valid Git branch name as a collision-free directory component."""
+    if not isinstance(name, str) or not name or name.startswith("-") or name == "HEAD":
+        raise ValueError("Expected a named Git branch")
+    return _validated_branch_id(name)
 
 
 def checkout_identity(checkout: Path) -> tuple[Path, str, str]:
@@ -197,6 +204,18 @@ class BranchTopology:
         if record is None or record.retired or root not in record.checkouts:
             raise ValueError("Checkout is not authorized for this branch")
         return name
+
+    def registered_checkout(self, checkout: Path) -> str:
+        """Resolve an active checkout whose Git identity was checked at registration."""
+        root = Path(checkout).expanduser().resolve()
+        matches = [
+            name
+            for name, record in self.records.items()
+            if not record.retired and root in record.checkouts
+        ]
+        if len(matches) != 1:
+            raise ValueError("Checkout is not authorized for an active branch")
+        return matches[0]
 
     def require_branch_checkout(self, name: str, checkout: Path) -> None:
         """Require an attached checkout of the branch being changed."""

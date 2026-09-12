@@ -554,6 +554,7 @@ def test_equivalent_demand_updates_next_recipe_without_rewriting_attempt(setup, 
 
 
 def test_detached_service_rejects_late_science_without_opening_branch_code(setup, monkeypatch):
+    from nro.orchestration import branch_planning, branch_reconciliation, scheduler_service
     from nro.orchestration.branch_registry import BranchRegistry
     from nro.orchestration.scheduler_service import admit
 
@@ -572,13 +573,28 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
         "instances",
         lambda *args: pytest.fail("Central service read branch science"),
     )
+    monkeypatch.setattr(
+        scheduler_service,
+        "scientific_contracts",
+        lambda *_args: pytest.fail("Central service recompiled submitted contracts"),
+    )
+    monkeypatch.setattr(
+        branch_planning,
+        "scientific_contracts",
+        lambda *_args: pytest.fail("Central plan recompiled submitted contracts"),
+    )
+    monkeypatch.setattr(
+        branch_reconciliation,
+        "scientific_contracts",
+        lambda *_args: pytest.fail("Central candidate lookup recompiled stored contracts"),
+    )
     request_id = admit(registry, payload, checkout=checkout, site_values=values)
     assert request_id
     payload["revisions"][spec.key] = 1
     with pytest.raises(ValueError, match="newer scientific request"):
         admit(registry, payload, checkout=checkout, site_values=values)
     payload["revisions"][spec.key] = 2
-    payload["specifications"][0]["processing"] = {"changed": True}
+    payload["contracts"][spec.key]["processing"] = {"changed": True}
     with pytest.raises(ValueError, match="newer scientific request"):
         admit(registry, payload, checkout=checkout, site_values=values)
     with registry.connection() as db:

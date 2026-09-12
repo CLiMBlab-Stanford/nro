@@ -100,6 +100,39 @@ def test_global_registry_writes_receipts_inside_the_instance_project(graph):
     assert not (registry.paths.bids_root / "derivatives").exists()
 
 
+def test_assessment_does_not_rewrite_ownership_receipts(graph, monkeypatch):
+    from nro.orchestration.ownership import write_instance_ownership
+
+    registry, _, ids = graph
+    write_instance_ownership(registry, ids["root"])
+    monkeypatch.setattr(
+        manifests,
+        "write_instance_ownership",
+        lambda *_args, **_kwargs: pytest.fail("assessment rewrote ownership"),
+    )
+    assert (
+        manifests.assess_registry(registry, instance_ids=[ids["root"]])[ids["root"]][0] == "fresh"
+    )
+
+
+def test_assessment_restores_a_missing_ownership_receipt(graph):
+    from nro.orchestration.ownership import instance_record_path
+
+    registry, _, ids = graph
+    assert (
+        manifests.assess_registry(registry, instance_ids=[ids["root"]])[ids["root"]][0] == "fresh"
+    )
+    row = next(row for row in registry.instance_rows() if row["id"] == ids["root"])
+    receipt = instance_record_path(
+        registry.paths.bids_root / "demo",
+        "preprocessing",
+        "main",
+        "anat",
+        row["instance_key"],
+    )
+    assert receipt.is_file()
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["generation", "contract", "inputs", "graph", "configuration", "claim", "reservation"],

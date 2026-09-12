@@ -94,10 +94,21 @@ def test_attestation_does_not_tag_deploy_or_change_science(release):
     assert row["commit"] == before
     assert row["attested_by"] == "Test Maintainer <maintainer@example.invalid>"
     assert store.require_approved(root) == row
+    assert store.require_recorded(root, row, check_head=True) == row
     assert store.history() == (row,)
     assert git(root, "tag") == ""
     assert git(root, "rev-parse", "HEAD") == before
     assert store.branches.registry("main").instances() == ()
+
+
+def test_recorded_release_check_rejects_a_changed_head(release):
+    root, store = release
+    row = store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
+    commit_version(root, "0.0.2")
+
+    assert store.require_recorded(root, row) == row
+    with pytest.raises(ValueError, match="checkout changed"):
+        store.require_recorded(root, row, check_head=True)
 
 
 def test_initial_release_can_use_explicit_bootstrap_attestation(release):

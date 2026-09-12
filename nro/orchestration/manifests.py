@@ -31,7 +31,7 @@ from nro.orchestration.assessment import (
     apply_assessment,
     capture_assessment,
 )
-from nro.orchestration.ownership import write_instance_ownership
+from nro.orchestration.ownership import missing_instance_ownership, write_instance_ownership
 from nro.orchestration.registry import Registry, ensure_shared_directory, utcnow
 
 MANIFEST_VERSION = 3
@@ -448,9 +448,8 @@ def assess_registry(
         except AssessmentConflict:
             if attempt == 2:
                 raise
-    for instance_id, (state, _reason) in states.items():
-        if state != "fresh":
-            continue
+    fresh = [instance_id for instance_id, (state, _reason) in states.items() if state == "fresh"]
+    for instance_id in missing_instance_ownership(registry, fresh):
         write_instance_ownership(registry, instance_id)
     return states
 

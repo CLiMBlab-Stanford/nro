@@ -52,8 +52,8 @@ def central(tmp_path):
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
     branches = BranchStore(registry.paths.control)
     branches.authorize_checkout("main", root, revision=branches.initialize().revision)
-    release = ReleaseStore(branches)
-    release.approve(root, "0.0.1", pr="test#1", attest_merged=True)
+    releases = ReleaseStore(branches)
+    release = releases.approve(root, "0.0.1", pr="test#1", attest_merged=True)
     values = {
         **settings()[0],
         "registry": str(registry.paths.control),
@@ -71,6 +71,7 @@ def central(tmp_path):
                 checkout=str(root),
                 environment=str(environment),
                 site=str(site),
+                release=release,
             )
         )
     )
@@ -128,7 +129,7 @@ def test_bound_scheduler_reuses_snapshot_published_at_activation(central, monkey
     assert source.digest == record["source_digest"]
 
 
-def test_activation_requires_quiescence_and_changed_source_never_falls_back(central):
+def test_activation_requires_quiescence_and_changed_commit_never_falls_back(central):
     registry, root, _ = central
     registry.register_worker("active", resource_class="large")
     with pytest.raises(ValueError, match="active workers"):
@@ -137,7 +138,13 @@ def test_activation_requires_quiescence_and_changed_source_never_falls_back(cent
         db.execute("UPDATE workers SET state='stopped'")
     implementation.activate(registry, root)
     (root / "nro/orchestration/worker.py").write_text('raise RuntimeError("changed")\n')
-    with pytest.raises(ValueError, match="clean"):
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", "Changed source"],
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(ValueError, match="checkout changed"):
         implementation.capture_worker_implementation(
             registry.paths.control, registry.paths.bids_root
         )

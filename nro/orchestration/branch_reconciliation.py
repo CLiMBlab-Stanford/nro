@@ -34,47 +34,56 @@ def candidates_locked(
             parents.setdefault(edge["instance_id"], []).append(
                 by_id[edge["upstream_instance_id"]]["instance_key"]
             )
-    specs = []
-    for row in rows:
-        contract = json.loads(row["artifact_contract_json"])
-        specs.append(
-            InstanceSpec.create(
-                key=row["instance_key"],
-                module=row["module"],
-                project=row["project"],
-                participant=row["participant"],
-                entities=json.loads(row["entities_json"]),
-                scope=row["scope"],
-                configuration_lineage_id=row["configuration_lineage_id"],
-                config_fingerprint=row["config_fingerprint"],
-                directory_label=row["directory_label"],
-                runtime_config=Path(row["runtime_config_path"]),
-                command=json.loads(row["command_json"]),
-                dependencies=parents.get(row["id"], ()),
-                input_paths=tuple(map(Path, json.loads(row["input_paths_json"]))),
-                output_root=Path(row["output_root"]),
-                output_prefix=row["output_prefix"],
-                expected_outputs=tuple(map(Path, json.loads(row["expected_outputs_json"]))),
-                output_format=contract["output"]["format"],
-                processing=contract.get("processing", {}),
-                resource_class=row["resource_class"],
+    contracts = {}
+    if any(not row["scientific_contract_json"] for row in rows):
+        specs = []
+        for row in rows:
+            contract = json.loads(row["artifact_contract_json"])
+            specs.append(
+                InstanceSpec.create(
+                    key=row["instance_key"],
+                    module=row["module"],
+                    project=row["project"],
+                    participant=row["participant"],
+                    entities=json.loads(row["entities_json"]),
+                    scope=row["scope"],
+                    configuration_lineage_id=row["configuration_lineage_id"],
+                    config_fingerprint=row["config_fingerprint"],
+                    directory_label=row["directory_label"],
+                    runtime_config=Path(row["runtime_config_path"]),
+                    command=json.loads(row["command_json"]),
+                    dependencies=parents.get(row["id"], ()),
+                    input_paths=tuple(map(Path, json.loads(row["input_paths_json"]))),
+                    output_root=Path(row["output_root"]),
+                    output_prefix=row["output_prefix"],
+                    expected_outputs=tuple(map(Path, json.loads(row["expected_outputs_json"]))),
+                    output_format=contract["output"]["format"],
+                    processing=contract.get("processing", {}),
+                    resource_class=row["resource_class"],
+                )
             )
-        )
-    contracts = scientific_contracts(specs)
-    return tuple(
-        ArtifactCandidate(
-            row["branch"] or "main",
-            row["logical_key"] or row["instance_key"],
+        contracts = scientific_contracts(specs)
+    candidates = []
+    for row in rows:
+        if fresh_only and not (row["artifact_state"] == "fresh" and row["current_generation"] >= 0):
+            continue
+        contract = (
             json.loads(row["scientific_contract_json"])
             if row["scientific_contract_json"]
-            else contracts[row["instance_key"]],
-            row["current_generation"],
-            Path(row["output_root"]),
-            {"instance_id": row["id"]},
+            else contracts[row["instance_key"]]
         )
-        for row in rows
-        if not fresh_only or row["artifact_state"] == "fresh" and row["current_generation"] >= 0
-    )
+        candidates.append(
+            ArtifactCandidate(
+                row["branch"] or "main",
+                row["logical_key"] or row["instance_key"],
+                contract,
+                row["current_generation"],
+                Path(row["output_root"]),
+                {"instance_id": row["id"]},
+                fingerprint(contract),
+            )
+        )
+    return tuple(candidates)
 
 
 def resolve_payload(topology, payload, candidates):
@@ -96,6 +105,7 @@ def resolve_payload(topology, payload, candidates):
         candidates,
         validate=lambda _: True,
         inherit=payload["inherit"],
+        contracts=payload.get("contracts"),
     )
 
 

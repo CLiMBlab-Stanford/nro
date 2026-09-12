@@ -89,6 +89,7 @@ class ArtifactCandidate:
     generation: int
     root: Path
     evidence: Mapping
+    contract_fingerprint: str | None = None
 
 
 def select_artifact(
@@ -112,7 +113,8 @@ def select_artifact(
             candidate
             for candidate in candidates
             if candidate.branch == owner
-            and fingerprint(dict(candidate.contract)) == expected
+            and (candidate.contract_fingerprint or fingerprint(dict(candidate.contract)))
+            == expected
             and validate(candidate)
         ]
         if len(eligible) > 1:
