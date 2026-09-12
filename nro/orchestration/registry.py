@@ -1760,6 +1760,47 @@ class Registry(WorkflowRegistry):
                 (state, utcnow(), worker_id),
             )
 
+    def confirm_worker_shutdown(self, worker_ids: Iterable[str]) -> dict[str, int]:
+        """Finalize worker records after their processes are confirmed inactive.
+
+        The caller must first verify process or allocation termination. This
+        method releases interrupted execution records while preserving demand.
+        """
+        selected = tuple(sorted(set(map(str, worker_ids))))
+        if not selected:
+            return {"workers": 0, "attempts": 0, "ingestion": 0}
+        placeholders = ",".join("?" for _ in selected)
+        now = utcnow()
+        with self.connection(write=True) as db:
+            rows = db.execute(
+                f"SELECT id,state FROM workers WHERE id IN ({placeholders})", selected
+            ).fetchall()
+            active = [
+                row["id"]
+                for row in rows
+                if row["state"] not in {"shutdown_requested", "exited", "terminated", "lost"}
+            ]
+            if active:
+                raise RuntimeError(
+                    "Cannot confirm workers that did not request shutdown: " + ", ".join(active)
+                )
+            from nro.bidsify.index import IngestionIndex
+
+            ingestion = IngestionIndex(self).recover_locked(set(selected))
+            attempts = db.execute(
+                f"""UPDATE attempts SET state='cancelled', completed_at=?
+                    WHERE worker_id IN ({placeholders})
+                      AND state IN ('queued','running','cancel_requested')""",
+                (now, *selected),
+            ).rowcount
+            workers = db.execute(
+                f"""UPDATE workers SET state='terminated', lease_expires_at=NULL, updated_at=?
+                    WHERE id IN ({placeholders}) AND state='shutdown_requested'""",
+                (now, *selected),
+            ).rowcount
+            dependency_state.synchronize(db, now=now)
+        return {"workers": workers, "attempts": attempts, "ingestion": ingestion}
+
     def claim_ready_instance(
         self,
         worker_id: str,

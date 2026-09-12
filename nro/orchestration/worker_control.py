@@ -24,6 +24,11 @@ def cancel_worker_allocations(
     for submission_id, job_id in shutdown["submissions"]:
         submissions.setdefault(job_id, []).append(submission_id)
     for job_id in shutdown["job_ids"]:
+        if _slurm_job_terminal(job_id) is True:
+            if update_registry:
+                for submission_id in submissions.get(job_id, ()):
+                    registry.update_submission(submission_id, state="cancelled")
+            continue
         try:
             result = subprocess.run(["scancel", job_id], text=True, capture_output=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as error:
