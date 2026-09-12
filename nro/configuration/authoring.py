@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.parsing import parse_mapping
-from nro.configuration.paths import BIDS_PATH
+from nro.configuration.site import bids_root as _configured_bids_root
 from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore, validate_config_id
 from nro.engine.definition_editor import (
     delete_definition,
@@ -106,7 +106,7 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         return yaml.safe_dump({name: "main" for name in DERIVATIVE_CLASSES}, sort_keys=False)
     paths = args.events or discover_event_files(
         target.identifier.split("/")[0],
-        Path(args.bids_root).expanduser().resolve(),
+        _configured_bids_root(),
         projects=args.project or (),
         participants=args.participant or (),
     )
@@ -149,9 +149,6 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
             if kind == "model":
                 command.add_argument("-P", "--project", nargs="+", action="extend")
                 command.add_argument("-p", "--participant", nargs="+", action="extend")
-                command.add_argument(
-                    "--bids-root", default=None, help="BIDS project root for event discovery"
-                )
                 command.add_argument(
                     "--events", nargs="+", type=Path, help="Infer a model from these event files"
                 )
@@ -221,14 +218,14 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
         if action == "create":
             discovery = any(
                 getattr(args, name, None)
-                for name in ("events", "conditions", "project", "participant", "bids_root")
+                for name in ("events", "conditions", "project", "participant")
             )
             if args.source and args.file:
                 raise ValueError("Use either --from or --file")
             if (args.source or args.file) and discovery:
                 raise ValueError("Event discovery options cannot be combined with --from or --file")
             if getattr(args, "events", None) and any(
-                getattr(args, name, None) for name in ("project", "participant", "bids_root")
+                getattr(args, name, None) for name in ("project", "participant")
             ):
                 raise ValueError("Use --events or BIDS discovery selectors, not both")
             if args.output and (args.file or args.yes):
@@ -245,8 +242,6 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
                 print(
                     f"{args.kind.capitalize()} already exists; opening for editing: {target.path}"
                 )
-            if args.kind == "model" and args.bids_root is None:
-                args.bids_root = BIDS_PATH
             if getattr(args, "events", None):
                 args.events = [path.expanduser() for path in args.events]
         if expected is not None:

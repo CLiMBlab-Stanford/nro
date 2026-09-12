@@ -266,7 +266,7 @@ def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> Non
 
 
 def test_status_without_a_registry_prints_an_empty_table(tmp_path: Path, capsys) -> None:
-    status_main(["--bids-root", str(tmp_path / "bids"), "--no-pager"])
+    status_main(["--no-pager"])
 
     output = capsys.readouterr().out
     assert output.startswith("PROJECT")
@@ -330,7 +330,7 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
 
     monkeypatch.setattr(scheduler_client, "status", scheduler_status)
 
-    status_main(["--bids-root", str(bids), "--json"])
+    status_main(["--json"])
 
     report = json.loads(capsys.readouterr().out)
     assert calls == ["cached"]
@@ -357,7 +357,7 @@ def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     with sqlite3.connect(registry.paths.database) as connection:
         connection.execute("PRAGMA user_version=10")
 
-    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
 
     assert result["repaired"] is True
@@ -376,7 +376,7 @@ def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     with sqlite3.connect(registry.paths.database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
-    status_main(["--bids-root", str(bids), "--no-pager"])
+    status_main(["--no-pager"])
     status_output = capsys.readouterr().out
     assert status_output.startswith("PROJECT")
     assert len(status_output.splitlines()) == 1
@@ -413,7 +413,7 @@ def test_run_repair_registers_existing_artifacts_without_demand(
         ),
     )
 
-    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
     registry = Registry.for_project("demo", bids_root=bids)
     rows = registry.instance_rows()
@@ -446,7 +446,7 @@ def test_repair_registers_only_existing_artifacts_and_their_dependencies(
         json.dumps({"complete": True}),
     )
 
-    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
     registry = Registry.for_project("demo", bids_root=bids)
 
@@ -480,7 +480,11 @@ def test_run_repair_requires_confirmation_before_stopping_active_workers(
     monkeypatch.setattr("nro.bin.run.stop_worker_pool_for_repair", unexpected_shutdown)
 
     with pytest.raises(SystemExit, match="repair cancelled"):
-        run_main(["--repair", "--bids-root", str(bids)])
+        run_main(
+            [
+                "--repair",
+            ]
+        )
 
     assert called is False
     assert registry.paths.database.is_file()
@@ -507,7 +511,7 @@ def test_run_repair_confirms_and_stops_active_workers_before_rebuild(
     monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
     monkeypatch.setattr("nro.bin.run.stop_worker_pool_for_repair", shutdown)
 
-    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
 
     assert len(calls) == 1
@@ -524,7 +528,7 @@ def test_run_repair_discovers_participant_without_planning_anatomy(
     _write(subject / "func" / "sub-02_task-rest_run-1_bold.nii.gz")
     _write(subject / "func" / "sub-02_task-rest_run-1_bold.json", "{}")
 
-    run_main(["--repair", "--bids-root", str(bids), "--json"])
+    run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
     registry = Registry.for_project("demo", bids_root=bids)
 
@@ -538,7 +542,13 @@ def test_run_repair_discovers_participant_without_planning_anatomy(
 
 def test_run_repair_rejects_derivative_selection(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="all projects.*--project"):
-        run_main(["--repair", "-P", "demo", "--bids-root", str(tmp_path / "bids")])
+        run_main(
+            [
+                "--repair",
+                "-P",
+                "demo",
+            ]
+        )
 
 
 def test_run_reports_when_only_selected_participant_is_unavailable(
@@ -556,8 +566,6 @@ def test_run_reports_when_only_selected_participant_is_unavailable(
                 "02",
                 "-P",
                 "demo",
-                "--bids-root",
-                str(bids),
                 "--no-submit",
             ]
         )
@@ -582,8 +590,6 @@ def test_run_continues_past_unavailable_participant(
         [
             "-P",
             "demo",
-            "--bids-root",
-            str(bids),
             "--no-submit",
             "--json",
         ]
@@ -617,9 +623,7 @@ def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None
         _write(subject / "func" / f"{stem}.nii.gz")
         _write(subject / "func" / f"{stem}.json", "{}")
 
-    run_main(
-        ["-p", "20", "-P", "demo", "-m", "clean", "--bids-root", str(bids), "--no-submit", "--json"]
-    )
+    run_main(["-p", "20", "-P", "demo", "-m", "clean", "--no-submit", "--json"])
     request = json.loads(capsys.readouterr().out)
     assert request["modules"] == ["clean"]
     assert request["instances"] == 5  # one anat plus func and clean for both runs
@@ -639,7 +643,7 @@ def test_bare_request_keeps_networks_when_no_task_models_match(
         _write(subject / "func" / f"{stem}.nii.gz")
         _write(subject / "func" / f"{stem}.json", "{}")
 
-    run_main(["--bids-root", str(bids), "--no-submit", "--json"])
+    run_main(["--no-submit", "--json"])
     request = json.loads(capsys.readouterr().out)
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
@@ -674,7 +678,7 @@ def test_run_requests_each_selected_branch_across_projects(
                 subject / "func" / f"{stem}_events.tsv", "onset\tduration\ttrial_type\n0\t1\tS\n"
             )
 
-    argv = ["--bids-root", str(bids), "--no-submit", "--json"]
+    argv = ["--no-submit", "--json"]
     if modules:
         argv.extend(["-m", *modules])
     run_main(argv)
@@ -720,8 +724,6 @@ def test_participant_selection_spans_every_matching_project(
             "01",
             "-m",
             "func",
-            "--bids-root",
-            str(bids),
             "--no-submit",
             "--json",
         ]
@@ -743,14 +745,12 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
 
-    run_main(
-        ["-p", "01", "-P", "demo", "-m", "func", "--bids-root", str(bids), "--no-submit", "--json"]
-    )
+    run_main(["-p", "01", "-P", "demo", "-m", "func", "--no-submit", "--json"])
     request = json.loads(capsys.readouterr().out)
     assert request["instances"] == 2
     assert request["submitted_workers"] == []
 
-    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
     assert set(report) == {"instances", "errors", "blocked_instances", "bidsification"}
     assert {row["status"] for row in report["instances"]} == {"Queued"}
@@ -765,8 +765,6 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
             "demo",
             "-w",
             "main",
-            "--bids-root",
-            str(bids),
             "-r",
             "task=rest",
             "run=1",
@@ -778,10 +776,19 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
     assert selected["instances"][0]["module"] == "func"
     assert selected["instances"][0]["workflows"] == ["main"]
 
-    stop_main(["-p", "01", "-m", "anat", "-P", "demo", "--bids-root", str(bids)])
+    stop_main(
+        [
+            "-p",
+            "01",
+            "-m",
+            "anat",
+            "-P",
+            "demo",
+        ]
+    )
     assert "Cancelled" in capsys.readouterr().out
     for mode in ([], ["--update"], []):
-        status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json", *mode])
+        status_main(["-p", "01", "-P", "demo", "--json", *mode])
         rows = json.loads(capsys.readouterr().out)["instances"]
         assert {row["status"] for row in rows} == {"Missing", "Stale"}
         assert all(row["reason"] for row in rows)
@@ -804,8 +811,6 @@ def test_set_updates_active_concurrency_without_creating_new_demand(
             "anat",
             "--concurrency",
             "2",
-            "--bids-root",
-            str(bids),
             "--no-submit",
             "--json",
         ]
@@ -819,8 +824,6 @@ def test_set_updates_active_concurrency_without_creating_new_demand(
             "unsupported=value",
             "concurrency=7",
             "another=setting",
-            "--bids-root",
-            str(bids),
             "--json",
         ]
     )
@@ -865,8 +868,6 @@ def test_status_reports_blocked_instances_and_their_root_errors(
             "demo",
             "-m",
             "func",
-            "--bids-root",
-            str(bids),
             "--no-submit",
             "--json",
         ]
@@ -885,7 +886,7 @@ def test_status_reports_blocked_instances_and_their_root_errors(
         error_message="anatomical failure",
     )
 
-    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
     statuses = {row["module"]: row["status"] for row in report["instances"]}
 
@@ -902,15 +903,13 @@ def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
-    run_main(
-        ["-p", "01", "-P", "demo", "-m", "func", "--bids-root", str(bids), "--no-submit", "--json"]
-    )
+    run_main(["-p", "01", "-P", "demo", "-m", "func", "--no-submit", "--json"])
     capsys.readouterr()
     registry = Registry.for_project("demo", bids_root=bids)
     database_mtime = registry.paths.database.stat().st_mtime_ns
     control_mtime = registry.paths.control.stat().st_mtime_ns
 
-    status_main(["-p", "01", "-P", "demo", "--bids-root", str(bids), "--json"])
+    status_main(["-p", "01", "-P", "demo", "--json"])
     capsys.readouterr()
 
     assert registry.paths.database.stat().st_mtime_ns == database_mtime
@@ -932,8 +931,6 @@ def test_status_default_is_cached_and_update_persists_assessment(
             "demo",
             "-m",
             "anat",
-            "--bids-root",
-            str(bids),
             "--no-submit",
             "--json",
         ]
@@ -948,12 +945,12 @@ def test_status_default_is_cached_and_update_persists_assessment(
             (row["id"],),
         )
 
-    status_main(["-P", "demo", "--bids-root", str(bids), "--json"])
+    status_main(["-P", "demo", "--json"])
     cached = json.loads(capsys.readouterr().out)["instances"]
     assert cached[0]["status"] == "Success"
     assert registry.instance_rows()[0]["artifact_state"] == "fresh"
 
-    status_main(["-P", "demo", "--bids-root", str(bids), "--update", "--json"])
+    status_main(["-P", "demo", "--update", "--json"])
     capsys.readouterr()
     assert registry.instance_rows()[0]["artifact_state"] == "missing"
 

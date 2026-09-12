@@ -54,8 +54,8 @@ nro branch retire feature/example
 ```
 
 `show` without a name checks the current checkout's registration. `--checkout`
-selects another checkout. `--json` provides structured output for every action;
-`--bids-root` selects the shared registry context as it does for other commands.
+selects another checkout. `--json` provides structured output for every action.
+The global site configuration selects the shared registry and BIDS context.
 `list` does not initialize an absent store.
 
 Reparenting changes the declared inheritance tree, not Git history or artifact

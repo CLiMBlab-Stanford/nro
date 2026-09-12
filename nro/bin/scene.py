@@ -6,11 +6,10 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH, WB_COMMAND_PATH
+from nro.configuration.paths import WB_COMMAND_PATH
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.engine.scenes import (
@@ -22,6 +21,7 @@ from nro.engine.scenes import (
     public_manifest_paths,
     template_surface_family,
 )
+from nro.engine.slurm import run_x11
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 from nro.engine.workbench import resolve_workbench_command, surface_inventory
 from nro.orchestration.branch_store import BranchStore
@@ -225,7 +225,6 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--wb-command", default=WB_COMMAND_PATH)
     parser.add_argument(
         "--publish", action="store_true", help="Copy every input into the scene bundle"
@@ -242,11 +241,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    from nro.configuration.site import CHECKOUT, settings
+    from nro.configuration.site import CHECKOUT, bids_root, settings
     from nro.orchestration.branch_views import registered_rows
 
-    bids_root = Path(args.bids_root).expanduser().resolve()
-    rows = registered_rows(bids_root)
+    selected_bids_root = bids_root()
+    rows = registered_rows(selected_bids_root)
     if rows is None:
         raise SystemExit("No central nro registry found")
     matched = [row for row in rows if _row_matches(row, selection)]
@@ -429,7 +428,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
         viewer = Path(wb_command).with_name("wb_view")
         if not viewer.is_file():
             raise SystemExit(f"Connectome Workbench viewer is not available: {viewer}")
-        subprocess.Popen([str(viewer), *(str(scene) for scene in scenes)])
+        try:
+            run_x11(
+                [str(viewer), *(str(scene) for scene in scenes)],
+                partition=values["viewing_partition"],
+                account=values["account"] or None,
+            )
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
 
 
 if __name__ == "__main__":

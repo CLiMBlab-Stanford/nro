@@ -171,8 +171,6 @@ def test_cache_purge_ignores_all_artifact_selectors(cache, capsys):
     registry, source, site = cache
     args = [
         "--cache",
-        "--bids-root",
-        str(registry.paths.bids_root),
         "-P",
         "not-a-project",
         "-p",
@@ -203,7 +201,11 @@ def test_confirmed_purge_rechecks_scheduler_state(cache, monkeypatch, capsys):
         return True
 
     monkeypatch.setattr(purge, "_confirm", confirm)
-    purge_main(["--cache", "--bids-root", str(registry.paths.bids_root)])
+    purge_main(
+        [
+            "--cache",
+        ]
+    )
     assert "outstanding demand" in capsys.readouterr().out
     assert source.exists() and site.exists()
 

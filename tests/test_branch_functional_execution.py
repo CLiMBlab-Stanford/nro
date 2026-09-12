@@ -93,6 +93,7 @@ def functional_case(tmp_path, monkeypatch):
         sdc_method="syn",
         output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
     )
+    values["synbold_disco_image"].write_bytes(b"test image")
     monkeypatch.setattr(
         func,
         "find_fsaverage_template_surface",

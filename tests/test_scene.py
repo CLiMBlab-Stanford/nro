@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 from nro.bin.scene import build_parser, scene_id
@@ -14,6 +16,7 @@ from nro.engine.scenes import (
     build_scene_bundle,
     manifest_surface_families,
 )
+from nro.engine.slurm import run_x11
 
 
 def _surfaces(root: Path) -> tuple[Path, ...]:
@@ -38,6 +41,29 @@ def test_scene_parser_uses_shared_selectors() -> None:
     assert scene_id("01", "fsnative", 2, {}, selection).startswith(
         "sub-01_space-fsnative_smoothing-2mm_selection-"
     )
+
+
+def test_scene_viewer_uses_an_x11_slurm_allocation(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
+
+    run_x11(
+        ["/opt/workbench/wb_view", "/data/example.scene"], partition="interactive", account="lab"
+    )
+
+    argv, options = calls[0]
+    assert argv[:3] == ["/usr/bin/srun", "--x11", "--partition=interactive"]
+    assert "--account=lab" in argv
+    assert argv[-2:] == ["/opt/workbench/wb_view", "/data/example.scene"]
+    assert options == {"check": True}
+
+
+def test_scene_viewer_requires_an_x11_display(monkeypatch) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    with pytest.raises(ValueError, match="DISPLAY"):
+        run_x11(["wb_view", "example.scene"], partition="interactive", account=None)
 
 
 def test_surface_base_scene_references_existing_geometry(tmp_path: Path) -> None:

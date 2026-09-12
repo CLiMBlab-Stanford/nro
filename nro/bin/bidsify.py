@@ -13,7 +13,7 @@ from nro.bidsify.identity import destination_label
 from nro.bidsify.publication import approval_snapshot
 from nro.bidsify.review import SkipSession, ask, choose_indices, wizard
 from nro.bidsify.store import IngestionStore, ReviewBusyError
-from nro.configuration.paths import BIDS_PATH
+from nro.configuration.site import bids_root as configured_bids_root
 from nro.configuration.site import settings
 from nro.orchestration.registry import Registry
 from nro.orchestration.submission import _submit_workers, _write_worker_script
@@ -22,9 +22,15 @@ from nro.orchestration.submission import _submit_workers, _write_worker_script
 def build_parser(*, prog="nro bidsify"):
     """Build selectors for a single destination project and resumable ingestion requests."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    parser.add_argument("--server")
+    parser.add_argument(
+        "-f",
+        "--flywheel-server",
+        dest="flywheel_server",
+        help="Configured Flywheel server profile",
+    )
+    parser.add_argument("--server", dest="flywheel_server", help=argparse.SUPPRESS)
     parser.add_argument("-P", "--project", help="Destination BIDS project")
-    parser.add_argument("--flywheel-project", help="Source GROUP/PROJECT for new sessions")
+    parser.add_argument("-F", "--flywheel-project", help="Source GROUP/PROJECT for new sessions")
     parser.add_argument("-p", "--participant", nargs="+", default=[])
     parser.add_argument("--session", nargs="+", default=[], help="Remote session IDs to include")
     parser.add_argument("--request", help="Resume one request without listing Flywheel sessions")
@@ -37,7 +43,6 @@ def build_parser(*, prog="nro bidsify"):
     parser.add_argument(
         "--no-submit", action="store_true", help="Save work without supplying new workers"
     )
-    parser.add_argument("--bids-root", type=Path, default=BIDS_PATH)
     parser.add_argument("--execution", help=argparse.SUPPRESS)
     return parser
 
@@ -121,12 +126,10 @@ def _advance(store: IngestionStore, record: dict, *, review_token: str) -> dict:
         action = ask("Retry, review decisions, cancel, or leave? r/e/c/l", "l")
         if action == "r":
             record.update(state="queued")
-        elif action == "e" and record["stage"] != "inspect":
+        elif action == "e" and record["stage"] == "convert":
             record.update(
                 state="needs_input",
-                stage="convert"
-                if all("metadata" in a or a["datatype"] == "ignore" for a in record["acquisitions"])
-                else "prepare",
+                stage="convert",
                 approval=None,
             )
         elif action == "c":
@@ -154,7 +157,7 @@ def _advance(store: IngestionStore, record: dict, *, review_token: str) -> dict:
             "Approve publication of these exact files, edit decisions, or leave? y/e/N", "n"
         ).lower()
         if answer == "e":
-            record.update(state="needs_input", stage="prepare", approval=None)
+            record.update(state="needs_input", stage="convert", approval=None)
             record = store.update(
                 record, expected_revision=record["revision"], review_token=review_token
             )
@@ -176,6 +179,9 @@ def main(argv=None, *, prog="nro bidsify"):
         from nro.configuration.site import installation_record
         from nro.orchestration.scheduler_implementation import implementation_path
 
+        site_values, _ = settings()
+        flywheel_server = args.flywheel_server or site_values.get("flywheel_server") or None
+        flywheel_project = args.flywheel_project or site_values.get("flywheel_project") or None
         if not args.execution and (
             installation_record().get("mode") == "branch"
             or implementation_path(Path(settings()[0]["registry"])).exists()
@@ -184,9 +190,8 @@ def main(argv=None, *, prog="nro bidsify"):
             return
         pin = json.loads(args.execution) if args.execution else None
         branch_paths = validate_execution(pin) if pin else None
-        if branch_paths and args.bids_root.resolve() != branch_paths.bids:
-            raise ValueError("Ingestion must use the registered shared BIDS root")
-        registry = Registry.for_project("", bids_root=args.bids_root)
+        bids_root = configured_bids_root()
+        registry = Registry.for_project("", bids_root=bids_root)
         config = load_config(args.config)
         if not args.request and not config["servers"]:
             raise ValueError(
@@ -201,7 +206,10 @@ def main(argv=None, *, prog="nro bidsify"):
         else:
             project = identifier(args.project or ask("Destination BIDS project"))
             server, remote_project = select_source(
-                config, project, server=args.server, flywheel_project=args.flywheel_project
+                config,
+                project,
+                server=flywheel_server,
+                flywheel_project=flywheel_project,
             )
             all_records = store.rows()
             saved = [
@@ -324,13 +332,12 @@ def main(argv=None, *, prog="nro bidsify"):
             advance(store, record)
         queued = [store.get(r["id"]) for r in records if store.get(r["id"])["state"] == "queued"]
         if queued and not args.no_submit:
-            site, _ = settings()
             memory = max(r["config"]["memory_gb"] for r in queued)
             script = _write_worker_script(
                 registry,
-                bids_root=args.bids_root.resolve(),
-                partition=site["partition"],
-                account=site["account"],
+                bids_root=bids_root,
+                partition=site_values["partition"],
+                account=site_values["account"],
                 hours=max(r["config"]["hours"] for r in queued),
                 memory_gb=memory,
                 cpus=max(r["config"]["cpus"] for r in queued),

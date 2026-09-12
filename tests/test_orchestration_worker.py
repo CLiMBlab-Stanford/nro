@@ -1651,7 +1651,7 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
         db.execute(
             "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[upstream.key]["id"],)
         )
-    status_main(["-p", "demo", "--bids-root", str(bids), "--json"])
+    status_main(["-p", "demo", "--json"])
     assert not registry.attempt_cancel_requested(claimed.attempt_id)
 
     Worker(

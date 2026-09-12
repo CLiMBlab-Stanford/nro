@@ -11,6 +11,8 @@ import runpy
 import sys
 from pathlib import Path
 
+MANIFEST_ONLY_PROTOCOL = 1
+
 
 def verify_source(root: Path, expected_digest: str) -> None:
     """Check source content and reject extra files, symlinks, or bytecode caches."""
@@ -59,27 +61,54 @@ def verify_source(root: Path, expected_digest: str) -> None:
         raise ValueError("Source snapshot file list changed")
 
 
+def verify_manifest(root: Path, expected_digest: str) -> None:
+    """Validate the snapshot manifest and the launcher without scanning package data."""
+    manifest_path = root / "source.json"
+    if root.resolve() != root or manifest_path.is_symlink():
+        raise ValueError("Source snapshot cannot be a symlink")
+    manifest = json.loads(manifest_path.read_text())
+    digest = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if digest != expected_digest:
+        raise ValueError("Source snapshot manifest changed")
+    relative = Path("nro/orchestration/source_launcher.py")
+    entry = manifest.get(str(relative))
+    launcher = root / relative
+    if not isinstance(entry, dict) or launcher.resolve() != launcher or not launcher.is_file():
+        raise ValueError("Source snapshot launcher is unavailable")
+    with launcher.open("rb") as stream:
+        actual = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual != entry.get("sha256"):
+        raise ValueError("Source snapshot launcher changed")
+
+
 def main() -> None:
     """Verify the expected source digest, then execute the requested nro module."""
-    if len(sys.argv) < 5 or not sys.argv[4].startswith("nro."):
+    manifest_only = len(sys.argv) > 1 and sys.argv[1] == "--manifest-only"
+    offset = 1 if manifest_only else 0
+    if len(sys.argv) < 5 + offset or not sys.argv[4 + offset].startswith("nro."):
         raise SystemExit("Expected source digest, site path and digest, and nro module name")
     root = Path(__file__).resolve().parents[2]
+    expected_digest = sys.argv[1 + offset]
     try:
-        verify_source(root, sys.argv[1])
+        (verify_manifest if manifest_only else verify_source)(root, expected_digest)
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error
-    site_path, site_digest = sys.argv[2:4]
+    site_path, site_digest = sys.argv[2 + offset : 4 + offset]
     if site_path != "-":
         site = Path(site_path)
         if site.resolve() != site or not site.is_file():
             raise SystemExit("Invalid execution site file")
         if hashlib.sha256(site.read_bytes()).hexdigest() != site_digest:
             raise SystemExit("Execution site settings changed")
-    module = sys.argv[4]
-    sys.argv = [module, *sys.argv[5:]]
+    module = sys.argv[4 + offset]
+    sys.argv = [module, *sys.argv[5 + offset :]]
     sys.path.insert(0, str(root))
     os.environ["PYTHONPATH"] = str(root)
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    os.environ["NRO_EXECUTION_SOURCE_ROOT"] = str(root)
+    os.environ["NRO_EXECUTION_SOURCE_DIGEST"] = expected_digest
     sys.dont_write_bytecode = True
     os.chdir(root)
     if site_path != "-":

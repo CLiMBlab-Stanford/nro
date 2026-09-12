@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.engine.targets import smoothing_entity_value
+from nro.engine.paths import anatomical_manifest_path
+from nro.engine.targets import is_fsaverage_space, smoothing_entity_value
 from nro.modules.microparcellation.paths import output_paths
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -33,17 +34,31 @@ def plan_instances(
         .resolve()
     )
     base_prefix = str(values.get("prefix") or context.sub_id)
+    anat = upstream["anat"][0]
+    preprocessing_label = context.registered.directories["preprocessing"]
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
         output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
-        dependencies = tuple(
+        clean_dependencies = tuple(
             instance.key
             for instance in upstream["clean"]
             if instance.entities.get("space") == space
             and instance.entities.get("smoothing") == str(smoothing)
         )
+        needs_anatomy = not space.startswith("MNI") and not is_fsaverage_space(space)
+        dependencies = (*clean_dependencies, *((anat.key,) if needs_anatomy else ()))
+        direct_inputs = list(context.aggregate_source_inputs)
+        if needs_anatomy:
+            direct_inputs.append(
+                anatomical_manifest_path(
+                    context.sub_id,
+                    project=context.project,
+                    preprocessing_id=preprocessing_label,
+                    bids_root=context.bids_root,
+                )
+            )
         result.append(
             InstanceSpec.create(
                 key=instance_key(
@@ -78,7 +93,7 @@ def plan_instances(
                     str(smoothing),
                 ),
                 dependencies=dependencies,
-                input_paths=context.aggregate_source_inputs,
+                input_paths=tuple(direct_inputs),
                 output_root=output_root,
                 output_prefix=prefix,
                 output_format=descriptor.output_format,

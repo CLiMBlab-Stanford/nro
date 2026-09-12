@@ -23,7 +23,7 @@ def command(tmp_path, monkeypatch, capsys):
     bids = tmp_path / "BIDS"
 
     def invoke(*args):
-        branch.main([*map(str, args), "--bids-root", str(bids), "--json"])
+        branch.main([*map(str, args), "--json"])
         return json.loads(capsys.readouterr().out)
 
     return invoke, identities, BranchStore(RegistryPaths.for_project("", bids_root=bids).control)

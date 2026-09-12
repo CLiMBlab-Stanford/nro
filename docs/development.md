@@ -98,7 +98,9 @@ processing settings, direct raw inputs, and dependency semantics remain substant
 Requests capture source and resolved site settings under
 `CONTROL/shared/cache/{implementations,execution-sites}`. Source includes package
 code and resources, including uncommitted development edits. It excludes environments,
-Git metadata, and caches. Launchers verify captures before importing code.
+Git metadata, and caches. Publication and scientific worker launchers verify every
+captured file before importing code. Short-lived scheduler commands validate the
+capture manifest and launcher without rereading package resources.
 Configuration snapshots are separate. Environments, images, and definitions stores
 are not copied; coordinate maintenance of those resources.
 

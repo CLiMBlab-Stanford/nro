@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from nro.configuration.paths import BIDS_PATH, WORK_PATH
+from nro.configuration.paths import WORK_PATH
 from nro.engine.bids import parse_bids_entities
 from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
 from nro.engine.cli import matches_instance_selectors as matches_selectors
@@ -426,7 +426,6 @@ def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
     """Construct the purge parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument("--work-root", default=WORK_PATH)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -458,13 +457,11 @@ def _purge_cache(args) -> None:
     from nro.orchestration.scheduler_implementation import implementation_path
 
     values = settings()[0]
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    bids_root = Path(values["bids"]).resolve()
     remote = (
         installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
-    if remote and bids_root != Path(values["bids"]).resolve():
-        raise SystemExit("Cache maintenance uses the shared site BIDS root")
     registry = None if remote else Registry.for_project("", bids_root=bids_root)
 
     def collect(*, dry_run=False, approved=None):
@@ -525,10 +522,11 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     from nro.orchestration.execution_context import ExecutionContext
     from nro.orchestration.scheduler_client import maintenance
 
-    bids_root, work_root = Path(args.bids_root).resolve(), Path(args.work_root).resolve()
-    if bids_root != Path(values["bids"]).resolve() or work_root != Path(values["work"]).resolve():
+    bids_root = Path(values["bids"]).resolve()
+    work_root = Path(args.work_root).resolve()
+    if work_root != Path(values["work"]).resolve():
         raise SystemExit(
-            "Branch purge uses the shared site roots and maps output paths automatically"
+            "Branch purge uses the shared WORK root and maps output paths automatically"
         )
     control = Path(values["registry"])
     snapshot = maintenance(control, bids_root, checkout=checkout, operation="purge_snapshot")
@@ -634,7 +632,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     ):
         _branch_purge(args, selection, values=values, checkout=CHECKOUT)
         return
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    bids_root = Path(values["bids"]).resolve()
     work_root = Path(args.work_root).expanduser().resolve()
     selectors = selection.instance_entities
     modules = _modules(selection.modules)

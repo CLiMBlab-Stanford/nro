@@ -13,7 +13,11 @@ images, CIFTIs, and surface files without rerunning scientific processing. It
 creates one scene for each selected participant, space, smoothing level, and
 requested session or run group. The command prints every generated scene path.
 Add `--open` to launch the `wb_view` executable beside the configured
-`wb_command`. Opening a GUI requires a working display.
+`wb_command`. The viewer runs through `srun --x11` on the site's
+`viewing_partition` and remains attached to the terminal until it closes.
+The viewing allocation does not register as an nro worker and does not count
+toward the shared concurrency limit. Opening a GUI requires an SSH connection
+with X forwarding and a Slurm installation configured to support it.
 
 Linked scenes are the default. They refer directly to source derivatives and
 do not duplicate large CIFTIs or surface geometry. `--publish` instead copies

@@ -9,12 +9,13 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from nro.configuration.paths import BIDS_PATH
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.engine.cli import matches_instance_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
+
+LOG_MODULES = (*MODULES, "bidsify")
 
 
 def _matching_instance_ids(
@@ -92,11 +93,38 @@ def collect_log_paths(
     return _existing(registry.paths.workers / f"slurm-{job_id}.log" for job_id in job_ids)
 
 
+def collect_bidsify_log_paths(registry: Registry, selection, *, branch: str = "main") -> list[Path]:
+    """Resolve dedicated ingestion logs using the selectors that apply to BIDS sessions."""
+    if (
+        selection.workflows
+        or selection.spaces
+        or selection.smoothing
+        or selection.models
+        or selection.model_sets
+        or set(selection.runs) - {"ses"}
+    ):
+        return []
+    from nro.bidsify.store import IngestionStore
+
+    store = IngestionStore(registry, branch=branch)
+    sessions = selection.runs.get("ses", ())
+    return _existing(
+        store.root / f"{row['id']}.log"
+        for row in store.rows()
+        if (not selection.projects or row["project"] in selection.projects)
+        and (not selection.participants or row["participant"] in selection.participants)
+        and (not sessions or row["session"] in sessions)
+    )
+
+
 def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
     """Construct the log parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    add_core_selection_arguments(parser, module_choices=MODULES)
-    parser.add_argument("--bids-root", default=BIDS_PATH)
+    add_core_selection_arguments(
+        parser,
+        module_choices=LOG_MODULES,
+        module_help="Select scientific module logs, or bidsify ingestion logs",
+    )
     parser.add_argument(
         "-i",
         "--instance-level",
@@ -117,31 +145,38 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    from nro.configuration import site
+
+    bids_root = site.bids_root()
     selectors = selection.instance_entities
     modules = set(selection.modules)
-    projects = selected_projects(bids_root, selection.projects)
-    if not projects:
+    bidsify_selected = "bidsify" in modules
+    scientific_modules = modules - {"bidsify"}
+    scientific_selected = not modules or bool(scientific_modules)
+    projects = (
+        selected_projects(bids_root, selection.projects)
+        if scientific_selected
+        else list(selection.projects)
+    )
+    if scientific_selected and not projects:
         raise SystemExit("No nro projects found in the central registry")
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
 
-    values = settings()[0]
+    values = site.settings()[0]
     branch_execution = (
-        installation_record().get("mode") == "branch"
+        site.installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution:
         from nro.orchestration.scheduler_client import logs
 
-        if bids_root != Path(values["bids"]).resolve():
-            raise SystemExit("Branch logs use the shared site BIDS root")
         result = logs(
             Path(values["registry"]),
             bids_root,
-            checkout=CHECKOUT,
+            checkout=site.CHECKOUT,
             selection=dict(
                 projects=projects,
+                ingestion_projects=selection.projects,
                 participants=selection.participants,
                 modules=selection.modules,
                 workflows=selection.workflows,
@@ -151,7 +186,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         )
         _page_logs([Path(path) for path in result["paths"]], instance_level=args.instance_level)
         return
-    registry = Registry.for_project(projects[0], bids_root=bids_root)
+    registry = Registry.for_project(projects[0] if projects else "", bids_root=bids_root)
     if not registry.existing_database_path().is_file():
         raise SystemExit("No central nro registry found")
     instance_filtered = bool(
@@ -161,27 +196,38 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         or selection.workflows
         or selectors
     )
-    instance_ids = _matching_instance_ids(
-        registry,
-        projects=set(projects),
-        participants=selection.participants,
-        modules=modules,
-        workflows=set(selection.workflows),
-        selectors=selectors,
+    paths = (
+        collect_log_paths(
+            registry,
+            instance_ids=_matching_instance_ids(
+                registry,
+                projects=set(projects),
+                participants=selection.participants,
+                modules=scientific_modules,
+                workflows=set(selection.workflows),
+                selectors=selectors,
+            ),
+            instance_level=args.instance_level,
+            instance_filtered=instance_filtered,
+        )
+        if scientific_selected
+        else []
     )
-    paths = collect_log_paths(
-        registry,
-        instance_ids=instance_ids,
+    if bidsify_selected:
+        paths.extend(collect_bidsify_log_paths(registry, selection))
+    _page_logs(
+        paths,
         instance_level=args.instance_level,
-        instance_filtered=instance_filtered,
+        empty_label="bidsification" if bidsify_selected and not scientific_selected else None,
     )
-    _page_logs(paths, instance_level=args.instance_level)
 
 
-def _page_logs(paths: Iterable[Path], *, instance_level: bool) -> None:
+def _page_logs(
+    paths: Iterable[Path], *, instance_level: bool, empty_label: str | None = None
+) -> None:
     paths = _existing(paths)
     if not paths:
-        level = "instance" if instance_level else "worker"
+        level = empty_label or ("instance" if instance_level else "worker")
         print(f"No matching {level}-level logs.")
         return
     less = shutil.which("less")

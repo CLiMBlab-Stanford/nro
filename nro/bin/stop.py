@@ -6,7 +6,6 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.registry import Registry
@@ -24,7 +23,6 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
         action="store_true",
         help="Shut down the current user's lab-wide worker pool without cancelling instance demand",
     )
-    parser.add_argument("--bids-root", default=BIDS_PATH)
     parser.add_argument(
         "-f",
         "--force",
@@ -53,28 +51,27 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    bids_root = Path(args.bids_root).expanduser().resolve()
+    from nro.configuration import site
+
+    bids_root = site.bids_root()
     modules = list(selection.modules)
     selectors = selection.instance_entities
     total = {"instances": 0, "requests": 0, "attempts": 0}
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
 
-    values = settings()[0]
+    values = site.settings()[0]
     branch_execution = (
-        installation_record().get("mode") == "branch"
+        site.installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution and not args.workers:
         from nro.orchestration.scheduler_client import stop
 
-        if bids_root != Path(values["bids"]).resolve():
-            raise SystemExit("Branch cancellation uses the shared site BIDS root")
         for project in selected_projects(bids_root, selection.projects):
             result = stop(
                 Path(values["registry"]),
                 bids_root,
-                checkout=CHECKOUT,
+                checkout=site.CHECKOUT,
                 project=project,
                 selection=dict(
                     participants=selection.participants,
@@ -107,15 +104,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             or args.force
         ):
             raise SystemExit(
-                "--workers controls the lab-wide pool; only --bids-root may accompany it"
+                "--workers controls the lab-wide pool and cannot be combined with selectors"
             )
         if branch_execution:
             from nro.orchestration.scheduler_client import pool_operation
 
-            if bids_root != Path(values["bids"]).resolve():
-                raise SystemExit("Worker shutdown uses the shared site BIDS root")
             shutdown = pool_operation(
-                Path(values["registry"]), bids_root, checkout=CHECKOUT, operation="stop_workers"
+                Path(values["registry"]),
+                bids_root,
+                checkout=site.CHECKOUT,
+                operation="stop_workers",
             )
             stopped_jobs, failures = shutdown["stopped_jobs"], shutdown["failures"]
         else:

@@ -4,7 +4,6 @@ import argparse
 import json
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import RegistryPaths
 from nro.orchestration.releases import ReleaseStore
@@ -28,7 +27,6 @@ def main(argv=None, *, prog="nro release"):
         action="store_true",
         help="Approve the tagged initial 0.0.1 main commit without a PR",
     )
-    parser.add_argument("--bids-root", type=Path, default=BIDS_PATH)
     parser.add_argument(
         "--activate",
         action="store_true",
@@ -54,7 +52,9 @@ def main(argv=None, *, prog="nro release"):
     if not args.version and (args.pr or args.attest_merged or args.bootstrap):
         parser.error("Attestation requires a version")
     try:
-        paths = RegistryPaths.for_project("", bids_root=args.bids_root)
+        from nro.configuration.site import bids_root
+
+        paths = RegistryPaths.for_project("", bids_root=bids_root())
         store = ReleaseStore(BranchStore(paths.control))
         if args.repair_scheduler:
             from nro.orchestration.registry import Registry

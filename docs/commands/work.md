@@ -128,6 +128,11 @@ the current attempt's instance logs. Logs separate command stdout and stderr;
 a message on stderr is not by itself a failed command. Worker logs are not
 one-to-one with derivatives because workers execute multiple instances.
 
+Use `nro log -m bidsify` to browse the dedicated logs for matching bidsification
+requests. In this command, `bidsify` is a logging selector, not a scientific
+module. Project and participant selectors apply, and `-r ses=LABEL` selects a
+BIDS session. `-i` does not change bidsification log selection.
+
 ## `nro stop`
 
 Cancel selected demand and, by default, its downstream dependents. Other users'
@@ -147,8 +152,8 @@ nro set concurrency=100
 
 Accept one or more `NAME=VALUE` pairs. Currently only positive integer
 `concurrency` is recognized; unsupported keys warn and are skipped. Malformed
-pairs or invalid recognized values fail. `--json` returns the update result;
-`--bids-root` selects the project-root context.
+pairs or invalid recognized values fail. `--json` returns the update result.
+The global site configuration selects the registry and BIDS context.
 
 The update applies to active requests, not a permanent installation default.
 It fails when no active requests can be updated. Workers observe the new limit

@@ -59,6 +59,7 @@ def add_core_selection_arguments(
     planner_defaults: bool = False,
     default_modules: Sequence[str] = (),
     default_workflow: str = "main",
+    module_help: str | None = None,
 ) -> None:
     """Add the selection options shared by user-facing orchestration tools."""
     parser.add_argument(
@@ -87,7 +88,8 @@ def add_core_selection_arguments(
         choices=module_choices,
         default=None,
         metavar="MODULE",
-        help=(
+        help=module_help
+        or (
             "Select one or more modules"
             + ("; defaults to all workflow endpoints" if planner_defaults else "")
         ),

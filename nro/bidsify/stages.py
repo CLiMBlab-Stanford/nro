@@ -158,19 +158,14 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
     if record["stage"] in {"inspect", "prepare"}:
         source = source or FlywheelSource(record["config"]["servers"][record["server"]])
     if record["stage"] == "inspect":
-        acquisitions = source.inventory(record["remote_session"], record["config"]["protocols"])
+        acquisitions = source.inventory(record["remote_session"])
         return {
-            "state": "needs_input",
+            "state": "queued",
             "stage": "prepare",
             "acquisitions": acquisitions,
-            "issues": [
-                "Confirm acquisition classifications, BIDS entities, and task events before download"
-            ],
+            "issues": [],
         }
     if record["stage"] == "prepare":
-        unresolved = issues(record, prepared=False)
-        if unresolved:
-            return {"state": "needs_input", "issues": unresolved}
         runner = Runner(
             module_name="Bidsification preparation",
             container=None,
@@ -179,7 +174,11 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
             next_step=count(1).__next__,
         )
         for item in record["acquisitions"]:
-            if item["datatype"] == "ignore":
+            if (
+                item["datatype"] == "ignore"
+                and item.get("confirmed")
+                and not item.get("classification_override")
+            ):
                 continue
 
             def action(item=item):

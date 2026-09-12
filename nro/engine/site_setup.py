@@ -32,7 +32,10 @@ DESCRIPTIONS = {
     "runtime": "Singularity or Apptainer executable",
     "oslom": "oslom_undir executable",
     "partition": "Slurm partition",
+    "viewing_partition": "Slurm partition for interactive scene viewing",
     "account": "Slurm account (- for none)",
+    "flywheel_server": "Default Flywheel server (- for none)",
+    "flywheel_project": "Default Flywheel GROUP/PROJECT (- for none)",
 }
 
 
@@ -110,7 +113,7 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
                     "" if accept_all else input(f"{description}\n  {key} [{values[key]}]: ").strip()
                 )
                 value = entered or values[key]
-                if key == "account" and entered == "-":
+                if key in {"account", "flywheel_server", "flywheel_project"} and entered == "-":
                     value = ""
                 if key in PATH_KEYS:
                     value = str(Path(value).expanduser())

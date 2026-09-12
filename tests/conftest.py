@@ -50,11 +50,13 @@ def definitions_fixture(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def isolated_installation(tmp_path_factory, monkeypatch, definitions_fixture):
+def isolated_installation(tmp_path, tmp_path_factory, monkeypatch, definitions_fixture):
     root = tmp_path_factory.mktemp("installation-settings")
     config = root / "site.toml"
     config.write_text(
-        f'bids = "{root / "bids"}"\nregistry = "{root / "registry"}"\nwork = "{root / "work"}"\n'
+        f'bids = "{tmp_path / "bids"}"\n'
+        f'registry = "{tmp_path / "registry"}"\n'
+        f'work = "{tmp_path / "work"}"\n'
     )
     monkeypatch.setenv("NRO_SITE_CONFIG", str(config))
     for variable in site.ENVIRONMENT_KEYS:

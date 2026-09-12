@@ -286,6 +286,16 @@ def test_image_preparation_does_not_require_identity(ingestion, monkeypatch):
         path.mkdir(parents=True)
         (path / ".prepared.json").write_text("{}")
         prepared.append(path)
+        item.update(
+            datatype="anat",
+            suffix="T1w",
+            confirmed=True,
+            classification={
+                "bids_guess": ["anat", "T1w"],
+                "source": "dcm2niix",
+                "reason": "accepted metadata-derived image type",
+            },
+        )
         return {"_shape": [2, 2, 2]}
 
     monkeypatch.setattr(stages, "prepare_image", prepare)
@@ -531,11 +541,11 @@ def test_status_lists_pending_without_flywheel(ingestion, capsys):
     from nro.bin.status import main
 
     registry, store, row = ingestion
-    main(["--bids-root", str(registry.paths.bids_root), "--json"])
+    main(["--json"])
     report = json.loads(capsys.readouterr().out)
     assert report["instances"] == []
     assert report["bidsification"][0]["id"] == row["id"]
-    main(["--bids-root", str(registry.paths.bids_root), "-p", "someoneelse", "--json"])
+    main(["-p", "someoneelse", "--json"])
     assert json.loads(capsys.readouterr().out)["bidsification"] == []
 
 
@@ -543,7 +553,8 @@ def test_inspect_is_metadata_only(ingestion):
     registry, store, row = ingestion
     source = SimpleNamespace(inventory=lambda *_: [{"id": "file", "datatype": None}])
     result = run_stage(row, registry, source=source)
-    assert result["state"] == "needs_input"
+    assert result["state"] == "queued"
+    assert result["stage"] == "prepare"
     assert not (registry.paths.bids_root / "demo").exists()
 
 
@@ -617,7 +628,7 @@ def test_raw_anatomy_never_reaches_shared_staging(ingestion, monkeypatch, tmp_pa
 
     registry, store, row = ingestion
     raw_root = tmp_path / "local-anatomy"
-    monkeypatch.setattr(images, "temporary_anatomy", lambda _: raw_root)
+    monkeypatch.setattr(images, "temporary_raw", lambda _: raw_root)
     monkeypatch.setattr(
         pydicom, "dcmread", lambda *_args, **_kwargs: SimpleNamespace(Modality="MR")
     )
@@ -645,6 +656,7 @@ def test_raw_anatomy_never_reaches_shared_staging(ingestion, monkeypatch, tmp_pa
             (output / "converted.json").write_text(
                 json.dumps(
                     {
+                        "BidsGuess": ["anat", "_T1w"],
                         "PatientName": "private",
                         "SeriesNumber": 1,
                         "MagneticFieldStrength": 7,
@@ -670,13 +682,51 @@ def test_raw_anatomy_never_reaches_shared_staging(ingestion, monkeypatch, tmp_pa
     assert list(shared.rglob("*.dcm")) == []
 
 
+def test_bids_guess_is_primary_classification_and_rules_refine_it():
+    from nro.bidsify.images import classify
+
+    rules = [{"pattern": "(?i)sbref", "datatype": "func", "suffix": "sbref"}]
+    bold = classify({"BidsGuess": ["func", "_task-rest_bold"]}, rules)
+    assert (bold["datatype"], bold["suffix"], bold["confirmed"]) == (
+        "func",
+        "bold",
+        True,
+    )
+    sbref = classify(
+        {"BidsGuess": ["func", "_task-rest_bold"], "SeriesDescription": "REST_SBRef"},
+        rules,
+    )
+    assert (sbref["datatype"], sbref["suffix"]) == ("func", "sbref")
+    assert sbref["classification"]["source"] == "protocol_rule"
+
+
+@pytest.mark.parametrize(
+    "metadata, reason",
+    [
+        ({"BidsGuess": ["discard", "_localizer"]}, "discard"),
+        ({"BidsGuess": ["dwi", "_dwi"]}, "outside nro"),
+        ({"SeriesDescription": "T1w"}, "did not provide"),
+    ],
+)
+def test_unusable_bids_guess_proposes_confirmable_ignore(metadata, reason):
+    from nro.bidsify.images import classify
+
+    result = classify(
+        metadata,
+        [{"pattern": "(?i)t1w", "datatype": "anat", "suffix": "T1w"}],
+    )
+    assert (result["datatype"], result["suffix"]) == ("ignore", "ignore")
+    assert result["confirmed"] is False
+    assert reason in result["classification"]["reason"]
+
+
 def test_failed_strip_removes_raw_local_files(ingestion, monkeypatch, tmp_path):
     pytest.importorskip("pydicom")
     from nro.bidsify import images
 
     registry, store, row = ingestion
     root = tmp_path / "raw"
-    monkeypatch.setattr(images, "temporary_anatomy", lambda _: root)
+    monkeypatch.setattr(images, "temporary_raw", lambda _: root)
     item = {
         "id": "a",
         "acquisition": "a",
@@ -717,7 +767,7 @@ def test_flywheel_revision_pinned_and_labels_not_saved(tmp_path):
         get_acquisition=lambda _: acquisition,
     )
     source = FlywheelSource({}, client=client)
-    items = source.inventory("session", load_config()["protocols"])
+    items = source.inventory("session")
     assert "private" not in json.dumps(items)
     source.download(items[0], tmp_path / "download")
     file.version = 2
@@ -735,14 +785,13 @@ def test_invalid_wizard_indices(answer):
 
 
 def test_wizard_multiple_event_files_resume(ingestion, monkeypatch, tmp_path):
-    import nro.bidsify.flywheel
     from nro.bidsify.review import wizard
 
     registry, store, row = ingestion
     event_path = tmp_path / "events.tsv"
     event_path.write_text("onset\tduration\ttrial_type\n0\t1\tA\n")
     row.update(
-        stage="prepare",
+        stage="convert",
         state="needs_input",
         acquisitions=[
             {
@@ -751,39 +800,74 @@ def test_wizard_multiple_event_files_resume(ingestion, monkeypatch, tmp_path):
                 "suffix": "bold",
                 "entities": {},
                 "events": None,
-                "confirmed": False,
+                "confirmed": True,
+                "classification": {
+                    "bids_guess": ["func", "bold"],
+                    "source": "dcm2niix",
+                    "reason": "accepted metadata-derived image type",
+                },
+                "metadata": {"_shape": [2, 2, 2, 10], "RepetitionTime": 1.0},
             }
             for i in (1, 2)
         ],
     )
     row = save_decision(store, row)
-    monkeypatch.setattr(
-        nro.bidsify.flywheel,
-        "FlywheelSource",
-        lambda _: SimpleNamespace(describe=lambda a: a["id"]),
-    )
     answers = iter(
         [
-            "",
-            "y",
-            "bad",
             "task=language run=01",
             str(event_path),
             "y",
             "",
-            "y",
+            "",
             "task=language run=02",
             str(event_path),
             "y",
+            "",
+            "",
         ]
     )
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     with store.review_session(row["id"]) as token:
         result = wizard(store, row, review_token=token)
-    assert result["state"] == "queued" and result["stage"] == "prepare"
+    assert result["state"] == "queued" and result["stage"] == "convert"
     assert all(
         Path(a["events"]).read_text() == event_path.read_text() for a in result["acquisitions"]
     )
+
+
+def test_wizard_override_of_proposed_ignore_requeues_preparation(ingestion, monkeypatch):
+    from nro.bidsify.review import wizard
+
+    registry, store, row = ingestion
+    row.update(
+        stage="convert",
+        state="needs_input",
+        acquisitions=[
+            {
+                "id": "a",
+                "datatype": "ignore",
+                "suffix": "ignore",
+                "entities": {},
+                "events": None,
+                "confirmed": False,
+                "metadata": {},
+                "classification": {
+                    "bids_guess": None,
+                    "source": "unmatched",
+                    "reason": "dcm2niix did not provide a usable BidsGuess",
+                },
+            }
+        ],
+    )
+    row = save_decision(store, row)
+    answers = iter(["anat/T1w", ""])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    with store.review_session(row["id"]) as token:
+        result = wizard(store, row, review_token=token)
+    item = result["acquisitions"][0]
+    assert result["state"] == "queued" and result["stage"] == "prepare"
+    assert item["classification_override"] == ["anat", "T1w"]
+    assert item["entities_confirmed"] is True
 
 
 def test_replacement_receipt_cleans_interrupted_backup(ingestion, monkeypatch):
@@ -969,28 +1053,30 @@ def test_event_updates_are_revision_checked_and_preserve_previous_snapshot(inges
 
 @pytest.mark.parametrize("answer", ["skip", "q", "interrupt"])
 def test_interactive_exit_releases_only_current_session(ingestion, monkeypatch, answer):
-    import nro.bidsify.flywheel
     from nro.bin.bidsify import advance
 
     registry, store, row = ingestion
     row.update(
         state="needs_input",
-        stage="prepare",
+        stage="convert",
         acquisitions=[
             {
                 "id": "a",
-                "datatype": "anat",
-                "suffix": "T1w",
+                "datatype": "ignore",
+                "suffix": "ignore",
                 "confirmed": False,
                 "entities": {},
                 "events": None,
+                "metadata": {},
+                "classification": {
+                    "bids_guess": ["discard", "localizer"],
+                    "source": "dcm2niix",
+                    "reason": "dcm2niix classified the acquisition as discard",
+                },
             }
         ],
     )
     row = save_decision(store, row)
-    monkeypatch.setattr(
-        nro.bidsify.flywheel, "FlywheelSource", lambda _: SimpleNamespace(describe=lambda _: "test")
-    )
 
     def prompt(_):
         assert store._review_active(row["id"])

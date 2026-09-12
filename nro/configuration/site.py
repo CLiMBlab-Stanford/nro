@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,11 +25,13 @@ DEFAULTS = {
     "license": str(LAB / "freesurfer/license.txt"),
     "runtime": "singularity",
     "partition": "sphinx",
+    "viewing_partition": "dev-interactive",
     "account": "nlp",
+    "flywheel_server": "",
+    "flywheel_project": "",
     "binds": ["/juice6:/juice6"],
 }
 ENVIRONMENT_KEYS = {
-    "NRO_BIDS_PATH": "bids",
     "NRO_WORK_PATH": "work",
     "NRO_WB_COMMAND": "workbench",
     "TEMPLATEFLOW_HOME": "templates",
@@ -43,7 +46,18 @@ DERIVED = {
         "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
     ),
 }
-PATH_KEYS = (set(DEFAULTS) - {"runtime", "partition", "account", "binds"}) | set(DERIVED)
+PATH_KEYS = (
+    set(DEFAULTS)
+    - {
+        "runtime",
+        "partition",
+        "viewing_partition",
+        "account",
+        "flywheel_server",
+        "flywheel_project",
+        "binds",
+    }
+) | set(DERIVED)
 
 
 def generic_defaults() -> dict:
@@ -66,6 +80,7 @@ def generic_defaults() -> dict:
             }.items()
         },
         "binds": [],
+        "viewing_partition": "interactive",
     }
 
 
@@ -133,9 +148,13 @@ def validate_setting(key: str, value: object) -> None:
         return
     if not isinstance(value, str) or "\n" in value or "\x00" in value:
         raise ValueError(f"{key} must be a single-line string")
+    if key == "flywheel_server" and value and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value):
+        raise ValueError("flywheel_server must be a configured server name")
+    if key == "flywheel_project" and value and not re.fullmatch(r"[^/\s]+/[^/\s]+", value):
+        raise ValueError("flywheel_project must use GROUP/PROJECT")
     if key in PATH_KEYS and not Path(value).expanduser().is_absolute():
         raise ValueError(f"{key} must be an absolute path")
-    if key not in {"account"} and not value.strip():
+    if key not in {"account", "flywheel_server", "flywheel_project"} and not value.strip():
         raise ValueError(f"{key} cannot be empty")
 
 
@@ -167,6 +186,11 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
     for key in PATH_KEYS:
         values[key] = str(Path(values[key]).expanduser())
     return values, sources
+
+
+def bids_root() -> Path:
+    """Return the BIDS root selected by the global site configuration."""
+    return Path(settings()[0]["bids"]).resolve()
 
 
 def definitions_root() -> Path:

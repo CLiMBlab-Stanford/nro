@@ -72,6 +72,7 @@ The main settings are:
 | `license` | Existing FreeSurfer `license.txt`. |
 | `runtime` | Singularity or Apptainer command or absolute executable path. |
 | `partition`, `account` | Slurm submission settings. Enter `-` for no account. |
+| `viewing_partition` | Slurm partition for X11 scene-viewing jobs. |
 
 Enter the path to your existing FreeSurfer license when prompted. For Slurm,
 replace the proposed partition and account with values for your cluster. The
