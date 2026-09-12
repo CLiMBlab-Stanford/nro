@@ -1510,6 +1510,7 @@ class Registry(WorkflowRegistry):
                 and not (
                     row["artifact_state"] == "missing"
                     and row.get("artifact_reason") == "Purged by user"
+                    and not row.get("demanded")
                 )
             ):
                 roots.add(instance_id)
@@ -1833,7 +1834,7 @@ class Registry(WorkflowRegistry):
                       OR COALESCE((SELECT error_type FROM attempts old
                                    WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '')
                          IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                             'InstanceGraphChanged')
+                             'InstanceGraphChanged', 'RegistryUnavailable')
                       OR EXISTS (
                           SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
                           WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
@@ -1916,7 +1917,7 @@ class Registry(WorkflowRegistry):
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
         """Return whether the current attempt has been marked for cancellation."""
-        with self.connection() as db:
+        with self.read_connection() as db:
             row = db.execute("SELECT state FROM attempts WHERE id=?", (attempt_id,)).fetchone()
             return bool(row and row["state"] == "cancel_requested")
 
@@ -2470,7 +2471,7 @@ class Registry(WorkflowRegistry):
                           OR COALESCE((SELECT error_type FROM attempts old
                                       WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '')
                              IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                                 'InstanceGraphChanged')
+                                 'InstanceGraphChanged', 'RegistryUnavailable')
                           OR EXISTS (
                               SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
                               WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'

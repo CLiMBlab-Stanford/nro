@@ -320,6 +320,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             continue
         entities = json.loads(row["entities_json"])
         root_ids = tuple(int(value) for value in row["root_failure_ids"])
+        if row["status"] == "Error":
+            critical_errors[(project, int(row["id"]))] = _failure_detail(row, project=project)
         for root_id in root_ids:
             critical_errors[(project, root_id)] = _failure_detail(by_id[root_id], project=project)
         output.append(

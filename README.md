@@ -36,7 +36,7 @@ The arrows show dependencies:
                     │              └──► [microparcellation] ──► [networks]
                     └──► [firstlevels]
 
-[anat] ── "direct anatomical inputs" ──► {networks, firstlevels}
+[anat] ── "direct anatomical inputs" ──► {clean, networks, firstlevels}
 ```
 
 Version 0.0.1 is the first release. nro follows

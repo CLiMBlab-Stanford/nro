@@ -493,6 +493,10 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     assert by_module["clean"][0].instance_contract["processing"] == {
         "output_metadata": clean_output_contract()
     }
+    assert by_module["clean"][0].dependencies == (
+        by_module["func"][0].key,
+        by_module["anat"][0].key,
+    )
     assert by_module["microparcellation"][0].entities == {"space": "fsnative", "smoothing": "2"}
     assert by_module["microparcellation"][0].dependencies == (by_module["clean"][0].key,)
     assert by_module["microparcellation"][0].instance_contract["processing"] == {
