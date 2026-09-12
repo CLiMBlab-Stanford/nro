@@ -160,6 +160,7 @@ def test_installation_activation_preserves_demand_and_clears_barrier(central):
         )
         db.execute("INSERT INTO metadata VALUES ('maintenance_mode','installation')")
         db.execute("INSERT INTO metadata VALUES ('installation_checkout',?)", (str(root),))
+        db.execute("INSERT INTO metadata VALUES ('installation_action','stop')")
 
     implementation.activate(registry, root, installation_maintenance=True)
 
@@ -170,6 +171,10 @@ def test_installation_activation_preserves_demand_and_clears_barrier(central):
         )
         assert (
             db.execute("SELECT value FROM metadata WHERE key='installation_checkout'").fetchone()
+            is None
+        )
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='installation_action'").fetchone()
             is None
         )
 

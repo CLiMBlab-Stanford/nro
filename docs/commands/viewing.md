@@ -16,10 +16,13 @@ Add `--open` to launch the `wb_view` executable beside the configured
 `wb_command`. Outside a Slurm allocation, the viewer runs through `srun --x11`
 on the site's `viewing_partition`. Inside an allocation, it runs directly on
 the allocated node because Slurm cannot add X11 forwarding to a nested job
-step. The viewer remains attached to the terminal until it closes. A dedicated
-viewing allocation does not register as an nro worker or count toward the
-shared concurrency limit. Opening a GUI requires an SSH connection with X
-forwarding and a Slurm installation configured to support it.
+step. Workbench loads the first scene state directly and hides its scene-loader
+dialog. Because this operation selects one scene state, `--open` requires
+selectors that generate exactly one scene. The viewer remains attached to the
+terminal until it closes. A dedicated viewing allocation does not register as
+an nro worker or count toward the shared concurrency limit. Opening a GUI
+requires an SSH connection with X forwarding and a Slurm installation
+configured to support it.
 
 Linked scenes are the default. They refer directly to source derivatives and
 do not duplicate large CIFTIs or surface geometry. `--publish` instead copies

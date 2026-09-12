@@ -416,14 +416,17 @@ def _main(argv=None) -> None:
                         raise RuntimeError("Path setup was cancelled")
             values = settings(path=site)[0]
             shared_registry = Registry.for_project(
-                "", bids_root=values["bids"], registry_path=values["registry"]
+                "",
+                bids_root=values["bids"],
+                registry_path=values["registry"],
+                installation_maintenance=True,
             )
 
-            def confirm_drain(activity: dict) -> bool:
+            def confirm_drain(activity: dict) -> str | None:
                 if args.drain:
-                    return True
+                    return "drain"
                 if args.non_interactive or not sys.stdin.isatty():
-                    return False
+                    return None
                 print(
                     "Shared work is active: "
                     f"{activity['workers']} worker(s), "
@@ -431,9 +434,21 @@ def _main(argv=None) -> None:
                     f"{activity['attempts']} derivative attempt(s), and "
                     f"{activity['ingestion']} ingestion stage(s)."
                 )
-                return input(
-                    "Drain the pool, preserve demand, and continue after running work finishes? [y/N]: "
-                ).strip().lower() in {"y", "yes"}
+                while True:
+                    answer = (
+                        input(
+                            "Finish current work [d], stop it now [s], or cancel maintenance [N]? "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    if answer in {"d", "drain"}:
+                        return "drain"
+                    if answer in {"s", "stop"}:
+                        return "stop"
+                    if answer in {"", "n", "no", "cancel"}:
+                        return None
+                    print("Enter d to drain, s to stop now, or n to cancel.")
 
             prepare_pool(shared_registry, checkout=ROOT, confirm=confirm_drain)
 

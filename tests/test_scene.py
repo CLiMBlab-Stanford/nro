@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from nro.bin.scene import build_parser, scene_id
+from nro.bin.scene import _viewer_command, build_parser, scene_id
 from nro.engine.cli import core_selection
 from nro.engine.scenes import (
     SceneSource,
@@ -41,6 +41,25 @@ def test_scene_parser_uses_shared_selectors() -> None:
     assert scene_id("01", "fsnative", 2, {}, selection).startswith(
         "sub-01_space-fsnative_smoothing-2mm_selection-"
     )
+
+
+def test_scene_viewer_loads_the_generated_scene_without_a_dialog(tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+
+    assert _viewer_command(Path("/opt/workbench/wb_view"), [scene]) == [
+        "/opt/workbench/wb_view",
+        "-scene-load-hd",
+        str(scene),
+        "1",
+    ]
+
+
+def test_scene_viewer_requires_one_generated_scene(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="exactly one scene"):
+        _viewer_command(
+            Path("/opt/workbench/wb_view"),
+            [tmp_path / "first.scene", tmp_path / "second.scene"],
+        )
 
 
 def test_scene_viewer_uses_an_x11_slurm_allocation(monkeypatch) -> None:

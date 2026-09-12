@@ -209,11 +209,13 @@ def definitions_root() -> Path:
     return root
 
 
-def require_execution_support(*, scientific: bool = False) -> None:
+def require_execution_support(
+    *, scientific: bool = False, installation_maintenance: bool = False
+) -> None:
     """Require branch execution to pass through the central admission boundary."""
     record = installation_record()
     _require_no_pending_conversion(record)
-    if record.get("mode") == "shared" and not record.get("ready"):
+    if record.get("mode") == "shared" and not record.get("ready") and not installation_maintenance:
         raise ValueError("The shared installation is undergoing setup or maintenance")
     if record.get("mode") == "branch":
         raise ValueError(
