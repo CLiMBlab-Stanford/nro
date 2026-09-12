@@ -163,6 +163,15 @@ def test_interrupted_registration_stays_blocked_and_can_resume(installations, mo
     assert calls[-1][calls[-1].index("nro.bin.branch") + 1] == "attach"
 
 
+def test_incomplete_shared_installation_allows_only_explicit_maintenance(monkeypatch):
+    record = {"mode": "shared", "ready": False}
+    monkeypatch.setattr(site, "installation_record", lambda: record)
+
+    with pytest.raises(ValueError, match="undergoing setup or maintenance"):
+        site.require_execution_support()
+    site.require_execution_support(installation_maintenance=True)
+
+
 def test_journal_before_record_replacement_blocks_execution_and_resumes(installations, monkeypatch):
     old, main, _, _ = installations
     root = Path(old["checkout"])

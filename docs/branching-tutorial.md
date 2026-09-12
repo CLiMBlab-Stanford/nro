@@ -215,8 +215,9 @@ nro doctor
 
 The installer checks that `main` is clean, tagged, and present on `origin/main`.
 It records the release and activates that checkout for future scheduler work. If
-work is active, it asks whether to drain the shared pool before continuing. No
-separate branch-registration or release-approval command is needed.
+work is active, it offers to finish current attempts or stop them immediately
+while preserving demand. No separate branch-registration or release-approval
+command is needed.
 
 After activation, equivalent `dev` artifacts may be promoted with the accepted
 pull-request reference:

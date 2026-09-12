@@ -220,6 +220,15 @@ def scene_id(participant: str, space: str, smoothing: int, group: dict[str, str]
     return "_".join(tokens)
 
 
+def _viewer_command(viewer: Path, scenes: list[Path]) -> list[str]:
+    if len(scenes) != 1:
+        raise ValueError(
+            "--open requires selectors that generate exactly one scene; "
+            f"the current selection generated {len(scenes)}"
+        )
+    return [str(viewer), "-scene-load-hd", str(scenes[0]), "1"]
+
+
 def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
     """Construct the scene command parser."""
 
@@ -430,7 +439,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
             raise SystemExit(f"Connectome Workbench viewer is not available: {viewer}")
         try:
             run_x11(
-                [str(viewer), *(str(scene) for scene in scenes)],
+                _viewer_command(viewer, scenes),
                 partition=values["viewing_partition"],
                 account=values["account"] or None,
             )

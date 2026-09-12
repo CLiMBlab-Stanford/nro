@@ -28,10 +28,10 @@ release, run:
 ./install --maintain
 ```
 
-If work is active, the installer asks to drain it. The drain preserves demand and
-queued ingestion while running work finishes. Activation records the central
-checkout, interpreter, site settings path, source fingerprint, and installed
-release in `CONTROL/shared/scheduler/implementation.json`.
+If work is active, the installer offers to finish current attempts, stop them
+immediately while preserving demand, or cancel maintenance. Activation records
+the central checkout, interpreter, site settings path, source fingerprint, and
+installed release in `CONTROL/shared/scheduler/implementation.json`.
 
 Once activated, Slurm submissions and `run --local` use this orchestration
 installation. Job subprocesses use their separately registered scientific code

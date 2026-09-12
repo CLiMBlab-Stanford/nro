@@ -16,7 +16,7 @@ def test_pool_drain_requires_confirmation_before_mutation(tmp_path):
 
     with pytest.raises(RuntimeError, match="not changed"):
         shared_installation.prepare_pool(
-            registry, checkout=tmp_path / "main", confirm=lambda activity: False
+            registry, checkout=tmp_path / "main", confirm=lambda activity: None
         )
 
     with registry.connection() as db:
@@ -41,7 +41,7 @@ def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
     monkeypatch.setattr(shared_installation, "wait_for_worker_shutdown", lambda registry: None)
 
     result = shared_installation.prepare_pool(
-        registry, checkout=tmp_path / "main", confirm=lambda activity: True
+        registry, checkout=tmp_path / "main", confirm=lambda activity: "drain"
     )
 
     assert result["workers"] == 1
@@ -54,6 +54,77 @@ def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
             db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone()[0]
             == "installation"
         )
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='installation_action'").fetchone()[0]
+            == "drain"
+        )
+
+
+def test_pool_stop_interrupts_workers_without_waiting_for_attempts(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    registry.register_worker("worker", resource_class="large", slurm_job_id="101")
+    events = []
+    original_shutdown = registry.request_worker_shutdown
+
+    def shutdown(**options):
+        events.append("shutdown")
+        return original_shutdown(**options)
+
+    monkeypatch.setattr(registry, "request_worker_shutdown", shutdown)
+    monkeypatch.setattr(shared_installation, "_executing", lambda registry: (1, 0))
+    monkeypatch.setattr(
+        shared_installation,
+        "cancel_worker_allocations",
+        lambda registry, request: (events.append("cancel") or 1, []),
+    )
+    monkeypatch.setattr(
+        shared_installation,
+        "wait_for_worker_shutdown",
+        lambda registry: events.append("confirmed"),
+    )
+
+    result = shared_installation.prepare_pool(
+        registry, checkout=tmp_path / "main", confirm=lambda activity: "stop"
+    )
+
+    assert result["action"] == "stop"
+    assert result["stopped_jobs"] == 1
+    assert events == ["shutdown", "cancel", "confirmed"]
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='worker'").fetchone()[0] == (
+            "shutdown_requested"
+        )
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='installation_action'").fetchone()[0]
+            == "stop"
+        )
+
+
+def test_legacy_maintenance_barrier_asks_for_an_action_when_resumed(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    checkout = (tmp_path / "main").resolve()
+    registry.register_worker("worker", resource_class="large", slurm_job_id="101")
+    with registry.connection(write=True) as db:
+        db.execute("INSERT INTO metadata VALUES ('maintenance_mode','installation')")
+        db.execute("INSERT INTO metadata VALUES ('installation_checkout',?)", (str(checkout),))
+    choices = []
+    monkeypatch.setattr(shared_installation, "_executing", lambda registry: (1, 0))
+    monkeypatch.setattr(
+        shared_installation, "cancel_worker_allocations", lambda registry, request: (1, [])
+    )
+    monkeypatch.setattr(shared_installation, "wait_for_worker_shutdown", lambda registry: None)
+
+    result = shared_installation.prepare_pool(
+        registry,
+        checkout=checkout,
+        confirm=lambda activity: choices.append(activity) or "stop",
+    )
+
+    assert result["resuming"] is True
+    assert result["action"] == "stop"
+    assert len(choices) == 1
 
 
 def test_publish_records_release_in_installation(tmp_path, monkeypatch):

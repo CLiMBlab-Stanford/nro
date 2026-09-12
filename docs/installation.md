@@ -97,12 +97,13 @@ Maintenance is explicit:
 ./install --maintain
 ```
 
-When shared work is active, the installer reports it and asks permission to drain
-the pool. Confirmation places the registry in installation maintenance, prevents
-new claims, lets running derivative and ingestion stages finish, stops workers and
-allocations, and preserves demand. Installation continues when the pool is quiet.
-Ctrl-C leaves the maintenance barrier in place; repeat `./install --maintain` to
-resume. `--drain` provides the same authorization for noninteractive maintenance.
+When shared work is active, the installer reports it and offers three choices. A
+graceful drain prevents new claims, lets running derivative and ingestion stages
+finish, and then stops the workers. An immediate stop interrupts running work and
+preserves its demand so it can be queued again. Cancelling makes no registry change.
+Installation continues when the pool is quiet. Ctrl-C after choosing an action
+leaves the maintenance barrier and action in place; repeat `./install --maintain`
+to resume. `--drain` authorizes a graceful drain during noninteractive maintenance.
 Without that option, noninteractive maintenance refuses an active pool.
 
 After updating `main` to a newer tagged release, `./install --maintain` records and

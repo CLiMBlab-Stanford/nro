@@ -80,7 +80,7 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
                 db.execute(
                     "DELETE FROM metadata WHERE "
                     "(key='maintenance_mode' AND value='installation') "
-                    "OR key='installation_checkout'"
+                    "OR key IN ('installation_checkout','installation_action')"
                 )
     return record
 

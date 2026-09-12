@@ -610,11 +610,16 @@ class Registry(WorkflowRegistry):
         *,
         lock_timeout: float = 120.0,
         stale_lock_after: float = 300.0,
+        installation_maintenance: bool = False,
     ) -> None:
-        """Bind resolved paths and lock timings without opening the database."""
+        """Bind resolved paths and lock timings without opening the database.
+
+        ``installation_maintenance`` lets the installer resume an incomplete
+        shared setup. Normal callers must leave it disabled.
+        """
         from nro.configuration.site import require_execution_support
 
-        require_execution_support()
+        require_execution_support(installation_maintenance=installation_maintenance)
         self.paths = paths
         self.lock_timeout = lock_timeout
         self.stale_lock_after = stale_lock_after
