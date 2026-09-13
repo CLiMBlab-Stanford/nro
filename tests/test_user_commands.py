@@ -49,9 +49,52 @@ def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
     monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
     monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"token": "launch"})
     monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
     with pytest.raises(RuntimeError, match="did not respond within 0.01 seconds"):
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0.01)
+
+
+def test_scheduler_exchange_does_not_time_out_while_slurm_controller_is_pending(
+    monkeypatch, tmp_path
+) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    responses = iter((None, None, {"result": {"ok": True}}))
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: next(responses))
+    monkeypatch.setattr(
+        scheduler_bus,
+        "read_launch",
+        lambda *_args: {"token": "launch", "job_id": "12345"},
+    )
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
+    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
+    monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
+
+    assert scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0) == {"ok": True}
+
+
+def test_scheduler_exchange_times_out_if_local_controller_does_not_activate(
+    monkeypatch, tmp_path
+) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
+    monkeypatch.setattr(
+        scheduler_bus,
+        "read_launch",
+        lambda *_args: {"token": "launch", "job_id": "local-123"},
+    )
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="did not respond within 0 seconds"):
+        scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0)
 
 
 def test_scheduler_exchange_reports_malformed_response(monkeypatch, tmp_path) -> None:
