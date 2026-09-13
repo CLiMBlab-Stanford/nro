@@ -137,6 +137,11 @@ def _busy(
     preserve_demand: bool = False,
     allowed_maintenance: str | None = None,
 ) -> str | None:
+    from nro.orchestration.scheduler_bus import read_active
+
+    active = read_active(registry.paths.control)
+    if active is not None and active.get("token") != os.environ.get("NRO_SCHEDULER_TOKEN"):
+        return "an active scheduler service"
     if _active_service(registry.paths.control, ignore=ignore_service):
         return "active scheduler service calls"
     checks = (

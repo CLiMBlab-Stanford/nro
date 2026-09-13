@@ -1,9 +1,7 @@
-"""Hash-bound approval and session publication without partial BIDS directories."""
+"""Hash-bound approval and recoverable session publication."""
 
-import ctypes
 import hashlib
 import json
-import os
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,19 +80,6 @@ def approval_snapshot(record: dict, registry, *, branch_paths: BranchPaths | Non
     }
 
 
-def _exchange(first: Path, second: Path) -> None:
-    """Atomically exchange existing directories on Linux; never use a two-rename fallback."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    rename = getattr(libc, "renameat2", None)
-    if rename is None:
-        raise BidsificationError(
-            "Atomic directory exchange is unavailable; existing BIDS was not changed"
-        )
-    if rename(-100, os.fsencode(first), -100, os.fsencode(second), 2):
-        error = ctypes.get_errno()
-        raise OSError(error, "Atomic directory exchange failed; existing BIDS was not changed")
-
-
 def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) -> dict:
     """Publish only approved bytes, preserving a receipt through interruption and repair.
 
@@ -120,43 +105,33 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
         if branch_paths != approved_paths:
             raise BidsificationError("Publication paths differ from the approved execution")
     store = IngestionStore(registry, branch_paths=branch_paths)
-    if detached and store.branch == "main":
-        raise BidsificationError("Production publication requires the central scheduler registry")
     staged, target = session_paths(record, registry, branch_paths=branch_paths)
     approval = record.get("approval")
     if not approval:
         raise BidsificationError("Publication has not been approved")
     receipt = store.root / "receipts" / f"{record['id']}.json"
+    journal = store.root / "transactions" / f"{record['id']}.json"
     secure_directory(target.parent)
     temporary = target.parent / f".nro-publish-{record['id']}"
-    if temporary.is_symlink():
-        raise BidsificationError("Unsafe publication temporary path")
-    if receipt.exists() and inventory(target) == approval["outputs"]:
-        if temporary.exists():
-            if inventory(temporary) != approval["existing"]:
-                raise BidsificationError(
-                    "Interrupted publication has an unexpected backup; operator review is required"
-                )
-            shutil.rmtree(temporary)
-        return {"published_path": str(target)}
-    if temporary.exists():
-        # A prior atomic exchange may have succeeded before its receipt write.
-        if (
-            inventory(target) == approval["outputs"]
-            and inventory(temporary) == approval["existing"]
-        ):
-            secure_directory(receipt.parent)
-            atomic_write_text(
-                receipt, json.dumps({"target": str(target), **approval}), mode=0o660, durable=True
-            )
-            shutil.rmtree(temporary)
-            return {"published_path": str(target)}
-        shutil.rmtree(temporary)
-    if approval_snapshot(record, registry, branch_paths=branch_paths) != approval:
-        raise BidsificationError("Staged outputs or destination changed after approval")
-    shutil.copytree(staged, temporary)
-    if inventory(temporary) != approval["outputs"]:
-        raise BidsificationError("Publication copy verification failed")
+    backup = target.parent / f".nro-backup-{record['id']}"
+    for path in (temporary, backup):
+        if path.is_symlink():
+            raise BidsificationError("Unsafe publication transaction path")
+    transaction = {
+        "protocol": 1,
+        "request": record["id"],
+        "target": str(target),
+        "candidate": str(temporary),
+        "backup": str(backup),
+        "approval": approval,
+    }
+    if journal.exists():
+        try:
+            saved_transaction = json.loads(journal.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise BidsificationError("Publication transaction journal is unreadable") from error
+        if saved_transaction != transaction:
+            raise BidsificationError("Publication transaction journal does not match approval")
 
     @contextmanager
     def publication_guard():
@@ -172,7 +147,7 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
             with registry.connection(write=True) as db:
                 yield db
 
-    with publication_guard() as db:
+    def require_ownership(db) -> None:
         current = store.get(record["id"])
         if (
             current["state"] != "running"
@@ -192,6 +167,88 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
             raise BidsificationError(
                 "Destination project has active derivative attempts; stop them before publication"
             )
+
+    def write_receipt() -> None:
+        secure_directory(receipt.parent)
+        atomic_write_text(
+            receipt,
+            json.dumps({"target": str(target), **approval}),
+            mode=0o660,
+            durable=True,
+        )
+
+    def remove_completed_transaction() -> None:
+        if temporary.exists():
+            if inventory(temporary) != approval["outputs"]:
+                raise BidsificationError(
+                    "Completed publication has an unexpected candidate directory"
+                )
+            shutil.rmtree(temporary)
+        if backup.exists():
+            if inventory(backup) != approval["existing"]:
+                raise BidsificationError(
+                    "Interrupted publication has an unexpected backup; operator review is required"
+                )
+            shutil.rmtree(backup)
+
+    completed = False
+    restored = False
+    with publication_guard() as db:
+        require_ownership(db)
+        if target.exists() and inventory(target) == approval["outputs"]:
+            write_receipt()
+            journal.unlink(missing_ok=True)
+            completed = True
+        elif backup.exists():
+            if inventory(backup) != approval["existing"] or not approval["target_exists"]:
+                raise BidsificationError(
+                    "Interrupted publication has an unexpected backup; operator review is required"
+                )
+            if target.exists():
+                raise BidsificationError(
+                    "Interrupted publication has both an old target and a backup"
+                )
+            if temporary.exists():
+                if inventory(temporary) != approval["outputs"]:
+                    raise BidsificationError(
+                        "Interrupted publication has an unexpected candidate; operator review is required"
+                    )
+                temporary.rename(target)
+                write_receipt()
+                journal.unlink(missing_ok=True)
+                completed = True
+            else:
+                backup.rename(target)
+                journal.unlink(missing_ok=True)
+                restored = True
+    if completed:
+        remove_completed_transaction()
+        return {"published_path": str(target)}
+
+    if temporary.exists():
+        if inventory(temporary) != approval["outputs"]:
+            if journal.exists() or backup.exists():
+                raise BidsificationError(
+                    "Publication candidate changed; operator review is required"
+                )
+            if approval_snapshot(record, registry, branch_paths=branch_paths) != approval:
+                raise BidsificationError(
+                    "Publication candidate and destination changed after approval"
+                )
+            shutil.rmtree(temporary)
+            shutil.copytree(staged, temporary)
+    else:
+        if approval_snapshot(record, registry, branch_paths=branch_paths) != approval:
+            detail = " after recovery" if restored else ""
+            raise BidsificationError(
+                f"Staged outputs or destination changed{detail} after approval"
+            )
+        shutil.copytree(staged, temporary)
+        if inventory(temporary) != approval["outputs"]:
+            raise BidsificationError("Publication copy verification failed")
+
+    with publication_guard() as db:
+        require_ownership(db)
         if approval_snapshot(record, registry, branch_paths=branch_paths) != approval:
             raise BidsificationError("Publication inputs changed while copying")
         project = store.project_root(record["project"])
@@ -208,16 +265,22 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
                     indent=2,
                 ),
             )
-        secure_directory(receipt.parent)
-        # The prepared receipt is also the recovery journal. Output hashes
-        # establish whether the single atomic filesystem operation completed.
+        secure_directory(journal.parent)
         atomic_write_text(
-            receipt, json.dumps({"target": str(target), **approval}), mode=0o660, durable=True
+            journal,
+            json.dumps(transaction),
+            mode=0o660,
+            durable=True,
         )
         if target.exists():
-            _exchange(temporary, target)
-        else:
+            target.rename(backup)
+        try:
             temporary.rename(target)
-    if temporary.exists():
-        shutil.rmtree(temporary)
+        except BaseException:
+            if not target.exists() and backup.exists():
+                backup.rename(target)
+            raise
+        write_receipt()
+        journal.unlink(missing_ok=True)
+    remove_completed_transaction()
     return {"published_path": str(target)}

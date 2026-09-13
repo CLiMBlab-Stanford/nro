@@ -34,7 +34,8 @@ def git(checkout, *args):
     )
 
 
-def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path):
+def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypatch):
+    monkeypatch.setenv("NRO_SCHEDULER_LOCAL", "1")
     root = tmp_path / "main"
     shutil.copytree(
         Path(__file__).parents[1] / "nro",

@@ -21,6 +21,7 @@ from nro.configuration.paths import BIDS_PATH
 from nro.engine.io import atomic_write_json
 from nro.orchestration.assessment import AssessmentConflict
 from nro.orchestration.contracts import ExecutionEnvelope
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.execution import (
     ExecutionLauncher,
@@ -226,6 +227,8 @@ def _runner_graph_signature(registry: Registry, instance_id: int) -> str:
     existing pathname. Commands and source code are execution details rather
     than evidence that the derivative contract changed.
     """
+    if hasattr(registry, "runner_graph_signature"):
+        return registry.runner_graph_signature(instance_id)
     with registry.connection() as db:
         closure = [
             dict(row)
@@ -320,6 +323,7 @@ class Worker:
         drain_seconds: float = 15 * 60,
         profile: str | None = None,
         launcher: ExecutionLauncher | None = None,
+        worker_id: str | None = None,
     ) -> None:
         """Configure registry access, resource limits, polling, and the execution launcher."""
         self.registry = registry
@@ -332,7 +336,7 @@ class Worker:
         )
         self.drain_seconds = drain_seconds
         self.profile = profile
-        self.worker_id = (
+        self.worker_id = worker_id or (
             f"{os.environ.get('SLURM_JOB_ID', 'local')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         )
         self.launcher = launcher or SubprocessExecutionLauncher()
@@ -343,6 +347,8 @@ class Worker:
         print(f"{utcnow()} nro worker {self.worker_id}: {message}", flush=True)
 
     def _attempt_summary(self, attempt_id: int) -> str:
+        if hasattr(self.registry, "attempt_summary"):
+            return self.registry.attempt_summary(attempt_id)
         with self.registry.connection() as db:
             row = db.execute(
                 "SELECT state, error_message FROM attempts WHERE id=?", (attempt_id,)
@@ -357,6 +363,11 @@ class Worker:
     def _submit_successor(self) -> None:
         job_id = os.environ.get("SLURM_JOB_ID")
         if not job_id:
+            return
+        if hasattr(self.registry, "request_capacity"):
+            self.registry.request_capacity(
+                "successor", memory_gb=self.memory_gb, profile=self.profile
+            )
             return
         script = self.registry.paths.workers / f"worker-{self.resource_class}.sbatch"
         tier_name = f"worker-{self.resource_class}-{self.memory_gb}gb"
@@ -395,6 +406,9 @@ class Worker:
 
     def _submit_adaptive_worker(self, memory_gb: int) -> None:
         if not os.environ.get("SLURM_JOB_ID"):
+            return
+        if hasattr(self.registry, "request_capacity"):
+            self.registry.request_capacity("adaptive", memory_gb=memory_gb, profile=self.profile)
             return
         profile_suffix = f"-{self.profile}" if self.profile else ""
         script = self.registry.paths.workers / (
@@ -446,6 +460,9 @@ class Worker:
     def _expand_ready_pool(self) -> None:
         """Add ordinary workers when a completed dependency exposes parallel work."""
         if not os.environ.get("SLURM_JOB_ID"):
+            return
+        if hasattr(self.registry, "request_capacity"):
+            self.registry.request_capacity("expand", memory_gb=self.memory_gb, profile=self.profile)
             return
         profile_suffix = f"-{self.profile}" if self.profile else ""
         script = self.registry.paths.workers / (
@@ -667,11 +684,20 @@ class Worker:
                 started_at=completion_started,
                 manifest_path=str(instance.manifest_path),
             )
-            manifest = record_completion(
-                self.registry,
-                instance_id=instance.instance_id,
-                attempt_id=attempt_id,
-                outputs=_outputs(instance),
+            outputs = _outputs(instance)
+            manifest = (
+                self.registry.record_completion(
+                    instance_id=instance.instance_id,
+                    attempt_id=attempt_id,
+                    outputs=outputs,
+                )
+                if hasattr(self.registry, "record_completion")
+                else record_completion(
+                    self.registry,
+                    instance_id=instance.instance_id,
+                    attempt_id=attempt_id,
+                    outputs=outputs,
+                )
             )
             _update_orchestration_step(
                 log_path,
@@ -751,46 +777,53 @@ class Worker:
         from nro.bidsify.store import IngestionStore
         from nro.orchestration.contracts import ExecutionRecipe
 
-        store = IngestionStore(self.registry, branch=record.get("branch", "main"))
-        log_path = store.root / f"{record['id']}.log"
-        result_path = store.root / f"{record['id']}.result"
-        result_path.unlink(missing_ok=True)
-        envelope = SimpleNamespace(
-            execution=ExecutionRecipe(
-                command=(
-                    sys.executable,
-                    "-m",
-                    "nro.bidsify",
-                    "--request",
-                    record["id"],
-                    "--bids-root",
-                    str(self.registry.paths.bids_root),
-                    "--control",
-                    str(self.registry.paths.control),
-                ),
-                runtime_config=store.root / f"{record['id']}.json",
-            )
-        )
-        self.registry.heartbeat_worker(self.worker_id, state="running")
+        branch = record.get("branch", "main")
+        store = None
         try:
+            if hasattr(self.registry, "finish_ingestion"):
+                control = ControlPaths(self.registry.paths.control)
+                root = (
+                    control.ingestion if branch == "main" else control.branch(branch) / "ingestion"
+                )
+            else:
+                store = IngestionStore(self.registry, branch=branch)
+                root = store.root
+            log_path = root / f"{record['id']}.log"
+            result_path = root / f"{record['id']}.result"
+            result_path.unlink(missing_ok=True)
+            envelope = SimpleNamespace(
+                execution=ExecutionRecipe(
+                    command=(
+                        sys.executable,
+                        "-m",
+                        "nro.bidsify",
+                        "--request",
+                        record["id"],
+                        "--bids-root",
+                        str(self.registry.paths.bids_root),
+                        "--control",
+                        str(self.registry.paths.control),
+                    ),
+                    runtime_config=root / f"{record['id']}.json",
+                )
+            )
+            self.registry.heartbeat_worker(self.worker_id, state="running")
             if record.get("execution"):
                 from nro.bidsify.execution import stage_command
 
                 envelope.execution = ExecutionRecipe(
                     command=stage_command(record, self.registry),
-                    runtime_config=store.root / f"{record['id']}.json",
+                    runtime_config=root / f"{record['id']}.json",
                 )
 
             def cancelled():
                 if self.stop_requested or self.registry.worker_shutdown_requested(self.worker_id):
                     return True
-                if store.branch != "main":
+                if branch != "main":
                     from nro.orchestration.branch_store import BranchStore
 
                     owner = (
-                        BranchStore(self.registry.paths.control)
-                        .read()
-                        .topology.records.get(store.branch)
+                        BranchStore(self.registry.paths.control).read().topology.records.get(branch)
                     )
                     return owner is None or owner.retired
                 return False
@@ -810,25 +843,36 @@ class Worker:
                     ),
                 )
             if result.cancelled:
-                store.finish(record["id"], self.worker_id, state="interrupted")
+                if store is None:
+                    self.registry.finish_ingestion(record["id"], branch=branch, state="interrupted")
+                else:
+                    store.finish(record["id"], self.worker_id, state="interrupted")
             elif result.return_code != 0 or not result_path.is_file():
-                store.finish(
-                    record["id"],
-                    self.worker_id,
-                    state="failed",
-                    changes={
-                        "issues": [
-                            "Scheduled stage failed; inspect the ingestion log and retry through nro bidsify"
-                        ]
-                    },
-                )
+                changes = {
+                    "issues": [
+                        "Scheduled stage failed; inspect the ingestion log and retry through nro bidsify"
+                    ]
+                }
+                if store is None:
+                    self.registry.finish_ingestion(
+                        record["id"], branch=branch, state="failed", changes=changes
+                    )
+                else:
+                    store.finish(record["id"], self.worker_id, state="failed", changes=changes)
             else:
                 changes = json.loads(result_path.read_text())
-                store.finish(
-                    record["id"], self.worker_id, state=changes.pop("state"), changes=changes
-                )
+                state = changes.pop("state")
+                if store is None:
+                    self.registry.finish_ingestion(
+                        record["id"], branch=branch, state=state, changes=changes
+                    )
+                else:
+                    store.finish(record["id"], self.worker_id, state=state, changes=changes)
         except Exception:
-            store.finish(record["id"], self.worker_id, state="interrupted")
+            if store is None:
+                self.registry.finish_ingestion(record["id"], branch=branch, state="interrupted")
+            else:
+                store.finish(record["id"], self.worker_id, state="interrupted")
         finally:
             self.registry.heartbeat_worker(self.worker_id, state="idle")
             self._expand_ready_pool()
@@ -843,6 +887,14 @@ class Worker:
 
     def _refresh_scheduler_state(self) -> None:
         """Periodically make the active registry agree with filesystem evidence."""
+        if hasattr(self.registry, "refresh_scheduler_state"):
+            cancelled = self.registry.refresh_scheduler_state()
+            if cancelled:
+                self._log(
+                    f"requested cancellation of {cancelled} active instance attempt(s) "
+                    "whose upstream artifacts became stale"
+                )
+            return
         if not self.registry.reserve_artifact_assessment():
             return
         try:
@@ -912,9 +964,14 @@ class Worker:
                     memory_gb=self.memory_gb,
                 )
                 if instance is None:
-                    from nro.bidsify.index import IngestionIndex
+                    if not hasattr(self.registry, "claim_ingestion"):
+                        from nro.bidsify.index import IngestionIndex
 
-                    ingestion = IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
+                    ingestion = (
+                        self.registry.claim_ingestion(self.memory_gb)
+                        if hasattr(self.registry, "claim_ingestion")
+                        else IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
+                    )
                     if ingestion is not None:
                         idle_since = time.monotonic()
                         idle_announced = False
@@ -961,7 +1018,10 @@ class Worker:
             self.registry.close_worker(self.worker_id, state=final_state)
             self.registry.mark_submission_complete(os.environ.get("SLURM_JOB_ID"))
             self._log(f"stopped (state={final_state})")
-            cleanup_cache(self.registry)
+            if hasattr(self.registry, "cleanup_cache"):
+                self.registry.cleanup_cache()
+            else:
+                cleanup_cache(self.registry)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -975,16 +1035,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--walltime-seconds", type=float)
     parser.add_argument("--drain-seconds", type=float, default=15 * 60)
     parser.add_argument("--profile")
+    parser.add_argument("--worker-id", help=argparse.SUPPRESS)
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     """Run one reusable worker until it drains or receives shutdown."""
     args = build_parser().parse_args(argv)
-    registry = Registry.for_project("", bids_root=args.bids_root)
+    direct_registry = Registry.for_project("", bids_root=args.bids_root)
     from nro.orchestration.scheduler_implementation import require_worker_source
 
-    require_worker_source(registry.paths.control)
+    require_worker_source(direct_registry.paths.control)
+    from nro.orchestration.worker_client import WorkerSchedulerClient
+
+    worker_id = args.worker_id or (
+        f"{os.environ.get('SLURM_JOB_ID', 'local')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+    registry = WorkerSchedulerClient(
+        bids_root=Path(args.bids_root),
+        control=direct_registry.paths.control,
+        worker_id=worker_id,
+    )
     raise SystemExit(
         Worker(
             registry,
@@ -995,6 +1066,7 @@ def main(argv: list[str] | None = None) -> None:
             walltime_seconds=args.walltime_seconds,
             drain_seconds=args.drain_seconds,
             profile=args.profile,
+            worker_id=worker_id,
         ).run()
     )
 

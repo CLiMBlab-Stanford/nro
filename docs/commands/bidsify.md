@@ -128,10 +128,11 @@ The lease is released before moving to the next session, including after
 Leases renew every 30 seconds while the terminal waits for input and expire
 after two minutes without renewal. A terminal that loses its lease cannot
 renew expired ownership or save more decisions. Reopen the session to resume.
-The global registry lock is held only for short operations, not while answering
-prompts. Registered requests remain in place even when nobody holds a review
-lease. A request reserves its BIDS destination once both labels are known;
-filling a missing label checks for another request or an existing destination.
+Review saves use a dedicated short-lived ingestion-state lock, never a scheduler
+database lock and never while the user answers prompts. Registered requests
+remain in place even when nobody holds a review lease. A request reserves its
+BIDS destination once both labels are known; filling a missing label checks for
+another request or an existing destination.
 
 Decision saves require both the active lease and the current record revision.
 Event TSV snapshots are written under the same checks and use content-addressed
@@ -334,10 +335,13 @@ because they can contain identifying labels. Safe failures appear in
 type without the original message.
 
 Publication copies the approved session to a hidden sibling on the destination
-filesystem, verifies it, and renames it into place. Replacing a session uses
-Linux atomic directory exchange. Filesystems that cannot perform that exchange
-fail without a two-rename fallback. The existing session is removed only after
-the exchange, and a receipt supports recovery after an interrupted commit.
+filesystem, verifies it, and renames it into place. Replacing a session uses a
+durable transaction journal and two same-filesystem renames. The old session is
+first moved to a hidden backup, and the complete new session is then moved into
+place. No partially copied session appears at the destination. If execution is
+interrupted between the renames, the next attempt either finishes publication
+or restores the old session from the backup based on the approved file hashes.
+The backup is removed only after a durable receipt records the new session.
 Other sessions are untouched. Existing raw `dataset_description.json` metadata
 is preserved; an absent description is created.
 

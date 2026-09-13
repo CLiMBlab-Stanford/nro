@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from nro.bin.run import _write_worker_script, build_parser
+from nro.bin.run import _resumable_rows, _write_worker_script, build_parser
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
 from nro.bin.status import _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
-from nro.engine.cli import core_selection, page_text
+from nro.engine.cli import CoreSelection, core_selection, page_text
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.registry import SCHEMA_VERSION, Registry
 
@@ -40,6 +40,81 @@ def test_run_defaults() -> None:
 
 def test_run_cpu_override() -> None:
     assert build_parser().parse_args(["--cpus", "8"]).cpus == 8
+
+
+def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
+    with pytest.raises(RuntimeError, match="did not respond within 0.01 seconds"):
+        scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0.01)
+
+
+def test_scheduler_exchange_reports_malformed_response(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: {"unexpected": True})
+    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
+    monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
+    with pytest.raises(RuntimeError, match="malformed response"):
+        scheduler_client.exchange(endpoint, {"operation": "status"})
+
+
+def test_resume_suppresses_new_request_defaults() -> None:
+    args = build_parser().parse_args(["--resume"])
+    selection = core_selection(args, apply_planner_defaults=False)
+
+    assert selection.modules == ()
+    assert selection.workflows == ()
+    assert selection.spaces == ()
+    assert selection.smoothing == ()
+
+
+def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
+    selection = CoreSelection((), (), (), (), {}, (), ())
+    rows = [
+        {
+            "id": index,
+            "status": status,
+            "demanded": demanded,
+            "project": "demo",
+            "participant": "01",
+            "module": "clean",
+            "workflow_ids": "main",
+            "entities_json": "{}",
+        }
+        for index, (status, demanded) in enumerate(
+            (
+                ("Queued", False),
+                ("Stopped", False),
+                ("Error", False),
+                ("Missing", False),
+                ("Stale", False),
+                ("Blocked", False),
+                ("Missing", True),
+                ("Stale", True),
+                ("Blocked", True),
+                ("Success", True),
+                ("Running", True),
+            )
+        )
+    ]
+
+    selected = _resumable_rows(rows, selection)
+
+    assert [(row["status"], bool(row["demanded"])) for row in selected] == [
+        ("Queued", False),
+        ("Stopped", False),
+        ("Error", False),
+        ("Missing", True),
+        ("Stale", True),
+        ("Blocked", True),
+    ]
 
 
 def test_run_can_disable_ancestor_reuse() -> None:
@@ -612,6 +687,32 @@ def test_run_continues_past_unavailable_participant(
             "reason": f"No T1w or T2w images found under {unavailable}",
         }
     ]
+
+
+def test_run_resume_recreates_only_matching_registered_demand(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    for participant in ("01", "02"):
+        subject = bids / "demo" / f"sub-{participant}"
+        _write(subject / "anat" / f"sub-{participant}_T1w.nii.gz")
+        stem = f"sub-{participant}_task-rest_run-1_bold"
+        _write(subject / "func" / f"{stem}.nii.gz")
+        _write(subject / "func" / f"{stem}.json", "{}")
+
+    run_main(["-P", "demo", "-m", "func", "--no-submit", "--json"])
+    capsys.readouterr()
+    run_main(["--resume", "-P", "demo", "-p", "01", "--no-submit", "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["resumed"] == 2
+    assert result["participants"] == {"demo": ["01"]}
+    assert result["instances"] == 2
+    registry = Registry.for_project("demo", bids_root=bids)
+    requests = registry.request_rows()
+    assert len(requests) == 2
+    assert json.loads(requests[-1]["selectors_json"])["participants"] == ["01"]
 
 
 def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None:

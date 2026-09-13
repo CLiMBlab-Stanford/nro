@@ -152,9 +152,17 @@ def add_core_selection_arguments(
         )
 
 
-def core_selection(args: argparse.Namespace) -> CoreSelection:
-    """Normalize shared CLI values and parse run selectors."""
+def core_selection(
+    args: argparse.Namespace, *, apply_planner_defaults: bool | None = None
+) -> CoreSelection:
+    """Normalize shared CLI values and parse run selectors.
+
+    ``apply_planner_defaults`` can suppress endpoint, workflow, space, and
+    smoothing defaults for modes that select existing registry records.
+    """
     planner_defaults = bool(getattr(args, "_planner_defaults", False))
+    if apply_planner_defaults is not None:
+        planner_defaults = apply_planner_defaults
     smoothing = tuple(
         dict.fromkeys(args.smoothing or ((DEFAULT_SMOOTHING_MM,) if planner_defaults else ()))
     )

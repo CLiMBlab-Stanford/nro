@@ -163,6 +163,39 @@ def test_upstream_targets_collapse_to_endpoint(branch_registry, tmp_path, module
     assert not any(row["demanded"] for row in branch_registry.instance_rows())
 
 
+def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_path):
+    complete = _plan_modules(branch_registry, tmp_path, ("clean",))
+    target = next(
+        key
+        for key in complete.requests[0].terminal_keys
+        if complete.instances[key].participant == "01"
+        and complete.instances[key].entities["space"] == "T1w"
+        and complete.instances[key].entities["smoothing"] == "2"
+        and complete.instances[key].entities["task"] == "rest"
+    )
+    workflow = ConfigStore().resolve("main")
+    planner = Planner(branch_registry, bids_root=tmp_path / "bids")
+    exact = planner.plan(
+        projects=("demo",),
+        requested_participants=(),
+        modules=("clean",),
+        workflows={"main": workflow},
+        registered_workflows={"main": branch_registry.register_workflow(workflow)},
+        selectors={},
+        spaces=("fsnative", "T1w"),
+        smoothing_levels=(0, 2),
+        memory_gb=32,
+        max_memory_gb=256,
+        target_instance_keys=frozenset({target}),
+    )
+
+    assert len(exact.requests) == 1
+    assert exact.requests[0].terminal_keys == (target,)
+    assert exact.requests[0].participants == ("01",)
+    assert target in exact.instances
+    assert all(instance.participant == "01" for instance in exact.instances.values())
+
+
 @pytest.mark.parametrize("modules", [("func", "firstlevels"), ("firstlevels", "func")])
 def test_partial_upstream_coverage_keeps_only_uncovered_runs(
     branch_registry,

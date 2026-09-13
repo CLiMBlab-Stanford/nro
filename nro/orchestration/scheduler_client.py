@@ -1,110 +1,408 @@
-"""Send compiled branch work to the designated central Python environment."""
+"""Exchange durable requests with the automatically managed scheduler service."""
+
+from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
-from nro.orchestration.execution_cache import cache_lock, service_lease
+from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.scheduler_implementation import (
     capture_worker_implementation,
     implementation_path,
 )
 
+DEFAULT_RPC_TIMEOUT_SECONDS = 180.0
+UPDATED_STATUS_TIMEOUT_SECONDS = 600.0
+CONTROL_RPC_TIMEOUT_SECONDS = 60.0
+MAINTENANCE_RPC_TIMEOUT_SECONDS = 900.0
+_WAIT_FRAMES = ("·", "•", "●", "•")
+_WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
+_RESET = "\x1b[0m"
+_CLEAR = "\r\x1b[2K"
 
-def command(control: Path, bids_root: Path) -> tuple[str, ...]:
-    """Capture the central service command while the caller holds the cache lock."""
+
+class SchedulerError(RuntimeError):
+    """Report a bounded scheduler transport or service failure."""
+
+
+@dataclass(frozen=True)
+class SchedulerEndpoint:
+    """Pin the control store and implementation used to launch its service."""
+
+    control: Path
+    bids_root: Path
+    source: object
+    site: Path
+    python: Path
+    maintenance: bool = False
+
+
+def command(
+    control: Path,
+    bids_root: Path,
+    *,
+    allow_changed_checkout: bool = False,
+    maintenance_checkout: Path | None = None,
+) -> SchedulerEndpoint:
+    """Capture the approved service implementation for a later durable exchange."""
+    control = Path(control).expanduser().resolve()
+    bids_root = Path(bids_root).expanduser().resolve()
     if not implementation_path(control).is_file():
         raise ValueError("Activate an approved main scheduler before submitting branch work")
-    source, site, python = capture_worker_implementation(control, bids_root)
-    return source.command(
-        (str(python), "-m", "nro.orchestration.scheduler_service"),
-        site=site,
-        manifest_only=source.supports_manifest_only(),
+    if maintenance_checkout is not None:
+        from nro.orchestration.scheduler_implementation import (
+            capture_maintenance_implementation,
+        )
+
+        source, site, python = capture_maintenance_implementation(
+            control, bids_root, maintenance_checkout
+        )
+    else:
+        source, site, python = capture_worker_implementation(
+            control, bids_root, check_checkout=not allow_changed_checkout
+        )
+    return SchedulerEndpoint(
+        control, bids_root, source, site, python, maintenance=maintenance_checkout is not None
     )
 
 
-def exchange(command: tuple[str, ...], message: dict, *, descriptors: tuple[int, ...] = ()) -> dict:
-    """Exchange one bounded operation; surface central errors without hiding stderr."""
-    result = subprocess.run(
-        command,
-        input=json.dumps(message, allow_nan=False),
-        text=True,
-        stdout=subprocess.PIPE,
-        pass_fds=descriptors,
+def _wait_notice(frame: int, message: str) -> bool:
+    if not sys.stderr.isatty():
+        return False
+    marker = _WAIT_FRAMES[frame % len(_WAIT_FRAMES)]
+    if "NO_COLOR" not in os.environ:
+        marker = f"{_WAIT_COLORS[frame % len(_WAIT_COLORS)]}{marker}{_RESET}"
+    sys.stderr.write(f"{_CLEAR}{marker} {message}")
+    sys.stderr.flush()
+    return True
+
+
+def _start_service(endpoint: SchedulerEndpoint) -> str | None:
+    """Submit one controller when this caller wins the atomic launch claim."""
+    from nro.configuration.site import settings
+    from nro.orchestration.scheduler_bus import (
+        claim_launch,
+        release_launch,
+        submit_controller,
+        update_launch_job,
+        write_controller_script,
     )
+
+    claim = claim_launch(endpoint.control)
+    if claim is None:
+        return None
     try:
-        response = json.loads(result.stdout)
-    except (ValueError, TypeError) as error:
-        raise RuntimeError("Central scheduler returned an invalid response") from error
-    if result.returncode or "error" in response:
-        raise RuntimeError(response.get("error", "Central scheduler failed"))
-    return response["result"]
+        values = settings(path=endpoint.site)[0]
+        script = write_controller_script(
+            endpoint.control,
+            bids_root=endpoint.bids_root,
+            token=claim.token,
+            source=endpoint.source,
+            site=endpoint.site,
+            python=endpoint.python,
+            partition=values["partition"],
+            account=values.get("account") or None,
+            maintenance=endpoint.maintenance,
+        )
+        if os.environ.get("NRO_SCHEDULER_LOCAL") == "1":
+            local_command = endpoint.source.command(
+                (
+                    str(endpoint.python),
+                    "-m",
+                    "nro.orchestration.scheduler_service",
+                    "--serve",
+                    "--launch-token",
+                    claim.token,
+                    "--bids-root",
+                    str(endpoint.bids_root),
+                    "--idle-grace",
+                    "1",
+                ),
+                site=endpoint.site,
+            )
+            environment = {
+                **os.environ,
+                "NRO_PROCESS_ROLE": "scheduler",
+                **({"NRO_SCHEDULER_MAINTENANCE": "1"} if endpoint.maintenance else {}),
+            }
+            environment.pop("SLURM_JOB_ID", None)
+            process = subprocess.Popen(
+                local_command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=environment,
+            )
+            job_id = f"local-{process.pid}"
+        else:
+            job_id = submit_controller(script)
+        update_launch_job(claim, job_id)
+        return job_id
+    except BaseException:
+        release_launch(endpoint.control, claim.token)
+        raise
+
+
+def _ensure_service(endpoint: SchedulerEndpoint, *, explicit: bool = True) -> None:
+    """Ensure that one live or starting controller can consume pending messages."""
+    from nro.orchestration.scheduler_bus import clear_shutdown, read_active, shutdown_pending
+
+    if explicit:
+        clear_shutdown(endpoint.control)
+    elif shutdown_pending(endpoint.control):
+        return
+    if read_active(endpoint.control) is None:
+        _start_service(endpoint)
+
+
+def exchange(
+    endpoint: SchedulerEndpoint,
+    message: dict,
+    *,
+    descriptors: tuple[int, ...] = (),
+    timeout: float | None = DEFAULT_RPC_TIMEOUT_SECONDS,
+) -> dict:
+    """Publish one command and wait for its durable response."""
+    if descriptors:
+        raise ValueError("The durable scheduler transport does not accept file descriptors")
+    from nro.orchestration.scheduler_bus import (
+        message_path,
+        publish_message,
+        read_response,
+    )
+
+    message_id = publish_message(endpoint.control, message)
+    try:
+        _ensure_service(endpoint)
+    except BaseException as error:
+        raise SchedulerError(f"Could not start the central scheduler: {error}") from error
+    started = time.monotonic()
+    last_recovery_check = started
+    frame = 0
+    notice = False
+    while True:
+        response = read_response(endpoint.control, message_id)
+        if response is not None and not message_path(endpoint.control, message_id).exists():
+            if notice:
+                sys.stderr.write(_CLEAR)
+                sys.stderr.flush()
+            if "error" in response:
+                raise SchedulerError(str(response["error"]))
+            if "result" not in response:
+                raise SchedulerError("Central scheduler returned a malformed response")
+            return response["result"]
+        elapsed = time.monotonic() - started
+        if timeout is not None and elapsed >= timeout:
+            if notice:
+                sys.stderr.write(_CLEAR)
+                sys.stderr.flush()
+            raise SchedulerError(
+                f"Central scheduler did not respond within {timeout:g} seconds; "
+                f"request {message_id} remains queued"
+            )
+        now = time.monotonic()
+        if now - last_recovery_check >= 5.0:
+            _ensure_service(endpoint, explicit=False)
+            last_recovery_check = now
+        if elapsed >= 0.75:
+            notice = _wait_notice(frame, "Waiting for the scheduler...") or notice
+            frame += 1
+        time.sleep(0.1 if elapsed < 2 else 0.5)
+
+
+def _cached_status(control: Path, checkout: Path) -> dict:
+    """Select one branch report from the last atomic read model."""
+    from nro.orchestration.branch_store import BranchStore
+    from nro.orchestration.scheduler_bus import read_snapshot
+
+    snapshot = read_snapshot(control)
+    if snapshot is None:
+        return {"rows": [], "visible_ids": [], "ingestion": [], "dependencies": []}
+    name = BranchStore(control).read().topology.registered_checkout(checkout)
+    return snapshot["branches"].get(
+        name, {"rows": [], "visible_ids": [], "ingestion": [], "dependencies": []}
+    )
+
+
+def _endpoint(
+    control: Path,
+    bids_root: Path,
+    *,
+    allow_changed_checkout: bool = False,
+    maintenance_checkout: Path | None = None,
+) -> SchedulerEndpoint:
+    with cache_lock(control):
+        return command(
+            control,
+            bids_root,
+            allow_changed_checkout=allow_changed_checkout,
+            maintenance_checkout=maintenance_checkout,
+        )
 
 
 def supply(
     control: Path, bids_root: Path, *, checkout: Path, request_ids: list[str], options: dict
 ) -> dict:
-    """Start central workers after admission has published the execution pins."""
-    with service_lease(control) as lease:
-        with cache_lock(control):
-            selected = command(control, bids_root)
-        return exchange(
-            selected,
-            dict(
-                operation="supply", checkout=str(checkout), request_ids=request_ids, options=options
-            ),
-            descriptors=(lease[1],),
-        )
+    """Start central workers after admission has published execution pins."""
+    result = exchange(
+        _endpoint(control, bids_root),
+        dict(operation="supply", checkout=str(checkout), request_ids=request_ids, options=options),
+        timeout=None if options["local"] else DEFAULT_RPC_TIMEOUT_SECONDS,
+    )
+    if options["local"]:
+        _wait_for_local_workers(Path(control), result["submitted_workers"])
+    return result
+
+
+def _wait_for_local_workers(control: Path, worker_ids: list[str]) -> None:
+    """Retain foreground semantics while the service remains free to coordinate."""
+    from nro.orchestration.scheduler_bus import read_snapshot
+
+    pending = set(worker_ids)
+    seen: set[str] = set()
+    started = time.monotonic()
+    while pending:
+        snapshot = read_snapshot(control) or {}
+        states = {str(row["id"]): str(row["state"]) for row in snapshot.get("workers", ())}
+        seen.update(pending.intersection(states))
+        failed = {
+            worker_id: states[worker_id]
+            for worker_id in pending
+            if states.get(worker_id) in {"lost", "terminated"}
+        }
+        if failed:
+            details = ", ".join(f"{worker} ({state})" for worker, state in failed.items())
+            raise SchedulerError(f"Local scheduler worker failed: {details}")
+        pending = {
+            worker_id
+            for worker_id in pending
+            if states.get(worker_id) not in {"exited", "terminated", "lost"}
+        }
+        if pending:
+            if time.monotonic() - started >= 300:
+                raise SchedulerError("Local scheduler worker did not finish within 300 seconds")
+            time.sleep(0.1)
+    if worker_ids and not seen:
+        raise SchedulerError("Local scheduler worker exited before registration")
 
 
 def status(control: Path, bids_root: Path, *, checkout: Path, mode: str) -> dict:
-    """Read central compiled status while protecting the short-lived service source."""
-    with cache_lock(control):
-        return exchange(
-            command(control, bids_root), dict(operation="status", checkout=str(checkout), mode=mode)
-        )
+    """Read the cached snapshot or request an authoritative update barrier."""
+    if mode == "cached":
+        return _cached_status(control, checkout)
+    if mode != "verify":
+        raise ValueError("Unknown status mode")
+    return exchange(
+        _endpoint(control, bids_root),
+        dict(operation="status", checkout=str(checkout), mode=mode),
+        timeout=UPDATED_STATUS_TIMEOUT_SECONDS,
+    )
 
 
 def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, selection: dict) -> dict:
-    """Cancel matching demand through the central branch-scoped operation."""
-    with cache_lock(control):
-        return exchange(
-            command(control, bids_root),
-            dict(operation="stop", checkout=str(checkout), project=project, selection=selection),
-        )
+    """Cancel matching demand through the branch-scoped service operation."""
+    return exchange(
+        _endpoint(control, bids_root),
+        dict(operation="stop", checkout=str(checkout), project=project, selection=selection),
+        timeout=CONTROL_RPC_TIMEOUT_SECONDS,
+    )
 
 
 def logs(
     control: Path, bids_root: Path, *, checkout: Path, selection: dict, instance_level: bool
 ) -> dict:
-    """Find branch logs without opening the scheduler database in this checkout."""
-    with cache_lock(control):
-        return exchange(
-            command(control, bids_root),
-            dict(
-                operation="logs",
-                checkout=str(checkout),
-                selection=selection,
-                instance_level=instance_level,
-            ),
+    """Resolve logs from the cached read model without starting a service."""
+    from nro.engine.cli import matches_instance_selectors
+    from nro.orchestration.control_paths import ControlPaths
+
+    report = _cached_status(control, checkout)
+    requested_modules = set(selection["modules"])
+    scientific_modules = requested_modules - {"bidsify"}
+    scientific_selected = not requested_modules or bool(scientific_modules)
+    visible = set(report["visible_ids"])
+    selected = [
+        row
+        for row in report["rows"]
+        if scientific_selected
+        and row["id"] in visible
+        and (not selection["projects"] or row["project"] in selection["projects"])
+        and (not selection["participants"] or row["participant"] in selection["participants"])
+        and (not scientific_modules or row["module"] in scientific_modules)
+        and (
+            not selection["workflows"]
+            or set(selection["workflows"]).intersection(row["workflow_ids"].split(","))
         )
+        and matches_instance_selectors(json.loads(row["entities_json"]), selection["selectors"])
+    ]
+    if instance_level:
+        paths = [row["log_path"] for row in selected if row.get("log_path")]
+    else:
+        paths = [row["worker_log_path"] for row in selected if row.get("worker_log_path")]
+    if "bidsify" in requested_modules and not selection["workflows"]:
+        sessions = selection["selectors"].get("ses", ())
+        control_paths = ControlPaths(control)
+        paths.extend(
+            str(
+                (
+                    control_paths.ingestion
+                    if row["branch"] == "main"
+                    else control_paths.branch(row["branch"]) / "ingestion"
+                )
+                / f"{row['id']}.log"
+            )
+            for row in report.get("ingestion", [])
+            if (
+                not selection.get("ingestion_projects")
+                or row["project"] in selection["ingestion_projects"]
+            )
+            and (not selection["participants"] or row["participant"] in selection["participants"])
+            and (not sessions or row["session"] in sessions)
+            and row.get("branch")
+        )
+    return {"paths": sorted(set(paths))}
 
 
 def pool_operation(
     control: Path, bids_root: Path, *, checkout: Path, operation: str, concurrency=None
 ) -> dict:
-    """Apply an explicit global pool control using the central implementation."""
-    with cache_lock(control):
-        return exchange(
-            command(control, bids_root),
-            dict(operation=operation, checkout=str(checkout), concurrency=concurrency),
-        )
+    """Apply a global pool control through the service."""
+    return exchange(
+        _endpoint(control, bids_root),
+        dict(operation=operation, checkout=str(checkout), concurrency=concurrency),
+        timeout=CONTROL_RPC_TIMEOUT_SECONDS,
+    )
+
+
+def shutdown_service(
+    control: Path,
+    bids_root: Path,
+    *,
+    checkout: Path,
+    allow_changed_checkout: bool = False,
+) -> dict:
+    """Record shutdown intent and stop the current controller after its response."""
+    return exchange(
+        _endpoint(
+            control,
+            bids_root,
+            allow_changed_checkout=allow_changed_checkout,
+            maintenance_checkout=checkout if allow_changed_checkout else None,
+        ),
+        {"operation": "server_shutdown", "checkout": str(checkout)},
+        timeout=CONTROL_RPC_TIMEOUT_SECONDS,
+    )
 
 
 def maintenance(
     control: Path, bids_root: Path, *, checkout: Path, operation: str, **fields
 ) -> dict:
-    """Run a scoped maintenance operation while the service retains its source lease."""
+    """Run one scoped maintenance operation through the service."""
     if operation not in {
         "purge_snapshot",
         "purge",
@@ -115,13 +413,24 @@ def maintenance(
         "promotion_publish",
         "publish",
         "branch_update",
+        "environment_idle",
+        "installation_activity",
+        "installation_prepare",
+        "installation_progress",
     }:
         raise ValueError("Unsupported maintenance operation")
-    with service_lease(control) as lease:
-        with cache_lock(control):
-            selected = command(control, bids_root)
-        return exchange(
-            selected,
-            dict(operation=operation, checkout=str(checkout), service=lease[0], **fields),
-            descriptors=(lease[1],),
-        )
+    timeout = (
+        None
+        if operation in {"purge", "promotion_publish", "publish"}
+        else MAINTENANCE_RPC_TIMEOUT_SECONDS
+    )
+    return exchange(
+        _endpoint(
+            control,
+            bids_root,
+            allow_changed_checkout=operation.startswith("installation_"),
+            maintenance_checkout=checkout if operation.startswith("installation_") else None,
+        ),
+        dict(operation=operation, checkout=str(checkout), **fields),
+        timeout=timeout,
+    )

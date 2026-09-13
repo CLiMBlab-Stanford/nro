@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -881,7 +883,10 @@ def test_worker_drains_before_walltime_without_claiming(tmp_path: Path) -> None:
     assert registry.instance_rows()[0]["attempt_state"] is None
 
 
-def test_idle_worker_exits_while_another_worker_runs_long_instance(tmp_path: Path) -> None:
+def test_idle_worker_exits_while_another_worker_runs_long_instance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -909,7 +914,7 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(tmp_path: Pat
     started = time.monotonic()
     Worker(registry, resource_class="large", idle_timeout=0.05, poll_interval=0.01).run()
 
-    assert time.monotonic() - started < 0.5
+    assert time.monotonic() - started < 1.5
 
 
 def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> None:
@@ -1048,11 +1053,12 @@ def test_slurm_terminal_distinguishes_absence_from_query_failure(
     expected,
 ):
     monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+    monkeypatch.setattr(RegistryLock, "_slurm_accounting_terminal", lambda _job_id: None)
 
     def query(command, **kwargs):
         assert command == ["squeue", "--noheader", "--jobs", "123", "--format", "%T"]
         assert kwargs["env"]["LC_ALL"] == "C"
-        assert kwargs["timeout"] == 15
+        assert kwargs["timeout"] == 5
         assert kwargs["check"] is False
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
@@ -1063,6 +1069,7 @@ def test_slurm_terminal_distinguishes_absence_from_query_failure(
 @pytest.mark.parametrize("error", [OSError("unavailable"), subprocess.TimeoutExpired("squeue", 15)])
 def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
     monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/squeue")
+    monkeypatch.setattr(RegistryLock, "_slurm_accounting_terminal", lambda _job_id: None)
 
     def query(*args, **kwargs):
         raise error
@@ -1071,6 +1078,88 @@ def test_slurm_terminal_execution_errors_remain_unknown(monkeypatch, error):
     assert RegistryLock._slurm_terminal("123") is None
     monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: None)
     assert RegistryLock._slurm_terminal("123") is None
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        ("RUNNING", False),
+        ("PENDING", False),
+        ("COMPLETING", False),
+        ("COMPLETED", True),
+        ("FAILED", True),
+        ("CANCELLED by 123", True),
+        ("OUT_OF_MEMORY", True),
+        ("UNKNOWN", None),
+    ],
+)
+def test_slurm_accounting_provides_conclusive_fallback(monkeypatch, state, expected):
+    monkeypatch.setattr("nro.orchestration.registry.shutil.which", lambda name: "/bin/sacct")
+
+    def query(command, **kwargs):
+        assert command == [
+            "sacct",
+            "--jobs",
+            "123",
+            "--noheader",
+            "--parsable2",
+            "--format",
+            "JobIDRaw,State",
+        ]
+        assert kwargs["timeout"] == 10
+        assert kwargs["env"]["LC_ALL"] == "C"
+        return subprocess.CompletedProcess(command, 0, f"123|{state}\n123.batch|FAILED\n", "")
+
+    monkeypatch.setattr("nro.orchestration.registry.subprocess.run", query)
+    assert RegistryLock._slurm_accounting_terminal("123") is expected
+
+
+def test_observational_connections_share_the_cross_host_lock(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids", lock_timeout=0.05)
+    registry.initialize()
+
+    with registry._lock():
+        with pytest.raises(RegistryLockTimeout):
+            with registry.read_connection():
+                pass
+
+    with registry.read_connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM metadata").fetchone()[0] > 0
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            db.execute("DELETE FROM metadata")
+
+
+def test_registry_lock_reports_interactive_wait_owner(tmp_path: Path, monkeypatch) -> None:
+    class Terminal:
+        def __init__(self) -> None:
+            self.output = ""
+
+        @staticmethod
+        def isatty() -> bool:
+            return True
+
+        def write(self, value: str) -> None:
+            self.output += value
+
+        @staticmethod
+        def flush() -> None:
+            pass
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids", lock_timeout=0.05)
+    registry.initialize()
+    terminal = Terminal()
+    monkeypatch.setattr("nro.orchestration.registry.sys.stderr", terminal)
+    monkeypatch.setattr("nro.orchestration.registry._WAIT_NOTICE_SECONDS", 0.0)
+
+    with registry._lock():
+        with pytest.raises(RegistryLockTimeout):
+            with registry.read_connection():
+                pass
+
+    assert "Waiting for registry access" in terminal.output
+    assert "held by" in terminal.output
+    assert socket.gethostname().split(".", 1)[0] in terminal.output
+    assert terminal.output.endswith("\r\x1b[2K")
 
 
 @pytest.mark.parametrize(

@@ -57,9 +57,11 @@ supplies worker resources. `InstanceSpec` combines them for registration.
 `ExecutionEnvelope` is the immutable worker-facing execution record.
 
 `Planner` uses module descriptors and subject planning contexts to build these
-records. `Registry` owns transactions, demand, attempts, leases, and scheduler
-submissions. `Worker` claims ready work and supervises an `ExecutionLauncher`.
-Use registry methods rather than writing SQL from scientific modules.
+records. `Registry` implements transactions, demand, attempts, leases, and
+scheduler submissions inside the controller. User commands use the durable
+scheduler client, while `WorkerSchedulerClient` gives workers claims and
+lifecycle operations without a database handle. `Worker` supervises an
+`ExecutionLauncher`. Scientific modules must not open the registry.
 
 See [contracts](autoapi/nro/orchestration/contracts/index.rst),
 [planner](autoapi/nro/orchestration/planner/index.rst),
@@ -83,7 +85,8 @@ completion generations, and ownership receipts interact.
 ## Ingestion
 
 `nro.bidsify` handles pre-BIDS work separately from scientific modules.
-`IngestionStore` saves review state and claims stages under the registry lock.
+`IngestionStore` saves interactive review state under its own short-lived lock.
+The scheduler controller claims stages and accounts for their worker capacity.
 `FlywheelSource` isolates read-only cloud access. `run_stage` executes a fixed,
 noninteractive stage; the `nro.bin.bidsify` wizard owns all user decisions.
 Workers supervise ingestion with the existing execution launcher and include

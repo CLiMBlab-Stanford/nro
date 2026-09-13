@@ -1,6 +1,7 @@
 """Ingestion scheduling, approval, privacy boundaries, and offline conversion tests."""
 
 import json
+import shutil
 import zipfile
 from copy import deepcopy
 from pathlib import Path
@@ -881,18 +882,90 @@ def test_replacement_receipt_cleans_interrupted_backup(ingestion, monkeypatch):
     real_remove = publication.shutil.rmtree
 
     def interrupted_remove(path, *args, **kwargs):
-        if path.name == f".nro-publish-{row['id']}":
+        if path.name == f".nro-backup-{row['id']}":
             raise OSError("interrupted cleanup")
         return real_remove(path, *args, **kwargs)
 
     monkeypatch.setattr(publication.shutil, "rmtree", interrupted_remove)
     with pytest.raises(OSError):
         publish(row, registry)
-    temporary = target.parent / f".nro-publish-{row['id']}"
-    assert temporary.exists()
+    backup = target.parent / f".nro-backup-{row['id']}"
+    assert backup.exists()
     monkeypatch.setattr(publication.shutil, "rmtree", real_remove)
     publish(row, registry)
+    assert not backup.exists()
+    assert inventory(target) == row["approval"]["outputs"]
+
+
+def test_replacement_recovers_after_old_target_was_moved(ingestion):
+    registry, store, row = ingestion
+    target = registry.paths.bids_root / "demo/sub-01/ses-01"
+    target.mkdir(parents=True)
+    (target / "old.nii").write_bytes(b"old")
+    row = prepared_session(registry, store, row, replace=True)
+    staged = Path(row["config"]["staging"]) / row["id"] / "bids/sub-01/ses-01"
+    temporary = target.parent / f".nro-publish-{row['id']}"
+    backup = target.parent / f".nro-backup-{row['id']}"
+    journal = store.root / "transactions" / f"{row['id']}.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(
+        json.dumps(
+            {
+                "protocol": 1,
+                "request": row["id"],
+                "target": str(target),
+                "candidate": str(temporary),
+                "backup": str(backup),
+                "approval": row["approval"],
+            }
+        )
+    )
+    shutil.copytree(staged, temporary)
+    target.rename(backup)
+
+    publish(row, registry)
+
+    assert inventory(target) == row["approval"]["outputs"]
     assert not temporary.exists()
+    assert not backup.exists()
+    assert not journal.exists()
+
+
+def test_publication_replaces_an_interrupted_unverified_copy(ingestion):
+    registry, store, row = ingestion
+    row = prepared_session(registry, store, row)
+    target = registry.paths.bids_root / "demo/sub-01/ses-01"
+    temporary = target.parent / f".nro-publish-{row['id']}"
+    temporary.mkdir(parents=True)
+    (temporary / "partial.nii").write_bytes(b"partial")
+
+    publish(row, registry)
+
+    assert inventory(target) == row["approval"]["outputs"]
+    assert not temporary.exists()
+
+
+def test_replacement_restores_old_target_when_install_rename_fails(ingestion, monkeypatch):
+    registry, store, row = ingestion
+    target = registry.paths.bids_root / "demo/sub-01/ses-01"
+    target.mkdir(parents=True)
+    (target / "old.nii").write_bytes(b"old")
+    row = prepared_session(registry, store, row, replace=True)
+    real_rename = Path.rename
+
+    def fail_install(path, destination):
+        if path.name == f".nro-publish-{row['id']}":
+            raise OSError("simulated install failure")
+        return real_rename(path, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", fail_install)
+        with pytest.raises(OSError, match="simulated install failure"):
+            publish(row, registry)
+
+    assert inventory(target) == row["approval"]["existing"]
+    assert not (target.parent / f".nro-backup-{row['id']}").exists()
+    publish(row, registry)
     assert inventory(target) == row["approval"]["outputs"]
 
 

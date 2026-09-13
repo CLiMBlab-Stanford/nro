@@ -968,6 +968,16 @@ def record_completion(
 ) -> dict:
     """Write a completion manifest last, then advance the registry generation."""
     with registry.connection() as db:
+        existing = db.execute(
+            "SELECT manifest_path,artifact_state FROM instances WHERE id=?", (instance_id,)
+        ).fetchone()
+    if existing is not None and existing["artifact_state"] == "fresh":
+        path = Path(existing["manifest_path"])
+        if path.is_file():
+            manifest = json.loads(path.read_text())
+            if int(manifest.get("attempt_id", -1)) == attempt_id:
+                return manifest
+    with registry.connection() as db:
         instance = dict(
             db.execute(
                 """SELECT t.*, ci.config_id, ci.config_fingerprint,

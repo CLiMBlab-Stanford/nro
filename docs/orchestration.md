@@ -11,14 +11,17 @@ records in this layout:
 ```text
 CONTROL/
   shared/scheduler/registry.sqlite3
+  shared/scheduler/service/{inbox,responses,workers,status.json}
   branches/<branch-id>/registry.sqlite3
 ```
 
 The scheduler database is the sole authority for requests, attempts, workers,
-Slurm submissions, and the concurrency limit. A branch database records that
-branch's compiled scientific contracts, workflow lineages, and artifact
-observations. All projects and branches therefore share worker capacity without
-requiring the scheduler to import development code.
+Slurm submissions, and the concurrency limit. An ephemeral Slurm controller is
+its only normal client. Commands and workers exchange durable files with that
+controller, while cached status reads its atomic JSON snapshot. A branch
+database records that branch's compiled scientific contracts, workflow
+lineages, and artifact observations. All projects and branches therefore share
+worker capacity without requiring the scheduler to import development code.
 
 ## Requests
 
@@ -48,10 +51,10 @@ status mode, cancellation rule, and repair boundary.
 ## Planning and execution
 
 The planner registers complete instance specifications before submitting work.
-Workers claim ready instances transactionally and run each one in a separate
-subprocess. A module constructs its complete runner graph before freshness is
-checked. The shared runner then executes or skips each declared step and writes
-the completion record.
+Workers request ready instances from the controller and run each one in a
+separate subprocess. A module constructs its complete runner graph before
+freshness is checked. The shared runner then executes or skips each declared
+step and writes the completion record.
 
 Development requests send their compiled graph and execution recipe to the
 installed central scheduler. The scheduler resolves compatible ancestor
