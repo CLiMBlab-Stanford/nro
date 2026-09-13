@@ -1,4 +1,4 @@
-"""Test the scheduler's lock-free transport and launch election."""
+"""Test scheduler transport, recovery records, and launch election."""
 
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -6,10 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from nro.engine.io import atomic_write_json
-from nro.orchestration import scheduler_bus, scheduler_client, scheduler_service
+from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import Registry
+from nro.orchestration.worker_client import WorkerSchedulerClient
 
 
 def test_simultaneous_callers_elect_one_controller(tmp_path):
@@ -34,6 +35,58 @@ def test_message_and_response_survive_independent_readers(tmp_path):
 
     assert record["payload"] == {"operation": "example"}
     assert scheduler_bus.read_response(control, message_id) == {"result": {"ok": True}}
+
+
+def test_direct_rpc_round_trip() -> None:
+    class MemorySocket:
+        def __init__(self) -> None:
+            self.data = bytearray()
+
+        def sendall(self, data: bytes) -> None:
+            self.data.extend(data)
+
+        def recv(self, size: int) -> bytes:
+            chunk = self.data[:size]
+            del self.data[:size]
+            return bytes(chunk)
+
+    connection = MemorySocket()
+    record = {"id": "request", "payload": {"operation": "status"}}
+    scheduler_rpc.send(connection, record)
+    response = scheduler_rpc.receive(connection)
+
+    assert response == record
+
+
+def test_direct_rpc_rejects_an_obsolete_scheduler_token() -> None:
+    envelope = {
+        "protocol": scheduler_bus.PROTOCOL,
+        "token": "old",
+        "generation": 3,
+        "record": {},
+    }
+
+    with pytest.raises(ValueError, match="endpoint is obsolete"):
+        scheduler_rpc.validate_request(envelope, token="current")
+
+
+def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client.endpoint = SimpleNamespace()
+    client.worker_id = "worker"
+    client.token = "token"
+    client.sequence = 0
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.worker_client.exchange",
+        lambda _endpoint, message, **options: calls.append((message, options)),
+    )
+
+    client.heartbeat_worker("worker", state="running")
+
+    assert calls[0][0]["action"] == "heartbeat"
+    assert calls[0][1]["durable"] is False
+    assert calls[0][1]["require_service"] is True
 
 
 def test_controller_startup_error_is_scoped_to_launch_token(tmp_path):

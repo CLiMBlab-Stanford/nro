@@ -11,16 +11,6 @@ from .execution import require_existing_path
 from .io import read_json, write_json
 
 
-def has_nested_key(mapping: dict[str, Any], dotted_path: str) -> bool:
-    """Return whether a dotted path is explicitly present in nested mappings."""
-    value: object = mapping
-    for key in dotted_path.split("."):
-        if not isinstance(value, dict) or key not in value:
-            return False
-        value = value[key]
-    return True
-
-
 def create_json_step(
     *,
     step_name: str,

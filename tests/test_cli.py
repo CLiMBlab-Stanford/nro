@@ -23,6 +23,8 @@ def test_installed_commands_are_exactly_the_bin_executables() -> None:
 
     assert cli.available_commands() == expected
     assert "qc" in expected
+    assert set(cli.COMMAND_HELP) == set(expected)
+    assert cli.CENTRAL_ONLY_COMMANDS <= set(expected)
 
 
 def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -> None:
@@ -36,6 +38,27 @@ def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -
     cli.main(["run", "-p", "t12"])
 
     assert calls == [(["-p", "t12"], "nro run")]
+
+
+def test_development_installation_restricts_only_central_maintenance(monkeypatch, capsys) -> None:
+    import nro.configuration.site as site
+
+    calls = []
+
+    def command_main(argv, *, prog):
+        calls.append((argv, prog))
+
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch"})
+    monkeypatch.setattr(cli, "_command_main", lambda command: command_main)
+
+    cli.main(["status"])
+    assert calls == [([], "nro status")]
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["release"])
+
+    assert error.value.code == 2
+    assert "release requires the central/main installation" in capsys.readouterr().err
 
 
 def test_dispatcher_reports_scheduler_failure_without_internal_traceback(monkeypatch) -> None:

@@ -1439,75 +1439,6 @@ class Runner:
         output = (proc.stdout or "").strip()
         return self._restore_host_paths(output) if self._container is not None else output
 
-    def run_out(
-        self,
-        cmd: Sequence[str],
-        *,
-        env: Optional[dict[str, str]] = None,
-        cwd: Optional[Path] = None,
-        outputs: Optional[Sequence[Path | str]] = None,
-        reason: Optional[str] = None,
-        quiet: bool = False,
-    ) -> str:
-        # ``quiet`` is retained as a caller-facing logging hint, but unified
-        # execution always records a numbered operation.  There is no hidden
-        # subprocess path.
-        """Execute a command and return captured stdout with host paths restored.
-
-        Command failure raises CalledProcessError. Container setup and logging
-        follow the same policy as other runner commands.
-        """
-        _ = quiet
-        if self._container is None:
-            _, started_at, step = self._log_command_start(
-                "Step", cmd, cwd=cwd, outputs=outputs, reason=reason
-            )
-            try:
-                proc = subprocess.run(
-                    list(cmd),
-                    check=True,
-                    env=env,
-                    cwd=str(cwd) if cwd else None,
-                    text=True,
-                    capture_output=True,
-                )
-            except subprocess.CalledProcessError as e:
-                self._log_command_failure(
-                    "Step",
-                    step,
-                    cwd=cwd,
-                    output=self._combined_output(e.stdout, e.stderr),
-                )
-                raise SystemExit(f"Command failed ({e.returncode}): {self._format_cmd(cmd)}") from e
-            self._log_command_success("Step", started_at, step, cwd=cwd)
-            return (proc.stdout or "").strip()
-        full_cmd = self._container_prefix_for_cwd(cwd) + ["bash", "-lc", self._inner_cmd(cmd, env)]
-        host_env = self._host_env_for_container(env)
-        _, started_at, step = self._log_command_start(
-            "Step (container)", full_cmd, cwd=cwd, outputs=outputs, reason=reason
-        )
-        try:
-            proc = subprocess.run(
-                full_cmd,
-                check=True,
-                env=host_env,
-                cwd=str(cwd) if cwd else None,
-                text=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError as e:
-            self._log_command_failure(
-                "Step (container)",
-                step,
-                cwd=cwd,
-                output=self._combined_output(e.stdout, e.stderr),
-            )
-            raise SystemExit(
-                f"Command failed ({e.returncode}): {self._format_cmd(full_cmd)}"
-            ) from e
-        self._log_command_success("Step (container)", started_at, step, cwd=cwd)
-        return self._restore_host_paths((proc.stdout or "").strip())
-
     def run_direct(
         self,
         args: Sequence[str],
@@ -1566,42 +1497,40 @@ class Runner:
     def require_cmds(self, cmds: Sequence[str]) -> None:
         """Check required executables in the configured execution environment.
 
-        Missing commands stop execution before scientific processing begins.
+        This check belongs inside a declared dependency-check step. Missing
+        commands fail that step without creating a nested pseudo-step.
         """
         requested = tuple(dict.fromkeys(str(command) for command in cmds))
-        with self.python_step(
-            step_name="Dependency Preflight",
-            outputs=None,
-            reason=f"Checking {len(requested)} required command(s).",
-        ):
-            missing: list[str] = []
-            for c in requested:
-                if self._container is None:
-                    full_cmd = ["bash", "-lc", f"command -v {shlex_quote(c)} >/dev/null 2>&1"]
-                    proc = subprocess.run(
-                        full_cmd, env=os.environ.copy(), text=True, capture_output=True
-                    )
-                    if proc.returncode != 0:
-                        missing.append(c)
-                else:
-                    check_cmd = self._inner_cmd(["command", "-v", c], None)
-                    full_cmd = self._container_prefix() + ["bash", "-lc", check_cmd]
-                    proc = subprocess.run(
-                        full_cmd,
-                        env=self._host_env_for_container(None),
-                        text=True,
-                        capture_output=True,
-                    )
-                    if proc.returncode != 0:
-                        missing.append(c)
-            if missing:
-                if self._container is None:
-                    msg = "Missing required commands on PATH:\n" + "\n".join(
-                        f"- {c}" for c in missing
-                    )
-                else:
-                    msg = "Missing required commands inside container:\n" + "\n".join(
-                        f"- {c}" for c in missing
-                    )
-                    msg += f"\n\nContainer image: {self._container.image}"
-                raise SystemExit(msg)
+        missing: list[str] = []
+        for command in requested:
+            if self._container is None:
+                full_cmd = [
+                    "bash",
+                    "-lc",
+                    f"command -v {shlex_quote(command)} >/dev/null 2>&1",
+                ]
+                proc = subprocess.run(
+                    full_cmd, env=os.environ.copy(), text=True, capture_output=True
+                )
+            else:
+                check_cmd = self._inner_cmd(["command", "-v", command], None)
+                full_cmd = self._container_prefix() + ["bash", "-lc", check_cmd]
+                proc = subprocess.run(
+                    full_cmd,
+                    env=self._host_env_for_container(None),
+                    text=True,
+                    capture_output=True,
+                )
+            if proc.returncode != 0:
+                missing.append(command)
+        if missing:
+            if self._container is None:
+                message = "Missing required commands on PATH:\n" + "\n".join(
+                    f"- {command}" for command in missing
+                )
+            else:
+                message = "Missing required commands inside container:\n" + "\n".join(
+                    f"- {command}" for command in missing
+                )
+                message += f"\n\nContainer image: {self._container.image}"
+            raise SystemExit(message)

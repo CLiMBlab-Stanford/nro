@@ -2641,6 +2641,39 @@ class Registry(WorkflowRegistry):
         memory_gb: int = 32,
     ) -> list[tuple[int, str]]:
         """Reserve workers for ready derivative and ingestion work under one limit."""
+        return self._worker_submission_plan(
+            request_id=request_id,
+            resource_class=resource_class,
+            memory_gb=memory_gb,
+            reserve=True,
+        )
+
+    def worker_capacity_needed(
+        self,
+        *,
+        request_id: str | None,
+        resource_class: str,
+        memory_gb: int = 32,
+    ) -> bool:
+        """Return whether ready work needs another compatible worker."""
+        return bool(
+            self._worker_submission_plan(
+                request_id=request_id,
+                resource_class=resource_class,
+                memory_gb=memory_gb,
+                reserve=False,
+            )
+        )
+
+    def _worker_submission_plan(
+        self,
+        *,
+        request_id: str | None,
+        resource_class: str,
+        memory_gb: int,
+        reserve: bool,
+    ) -> list[tuple[int, str]]:
+        """Compute needed capacity and optionally create its submission records."""
         with self.connection(write=True) as db:
             if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
                 return []
@@ -2761,6 +2794,8 @@ class Registry(WorkflowRegistry):
                     - own_idle,
                 )
             reservations: list[tuple[int, str]] = []
+            if not reserve:
+                return [(0, "")] if count else []
             for _ in range(count):
                 token = uuid.uuid4().hex
                 cursor = db.execute(

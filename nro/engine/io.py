@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import gzip
 import json
 import os
 import shutil
+import time
 import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
@@ -14,8 +16,16 @@ from typing import Any, Iterator
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    """Read one JSON object from disk."""
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    """Read one JSON object, retrying transient stale handles."""
+    path = Path(path)
+    for attempt in range(5):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            break
+        except OSError as error:
+            if error.errno != errno.ESTALE or attempt == 4:
+                raise
+            time.sleep(0.05 * (2**attempt))
     if not isinstance(value, dict):
         raise ValueError(f"Expected a JSON object in {path}")
     return value

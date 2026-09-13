@@ -175,6 +175,15 @@ class FmapPair:
 
 
 @dataclass(frozen=True)
+class ResolvedFuncReferences:
+    """Selected reference images and any nonfatal selection warning."""
+
+    sbref: Optional[ImageRec]
+    pair: Optional[FmapPair]
+    warning: Optional[str]
+
+
+@dataclass(frozen=True)
 class ResolvedFuncRun:
     """Selected BOLD, SBRef, fieldmap pair, and metadata provenance for a run."""
 
@@ -441,6 +450,106 @@ def pick_prev_fmap_pair(fmaps: Sequence[ImageRec], bold: ImageRec) -> FmapPair:
     return FmapPair(se1=se_same, se2=se_opp)
 
 
+def resolve_func_references(
+    *,
+    bold: ImageRec,
+    sbrefs: Sequence[ImageRec],
+    sidecarless_sbrefs: Sequence[Path],
+    fmaps: Sequence[ImageRec],
+    sdc_from_sbref_pair: bool,
+    selection_warning: str | None = None,
+    unusable_sbrefs: Sequence[str] = (),
+) -> ResolvedFuncReferences:
+    """Resolve one run's SBRef and fieldmap pair from an indexed session.
+
+    Explicit associations recorded during bidsification take precedence over
+    acquisition-order heuristics. Missing optional references return a warning;
+    inconsistent explicit associations raise an error.
+    """
+    candidates = list(sbrefs)
+    exact_sidecarless = [
+        path for path in sidecarless_sbrefs if parse_bids_entities(path.name) == bold.ents
+    ]
+    if len(exact_sidecarless) == 1:
+        candidates.append(inherit_sbref_metadata(exact_sidecarless[0], bold))
+    elif len(exact_sidecarless) > 1:
+        warning = (
+            "SBRef metadata inheritance was not applied because multiple sidecarless "
+            f"SBRefs exactly matched the selected BOLD entities: "
+            f"{[path.name for path in exact_sidecarless]}"
+        )
+        selection_warning = (
+            warning if selection_warning is None else f"{selection_warning} {warning}"
+        )
+
+    sbref: Optional[ImageRec] = None
+    pair: Optional[FmapPair] = None
+    explicit_references = bold.metadata.get("NROReferencePolicy") == "explicit"
+    if explicit_references:
+        selected = bold.metadata.get("NROSBRef")
+        if selected is not None:
+            if not isinstance(selected, str) or Path(selected).name != selected:
+                raise ValueError("Invalid explicit SBRef filename")
+            matches = [candidate for candidate in candidates if candidate.img.name == selected]
+            if len(matches) != 1:
+                raise ValueError("The explicitly assigned SBRef is missing or invalid")
+            sbref = matches[0]
+    elif candidates:
+        try:
+            sbref = pick_prev_sbref(candidates, bold)
+        except Exception as error:
+            selection_warning = (
+                str(error) if selection_warning is None else f"{selection_warning} {error}"
+            )
+    elif selection_warning is None:
+        if unusable_sbrefs:
+            selection_warning = (
+                f"No usable SBRef under {bold.img.parent}; {len(unusable_sbrefs)} "
+                f"candidate(s) lacked required sidecars. {unusable_sbrefs[0]}"
+            )
+        else:
+            selection_warning = f"No SBRef available under {bold.img.parent}"
+
+    if explicit_references:
+        sources = bold.metadata.get("B0FieldSource", [])
+        if sources:
+            if isinstance(sources, str):
+                sources = [sources]
+            linked = [fmap for fmap in fmaps if fmap.metadata.get("B0FieldIdentifier") in sources]
+            if (
+                len(sources) != 1
+                or len(linked) != 2
+                or not all(fmap_targets_bold(fmap, bold) for fmap in linked)
+            ):
+                raise ValueError("Explicit fieldmap association is missing or inconsistent")
+            pair = pick_prev_fmap_pair(linked, bold)
+    elif sdc_from_sbref_pair and sbref is not None:
+        try:
+            pair = FmapPair(se1=sbref, se2=pick_nearest_opp_sbref(candidates, sbref))
+        except Exception as error:
+            selection_warning = (
+                str(error) if selection_warning is None else f"{selection_warning} {error}"
+            )
+    elif not sdc_from_sbref_pair:
+        try:
+            pair = pick_prev_fmap_pair(fmaps, bold)
+        except Exception as error:
+            selection_warning = (
+                str(error) if selection_warning is None else f"{selection_warning} {error}"
+            )
+
+    if pair is not None and (bold.readout is None or bold.readout <= 0):
+        warning = (
+            "Ignoring the reverse-PE pair because the effective BOLD metadata "
+            "do not provide a positive total readout time."
+        )
+        selection_warning = (
+            warning if selection_warning is None else f"{selection_warning} {warning}"
+        )
+        pair = None
+    return ResolvedFuncReferences(sbref=sbref, pair=pair, warning=selection_warning)
+
+
 def func_root_for_subject(project: str, sub_id: str, ses_id: Optional[str]) -> Path:
     """Return the source-BIDS subject or session directory."""
     sub_dir = project_data_root(project) / str(sub_id)
@@ -554,101 +663,36 @@ def resolve_func_run_request(
             unusable_sbrefs.append(str(error))
             sidecarless_sbrefs.append(p)
 
-    exact_sidecarless = [p for p in sidecarless_sbrefs if parse_bids_entities(p.name) == bold.ents]
-    inheritance_warning: Optional[str] = None
-    if len(exact_sidecarless) == 1:
-        sbrefs.append(inherit_sbref_metadata(exact_sidecarless[0], bold))
-    elif len(exact_sidecarless) > 1:
-        inheritance_warning = (
-            "SBRef metadata inheritance was not applied because multiple sidecarless SBRefs "
-            f"exactly matched the selected BOLD entities: {[p.name for p in exact_sidecarless]}"
-        )
-
-    sbref: Optional[ImageRec] = None
-    pair: Optional[FmapPair] = None
-    selection_warning: Optional[str] = stem_warning
-    if inheritance_warning:
-        selection_warning = (
-            inheritance_warning
-            if selection_warning is None
-            else f"{selection_warning} {inheritance_warning}"
-        )
     explicit_references = bold.metadata.get("NROReferencePolicy") == "explicit"
-    if explicit_references:
-        selected = bold.metadata.get("NROSBRef")
-        if selected is not None:
-            if not isinstance(selected, str) or Path(selected).name != selected:
-                raise ValueError("Invalid explicit SBRef filename")
-            matches = [s for s in sbrefs if s.img.name == selected]
-            if len(matches) != 1:
-                raise ValueError("The explicitly assigned SBRef is missing or invalid")
-            sbref = matches[0]
-    elif sbrefs:
-        try:
-            sbref = pick_prev_sbref(sbrefs, bold)
-        except Exception as e:
-            selection_warning = str(e) if selection_warning is None else f"{selection_warning} {e}"
-    else:
-        if selection_warning is None:
-            if unusable_sbrefs:
-                selection_warning = (
-                    f"No usable SBRef under {func_dir}; {len(unusable_sbrefs)} candidate(s) "
-                    f"lacked required sidecars. {unusable_sbrefs[0]}"
-                )
-            else:
-                selection_warning = f"No SBRef available under {func_dir}"
-
-    if explicit_references:
-        sources = bold.metadata.get("B0FieldSource", [])
-        if sources:
-            if isinstance(sources, str):
-                sources = [sources]
-            fmaps = (
-                [load_rec(p) for p in sorted(fmap_dir.glob(f"{prefix}_*_epi.nii*"))]
-                if fmap_dir.exists()
-                else []
-            )
-            linked = [f for f in fmaps if f.metadata.get("B0FieldIdentifier") in sources]
-            if (
-                len(sources) != 1
-                or len(linked) != 2
-                or not all(fmap_targets_bold(f, bold) for f in linked)
-            ):
-                raise ValueError("Explicit fieldmap association is missing or inconsistent")
-            pair = pick_prev_fmap_pair(linked, bold)
-    elif sdc_from_sbref_pair and sbref is not None:
-        try:
-            sbref_opp = pick_nearest_opp_sbref(sbrefs, sbref)
-            pair = FmapPair(se1=sbref, se2=sbref_opp)
-        except Exception as e:
-            selection_warning = str(e) if selection_warning is None else f"{selection_warning} {e}"
-    elif not sdc_from_sbref_pair:
+    fmaps: list[ImageRec] = []
+    fmap_warning = stem_warning
+    if explicit_references or not sdc_from_sbref_pair:
         try:
             fmap_imgs = sorted(fmap_dir.glob(f"{prefix}_*_epi.nii*")) if fmap_dir.exists() else []
             fmaps = [load_rec(p) for p in fmap_imgs]
-            pair = pick_prev_fmap_pair(fmaps, bold)
-        except Exception as e:
-            selection_warning = str(e) if selection_warning is None else f"{selection_warning} {e}"
+        except Exception as error:
+            if explicit_references:
+                raise
+            fmap_warning = str(error) if stem_warning is None else f"{stem_warning} {error}"
+    references = resolve_func_references(
+        bold=bold,
+        sbrefs=sbrefs,
+        sidecarless_sbrefs=sidecarless_sbrefs,
+        fmaps=fmaps,
+        sdc_from_sbref_pair=sdc_from_sbref_pair,
+        selection_warning=fmap_warning,
+        unusable_sbrefs=unusable_sbrefs,
+    )
 
-    if pair is not None and (bold.readout is None or bold.readout <= 0):
-        warning = (
-            "Ignoring the reverse-PE pair because the effective BOLD metadata "
-            "do not provide a positive total readout time."
-        )
-        selection_warning = (
-            warning if selection_warning is None else f"{selection_warning} {warning}"
-        )
-        pair = None
-
-    registration_method = "topup_bbregister" if pair is not None else "ants_syn"
+    registration_method = "topup_bbregister" if references.pair is not None else "ants_syn"
     return ResolvedFuncRun(
         func_root=func_dir,
         fmap_root=fmap_dir,
         bold=bold,
-        sbref=sbref,
-        pair=pair,
+        sbref=references.sbref,
+        pair=references.pair,
         registration_method=registration_method,
-        selection_warning=selection_warning,
+        selection_warning=references.warning,
         requested_run_stem=str(run_stem).strip(),
         resolved_run_stem=nifti_stem(bold.img).removesuffix("_bold"),
     )

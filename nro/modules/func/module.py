@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""
-Run a full preprocessing sequence for one BOLD run:
+"""Build the preprocessing graph for one BOLD run.
 
 - Susceptibility distortion correction (SDC) from a blip-reversed spin-echo EPI pair using FSL topup
   with explicit warp outputs (topup --dfout/--jacout).
@@ -20,8 +18,8 @@ Run a full preprocessing sequence for one BOLD run:
 - Optional ICA-AROMA denoising of the registered BOLD (enabled by default).
 - Confounds TSV/JSON generation from the registered or ICA-AROMA-cleaned BOLD.
 
-Notes:
-- This script assumes your FSL build supports: `topup --dfout` and `topup --jacout`.
+Requirements:
+- FSL must support `topup --dfout` and `topup --jacout`.
 - Any selected SBRef must have phase-encoding and readout metadata compatible with the BOLD run.
 """
 
@@ -85,7 +83,7 @@ from nro.engine.paths import (
     resolve_project_work_path,
 )
 from nro.engine.templates import find_fsaverage_template_surface
-from nro.modules.func.contracts import (
+from nro.modules.func.contract import (
     MARSS_DIAGNOSTIC_METHOD,
     final_resampling_contract,
     final_resampling_metadata,
@@ -2427,7 +2425,7 @@ def build_module(
                         input_is_mni=False,
                         identity_transform=identity_transform,
                         t1_to_mni_warp=t1_to_mni_warp,
-                        mni_reference=anat_mni_template,
+                        mni_reference=mni_ref,
                         configured_command=opts.ica_aroma_cmd,
                         repetition_time=repetition_time,
                         denoise_type=denoise_type,

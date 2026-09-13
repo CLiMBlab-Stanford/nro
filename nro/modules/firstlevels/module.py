@@ -370,7 +370,7 @@ def create_smoothing_step(
     )
 
 
-def run_module(
+def build_module(
     *,
     runs: tuple[BidsRun, ...],
     participant: str,
@@ -385,8 +385,13 @@ def run_module(
     work_root: Path,
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
-) -> Path:
-    """Construct and execute one participant/task/model/space/smoothing DAG."""
+) -> tuple[Runner, Path]:
+    """Construct one participant/task/model/space/smoothing DAG.
+
+    The returned runner owns the complete graph but has not assessed or
+    executed it. The second value is the completion artifact produced by its
+    terminal step.
+    """
     if not runs or smoothing < 0 or config["noise_model"] not in {"ols", "ar1"}:
         raise ValueError(
             "Firstlevels requires selected runs, nonnegative smoothing and ols/ar1 noise"
@@ -554,6 +559,45 @@ def run_module(
             validate=partial(validate_completion, completion, definition=definition),
             completion_boundary=True,
         )
+    )
+    return runner, completion
+
+
+def run_module(
+    *,
+    runs: tuple[BidsRun, ...],
+    participant: str,
+    project_root: Path,
+    preprocessing_id: str,
+    config_id: str,
+    model_id: str,
+    model: dict,
+    config: dict,
+    space: str,
+    smoothing: int,
+    work_root: Path,
+    output_root: Path | None = None,
+    execution_context: ExecutionContext | None = None,
+) -> Path:
+    """Construct and execute one participant/task/model/space/smoothing DAG.
+
+    Return the completion artifact after the shared runner has executed or
+    skipped every declared step.
+    """
+    runner, completion = build_module(
+        runs=runs,
+        participant=participant,
+        project_root=project_root,
+        preprocessing_id=preprocessing_id,
+        config_id=config_id,
+        model_id=model_id,
+        model=model,
+        config=config,
+        space=space,
+        smoothing=smoothing,
+        work_root=work_root,
+        output_root=output_root,
+        execution_context=execution_context,
     )
     with runner.run_context():
         runner.execute()

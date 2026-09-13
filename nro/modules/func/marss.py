@@ -19,7 +19,7 @@ import numpy as np
 
 from nro.engine.images import nifti_is_valid
 from nro.engine.io import atomic_output_path, write_json
-from nro.modules.func.contracts import MARSS_DIAGNOSTIC_METHOD
+from nro.modules.func.contract import MARSS_DIAGNOSTIC_METHOD
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 

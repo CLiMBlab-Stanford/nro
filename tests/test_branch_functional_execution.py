@@ -135,6 +135,13 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     graph = job._graph.freeze()
     assert any(image in step.inputs for step in graph.steps)
     assert any("space-fsaverage6" in path.name for step in graph.steps for path in step.outputs)
+    if aroma:
+        aroma_step = next(
+            step
+            for step in graph.steps
+            if step.name == "Run ICA-AROMA Classification and Denoising"
+        )
+        assert any(path.name.endswith("_mni_2mm.nii.gz") for path in aroma_step.inputs)
     for step in graph.steps:
         for path in step.outputs:
             context.require_output(path)

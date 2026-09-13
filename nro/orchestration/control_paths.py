@@ -48,11 +48,6 @@ class ControlPaths:
         return self.service / "responses"
 
     @property
-    def service_workers(self) -> Path:
-        """Return the worker mailbox and presence directory."""
-        return self.service / "workers"
-
-    @property
     def service_active(self) -> Path:
         """Return the active controller record."""
         return self.service / "active.json"
@@ -135,7 +130,6 @@ class ControlPaths:
             self.service,
             self.service_inbox,
             self.service_responses,
-            self.service_workers,
             self.catalog,
             self.cache,
             self.implementations,

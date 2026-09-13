@@ -1,4 +1,4 @@
-"""Durable filesystem transport for the ephemeral scheduler service."""
+"""Persist scheduler recovery records and manage service election."""
 
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ def prepare(control: Path) -> ControlPaths:
         paths.service,
         paths.service_inbox,
         paths.service_responses,
-        paths.service_workers,
     ):
         ensure_shared_directory(path)
         try:
@@ -67,13 +66,10 @@ def response_path(control: Path, message_id: str) -> Path:
     return ControlPaths(control).service_responses / f"{message_id}.json"
 
 
-def publish_message(control: Path, payload: dict[str, Any], *, kind: str = "command") -> str:
-    """Publish one immutable message and return its generated identity."""
-    paths = prepare(control)
+def create_message(payload: dict[str, Any], *, kind: str = "command") -> dict[str, Any]:
+    """Create one validated scheduler record without publishing it."""
     message_id = uuid.uuid4().hex
-    target = message_path(paths.root, message_id)
-    ensure_shared_directory(target.parent)
-    record = {
+    return {
         "protocol": PROTOCOL,
         "id": message_id,
         "kind": kind,
@@ -82,8 +78,16 @@ def publish_message(control: Path, payload: dict[str, Any], *, kind: str = "comm
         "host": socket.gethostname(),
         "payload": payload,
     }
+
+
+def publish_message(control: Path, payload: dict[str, Any], *, kind: str = "command") -> str:
+    """Publish one immutable recovery record and return its identity."""
+    paths = prepare(control)
+    record = create_message(payload, kind=kind)
+    target = message_path(paths.root, record["id"])
+    ensure_shared_directory(target.parent)
     atomic_write_json(target, record, sort_keys=True, mode=0o664, durable=True)
-    return message_id
+    return str(record["id"])
 
 
 def publish_response(control: Path, message_id: str, value: dict[str, Any]) -> None:
@@ -101,25 +105,41 @@ def read_response(control: Path, message_id: str) -> dict[str, Any] | None:
         return None
 
 
-def pending_messages(control: Path, *, limit: int = 100) -> tuple[Path, ...]:
-    """Return a bounded deterministic batch of complete inbox messages."""
+def pending_messages(
+    control: Path, *, limit: int = 100, minimum_age: float = 1.0
+) -> tuple[Path, ...]:
+    """Return a bounded batch old enough to require filesystem recovery."""
     root = ControlPaths(control).service_inbox
     if not root.is_dir():
         return ()
-    return tuple(sorted(root.glob("*/*.json"), key=lambda path: path.name)[:limit])
+    cutoff = time.time() - minimum_age
+    candidates = []
+    for path in root.glob("*/*.json"):
+        try:
+            if path.stat().st_mtime <= cutoff:
+                candidates.append(path)
+        except OSError:
+            continue
+    return tuple(sorted(candidates, key=lambda path: path.name)[:limit])
 
 
 def consume_message(path: Path) -> dict[str, Any]:
     """Read and validate one immutable inbox record."""
-    record = read_json(path)
+    return validate_message(read_json(path), expected_id=path.stem)
+
+
+def validate_message(record: Any, *, expected_id: str | None = None) -> dict[str, Any]:
+    """Validate one durable or directly received scheduler record."""
     if (
-        set(record) != {"protocol", "id", "kind", "created_at", "user", "host", "payload"}
+        not isinstance(record, dict)
+        or set(record) != {"protocol", "id", "kind", "created_at", "user", "host", "payload"}
         or record["protocol"] != PROTOCOL
         or record["kind"] not in {"command", "worker"}
         or not isinstance(record["payload"], dict)
-        or path.stem != record["id"]
+        or expected_id is not None
+        and expected_id != record["id"]
     ):
-        raise ValueError(f"Invalid scheduler message: {path}")
+        raise ValueError(f"Invalid scheduler message: {expected_id or '<direct>'}")
     _identifier(record["id"], "message ID")
     return record
 
@@ -140,10 +160,22 @@ def read_active(control: Path) -> dict[str, Any] | None:
         value = read_json(path)
     except FileNotFoundError:
         return None
-    required = {"protocol", "token", "generation", "job_id", "host", "pid", "heartbeat"}
+    required = {
+        "protocol",
+        "token",
+        "generation",
+        "job_id",
+        "host",
+        "pid",
+        "port",
+        "heartbeat",
+    }
     if set(value) != required or value["protocol"] != PROTOCOL:
         return None
     try:
+        port = int(value["port"])
+        if not 0 < port < 65536 or not str(value["host"]):
+            return None
         if time.time() - float(value["heartbeat"]) > LEASE_SECONDS:
             return None
     except (TypeError, ValueError):
@@ -157,15 +189,20 @@ def publish_active(
     token: str,
     generation: int,
     job_id: str | None,
+    host: str,
+    port: int,
 ) -> dict[str, Any]:
     """Publish or renew the controller's externally visible lease."""
+    if not host or not 0 < int(port) < 65536:
+        raise ValueError("Scheduler endpoint is invalid")
     record = {
         "protocol": PROTOCOL,
         "token": _identifier(token, "fencing token"),
         "generation": int(generation),
         "job_id": str(job_id or ""),
-        "host": socket.gethostname(),
+        "host": str(host),
         "pid": os.getpid(),
+        "port": int(port),
         "heartbeat": time.time(),
     }
     atomic_write_json(
@@ -319,7 +356,7 @@ def release_launch(control: Path, token: str) -> None:
         shutil.rmtree(stale, ignore_errors=True)
 
 
-def activate(control: Path, token: str, generation: int) -> dict[str, Any]:
+def activate(control: Path, token: str, generation: int, *, host: str, port: int) -> dict[str, Any]:
     """Activate the matching launch claim and reject delayed controller jobs."""
     claim = read_launch(control)
     if not claim or claim.get("token") != token:
@@ -332,6 +369,8 @@ def activate(control: Path, token: str, generation: int) -> dict[str, Any]:
         token=token,
         generation=generation,
         job_id=os.environ.get("SLURM_JOB_ID") or str(claim.get("job_id") or ""),
+        host=host,
+        port=port,
     )
 
 

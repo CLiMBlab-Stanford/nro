@@ -8,7 +8,7 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.anat import constants as anat_constants
 from nro.modules.anat import steps as anat_steps
-from nro.modules.anat.common import AnatImage
+from nro.modules.anat.inputs import AnatImage
 
 
 def test_gray_matter_aseg_labels_have_named_definitions() -> None:

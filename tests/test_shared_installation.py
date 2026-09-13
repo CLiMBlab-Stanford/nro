@@ -1,11 +1,12 @@
 """Shared installation drains execution and publishes tagged main source."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from nro.engine import shared_installation
-from nro.orchestration import worker_control
+from nro.orchestration import scheduler_service, worker_control
 from nro.orchestration.registry import Registry
 
 
@@ -172,6 +173,56 @@ def test_worker_cancellation_accepts_an_already_finished_allocation(monkeypatch)
     assert stopped == 0
     assert failures == []
     assert updates == [(7, "cancelled")]
+
+
+def test_installation_stop_waits_for_confirmed_allocation_exit(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    checkout = tmp_path / "main"
+    checkout.mkdir()
+    registry.register_worker("worker-1", resource_class="small", slurm_job_id="101")
+    with registry.connection(write=True) as db:
+        db.executemany(
+            "INSERT INTO metadata(key,value) VALUES (?,?)",
+            (
+                ("maintenance_mode", "installation"),
+                ("installation_checkout", str(checkout.resolve())),
+                ("installation_action", "stop"),
+            ),
+        )
+
+    topology = SimpleNamespace(registered_checkout=lambda _checkout: "main")
+    monkeypatch.setattr(
+        scheduler_service,
+        "BranchStore",
+        lambda _control: SimpleNamespace(read=lambda: SimpleNamespace(topology=topology)),
+    )
+    terminal = False
+    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda _job_id: terminal)
+    monkeypatch.setattr(
+        worker_control.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    waiting = scheduler_service.installation_progress(registry, checkout=checkout)
+
+    assert waiting["done"] is False
+    assert waiting["workers"] == 1
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='worker-1'").fetchone()[0] == (
+            "shutdown_requested"
+        )
+
+    terminal = True
+    finished = scheduler_service.installation_progress(registry, checkout=checkout)
+
+    assert finished["done"] is True
+    assert finished["workers"] == 0
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='worker-1'").fetchone()[0] == (
+            "terminated"
+        )
 
 
 def test_publish_records_release_in_installation(tmp_path, monkeypatch):

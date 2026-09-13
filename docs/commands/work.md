@@ -7,10 +7,11 @@
 Plan requested terminal instances, register upstream demand, assess outputs,
 and supply workers. Fresh intermediates can be skipped even when the instance
 needs execution. No upfront catalog of all space/smoothing combinations is needed.
-The command starts the ephemeral scheduler controller when none is active and
-then communicates through durable request files. Concurrent invocations share
-the same controller. It exits automatically after registered work and workers
-become idle; users do not need to manage it.
+The command admits demand without starting a persistent service. If ready work
+needs worker capacity, it starts the ephemeral scheduler controller and sends
+requests directly over TCP. Concurrent invocations share the same controller.
+The controller exits after work and workers become idle; users do not manage it.
+`--no-submit` never starts the controller.
 
 Omitting `--module` requests every workflow endpoint, currently `dynconn`,
 `networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
@@ -115,7 +116,8 @@ can be adopted without demand. An empty registry prints headers without rows.
 By default, status uses the last atomic scheduler snapshot without starting a
 controller or checking files.
 `--update` performs the full assessment, updates the registry, and reports the
-result, starting a controller if needed. Use `--json` for structured output or
+result. It uses the live controller or a fenced local update process, without
+submitting a controller to Slurm. Use `--json` for structured output or
 `--no-pager` to bypass `less`.
 The pager uses colors and pinned headers when supported.
 

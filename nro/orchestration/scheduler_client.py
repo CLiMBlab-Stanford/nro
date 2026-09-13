@@ -1,4 +1,4 @@
-"""Exchange durable requests with the automatically managed scheduler service."""
+"""Coordinate through a live scheduler or a fenced one-shot process."""
 
 from __future__ import annotations
 
@@ -39,7 +39,6 @@ class SchedulerEndpoint:
     source: object
     site: Path
     python: Path
-    maintenance: bool = False
 
 
 def command(
@@ -49,7 +48,7 @@ def command(
     allow_changed_checkout: bool = False,
     maintenance_checkout: Path | None = None,
 ) -> SchedulerEndpoint:
-    """Capture the approved service implementation for a later durable exchange."""
+    """Capture the approved implementation used for scheduler coordination."""
     control = Path(control).expanduser().resolve()
     bids_root = Path(bids_root).expanduser().resolve()
     if not implementation_path(control).is_file():
@@ -66,9 +65,7 @@ def command(
         source, site, python = capture_worker_implementation(
             control, bids_root, check_checkout=not allow_changed_checkout
         )
-    return SchedulerEndpoint(
-        control, bids_root, source, site, python, maintenance=maintenance_checkout is not None
-    )
+    return SchedulerEndpoint(control, bids_root, source, site, python)
 
 
 def _wait_notice(frame: int, message: str) -> bool:
@@ -98,7 +95,7 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
         return None
     try:
         values = settings(path=endpoint.site)[0]
-        run_locally = endpoint.maintenance or os.environ.get("NRO_SCHEDULER_LOCAL") == "1"
+        run_locally = os.environ.get("NRO_SCHEDULER_LOCAL") == "1"
         if run_locally:
             from nro.orchestration.control_paths import ControlPaths
 
@@ -120,7 +117,6 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
             environment = {
                 **os.environ,
                 "NRO_PROCESS_ROLE": "scheduler",
-                **({"NRO_SCHEDULER_MAINTENANCE": "1"} if endpoint.maintenance else {}),
             }
             environment.pop("SLURM_JOB_ID", None)
             log = ControlPaths(endpoint.control).service / f"controller-local-{claim.token}.log"
@@ -153,16 +149,66 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
         raise
 
 
-def _ensure_service(endpoint: SchedulerEndpoint, *, explicit: bool = True) -> None:
-    """Ensure that one live or starting controller can consume pending messages."""
+def _run_once(endpoint: SchedulerEndpoint) -> bool:
+    """Run the pinned coordinator locally for a bounded request batch."""
+    from nro.orchestration.scheduler_bus import claim_launch, release_launch, update_launch_job
+
+    claim = claim_launch(endpoint.control)
+    if claim is None:
+        return False
+    command = endpoint.source.command(
+        (
+            str(endpoint.python),
+            "-m",
+            "nro.orchestration.scheduler_service",
+            "--once",
+            "--launch-token",
+            claim.token,
+            "--bids-root",
+            str(endpoint.bids_root),
+        ),
+        site=endpoint.site,
+    )
+    environment = {**os.environ, "NRO_PROCESS_ROLE": "scheduler"}
+    environment.pop("SLURM_JOB_ID", None)
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+        update_launch_job(claim, f"local-{process.pid}")
+        stdout, stderr = process.communicate()
+        if process.returncode:
+            detail = stderr.strip() or stdout.strip() or f"status {process.returncode}"
+            raise SchedulerError(f"One-shot scheduler update failed: {detail}")
+        return True
+    except BaseException:
+        release_launch(endpoint.control, claim.token)
+        raise
+
+
+def _ensure_coordinator(
+    endpoint: SchedulerEndpoint,
+    *,
+    require_service: bool,
+    start_epoch: bool = False,
+) -> None:
+    """Provide a live service or a fenced one-shot coordinator as requested."""
     from nro.orchestration.scheduler_bus import clear_shutdown, read_active, shutdown_pending
 
-    if explicit:
+    if start_epoch:
         clear_shutdown(endpoint.control)
-    elif shutdown_pending(endpoint.control):
+    elif require_service and shutdown_pending(endpoint.control):
         return
     if read_active(endpoint.control) is None:
-        _start_service(endpoint)
+        if require_service:
+            _start_service(endpoint)
+        else:
+            _run_once(endpoint)
 
 
 def exchange(
@@ -171,11 +217,18 @@ def exchange(
     *,
     descriptors: tuple[int, ...] = (),
     timeout: float | None = DEFAULT_RPC_TIMEOUT_SECONDS,
+    require_service: bool = False,
+    start_epoch: bool = False,
+    durable: bool = True,
 ) -> dict:
-    """Publish one command and wait for its durable response."""
+    """Send one request directly, with a recovery record when required."""
     if descriptors:
         raise ValueError("The durable scheduler transport does not accept file descriptors")
+    if not durable and not require_service:
+        raise ValueError("Direct-only scheduler calls require a live service")
     from nro.orchestration.scheduler_bus import (
+        consume_message,
+        create_message,
         message_path,
         publish_message,
         read_active,
@@ -184,17 +237,28 @@ def exchange(
         read_startup_error,
     )
 
-    message_id = publish_message(endpoint.control, message)
+    if durable:
+        kind = "worker" if message.get("operation") == "worker" else "command"
+        message_id = publish_message(endpoint.control, message, kind=kind)
+        record = consume_message(message_path(endpoint.control, message_id))
+    else:
+        record = create_message(message, kind="worker")
+        message_id = str(record["id"])
     try:
-        _ensure_service(endpoint)
+        _ensure_coordinator(
+            endpoint,
+            require_service=require_service,
+            start_epoch=start_epoch,
+        )
     except BaseException as error:
-        raise SchedulerError(f"Could not start the central scheduler: {error}") from error
+        raise SchedulerError(f"Could not start scheduler coordination: {error}") from error
     started = time.monotonic()
     last_recovery_check = started
     active_token: str | None = None
     active_started: float | None = None
     frame = 0
     notice = False
+    attempted_endpoint: tuple[str, int] | None = None
     while True:
         launch = read_launch(endpoint.control)
         if launch is not None:
@@ -206,7 +270,7 @@ def exchange(
                 raise SchedulerError(
                     "Central scheduler could not start: " + str(startup_error["error"])
                 )
-        response = read_response(endpoint.control, message_id)
+        response = read_response(endpoint.control, message_id) if durable else None
         if response is not None and not message_path(endpoint.control, message_id).exists():
             if notice:
                 sys.stderr.write(_CLEAR)
@@ -223,6 +287,36 @@ def exchange(
             if token != active_token:
                 active_token = token
                 active_started = now
+            endpoint_identity = (
+                str(active["token"]),
+                int(active["port"]),
+            )
+            if endpoint_identity != attempted_endpoint:
+                from nro.orchestration.scheduler_rpc import request
+
+                attempted_endpoint = endpoint_identity
+                try:
+                    direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
+                    response = request(
+                        active,
+                        record,
+                        timeout=direct_timeout,
+                        durable=durable,
+                    )
+                except (ConnectionError, OSError, TimeoutError, ValueError):
+                    response = None
+                if response is not None:
+                    if response.get("error") == "Scheduler endpoint is obsolete":
+                        response = None
+                        continue
+                    if notice:
+                        sys.stderr.write(_CLEAR)
+                        sys.stderr.flush()
+                    if "error" in response:
+                        raise SchedulerError(str(response["error"]))
+                    if "result" not in response:
+                        raise SchedulerError("Central scheduler returned a malformed response")
+                    return response["result"]
         elif active_token is not None:
             launch_token = str(launch.get("token") or "") if launch is not None else ""
             if launch_token and launch_token != active_token:
@@ -248,8 +342,13 @@ def exchange(
                 f"request {message_id} remains queued"
             )
         if now - last_recovery_check >= 5.0:
-            _ensure_service(endpoint, explicit=False)
+            _ensure_coordinator(
+                endpoint,
+                require_service=require_service,
+                start_epoch=False,
+            )
             last_recovery_check = now
+            attempted_endpoint = None
         elapsed = now - started
         if elapsed >= 0.75:
             message_text = (
@@ -296,10 +395,34 @@ def supply(
     control: Path, bids_root: Path, *, checkout: Path, request_ids: list[str], options: dict
 ) -> dict:
     """Start central workers after admission has published execution pins."""
+    endpoint = _endpoint(control, bids_root)
+    if options.get("no_submit", False):
+        return exchange(
+            endpoint,
+            dict(
+                operation="supply",
+                checkout=str(checkout),
+                request_ids=request_ids,
+                options=options,
+            ),
+        )
+    preflight = exchange(
+        endpoint,
+        dict(
+            operation="supply_needed",
+            checkout=str(checkout),
+            request_ids=request_ids,
+            options=options,
+        ),
+    )
+    if not preflight["needed"]:
+        return {"submitted_workers": []}
     result = exchange(
-        _endpoint(control, bids_root),
+        endpoint,
         dict(operation="supply", checkout=str(checkout), request_ids=request_ids, options=options),
         timeout=None if options["local"] else DEFAULT_RPC_TIMEOUT_SECONDS,
+        require_service=True,
+        start_epoch=True,
     )
     if options["local"]:
         _wait_for_local_workers(Path(control), result["submitted_workers"])
@@ -433,6 +556,10 @@ def shutdown_service(
     allow_changed_checkout: bool = False,
 ) -> dict:
     """Record shutdown intent and stop the current controller after its response."""
+    from nro.orchestration.scheduler_bus import read_active
+
+    if read_active(control) is None:
+        return {"stopping": False}
     return exchange(
         _endpoint(
             control,

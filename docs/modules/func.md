@@ -58,7 +58,8 @@ and resolved methods; do not assume every run used the default branch.
    outlier families. See [denoising](../methods/denoising.md).
 8. When `clean_ica_aroma` is enabled, estimate a shared MELODIC/ICA-AROMA model
    and noise classification. The estimation input is spatially smoothed; shared
-   components are then regressed from each output-space time course. The
+   components are then regressed from each output-space time course. Spatial
+   classification uses the 2 mm reference in the configured MNI space. The
    `ica_aroma_denoise_type` selects aggressive or nonaggressive regression.
    `ica_aroma_cmd` can replace the bundled implementation with an external command.
    Classification and estimation policies are recorded with the outputs.
@@ -92,7 +93,7 @@ and decision metadata. Pass-through runs use zero-valued artifact placeholders
 to keep the output signature fixed. The functional manifest identifies every
 published path.
 
-The [functional contract](../autoapi/nro/modules/func/contracts/index.rst) defines the
+The [functional contract](../autoapi/nro/modules/func/contract/index.rst) defines the
 required manifest and sidecar fields; the
 [resolver](../autoapi/nro/modules/func/resolver/index.rst) defines reference selection.
 

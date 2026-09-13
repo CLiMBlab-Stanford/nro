@@ -79,7 +79,7 @@ def _slurm_job_terminal(job_id: str) -> bool | None:
     return None
 
 
-def _active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
+def active_pool_members(activity: dict) -> tuple[list[str], list[str]]:
     """Return worker IDs and job IDs whose termination is not yet confirmed."""
     now = time.time()
     hostname = socket.gethostname()
@@ -116,7 +116,7 @@ def wait_for_worker_shutdown(
     """Wait until every worker process/allocation is confirmed inactive."""
     deadline = time.monotonic() + timeout
     while True:
-        workers, jobs = _active_pool_members(registry.worker_pool_activity(for_repair=True))
+        workers, jobs = active_pool_members(registry.worker_pool_activity(for_repair=True))
         if not workers and not jobs:
             return
         if time.monotonic() >= deadline:

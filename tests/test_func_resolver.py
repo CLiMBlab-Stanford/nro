@@ -5,7 +5,9 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from nro.engine.bids import BidsRun
 from nro.modules.func import resolver as func_resolver
+from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
 
 
 def _image(path: Path) -> None:
@@ -169,6 +171,21 @@ def test_bidsification_associations_override_heuristics(tmp_path, monkeypatch, u
     assert (result.sbref is not None) == use_references
     assert (result.pair is not None) == use_references
     if use_references:
+        run = BidsRun(
+            participant="01",
+            session="a",
+            stem=stem,
+            entities={"task": "rest", "run": "1"},
+            path=bold,
+        )
+        planned_inputs = resolved_func_inputs(
+            run,
+            sdc_from_sbref_pair=True,
+            session_inventory=load_session_inventory(run, include_fmaps=False),
+        )
+        assert sbref in planned_inputs
+        assert all(fmap in planned_inputs for fmap in sorted((root / "fmap").glob("*_epi.nii.gz")))
+
         sbref.unlink()
         with pytest.raises(ValueError, match="explicitly assigned SBRef"):
             resolve()
