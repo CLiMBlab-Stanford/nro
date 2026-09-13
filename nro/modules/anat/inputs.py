@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Shared helpers for the anatomical preprocessing module."""
+"""Resolve and order anatomical source images."""
 
 from __future__ import annotations
 
@@ -72,20 +71,3 @@ def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatIm
 def sort_anat_images(images: Sequence[AnatImage]) -> list[AnatImage]:
     """Sort anatomical images by the best available acquisition order."""
     return sorted(images, key=lambda item: (item.time_kind, item.time_value, item.image.name))
-
-
-def robust_template_cmd(
-    inputs: Sequence[Path], out_template: Path, out_transform_prefix: Path
-) -> list[str]:
-    """Build an ``mri_robust_template`` command for anatomical averaging."""
-    cmd = [
-        "mri_robust_template",
-        "--template",
-        str(out_template),
-        "--satit",
-        "--mapmov",
-        str(out_transform_prefix),
-    ]
-    for path in inputs:
-        cmd += ["--mov", str(path)]
-    return cmd

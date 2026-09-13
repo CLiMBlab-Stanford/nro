@@ -1,4 +1,4 @@
-"""Substantive functional-processing policies shared with orchestration."""
+"""Substantive functional-processing contracts shared with orchestration."""
 
 from __future__ import annotations
 

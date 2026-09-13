@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Clean one preprocessed BOLD run in one space at one smoothing level.
 
 The cleaner fits each run to the portion of its Fourier basis inside the

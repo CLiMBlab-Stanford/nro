@@ -470,7 +470,7 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
         / "demo/derivatives/preprocessing/main/sub-01/func"
         / f"{func['output_prefix']}_bold/scratch.txt"
     )
-    foreign = _write(bids / "demo/derivatives/other-pipeline/sub-01/foreign_result.nii.gz")
+    foreign = _write(bids / "demo/derivatives/other-system/sub-01/foreign_result.nii.gz")
     attempt_log = _write(registry.paths.events / "complete" / "instance.log")
     now = utcnow()
     with registry.connection(write=True) as db:

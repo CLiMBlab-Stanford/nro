@@ -11,7 +11,7 @@ from nro.configuration.runtime import configure
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.anat import module as anat
-from nro.modules.anat.common import AnatImage
+from nro.modules.anat.inputs import AnatImage
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner

@@ -1,4 +1,4 @@
-"""Worker-side client for the scheduler's durable message protocol."""
+"""Worker-side client for direct scheduler coordination."""
 
 from __future__ import annotations
 
@@ -6,14 +6,11 @@ import getpass
 import os
 import socket
 import sys
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
 
-from nro.engine.io import atomic_write_json, read_json
 from nro.orchestration.contracts import ExecutionEnvelope
-from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.scheduler_client import SchedulerEndpoint, exchange
 from nro.orchestration.source_snapshots import SourceSnapshot
 
@@ -42,9 +39,8 @@ class WorkerSchedulerClient:
             Path(site),
             Path(sys.executable),
         )
-        self.worker_root = ControlPaths(control).service_workers / worker_id
 
-    def _call(self, action: str, **fields: Any) -> Any:
+    def _call(self, action: str, *, durable: bool = True, **fields: Any) -> Any:
         """Send one ordered worker event and return its service result."""
         self.sequence += 1
         return exchange(
@@ -58,6 +54,8 @@ class WorkerSchedulerClient:
                 **fields,
             },
             timeout=300.0,
+            require_service=True,
+            durable=durable,
         )
 
     def register_worker(self, worker_id: str, **fields: Any) -> None:
@@ -71,39 +69,12 @@ class WorkerSchedulerClient:
         )
 
     def heartbeat_worker(self, worker_id: str, *, state: str, **_fields: Any) -> None:
-        """Publish the worker's current state without opening the registry."""
-        from nro.orchestration.scheduler_bus import read_active
-        from nro.orchestration.scheduler_client import _ensure_service
-
-        if read_active(self.endpoint.control) is None:
-            _ensure_service(self.endpoint, explicit=False)
-        self.sequence += 1
-        atomic_write_json(
-            self.worker_root / "presence.json",
-            {
-                "protocol": 1,
-                "worker_id": self.worker_id,
-                "worker_token": self.token,
-                "sequence": self.sequence,
-                "state": state,
-                "heartbeat": time.time(),
-            },
-            sort_keys=True,
-            mode=0o664,
-        )
-
-    def _control(self) -> dict:
-        try:
-            value = read_json(self.worker_root / "control.json")
-        except FileNotFoundError:
-            return {}
-        if value.get("worker_token") != self.token:
-            return {}
-        return value
+        """Refresh this worker's registry lease through the scheduler."""
+        self._call("heartbeat", state=state, durable=False)
 
     def worker_shutdown_requested(self, worker_id: str) -> bool:
-        """Return whether the current control file requests shutdown."""
-        return self._control().get("state") == "shutdown_requested"
+        """Return whether the scheduler requests this worker to shut down."""
+        return bool(self._call("shutdown_requested", durable=False))
 
     def mark_submission_running(self, slurm_job_id: str) -> None:
         """Associate this running worker with its Slurm submission."""
@@ -143,8 +114,8 @@ class WorkerSchedulerClient:
         )
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
-        """Return whether the current control file cancels an attempt."""
-        return int(attempt_id) in set(self._control().get("cancel_attempts", ()))
+        """Return whether the scheduler has cancelled an attempt."""
+        return bool(self._call("attempt_cancel_requested", attempt_id=attempt_id, durable=False))
 
     def record_attempt_process(self, attempt_id: int, process_group_id: int) -> None:
         """Record the process group supervised for an attempt."""
@@ -165,11 +136,11 @@ class WorkerSchedulerClient:
 
     def runner_graph_signature(self, instance_id: int) -> str:
         """Return the current transitive graph signature for an instance."""
-        return str(self._call("runner_graph_signature", instance_id=instance_id))
+        return str(self._call("runner_graph_signature", instance_id=instance_id, durable=False))
 
     def attempt_summary(self, attempt_id: int) -> str:
         """Return a concise summary of an attempt's saved state."""
-        return str(self._call("attempt_summary", attempt_id=attempt_id))
+        return str(self._call("attempt_summary", attempt_id=attempt_id, durable=False))
 
     def record_completion(
         self, *, instance_id: int, attempt_id: int, outputs: Sequence[Path]
@@ -188,7 +159,7 @@ class WorkerSchedulerClient:
 
     def required_memory_above(self, memory_gb: int) -> int | None:
         """Return the smallest ready memory tier above this worker's capacity."""
-        value = self._call("required_memory", memory_gb=memory_gb)
+        value = self._call("required_memory", memory_gb=memory_gb, durable=False)
         return None if value is None else int(value)
 
     def request_capacity(self, kind: str, *, memory_gb: int, profile: str | None = None) -> None:

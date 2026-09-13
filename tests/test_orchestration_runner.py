@@ -506,14 +506,22 @@ def test_dependency_preflight_failure_is_attributed_to_numbered_step(
         "nro.orchestration.runner.subprocess.run",
         lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "", ""),
     )
+    runner.add_step(
+        Step.python(
+            name="Check Dependencies",
+            outputs=(Path("dependencies.complete"),),
+            action=lambda: runner.require_cmds(["definitely-not-installed"]),
+        )
+    )
 
     with caplog.at_level(logging.INFO, logger="test.runner.dependency-preflight"):
         with pytest.raises(SystemExit, match="Missing required commands on PATH"):
             with runner.run_context():
-                runner.require_cmds(["definitely-not-installed"])
+                runner.execute()
 
-    assert "Failed Step: 002 — Dependency Preflight" in caplog.text
+    assert "Failed Step: 002 — Check Dependencies" in caplog.text
     assert "Error: SystemExit: Missing required commands on PATH" in caplog.text
+    assert "Dependency Preflight" not in caplog.text
 
 
 def test_structured_step_ledger_records_outputs(tmp_path: Path, monkeypatch) -> None:

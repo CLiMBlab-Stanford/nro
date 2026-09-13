@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""
-Assemble a confounds TSV broadly compatible with common fMRIPrep-style regressors.
+"""Assemble a confounds TSV using common fMRIPrep-style names.
 
 Compute six MCFLIRT motion parameters, mean white-matter/CSF/global signals,
 and the derivatives and squared terms of the nine base signals. Also export

@@ -88,24 +88,27 @@ attempts, workers, and submissions. Consequently, concurrency limits and
 reusable worker capacity are enforced across simultaneous requests from
 different projects and branches.
 
-An automatically managed Slurm controller is the only normal client of the
+An automatically managed Slurm controller is the only long-lived client of the
 shared scheduler SQLite database. Checkout processes may compile scientific
 state in their branch-owned registries, which contain no attempts or worker-pool
-state. User commands and workers send scheduler messages through the control
-filesystem. Atomic launch election and fencing permit only the current
-controller to consume them. The controller uses rollback journaling and short
-transactions; no transaction spans scientific computation, Slurm waiting, or
-bulk filesystem work. Request and response files survive controller failure and
-can be replayed safely by its replacement.
+state. User commands and workers send requests directly to the controller over
+TCP. Each request is also journaled in the control filesystem until its registry
+change commits. A replacement controller can replay an unresolved request.
+Atomic launch election and fencing permit only the current controller to act.
+The controller uses rollback journaling and short transactions; no transaction
+spans scientific computation, Slurm waiting, network waiting, or bulk filesystem
+work.
 
 The controller publishes an atomic JSON read model after relevant changes.
 Cached observation reads that snapshot without starting the controller or
-opening SQLite. Mutating commands start the service when needed, display a
-lightweight progress indicator while awaiting a response, and fail after a
-bounded timeout rather than hanging indefinitely. The controller exits after
-demand, attempts, workers, ingestion, and pending messages remain idle for a
-short grace period. Installation and repair use a deliberate shutdown barrier
-before entering their exceptional offline maintenance phase.
+opening SQLite. Bounded mutations use the live controller or a fenced local
+one-shot coordinator. Only work supply and workers may submit a controller to
+Slurm. Commands display a lightweight progress indicator while awaiting a
+response. Controller queueing has no timeout; communication with a live
+controller does. The controller exits after attempts, workers, submissions, and
+pending requests remain idle for a short grace period. Installation and repair
+use a deliberate shutdown barrier before entering their exceptional offline
+maintenance phase.
 
 Registry state separates:
 
@@ -198,10 +201,10 @@ Slurm jobs are reusable foreground workers, not one-job-per-module wrappers.
 Workers request compatible ready instances through ordered scheduler events and
 supervise one module subprocess at a time. A claim returns a typed
 `ExecutionEnvelope`; an `ExecutionLauncher` owns subprocess creation and
-supervision. Atomic presence files renew worker leases without a database write
-for every heartbeat. Workers poll durable control files and terminate the whole
-subprocess group when required. Neither the worker nor its scientific subprocess
-can open the scheduler database.
+supervision. Workers renew leases and check cancellation through direct scheduler
+requests, then terminate the whole subprocess group when required. Their request
+records remain available for replay until the scheduler commits them. Neither the
+worker nor its scientific subprocess can open the scheduler database.
 
 Workers drain before wall-time and request successor capacity from the
 controller. The registry, not queued Slurm count, enforces shared concurrency.
@@ -211,8 +214,9 @@ ceiling; higher-tier workers may accept lower-tier instances.
 ## Observation and mutation
 
 `log` is observational. By default, `status` reads the last atomic scheduler
-snapshot. `status --update` starts the controller if needed, performs
-authoritative assessment, updates the registry, and publishes a new snapshot;
+snapshot. `status --update` uses the live controller or a fenced one-shot
+coordinator, performs authoritative assessment, updates the registry, and
+publishes a new snapshot;
 it can cancel an attempt whose registered contract has become obsolete. `run`
 and worker events also assess artifacts and grow the worker pool. `set`, `stop`,
 `purge`, and `publish` are explicit mutation commands with distinct

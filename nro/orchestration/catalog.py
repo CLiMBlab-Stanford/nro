@@ -17,7 +17,7 @@ from nro.modules.firstlevels.planning import plan_instances as plan_firstlevels_
 from nro.modules.firstlevels.planning import refresh_command as refresh_firstlevels_command
 from nro.modules.firstlevels.planning import select_model_runs
 from nro.modules.firstlevels.task_models import canonical_processing, model_contract, select_models
-from nro.modules.func.contracts import final_resampling_contract, functional_output_contract
+from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.func.planning import plan_instances as plan_func_instances
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.microparcellation.planning import (

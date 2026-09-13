@@ -4,20 +4,14 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-MODULE_FILES = (
-    ROOT / "nro/modules/anat/module.py",
-    ROOT / "nro/modules/func/module.py",
-    ROOT / "nro/modules/clean/module.py",
-    ROOT / "nro/modules/microparcellation/module.py",
-    ROOT / "nro/modules/networks/module.py",
-)
+MODULE_FILES = tuple(sorted((ROOT / "nro/modules").glob("*/module.py")))
 
 
-def test_every_module_uses_the_shared_runner_context() -> None:
+def test_every_module_builds_with_the_shared_runner() -> None:
     for path in MODULE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "Runner" in source, path
-        assert ".run_context(" in source, path
+        assert "def build_module(" in source, path
 
 
 def test_modules_construct_declarative_runner_graphs_without_freshness_checks() -> None:

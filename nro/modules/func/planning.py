@@ -10,13 +10,9 @@ from typing import TYPE_CHECKING, Mapping
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.paths import functional_manifest_path
 from nro.modules.func.resolver import (
-    FmapPair,
-    inherit_sbref_metadata,
+    ImageRec,
     load_rec,
-    parse_bids_entities,
-    pick_nearest_opp_sbref,
-    pick_prev_fmap_pair,
-    pick_prev_sbref,
+    resolve_func_references,
 )
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -27,9 +23,9 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _SessionInventory:
-    sbrefs: tuple[object, ...]
+    sbrefs: tuple[ImageRec, ...]
     sidecarless_sbrefs: tuple[Path, ...]
-    fmaps: tuple[object, ...]
+    fmaps: tuple[ImageRec, ...]
 
 
 def load_session_inventory(run: BidsRun, *, include_fmaps: bool) -> _SessionInventory:
@@ -63,38 +59,25 @@ def resolved_func_inputs(
     """Mirror functional reference and fieldmap selection for exact inputs."""
     bold = load_rec(run.path)
     result: list[Path] = [bold.img, *bold.metadata_sources]
-    sbrefs = list(session_inventory.sbrefs)
-    exact = [
-        path
-        for path in session_inventory.sidecarless_sbrefs
-        if parse_bids_entities(path.name) == bold.ents
-    ]
-    if len(exact) == 1:
-        sbrefs.append(inherit_sbref_metadata(exact[0], bold))
-    sbref = None
-    if sbrefs:
-        try:
-            sbref = pick_prev_sbref(sbrefs, bold)
-        except Exception:
-            pass
-    if sbref is not None:
-        result.append(sbref.img)
-        result.extend(sbref.metadata_sources)
-    pair = None
-    if bold.readout is None or bold.readout <= 0:
-        pair = None
-    elif sdc_from_sbref_pair and sbref is not None:
-        try:
-            pair = FmapPair(se1=sbref, se2=pick_nearest_opp_sbref(sbrefs, sbref))
-        except Exception:
-            pass
-    elif not sdc_from_sbref_pair:
-        try:
-            pair = pick_prev_fmap_pair(session_inventory.fmaps, bold)
-        except Exception:
-            pass
-    if pair is not None:
-        for record in (pair.se1, pair.se2):
+    fmaps = session_inventory.fmaps
+    if bold.metadata.get("NROReferencePolicy") == "explicit" and sdc_from_sbref_pair:
+        session_root = run.path.parent.parent
+        prefix = f"sub-{run.participant}" + (f"_ses-{run.session}" if run.session else "")
+        fmaps = tuple(
+            load_rec(path) for path in sorted((session_root / "fmap").glob(f"{prefix}_*_epi.nii*"))
+        )
+    references = resolve_func_references(
+        bold=bold,
+        sbrefs=session_inventory.sbrefs,
+        sidecarless_sbrefs=session_inventory.sidecarless_sbrefs,
+        fmaps=fmaps,
+        sdc_from_sbref_pair=sdc_from_sbref_pair,
+    )
+    if references.sbref is not None:
+        result.append(references.sbref.img)
+        result.extend(references.sbref.metadata_sources)
+    if references.pair is not None:
+        for record in (references.pair.se1, references.pair.se2):
             result.append(record.img)
             result.extend(record.metadata_sources)
     return tuple(dict.fromkeys(result))

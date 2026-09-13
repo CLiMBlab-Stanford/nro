@@ -11,7 +11,7 @@ import nro.modules.func.planning as func_planning
 from nro.configuration.store import ConfigStore
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.clean.contract import clean_output_contract
-from nro.modules.func.contracts import final_resampling_contract, functional_output_contract
+from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.networks.contract import networks_output_contract
 from nro.orchestration.contracts import InstanceSpec

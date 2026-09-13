@@ -11,14 +11,16 @@ records in this layout:
 ```text
 CONTROL/
   shared/scheduler/registry.sqlite3
-  shared/scheduler/service/{inbox,responses,workers,status.json}
+  shared/scheduler/service/{inbox,responses,status.json}
   branches/<branch-id>/registry.sqlite3
 ```
 
 The scheduler database is the sole authority for requests, attempts, workers,
 Slurm submissions, and the concurrency limit. An ephemeral Slurm controller is
-its only normal client. Commands and workers exchange durable files with that
-controller, while cached status reads its atomic JSON snapshot. A branch
+its only long-lived client. Commands and workers use direct TCP requests while
+the controller is active. Each request remains in a durable recovery journal
+until its registry change commits. Cached status reads an atomic JSON snapshot.
+A branch
 database records that branch's compiled scientific contracts, workflow
 lineages, and artifact observations. All projects and branches therefore share
 worker capacity without requiring the scheduler to import development code.

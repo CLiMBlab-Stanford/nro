@@ -97,8 +97,9 @@ Maintenance is explicit:
 ./install --maintain
 ```
 
-The installer runs its scheduler controller locally. Maintenance does not request a
-Slurm allocation or wait for capacity in the scientific partition.
+The installer uses the active scheduler or a fenced one-shot update process.
+Maintenance does not start a scheduler, request a Slurm allocation, or wait for
+capacity in the scientific partition.
 
 Shared setup verifies container images by checksum without launching them on the login
 host. To test container execution explicitly, run `nro doctor --deep` in the same kind
@@ -107,11 +108,13 @@ of Slurm allocation used for scientific work.
 When shared work is active, the installer reports it and offers three choices. A
 graceful drain prevents new claims, lets running derivative and ingestion stages
 finish, and then stops the workers. An immediate stop interrupts running work and
-preserves its demand so it can be queued again. Cancelling makes no registry change.
-Installation continues when the pool is quiet. Ctrl-C after choosing an action
-leaves the maintenance barrier and action in place; repeat `./install --maintain`
-to resume. `--drain` authorizes a graceful drain during noninteractive maintenance.
-Without that option, noninteractive maintenance refuses an active pool.
+preserves its demand so it can be queued again. The installer waits for Slurm to
+confirm that every allocation has ended before changing the environment. Cancelling
+makes no registry change. Installation continues when the pool is quiet. Ctrl-C after
+choosing an action leaves the maintenance barrier and action in place; repeat
+`./install --maintain` to resume. `--drain` authorizes a graceful drain during
+noninteractive maintenance. Without that option, noninteractive maintenance refuses
+an active pool.
 
 After updating `main` to a newer tagged release, `./install --maintain` records and
 activates that release automatically. Runtime checks compare the installation's
@@ -232,8 +235,8 @@ Generic defaults omit CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
 the X11 allocations created by `nro scene --open`; CLIMBLAB uses
-`dev-interactive`. Viewer allocations do not enter nro's worker pool or shared
-concurrency accounting.
+`john`. Both partitions use the `nlp` account. Viewer allocations do not enter
+nro's worker pool or shared concurrency accounting.
 
 `flywheel_server` and `flywheel_project` are optional defaults for
 `nro bidsify`. The project uses the `GROUP/PROJECT` form. Command-line values

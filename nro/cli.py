@@ -35,6 +35,8 @@ COMMAND_HELP = {
     "scene": "Create combined Workbench scenes from completed derivatives.",
 }
 
+CENTRAL_ONLY_COMMANDS = frozenset({"cutover", "release"})
+
 
 def available_commands() -> tuple[str, ...]:
     """Return exactly the executable module names present in ``nro.bin``."""
@@ -84,28 +86,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
         parser.error(f"unknown command {command!r}; choose from " + ", ".join(available_commands()))
     from nro.configuration.site import installation_record
 
-    if installation_record().get("mode") == "branch" and command not in {
-        "branch",
-        "doctor",
-        "paths",
-        "setup",
-        "definitions",
-        "create",
-        "edit",
-        "delete",
-        "models",
-        "run",
-        "status",
-        "stop",
-        "log",
-        "set",
-        "purge",
-        "bidsify",
-        "promote",
-        "scene",
-        "qc",
-        "publish",
-    }:
+    if installation_record().get("mode") == "branch" and command in CENTRAL_ONLY_COMMANDS:
         if "-h" not in values and "--help" not in values:
             parser.error(
                 f"{command} requires the central/main installation; a development installation does not grant maintenance authority"

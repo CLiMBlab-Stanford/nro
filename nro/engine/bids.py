@@ -256,39 +256,6 @@ def bids_readout_time(metadata: Mapping[str, Any]) -> float:
     return float(echo_spacing) * (int(matrix_size) - 1)
 
 
-def phase_encoding_direction_from_json(path: Path | None) -> str | None:
-    """Read an optional BIDS phase-encoding direction without raising."""
-    if path is None:
-        return None
-    try:
-        value = str(read_json(path).get("PhaseEncodingDirection", "")).strip()
-    except Exception:
-        return None
-    return value or None
-
-
-def readout_time_from_json(path: Path | None) -> float | None:
-    """Read an optional BIDS total readout time without raising."""
-    if path is None:
-        return None
-    try:
-        return bids_readout_time(read_json(path))
-    except Exception:
-        return None
-
-
-def repetition_time_from_json(path: Path | None) -> float | None:
-    """Read an optional positive BIDS repetition time without raising."""
-    if path is None:
-        return None
-    try:
-        value = read_json(path).get("RepetitionTime")
-        repetition_time = float(value) if value is not None else 0.0
-    except Exception:
-        return None
-    return repetition_time if repetition_time > 0 else None
-
-
 def _parse_selector_values(
     values: Sequence[str] | None, *, reject_non_run: bool
 ) -> dict[str, tuple[str, ...] | None]:

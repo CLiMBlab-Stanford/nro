@@ -19,7 +19,7 @@ from nro.engine.paths import (
     preprocessing_session_anat_dir,
     preprocessing_session_work_dir,
 )
-from nro.modules.anat.common import AnatImage, robust_template_cmd, sort_anat_images
+from nro.modules.anat.inputs import AnatImage, sort_anat_images
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
@@ -28,6 +28,24 @@ from .constants import (
     _FREESURFER_ASEG_LABELS,
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
+
+
+def _robust_template_command(
+    inputs: Sequence[Path], out_template: Path, out_transform_prefix: Path
+) -> list[str]:
+    """Build an ``mri_robust_template`` command for anatomical averaging."""
+    command = [
+        "mri_robust_template",
+        "--template",
+        str(out_template),
+        "--satit",
+        "--mapmov",
+        str(out_transform_prefix),
+    ]
+    for path in inputs:
+        command.extend(("--mov", str(path)))
+    return command
+
 
 next_step = new_step_counter()
 
@@ -306,7 +324,7 @@ def _create_copy_or_average_step(
         )
     else:
         tmp_dir = work_dir / f"robust_template_{modality}"
-        cmd = robust_template_cmd(
+        cmd = _robust_template_command(
             [item.image for item in ordered], out_img, tmp_dir / f"{modality}_"
         )
 

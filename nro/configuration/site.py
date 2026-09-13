@@ -25,7 +25,7 @@ DEFAULTS = {
     "license": str(LAB / "freesurfer/license.txt"),
     "runtime": "singularity",
     "partition": "sphinx",
-    "viewing_partition": "dev-interactive",
+    "viewing_partition": "john",
     "account": "nlp",
     "flywheel_server": "",
     "flywheel_project": "",

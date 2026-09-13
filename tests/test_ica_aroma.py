@@ -30,6 +30,33 @@ def _runner(name: str = "test.ica-aroma") -> Runner:
     )
 
 
+def test_builtin_workflow_tracks_spatial_reference_as_input(tmp_path: Path) -> None:
+    runner = _runner()
+    mni_reference = tmp_path / "tpl-MNI152NLin2009cAsym_res-02_T1w.nii.gz"
+    step = func_steps._create_ica_aroma_workflow_step(
+        runner=runner,
+        epi=tmp_path / "bold.nii.gz",
+        melodic_input=tmp_path / "smoothed.nii.gz",
+        motion_parameters=tmp_path / "motion.par",
+        melodic_mask=tmp_path / "melodic_mask.nii.gz",
+        regression_mask=tmp_path / "regression_mask.nii.gz",
+        aroma_dir=tmp_path / "aroma",
+        outputs=(tmp_path / "aroma/classification_overview.txt",),
+        melodic_products=(tmp_path / "aroma/melodic.complete",),
+        input_is_mni=False,
+        identity_transform=tmp_path / "identity.mat",
+        t1_to_mni_warp=tmp_path / "warp.nii.gz",
+        mni_reference=mni_reference,
+        configured_command=None,
+        repetition_time=0.72,
+        denoise_type="aggr",
+        env={},
+        force=False,
+    )
+
+    assert mni_reference in step.inputs
+
+
 def test_denoising_restricts_regression_to_brain_mask(tmp_path: Path) -> None:
     commands: list[list[str]] = []
     epi = tmp_path / "bold.nii.gz"

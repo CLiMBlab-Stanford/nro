@@ -5,9 +5,11 @@ import fcntl
 import json
 import os
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from nro.orchestration.branch_reconciliation import candidates_locked, resolve_p
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
+from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
 from nro.orchestration.source_snapshots import SourceSnapshot
 
 _STOP = False
@@ -249,7 +252,7 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
             wait=False,
         )
         submitted = [process.nro_worker_id]
-    elif not options["no_submit"]:
+    elif not options.get("no_submit", False):
         tier, scripts = options["memory"], {}
         while True:
             scripts[tier] = _write_worker_script(
@@ -273,6 +276,28 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
             options["memory"],
         )
     return {"submitted_workers": submitted}
+
+
+def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
+    """Assess whether a supply request needs a new worker service."""
+    branches = BranchStore(registry.paths.control)
+    name = branches.read().topology.registered_checkout(checkout)
+    owner = branches.read().topology.records[name].registry_id
+    with registry.connection() as db:
+        for request_id in request_ids:
+            row = db.execute(
+                "SELECT registry_id FROM request_owners WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if row is None or row[0] != owner:
+                raise ValueError("Worker supply request belongs to another branch")
+    registry.cancel_attempts_with_stale_upstreams()
+    registry.reconcile_requests()
+    needed = registry.worker_capacity_needed(
+        request_id=request_ids[0] if request_ids else None,
+        resource_class="large",
+        memory_gb=int(options["memory"]),
+    )
+    return {"needed": needed}
 
 
 def status(registry, *, checkout: Path, mode: str) -> dict:
@@ -564,16 +589,24 @@ def installation_progress(registry, *, checkout: Path) -> dict:
         raise ValueError("This checkout does not own installation maintenance")
     action = rows.get("installation_action", "drain")
     activity = installation_activity(registry, checkout=checkout)
-    stopped: list[str] = []
+    stopped = 0
     failures: list[str] = []
     if action == "stop" or not (activity["attempts"] or activity["ingestion"]):
-        from nro.orchestration.worker_control import cancel_worker_allocations
+        from nro.orchestration.worker_control import active_pool_members, cancel_worker_allocations
 
         shutdown = registry.request_worker_shutdown(all_users=True)
-        stopped, failures = cancel_worker_allocations(registry, shutdown)
+        stopped, failures = cancel_worker_allocations(
+            registry,
+            shutdown,
+            update_registry=False,
+        )
         if not failures:
-            registry.recover_orphaned_attempts()
-            registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
+            workers, jobs = active_pool_members(registry.worker_pool_activity())
+            if not workers and not jobs:
+                for submission_id, _job_id in shutdown["submissions"]:
+                    registry.update_submission(submission_id, state="cancelled")
+                registry.recover_orphaned_attempts()
+                registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
         activity = installation_activity(registry, checkout=checkout)
     done = not any(activity.values()) and not failures
     return {
@@ -881,6 +914,13 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             message["options"],
             checkout=Path(message["checkout"]),
         )
+    elif message["operation"] == "supply_needed":
+        result = supply_needed(
+            registry,
+            message["request_ids"],
+            message["options"],
+            checkout=Path(message["checkout"]),
+        )
     elif message["operation"] == "status":
         result = status(registry, checkout=Path(message["checkout"]), mode=message["mode"])
     elif message["operation"] == "stop":
@@ -1053,6 +1093,69 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
     return response
 
 
+def _quiet_message(record: dict) -> bool:
+    payload = record["payload"]
+    return payload.get("operation") == "worker" and payload.get("action") in {
+        "heartbeat",
+        "shutdown_requested",
+        "attempt_cancel_requested",
+        "required_memory",
+    }
+
+
+def _process_record(registry, record: dict, *, values: dict) -> dict:
+    """Commit one record once, publish its recovery response, and acknowledge it."""
+    from nro.orchestration.scheduler_bus import (
+        acknowledge_message,
+        message_path,
+        publish_response,
+        read_response,
+    )
+
+    response = read_response(registry.paths.control, record["id"])
+    if response is None:
+        response = _message_response(registry, record, values=values)
+        publish_response(registry.paths.control, record["id"], response)
+    acknowledge_message(message_path(registry.paths.control, record["id"]))
+    return response
+
+
+def _receive_direct(
+    listener: socket.socket,
+    registry,
+    *,
+    values: dict,
+    token: str,
+    generation: int,
+) -> tuple[bool, bool]:
+    """Handle one waiting TCP request and report whether state may have changed."""
+    from nro.orchestration.scheduler_rpc import receive, send, validate_request
+
+    try:
+        connection, _peer = listener.accept()
+    except BlockingIOError:
+        return False, False
+    with connection:
+        connection.settimeout(60.0)
+        try:
+            envelope = receive(connection)
+            record, durable = validate_request(envelope, token=token)
+            response = (
+                _process_record(registry, record, values=values)
+                if durable
+                else _message_response(registry, record, values=values)
+            )
+            changed = not _quiet_message(record)
+        except BaseException as error:
+            response = {"error": str(error)}
+            changed = False
+        try:
+            send(connection, response)
+        except (ConnectionError, OSError):
+            pass
+    return True, changed
+
+
 def _branch_reports(registry) -> dict[str, dict]:
     """Build one cached report for every active branch with an attached checkout."""
     reports = {}
@@ -1102,103 +1205,6 @@ def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
     )
 
 
-def publish_worker_controls(registry, *, generation: int) -> None:
-    """Publish worker shutdown and attempt-cancellation state atomically."""
-    from nro.engine.io import atomic_write_json
-    from nro.orchestration.control_paths import ControlPaths
-
-    with registry.connection() as db:
-        rows = [dict(row) for row in db.execute("SELECT id,state FROM workers")]
-        cancelled: dict[str, list[int]] = {}
-        for row in db.execute(
-            "SELECT worker_id,id FROM attempts WHERE state='cancel_requested' AND worker_id IS NOT NULL"
-        ):
-            cancelled.setdefault(str(row["worker_id"]), []).append(int(row["id"]))
-        tokens = {
-            str(row["key"]).removeprefix("worker_token:"): str(row["value"])
-            for row in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'worker_token:%'")
-        }
-    root = ControlPaths(registry.paths.control).service_workers
-    for row in rows:
-        worker_id = str(row["id"])
-        token = tokens.get(worker_id)
-        if token is None:
-            continue
-        atomic_write_json(
-            root / worker_id / "control.json",
-            {
-                "protocol": 1,
-                "generation": generation,
-                "worker_id": worker_id,
-                "worker_token": token,
-                "state": row["state"],
-                "cancel_attempts": sorted(cancelled.get(worker_id, ())),
-            },
-            sort_keys=True,
-            mode=0o664,
-        )
-
-
-def apply_worker_presence(registry) -> bool:
-    """Coalesce all new worker heartbeats into one registry transaction."""
-    from nro.engine.io import read_json
-    from nro.orchestration.control_paths import ControlPaths
-    from nro.orchestration.registry import utcnow
-
-    records = []
-    root = ControlPaths(registry.paths.control).service_workers
-    for path in root.glob("*/presence.json"):
-        try:
-            value = read_json(path)
-            worker_id = str(value["worker_id"])
-            token = str(value["worker_token"])
-            state = str(value["state"])
-            sequence = int(value["sequence"])
-            if path.parent.name != worker_id or state not in {"idle", "running", "draining"}:
-                continue
-            records.append((worker_id, token, state, sequence))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    if not records:
-        return False
-    visible_changed = False
-    with registry.connection(write=True) as db:
-        for worker_id, token, state, sequence in records:
-            try:
-                current = db.execute(
-                    "SELECT w.state,m.value AS token FROM workers w "
-                    "LEFT JOIN metadata m ON m.key=? WHERE w.id=?",
-                    (f"worker_token:{worker_id}", worker_id),
-                ).fetchone()
-                previous = db.execute(
-                    "SELECT value FROM metadata WHERE key=?",
-                    (f"worker_presence_sequence:{worker_id}",),
-                ).fetchone()
-                if (
-                    current is None
-                    or current["token"] != token
-                    or previous
-                    and int(previous[0]) >= sequence
-                ):
-                    continue
-                visible_changed = visible_changed or (
-                    current["state"] != "shutdown_requested" and current["state"] != state
-                )
-                db.execute(
-                    "INSERT INTO metadata(key,value) VALUES (?,?) "
-                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    (f"worker_presence_sequence:{worker_id}", str(sequence)),
-                )
-                db.execute(
-                    """UPDATE workers SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
-                       lease_expires_at=?,updated_at=? WHERE id=?""",
-                    (state, time.time() + 120.0, utcnow(), worker_id),
-                )
-            except (ValueError, TypeError, sqlite3.Error):
-                continue
-    return visible_changed
-
-
 def _registry_busy(registry) -> bool:
     """Return whether active execution requires the service to remain available."""
     with registry.connection() as db:
@@ -1210,7 +1216,12 @@ def _registry_busy(registry) -> bool:
         return any(db.execute(query).fetchone() for query in queries)
 
 
-def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> int:
+def serve(
+    *,
+    launch_token: str,
+    bids_root: Path,
+    idle_grace: float = DEFAULT_IDLE_GRACE_SECONDS,
+) -> int:
     """Own scheduler access until all durable work has remained quiescent."""
     from nro.configuration.site import settings
     from nro.orchestration.registry import Registry
@@ -1224,7 +1235,6 @@ def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> in
         publish_active,
         publish_response,
         publish_startup_error,
-        read_response,
     )
     from nro.orchestration.scheduler_implementation import require_worker_source
 
@@ -1232,6 +1242,132 @@ def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> in
     _STOP = False
     values = settings()[0]
     control = Path(values["registry"])
+    require_worker_source(control)
+    registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
+    from nro.orchestration.scheduler_rpc import open_listener
+
+    listener = open_listener()
+    host = socket.getfqdn()
+    port = int(listener.getsockname()[1])
+    try:
+        registry.initialize()
+        with registry.connection(write=True) as db:
+            row = db.execute(
+                "SELECT value FROM metadata WHERE key='scheduler_generation'"
+            ).fetchone()
+            generation = int(row[0]) + 1 if row else 1
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES ('scheduler_generation',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(generation),),
+            )
+        active = activate(control, launch_token, generation, host=host, port=port)
+    except BaseException as error:
+        publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")
+        raise
+    os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
+    os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
+    heartbeat_state = {"generation": generation, "job_id": active.get("job_id")}
+    heartbeat_stop = threading.Event()
+
+    def renew_lease() -> None:
+        while not heartbeat_stop.wait(HEARTBEAT_SECONDS):
+            try:
+                publish_active(
+                    control,
+                    token=launch_token,
+                    generation=int(heartbeat_state["generation"]),
+                    job_id=heartbeat_state["job_id"],
+                    host=host,
+                    port=port,
+                )
+            except OSError as error:
+                print(f"Scheduler heartbeat failed: {error}", flush=True)
+
+    heartbeat_thread = threading.Thread(target=renew_lease, name="scheduler-heartbeat")
+    heartbeat_thread.start()
+    idle_since = None
+    last_cleanup = 0.0
+    try:
+        publish_status_snapshot(registry, generation=generation, active=True)
+        while not _STOP:
+            now = time.monotonic()
+            if now - last_cleanup >= 3600.0:
+                collect_transport_garbage(control)
+                last_cleanup = now
+            changed = False
+            handled_direct = False
+            while True:
+                handled, direct_changed = _receive_direct(
+                    listener,
+                    registry,
+                    values=values,
+                    token=launch_token,
+                    generation=generation,
+                )
+                if not handled:
+                    break
+                handled_direct = True
+                changed = changed or direct_changed
+            batch = pending_messages(control)
+            for path in batch:
+                try:
+                    record = consume_message(path)
+                    _process_record(registry, record, values=values)
+                    changed = changed or not _quiet_message(record)
+                except BaseException as error:
+                    print(f"Scheduler deferred {path}: {type(error).__name__}: {error}", flush=True)
+                    try:
+                        publish_response(control, path.stem, {"error": str(error)})
+                        acknowledge_message(path)
+                    except BaseException:
+                        # A transient filesystem error leaves the message for retry.
+                        pass
+            if changed:
+                generation += 1
+                with registry.connection(write=True) as db:
+                    db.execute(
+                        "UPDATE metadata SET value=? WHERE key='scheduler_generation'",
+                        (str(generation),),
+                    )
+                heartbeat_state["generation"] = generation
+                publish_status_snapshot(registry, generation=generation, active=True)
+            if batch or handled_direct or _registry_busy(registry):
+                idle_since = None
+            elif idle_since is None:
+                idle_since = time.monotonic()
+            elif time.monotonic() - idle_since >= idle_grace:
+                break
+            time.sleep(0.02 if handled_direct else 0.1)
+        publish_status_snapshot(registry, generation=generation, active=False)
+        return 0
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join()
+        listener.close()
+        deactivate(control, launch_token)
+
+
+def run_once(*, launch_token: str, bids_root: Path) -> int:
+    """Process pending requests under a launch claim without starting a service."""
+    from nro.configuration.site import settings
+    from nro.orchestration.registry import Registry
+    from nro.orchestration.scheduler_bus import (
+        consume_message,
+        pending_messages,
+        publish_startup_error,
+        read_launch,
+        release_launch,
+    )
+    from nro.orchestration.scheduler_implementation import require_worker_source
+
+    values = settings()[0]
+    control = Path(values["registry"])
+    claim = read_launch(control)
+    if not claim or claim.get("token") != launch_token:
+        raise RuntimeError("One-shot coordinator launch token is obsolete")
     require_worker_source(control)
     registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
     try:
@@ -1246,101 +1382,42 @@ def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> in
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (str(generation),),
             )
-        active = activate(control, launch_token, generation)
+        os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
+        os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
+        while True:
+            batch = pending_messages(control, minimum_age=0.0)
+            if not batch:
+                break
+            for path in batch:
+                record = consume_message(path)
+                _process_record(registry, record, values=values)
+        publish_status_snapshot(registry, generation=generation, active=False)
+        return 0
     except BaseException as error:
         publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")
         raise
-    os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
-    os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
-    signal.signal(signal.SIGTERM, _request_stop)
-    signal.signal(signal.SIGINT, _request_stop)
-    idle_since = None
-    last_heartbeat = 0.0
-    last_cleanup = 0.0
-    try:
-        publish_status_snapshot(registry, generation=generation, active=True)
-        publish_worker_controls(registry, generation=generation)
-        while not _STOP:
-            now = time.monotonic()
-            if now - last_heartbeat >= 5.0:
-                active = publish_active(
-                    control,
-                    token=launch_token,
-                    generation=generation,
-                    job_id=active.get("job_id"),
-                )
-                last_heartbeat = now
-            if now - last_cleanup >= 3600.0:
-                collect_transport_garbage(control)
-                last_cleanup = now
-            presence_changed = apply_worker_presence(registry)
-            batch = pending_messages(control)
-            changed = False
-            for path in batch:
-                try:
-                    record = consume_message(path)
-                    response = read_response(control, record["id"])
-                    if response is None:
-                        response = _message_response(registry, record, values=values)
-                        publish_response(control, record["id"], response)
-                    acknowledge_message(path)
-                    payload = record["payload"]
-                    changed = (
-                        changed
-                        or payload.get("operation") != "worker"
-                        or payload.get("action")
-                        not in {
-                            "heartbeat",
-                            "shutdown_requested",
-                            "attempt_cancel_requested",
-                            "required_memory",
-                        }
-                    )
-                except BaseException as error:
-                    print(f"Scheduler deferred {path}: {type(error).__name__}: {error}", flush=True)
-                    try:
-                        publish_response(control, path.stem, {"error": str(error)})
-                        acknowledge_message(path)
-                    except BaseException:
-                        # A transient filesystem error leaves the message for retry.
-                        pass
-            if changed or presence_changed:
-                generation += 1
-                with registry.connection(write=True) as db:
-                    db.execute(
-                        "UPDATE metadata SET value=? WHERE key='scheduler_generation'",
-                        (str(generation),),
-                    )
-                publish_status_snapshot(registry, generation=generation, active=True)
-                publish_worker_controls(registry, generation=generation)
-            if batch or _registry_busy(registry):
-                idle_since = None
-            elif idle_since is None:
-                idle_since = time.monotonic()
-            elif time.monotonic() - idle_since >= idle_grace:
-                break
-            time.sleep(0.2 if batch else 1.0)
-        publish_status_snapshot(registry, generation=generation, active=False)
-        return 0
     finally:
-        deactivate(control, launch_token)
+        release_launch(control, launch_token)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the internal controller parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--once", action="store_true")
     parser.add_argument("--launch-token")
     parser.add_argument("--bids-root", type=Path)
-    parser.add_argument("--idle-grace", type=float, default=30.0)
+    parser.add_argument("--idle-grace", type=float, default=DEFAULT_IDLE_GRACE_SECONDS)
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     """Run the controller, or reject the removed one-shot transport."""
     args = build_parser().parse_args(argv)
-    if not args.serve or not args.launch_token or args.bids_root is None:
+    if args.serve == args.once or not args.launch_token or args.bids_root is None:
         raise SystemExit("scheduler_service must be started through the scheduler bus")
+    if args.once:
+        raise SystemExit(run_once(launch_token=args.launch_token, bids_root=args.bids_root))
     raise SystemExit(
         serve(
             launch_token=args.launch_token,

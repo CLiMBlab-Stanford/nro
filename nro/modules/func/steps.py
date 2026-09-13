@@ -29,7 +29,7 @@ from nro.engine.images import (
 from nro.engine.io import atomic_output_path, read_json, write_json
 from nro.engine.registration import rigid_transform_metrics, validate_rigid_transform
 from nro.modules.func.confounds import get_confounds
-from nro.modules.func.contracts import (
+from nro.modules.func.contract import (
     FINAL_RESAMPLING_INTERPOLATION,
     FINAL_WARP_INTERPOLATION,
 )
@@ -2719,6 +2719,8 @@ def _create_ica_aroma_workflow_step(
         )
 
     inputs = [epi, melodic_input, motion_parameters, melodic_mask, regression_mask]
+    if configured_command is None:
+        inputs.append(mni_reference)
     if not input_is_mni:
         inputs.extend((identity_transform, t1_to_mni_warp))
     return Step.directory_step(

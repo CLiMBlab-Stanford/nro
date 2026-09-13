@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run anatomical preprocessing for one subject."""
 
 from __future__ import annotations
@@ -30,11 +29,11 @@ from nro.engine.paths import (
     resolve_project_work_path,
 )
 from nro.engine.templates import find_fsaverage_template_surface
-from nro.modules.anat.common import (
+from nro.modules.anat.contract import anatomical_output_contract, validate_anatomical_manifest
+from nro.modules.anat.inputs import (
     AnatImage,
     load_anat_image,
 )
-from nro.modules.anat.contract import anatomical_output_contract, validate_anatomical_manifest
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import ContainerSpec, Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
