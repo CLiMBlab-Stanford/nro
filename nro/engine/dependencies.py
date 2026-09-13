@@ -203,13 +203,36 @@ def run_probe(command: list[str], *, timeout=60, cwd: Path | None = None) -> str
     return result.stdout.strip()[-1000:]
 
 
-def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) -> list[dict]:
+def run_container_probe(command: list[str], *, timeout=120) -> str:
+    """Run a container probe and identify restrictions imposed by the caller."""
+    try:
+        return run_probe(command, timeout=timeout)
+    except RuntimeError as error:
+        message = str(error)
+        if "Could not write info to setgroups: Permission denied" in message:
+            raise RuntimeError(
+                "Container execution is blocked by the current process sandbox. "
+                "Run ./install from an ordinary host shell outside nested user namespaces "
+                "or no-new-privileges isolation."
+            ) from error
+        raise
+
+
+def check_installation(
+    *,
+    deep=False,
+    with_oslom=True,
+    slurm=True,
+    quick=False,
+    container_execution=True,
+) -> list[dict]:
     """Return named dependency checks with ok, required, and detail fields.
 
     Quick mode checks whether configured resources and Python modules are
     available without loading scientific libraries or parsing every definition.
-    Deep mode starts containers and verifies resource identities. Neither mode
-    installs resources or processes subject data.
+    Deep mode verifies resource identities. ``container_execution`` also starts
+    each image in the current process environment. Neither mode installs
+    resources or processes subject data.
     """
     values, _ = settings()
     results = []
@@ -350,6 +373,7 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) 
                         )
 
                 check(f"{key} checksum", receipt_check)
+    if deep and container_execution:
         tools = " ".join(
             shlex.quote(x)
             for x in (
@@ -370,7 +394,7 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) 
         )
         check(
             "QuNex execution",
-            lambda: run_probe(
+            lambda: run_container_probe(
                 [
                     values["runtime"],
                     "exec",
@@ -382,13 +406,12 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) 
                     "-c",
                     script,
                 ],
-                timeout=120,
             ),
         )
         for key in ("synthstrip", "synbold"):
             check(
                 f"{key} execution",
-                lambda key=key: run_probe(
+                lambda key=key: run_container_probe(
                     [
                         values["runtime"],
                         "exec",
@@ -396,7 +419,6 @@ def check_installation(*, deep=False, with_oslom=True, slurm=True, quick=False) 
                         values[key],
                         "/bin/true",
                     ],
-                    timeout=120,
                 ),
             )
     return results

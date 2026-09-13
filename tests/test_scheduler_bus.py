@@ -36,6 +36,15 @@ def test_message_and_response_survive_independent_readers(tmp_path):
     assert scheduler_bus.read_response(control, message_id) == {"result": {"ok": True}}
 
 
+def test_controller_startup_error_is_scoped_to_launch_token(tmp_path):
+    control = tmp_path / ".nro"
+    scheduler_bus.prepare(control)
+    scheduler_bus.publish_startup_error(control, "current", "database is locked")
+
+    assert scheduler_bus.read_startup_error(control, "current")["error"] == "database is locked"
+    assert scheduler_bus.read_startup_error(control, "other") is None
+
+
 def test_cached_status_neither_starts_service_nor_opens_database(tmp_path, monkeypatch):
     control = tmp_path / ".nro"
     checkout = tmp_path / "checkout"

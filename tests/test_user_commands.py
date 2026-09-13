@@ -4,6 +4,7 @@ import json
 import sqlite3
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -63,6 +64,65 @@ def test_scheduler_exchange_reports_malformed_response(monkeypatch, tmp_path) ->
     monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
     with pytest.raises(RuntimeError, match="malformed response"):
         scheduler_client.exchange(endpoint, {"operation": "status"})
+
+
+def test_scheduler_exchange_reports_startup_failure(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: {"token": "launch"})
+    monkeypatch.setattr(
+        scheduler_bus,
+        "read_startup_error",
+        lambda *_args: {"error": "database is locked"},
+    )
+    monkeypatch.setattr(scheduler_client, "_ensure_service", lambda *_args, **_kwargs: None)
+    with pytest.raises(RuntimeError, match="could not start: database is locked"):
+        scheduler_client.exchange(endpoint, {"operation": "status"})
+
+
+def test_installation_maintenance_starts_controller_locally(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    scheduler_bus.prepare(tmp_path)
+    claim = SimpleNamespace(token="launch", owner_path=tmp_path / "owner.json")
+    source = SimpleNamespace(command=lambda command, *, site: list(command))
+    endpoint = scheduler_client.SchedulerEndpoint(
+        tmp_path,
+        tmp_path / "BIDS",
+        source,
+        tmp_path / "site.toml",
+        Path("/usr/bin/python3"),
+        maintenance=True,
+    )
+    calls = {}
+    monkeypatch.setattr(scheduler_bus, "claim_launch", lambda _control: claim)
+    monkeypatch.setattr(
+        scheduler_bus, "update_launch_job", lambda _claim, job: calls.setdefault("job", job)
+    )
+    monkeypatch.setattr(
+        "nro.configuration.site.settings",
+        lambda *, path: ({"partition": "science", "account": None}, path),
+    )
+    monkeypatch.setattr(
+        scheduler_client.subprocess,
+        "Popen",
+        lambda command, **kwargs: (
+            calls.update(command=command, kwargs=kwargs) or SimpleNamespace(pid=123)
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_bus,
+        "write_controller_script",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("maintenance submitted a Slurm controller")
+        ),
+    )
+
+    assert scheduler_client._start_service(endpoint) == "local-123"
+    assert calls["job"] == "local-123"
+    assert calls["kwargs"]["start_new_session"] is True
 
 
 def test_resume_suppresses_new_request_defaults() -> None:

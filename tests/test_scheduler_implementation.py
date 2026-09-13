@@ -179,6 +179,22 @@ def test_installation_activation_preserves_demand_and_clears_barrier(central):
         )
 
 
+def test_incomplete_shared_installation_can_resume_maintenance(central):
+    registry, root, python = central
+    implementation.activate(registry, root)
+    installed_path = root / ".nro-installation.json"
+    installed = json.loads(installed_path.read_text())
+    installed["ready"] = False
+    installed_path.write_text(json.dumps(installed))
+
+    source, _, selected_python = implementation.capture_maintenance_implementation(
+        registry.paths.control, registry.paths.bids_root, root
+    )
+
+    assert source.root.is_dir()
+    assert selected_python == python
+
+
 def test_worker_import_does_not_load_scientific_modules():
     code = (
         "import sys; import nro.orchestration.worker; "

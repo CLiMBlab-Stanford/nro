@@ -198,6 +198,14 @@ def _launch_abandoned(record: dict[str, Any] | None) -> bool:
     job_id = str(record.get("job_id") or "")
     if job_id:
         if job_id.startswith("local-"):
+            if record.get("host") != socket.gethostname():
+                try:
+                    created = datetime.fromisoformat(str(record["created_at"]))
+                    return (
+                        datetime.now(timezone.utc) - created
+                    ).total_seconds() > STARTING_GRACE_SECONDS
+                except (KeyError, TypeError, ValueError):
+                    return False
             try:
                 os.kill(int(job_id.removeprefix("local-")), 0)
             except ProcessLookupError:
@@ -339,6 +347,35 @@ def deactivate(control: Path, token: str) -> None:
     release_launch(control, token)
 
 
+def publish_startup_error(control: Path, token: str, error: str) -> None:
+    """Publish a controller startup failure for clients awaiting its token."""
+    atomic_write_json(
+        ControlPaths(control).service / f"startup-error-{_identifier(token, 'launch token')}.json",
+        {
+            "protocol": PROTOCOL,
+            "token": token,
+            "error": str(error),
+            "created_at": utcnow(),
+        },
+        sort_keys=True,
+        mode=0o664,
+        durable=True,
+    )
+
+
+def read_startup_error(control: Path, token: str) -> dict[str, Any] | None:
+    """Read the startup failure for one launch token, if present."""
+    if not token:
+        return None
+    try:
+        value = read_json(ControlPaths(control).service / f"startup-error-{token}.json")
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+    if value.get("protocol") != PROTOCOL or value.get("token") != token:
+        return None
+    return value
+
+
 def write_controller_script(
     control: Path,
     *,
@@ -349,7 +386,6 @@ def write_controller_script(
     python: Path,
     partition: str,
     account: str | None,
-    maintenance: bool = False,
 ) -> Path:
     """Write the pinned Slurm script for one controller launch."""
     import shlex
@@ -381,8 +417,6 @@ def write_controller_script(
     if account:
         lines.append(f"#SBATCH --account={account}")
     lines.extend(("set -euo pipefail", "export NRO_PROCESS_ROLE=scheduler"))
-    if maintenance:
-        lines.append("export NRO_SCHEDULER_MAINTENANCE=1")
     lines.append("exec " + shlex.join(command))
     atomic_write_text(script, "\n".join(lines) + "\n", mode=0o664)
     return script
@@ -447,6 +481,8 @@ def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) ->
     for path in (
         *paths.service_responses.glob("*.json"),
         *paths.service.glob("controller-*.sbatch"),
+        *paths.service.glob("controller-local-*.log"),
+        *paths.service.glob("startup-error-*.json"),
     ):
         try:
             if path.stat().st_mtime < cutoff:

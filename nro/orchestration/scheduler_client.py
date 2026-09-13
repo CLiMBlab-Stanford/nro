@@ -98,18 +98,10 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
         return None
     try:
         values = settings(path=endpoint.site)[0]
-        script = write_controller_script(
-            endpoint.control,
-            bids_root=endpoint.bids_root,
-            token=claim.token,
-            source=endpoint.source,
-            site=endpoint.site,
-            python=endpoint.python,
-            partition=values["partition"],
-            account=values.get("account") or None,
-            maintenance=endpoint.maintenance,
-        )
-        if os.environ.get("NRO_SCHEDULER_LOCAL") == "1":
+        run_locally = endpoint.maintenance or os.environ.get("NRO_SCHEDULER_LOCAL") == "1"
+        if run_locally:
+            from nro.orchestration.control_paths import ControlPaths
+
             local_command = endpoint.source.command(
                 (
                     str(endpoint.python),
@@ -131,16 +123,28 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
                 **({"NRO_SCHEDULER_MAINTENANCE": "1"} if endpoint.maintenance else {}),
             }
             environment.pop("SLURM_JOB_ID", None)
-            process = subprocess.Popen(
-                local_command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                env=environment,
-            )
+            log = ControlPaths(endpoint.control).service / f"controller-local-{claim.token}.log"
+            with log.open("ab") as stream:
+                process = subprocess.Popen(
+                    local_command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    env=environment,
+                )
             job_id = f"local-{process.pid}"
         else:
+            script = write_controller_script(
+                endpoint.control,
+                bids_root=endpoint.bids_root,
+                token=claim.token,
+                source=endpoint.source,
+                site=endpoint.site,
+                python=endpoint.python,
+                partition=values["partition"],
+                account=values.get("account") or None,
+            )
             job_id = submit_controller(script)
         update_launch_job(claim, job_id)
         return job_id
@@ -174,7 +178,9 @@ def exchange(
     from nro.orchestration.scheduler_bus import (
         message_path,
         publish_message,
+        read_launch,
         read_response,
+        read_startup_error,
     )
 
     message_id = publish_message(endpoint.control, message)
@@ -187,6 +193,16 @@ def exchange(
     frame = 0
     notice = False
     while True:
+        launch = read_launch(endpoint.control)
+        if launch is not None:
+            startup_error = read_startup_error(endpoint.control, str(launch.get("token") or ""))
+            if startup_error is not None:
+                if notice:
+                    sys.stderr.write(_CLEAR)
+                    sys.stderr.flush()
+                raise SchedulerError(
+                    "Central scheduler could not start: " + str(startup_error["error"])
+                )
         response = read_response(endpoint.control, message_id)
         if response is not None and not message_path(endpoint.control, message_id).exists():
             if notice:

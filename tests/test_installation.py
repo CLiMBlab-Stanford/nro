@@ -561,6 +561,30 @@ def test_missing_oslom_offline_does_not_create_directories(isolated_site, tmp_pa
     assert not target.parent.exists()
 
 
+def test_container_probe_explains_nested_namespace_restriction(monkeypatch):
+    monkeypatch.setattr(
+        dependencies,
+        "run_probe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("Could not write info to setgroups: Permission denied")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="current process sandbox"):
+        dependencies.run_container_probe(["singularity", "exec"])
+
+
+def test_container_probe_preserves_other_runtime_failures(monkeypatch):
+    monkeypatch.setattr(
+        dependencies,
+        "run_probe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("image is corrupt")),
+    )
+
+    with pytest.raises(RuntimeError, match="image is corrupt"):
+        dependencies.run_container_probe(["singularity", "exec"])
+
+
 @pytest.mark.parametrize("interruption", [KeyboardInterrupt, EOFError])
 @pytest.mark.parametrize("entry", ["bootstrap", "setup", "paths"])
 def test_setup_interrupts_exit_without_tracebacks(monkeypatch, capsys, entry, interruption):
