@@ -85,7 +85,7 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
     return record
 
 
-def capture_worker_implementation(control: Path, bids_root: Path):
+def capture_worker_implementation(control: Path, bids_root: Path, *, check_checkout: bool = True):
     """Capture the designated orchestration source, interpreter, and resolved site.
 
     Call while holding the execution-cache publication lock. Activation has
@@ -134,7 +134,10 @@ def capture_worker_implementation(control: Path, bids_root: Path):
     ):
         raise ValueError("The designated scheduler installation changed or is unavailable")
     releases = ReleaseStore(BranchStore(control))
-    if releases.require_recorded(checkout, record["release"], check_head=True) != record["release"]:
+    if (
+        releases.require_recorded(checkout, record["release"], check_head=check_checkout)
+        != record["release"]
+    ):
         raise ValueError(
             "Scheduler release changed; activate it explicitly after draining the pool"
         )
@@ -152,6 +155,34 @@ def capture_worker_implementation(control: Path, bids_root: Path):
         raise ValueError("The designated scheduler source snapshot is incomplete")
     site = capture_site(paths.execution_sites, values)
     return source, site, Path(record["python"])
+
+
+def capture_maintenance_implementation(control: Path, bids_root: Path, checkout: Path):
+    """Capture a tagged shared checkout while it upgrades its installed release."""
+    path = implementation_path(control)
+    record = json.loads(path.read_text())
+    checkout = checkout.resolve()
+    if checkout != Path(record.get("checkout", "")).resolve():
+        raise ValueError("Only the active shared checkout may maintain its installation")
+    installed = installation_record(checkout)
+    if (
+        installed.get("mode") != "shared"
+        or not installed.get("ready")
+        or installed.get("site") != record.get("site")
+    ):
+        raise ValueError("The active shared installation is unavailable")
+    values = settings(path=Path(record["site"]))[0]
+    if (
+        Path(values["registry"]).resolve() != Path(control).resolve()
+        or Path(values["bids"]).resolve() != Path(bids_root).resolve()
+    ):
+        raise ValueError("The shared installation belongs to another site")
+    source = SourceStore(ControlPaths(control).implementations).capture(checkout)
+    site = capture_site(ControlPaths(control).execution_sites, values)
+    python = Path(record["python"])
+    if not python.is_file():
+        raise ValueError("The active shared interpreter is unavailable")
+    return source, site, python
 
 
 def validate_worker_script(control: Path, script: Path) -> None:
@@ -194,6 +225,13 @@ def require_worker_source(control: Path) -> None:
     launched_root = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
     launched_digest = os.environ.get("NRO_EXECUTION_SOURCE_DIGEST")
     package_root = Path(__file__).resolve().parents[2]
+    if (
+        os.environ.get("NRO_PROCESS_ROLE") == "scheduler"
+        and os.environ.get("NRO_SCHEDULER_MAINTENANCE") == "1"
+        and launched_root == str(package_root)
+        and launched_digest == source_fingerprint(package_root)
+    ):
+        return
     if launched_root is not None or launched_digest is not None:
         expected_root = ControlPaths(control).implementations / record["source_digest"]
         if (
@@ -219,7 +257,9 @@ def run_local_worker(
     drain_seconds: float,
     poll_interval: float = 5.0,
     stdout=None,
-) -> None:
+    wait: bool = True,
+    worker_id: str | None = None,
+):
     """Run the designated worker in a separate foreground process."""
     import subprocess
 
@@ -229,6 +269,7 @@ def run_local_worker(
         source, site, python = capture_worker_implementation(
             registry.paths.control, registry.paths.bids_root
         )
+        worker_id = worker_id or f"local-{os.getpid()}-{os.urandom(4).hex()}"
         command = source.command(
             (
                 str(python),
@@ -246,10 +287,17 @@ def run_local_worker(
                 str(poll_interval),
                 "--drain-seconds",
                 str(drain_seconds),
+                "--worker-id",
+                worker_id,
             ),
             site=site,
         )
-        process = subprocess.Popen(command, stdout=stdout)
+        environment = {**os.environ, "NRO_PROCESS_ROLE": "worker"}
+        environment.pop("SLURM_JOB_ID", None)
+        process = subprocess.Popen(command, stdout=stdout, env=environment)
+        process.nro_worker_id = worker_id
+    if not wait:
+        return process
     try:
         if process.wait():
             raise RuntimeError("Local scheduler worker exited unsuccessfully")
@@ -257,3 +305,4 @@ def run_local_worker(
         process.terminate()
         process.wait()
         raise
+    return process

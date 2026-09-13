@@ -1,8 +1,14 @@
-"""Accept compiled requests in the centrally selected orchestration process."""
+"""Run the ephemeral service that owns the central scheduler registry."""
 
+import argparse
 import fcntl
 import json
+import os
+import signal
+import sqlite3
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from nro.configuration.store import fingerprint
@@ -14,6 +20,13 @@ from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.source_snapshots import SourceSnapshot
 
+_STOP = False
+
+
+def _request_stop(_signum, _frame) -> None:
+    global _STOP
+    _STOP = True
+
 
 def admit(
     registry,
@@ -23,6 +36,7 @@ def admit(
     site_values: dict,
     assess: bool = True,
     source_verified: bool = False,
+    request_id: str | None = None,
 ) -> str:
     """Keep an installed environment out of maintenance until demand is published."""
     record_path = checkout / ".nro-installation.json"
@@ -34,6 +48,7 @@ def admit(
             site_values=site_values,
             assess=assess,
             source_verified=source_verified,
+            request_id=request_id,
         )
     lock = checkout / ".nro-install.lock"
     if not lock.is_file():
@@ -55,10 +70,18 @@ def admit(
             site_values=site_values,
             assess=assess,
             source_verified=source_verified,
+            request_id=request_id,
         )
 
 
-def admit_many(registry, entries: list[dict], *, checkout: Path, site_values: dict) -> list[str]:
+def admit_many(
+    registry,
+    entries: list[dict],
+    *,
+    checkout: Path,
+    site_values: dict,
+    message_id: str = "direct",
+) -> list[str]:
     """Admit one invocation's requests after one source check and registry assessment."""
     if not isinstance(entries, list) or not entries:
         raise ValueError("Admission batch must contain at least one request")
@@ -96,8 +119,9 @@ def admit_many(registry, entries: list[dict], *, checkout: Path, site_values: di
             site_values=site_values,
             assess=False,
             source_verified=True,
+            request_id=f"{message_id}-{index}",
         )
-        for entry in entries
+        for index, entry in enumerate(entries)
     ]
 
 
@@ -109,6 +133,7 @@ def _admit(
     site_values: dict,
     assess: bool = True,
     source_verified: bool = False,
+    request_id: str | None = None,
 ) -> str:
     """Validate and admit a detached graph without opening its scientific registry.
 
@@ -193,7 +218,7 @@ def _admit(
                     (payload["registry_id"], key, revision, digest),
                 )
             plan = resolve_payload(topology, payload, candidates_locked(db, context.project))
-            return _admit_resolved(registry, db, plan, payload)
+            return _admit_resolved(registry, db, plan, payload, request_id=request_id)
 
 
 def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
@@ -215,13 +240,15 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
 
     submitted = []
     if options["local"]:
-        run_local_worker(
+        process = run_local_worker(
             registry,
             memory_gb=options["memory"],
             drain_seconds=options["drain_minutes"] * 60,
             poll_interval=options.get("worker_poll_interval", 5.0),
             stdout=sys.stderr,
+            wait=False,
         )
+        submitted = [process.nro_worker_id]
     elif not options["no_submit"]:
         tier, scripts = options["memory"], {}
         while True:
@@ -240,7 +267,10 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
                 break
             tier = min(options["max_memory"], tier * 2)
         submitted = _submit_workers(
-            registry, request_ids[0], scripts[options["memory"]], options["memory"]
+            registry,
+            request_ids[0] if request_ids else None,
+            scripts[options["memory"]],
+            options["memory"],
         )
     return {"submitted_workers": submitted}
 
@@ -255,17 +285,20 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
 
     ingestion = [
         {
-            key: row[key]
-            for key in (
-                "id",
-                "server",
-                "project",
-                "participant",
-                "session",
-                "state",
-                "stage",
-                "issues",
-            )
+            **{
+                key: row[key]
+                for key in (
+                    "id",
+                    "server",
+                    "project",
+                    "participant",
+                    "session",
+                    "state",
+                    "stage",
+                    "issues",
+                )
+            },
+            "branch": name,
         }
         for row in IngestionStore(registry, branch=name).rows()
     ]
@@ -313,6 +346,16 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
             (owner,),
         ):
             workflows.setdefault(row[0], set()).add(row[1].removeprefix(owner + ":"))
+        worker_logs = {
+            int(row["instance_id"]): str(
+                registry.paths.workers / f"slurm-{row['slurm_job_id']}.log"
+            )
+            for row in db.execute(
+                """SELECT a.instance_id,w.slurm_job_id FROM attempts a
+                   JOIN workers w ON w.id=a.worker_id
+                   WHERE w.slurm_job_id IS NOT NULL ORDER BY a.id"""
+            )
+        }
     for row in rows:
         if row["id"] in visible:
             logical_key, revision = scientific.get(row["id"], (row["instance_key"], None))
@@ -321,6 +364,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
         row["workflow_ids"] = ",".join(sorted(workflows.get(row["id"], ()))) or (
             row.get("workflow_ids", "") if name == "main" else ""
         )
+        row["worker_log_path"] = worker_logs.get(int(row["id"]))
     return {
         "rows": rows,
         "visible_ids": sorted(visible),
@@ -450,184 +494,853 @@ def require_environment_idle(registry, *, checkout: Path, environment: Path) -> 
     return {"idle": True}
 
 
-def main() -> None:
-    """Exchange one JSON request and response over standard input and output."""
-    from nro.configuration.site import settings
-    from nro.orchestration.registry import Registry
-    from nro.orchestration.scheduler_implementation import require_worker_source
-
-    try:
-        message = json.load(sys.stdin)
-        values = settings()[0]
-        require_worker_source(Path(values["registry"]))
-        registry = Registry.for_project(
-            message.get("project", ""), bids_root=values["bids"], registry_path=values["registry"]
+def installation_activity(registry, *, checkout: Path) -> dict:
+    """Report work that must finish or stop before shared installation maintenance."""
+    BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
+    activity = registry.worker_pool_activity()
+    with registry.connection() as db:
+        attempts = int(
+            db.execute(
+                "SELECT COUNT(*) FROM attempts WHERE state IN ('running','cancel_requested')"
+            ).fetchone()[0]
         )
-        if message["operation"] == "admit":
-            request_id = admit(
-                registry, message["payload"], checkout=Path(message["checkout"]), site_values=values
-            )
-            result = {"request_id": request_id}
-        elif message["operation"] == "admit_many":
-            result = {
-                "request_ids": admit_many(
-                    registry,
-                    message["entries"],
-                    checkout=Path(message["checkout"]),
-                    site_values=values,
-                )
-            }
-        elif message["operation"] == "supply":
-            result = supply(
-                registry,
-                message["request_ids"],
-                message["options"],
-                checkout=Path(message["checkout"]),
-            )
-        elif message["operation"] == "status":
-            result = status(registry, checkout=Path(message["checkout"]), mode=message["mode"])
-        elif message["operation"] == "stop":
-            result = stop(
-                registry, checkout=Path(message["checkout"]), selection=message["selection"]
-            )
-        elif message["operation"] == "logs":
-            result = logs(
-                registry,
-                checkout=Path(message["checkout"]),
-                selection=message["selection"],
-                instance_level=message["instance_level"],
-            )
-        elif message["operation"] in {"concurrency", "stop_workers"}:
-            result = pool_operation(
-                registry,
-                checkout=Path(message["checkout"]),
-                operation=message["operation"],
-                concurrency=message.get("concurrency"),
-            )
-        elif message["operation"] == "environment_idle":
-            result = require_environment_idle(
-                registry,
-                checkout=Path(message["checkout"]),
-                environment=Path(message["environment"]),
-            )
-        elif message["operation"] == "purge_snapshot":
-            from nro.orchestration.branch_purge import snapshot
+    from nro.bidsify.index import IngestionIndex
 
-            result = snapshot(registry, checkout=Path(message["checkout"]), site_values=values)
-        elif message["operation"] == "purge":
-            from nro.orchestration.branch_purge import purge
+    ingestion = sum(row["state"] == "running" for row in IngestionIndex(registry).rows())
+    return {
+        "workers": len(activity["workers"]),
+        "submissions": len(activity["submissions"]),
+        "attempts": attempts,
+        "ingestion": ingestion,
+    }
 
-            result = purge(
+
+def installation_prepare(registry, *, checkout: Path, action: str) -> dict:
+    """Install a global barrier and begin a drain or immediate stop."""
+    if action not in {"drain", "stop"}:
+        raise ValueError("Installation action must be drain or stop")
+    checkout = checkout.resolve()
+    BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
+    with registry.connection(write=True) as db:
+        rows = {
+            str(row["key"]): str(row["value"])
+            for row in db.execute(
+                "SELECT key,value FROM metadata WHERE key IN "
+                "('maintenance_mode','installation_checkout','installation_action')"
+            )
+        }
+        if rows.get("maintenance_mode") not in {None, "installation"}:
+            raise ValueError(
+                f"Shared registry is already in {rows['maintenance_mode']} maintenance"
+            )
+        if rows.get("installation_checkout") not in {None, str(checkout)}:
+            raise ValueError("Shared installation maintenance belongs to another checkout")
+        db.executemany(
+            "INSERT INTO metadata(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (
+                ("maintenance_mode", "installation"),
+                ("installation_checkout", str(checkout)),
+                ("installation_action", action),
+            ),
+        )
+    return installation_progress(registry, checkout=checkout)
+
+
+def installation_progress(registry, *, checkout: Path) -> dict:
+    """Advance installation quiescence and report whether direct maintenance is safe."""
+    checkout = checkout.resolve()
+    with registry.connection() as db:
+        rows = {
+            str(row["key"]): str(row["value"])
+            for row in db.execute(
+                "SELECT key,value FROM metadata WHERE key IN "
+                "('maintenance_mode','installation_checkout','installation_action')"
+            )
+        }
+    if rows.get("maintenance_mode") != "installation" or rows.get("installation_checkout") != str(
+        checkout
+    ):
+        raise ValueError("This checkout does not own installation maintenance")
+    action = rows.get("installation_action", "drain")
+    activity = installation_activity(registry, checkout=checkout)
+    stopped: list[str] = []
+    failures: list[str] = []
+    if action == "stop" or not (activity["attempts"] or activity["ingestion"]):
+        from nro.orchestration.worker_control import cancel_worker_allocations
+
+        shutdown = registry.request_worker_shutdown(all_users=True)
+        stopped, failures = cancel_worker_allocations(registry, shutdown)
+        if not failures:
+            registry.recover_orphaned_attempts()
+            registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
+        activity = installation_activity(registry, checkout=checkout)
+    done = not any(activity.values()) and not failures
+    return {
+        **activity,
+        "action": action,
+        "done": done,
+        "stopped_jobs": stopped,
+        "failures": failures,
+    }
+
+
+def _validate_worker_event(registry, message: dict, *, registering: bool = False) -> None:
+    """Fence stale workers and reject events older than the last applied sequence."""
+    worker_id = str(message["worker_id"])
+    token = str(message["worker_token"])
+    sequence = int(message["sequence"])
+    token_key = f"worker_token:{worker_id}"
+    sequence_key = f"worker_sequence:{worker_id}"
+    with registry.connection(write=True) as db:
+        current_token = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (token_key,)
+        ).fetchone()
+        current_sequence = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (sequence_key,)
+        ).fetchone()
+        if registering:
+            if current_token is not None and current_token[0] != token:
+                worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+                if worker is not None and worker[0] not in {"exited", "terminated", "lost"}:
+                    raise ValueError("Worker identity is already owned by another process")
+            previous = 0
+        else:
+            if current_token is None or current_token[0] != token:
+                raise ValueError("Worker fencing token is obsolete")
+            previous = int(current_sequence[0]) if current_sequence else 0
+        if sequence < previous:
+            raise ValueError("Worker event sequence predates its applied predecessor")
+
+
+def _commit_worker_event(registry, message: dict) -> None:
+    """Advance a worker sequence only after its operation has succeeded."""
+    worker_id = str(message["worker_id"])
+    token = str(message["worker_token"])
+    sequence = int(message["sequence"])
+    token_key = f"worker_token:{worker_id}"
+    sequence_key = f"worker_sequence:{worker_id}"
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (token_key, token),
+        )
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (sequence_key, str(sequence)),
+        )
+
+
+def _worker_script(registry, *, memory_gb: int, profile: str | None) -> Path:
+    suffix = f"-{profile}" if profile else ""
+    exact = registry.paths.workers / f"worker-large-{memory_gb}gb{suffix}.sbatch"
+    if exact.is_file():
+        return exact
+    candidates = sorted(registry.paths.workers.glob(f"worker-large-{memory_gb}gb-*.sbatch"))
+    if candidates:
+        return candidates[-1]
+    raise ValueError(f"No prepared {memory_gb} GB worker script is available")
+
+
+def _submit_reserved(
+    registry, submission_id: int, script: Path, *, dependency: str | None = None
+) -> str:
+    """Run sbatch outside a registry transaction and finalize its reserved intent."""
+    from nro.orchestration.scheduler_implementation import validate_worker_script
+
+    validate_worker_script(registry.paths.control, script)
+    command = ["sbatch", "--parsable"]
+    if dependency:
+        command.append(f"--dependency=afterany:{dependency}")
+    command.append(str(script))
+    try:
+        result = subprocess.run(command, check=True, text=True, capture_output=True)
+        job_id = result.stdout.strip().split(";", 1)[0]
+        if not job_id:
+            raise RuntimeError(f"sbatch returned no worker job ID: {result.stdout!r}")
+        registry.update_submission(submission_id, state="submitted", slurm_job_id=job_id)
+        return job_id
+    except BaseException:
+        registry.update_submission(submission_id, state="error")
+        raise
+
+
+def worker_operation(registry, message: dict) -> object:
+    """Apply one ordered worker event and return its acknowledgement or assignment."""
+    action = message["action"]
+    _validate_worker_event(registry, message, registering=action == "register")
+    result = _apply_worker_operation(registry, message)
+    _commit_worker_event(registry, message)
+    return result
+
+
+def _apply_worker_operation(registry, message: dict) -> object:
+    """Apply one worker operation after fencing and before sequence publication."""
+    action = message["action"]
+    worker_id = str(message["worker_id"])
+    if action == "register":
+        registry.register_worker(
+            worker_id,
+            resource_class=message["resource_class"],
+            memory_gb=int(message["memory_gb"]),
+            slurm_job_id=message.get("slurm_job_id"),
+            user_name=str(message["user_name"]),
+            hostname=str(message["hostname"]),
+            pid=int(message["pid"]),
+        )
+        return None
+    if action == "heartbeat":
+        registry.heartbeat_worker(worker_id, state=message["state"])
+        return None
+    if action == "shutdown_requested":
+        return registry.worker_shutdown_requested(worker_id)
+    if action == "submission_running":
+        registry.mark_submission_running(message.get("slurm_job_id", ""))
+        return None
+    if action == "submission_complete":
+        registry.mark_submission_complete(message.get("slurm_job_id"))
+        return None
+    if action == "reconcile_submissions":
+        return registry.reconcile_scheduler_submissions()
+    if action == "recover_orphans":
+        return registry.recover_orphaned_attempts()
+    if action == "claim":
+        envelope = registry.current_worker_assignment(worker_id)
+        if envelope is None:
+            envelope = registry.claim_ready_instance(
+                worker_id,
+                tuple(message["resource_classes"]),
+                memory_gb=int(message["memory_gb"]),
+            )
+        return None if envelope is None else envelope.as_dict()
+    if action == "claim_ingestion":
+        from nro.bidsify.index import IngestionIndex
+
+        return IngestionIndex(registry).claim(worker_id, int(message["memory_gb"]))
+    if action == "finish_ingestion":
+        from nro.bidsify.store import IngestionStore
+
+        IngestionStore(registry, branch=message["branch"]).finish(
+            message["request_id"],
+            worker_id,
+            state=message["state"],
+            changes=message.get("changes"),
+        )
+        return None
+    if action == "attempt_cancel_requested":
+        return registry.attempt_cancel_requested(int(message["attempt_id"]))
+    if action == "attempt_process":
+        registry.record_attempt_process(
+            int(message["attempt_id"]), int(message["process_group_id"])
+        )
+        return None
+    if action == "finish_attempt":
+        registry.finish_attempt(
+            int(message["attempt_id"]),
+            state=message["state"],
+            error_type=message.get("error_type"),
+            error_message=message.get("error_message"),
+        )
+        return None
+    if action == "record_oom":
+        return registry.record_oom(int(message["attempt_id"]), message=message["message"])
+    if action == "cancel_failed_descendants":
+        return registry.cancel_attempts_downstream_of_failure(int(message["instance_id"]))
+    if action == "runner_graph_signature":
+        from nro.orchestration.worker import _runner_graph_signature
+
+        return _runner_graph_signature(registry, int(message["instance_id"]))
+    if action == "attempt_summary":
+        with registry.connection() as db:
+            row = db.execute(
+                "SELECT state,error_message FROM attempts WHERE id=?",
+                (int(message["attempt_id"]),),
+            ).fetchone()
+        if row is None:
+            return "attempt record missing"
+        return f"attempt state={row['state']}" + (
+            f"; error={row['error_message']}" if row["error_message"] else ""
+        )
+    if action == "record_completion":
+        from nro.orchestration.manifests import record_completion
+
+        return record_completion(
+            registry,
+            instance_id=int(message["instance_id"]),
+            attempt_id=int(message["attempt_id"]),
+            outputs=tuple(Path(path) for path in message["outputs"]),
+        )
+    if action == "refresh":
+        from nro.orchestration.assessment import AssessmentConflict
+        from nro.orchestration.branch_reconciliation import reconcile_branch_requests
+        from nro.orchestration.manifests import assess_registry
+
+        cancelled = []
+        if registry.reserve_artifact_assessment():
+            try:
+                demanded = registry.demanded_instance_ids()
+                if demanded:
+                    try:
+                        assess_registry(registry, instance_ids=demanded, compiled=True)
+                    except AssessmentConflict:
+                        pass
+                reconcile_branch_requests(registry)
+                cancelled = registry.cancel_attempts_with_stale_upstreams()
+                registry.reconcile_requests()
+            finally:
+                registry.finish_artifact_assessment()
+        return len(cancelled)
+    if action == "required_memory":
+        return registry.required_memory_above(int(message["memory_gb"]))
+    if action == "request_capacity":
+        memory = int(message["memory_gb"])
+        kind = message["kind"]
+        if kind == "successor":
+            reservation = registry.reserve_worker_successor(
+                worker_id=worker_id, resource_class="large", memory_gb=memory
+            )
+            if reservation is None:
+                return None
+            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
+            with registry.connection() as db:
+                row = db.execute(
+                    "SELECT slurm_job_id FROM workers WHERE id=?", (worker_id,)
+                ).fetchone()
+            return _submit_reserved(
+                registry, reservation[0], script, dependency=row[0] if row else None
+            )
+        if kind == "adaptive":
+            reservation = registry.reserve_adaptive_worker(resource_class="large", memory_gb=memory)
+            if reservation is None:
+                return None
+            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
+            return _submit_reserved(registry, reservation[0], script)
+        if kind == "expand":
+            reservations = registry.reserve_worker_submissions(
+                request_id=None, resource_class="large", memory_gb=memory
+            )
+            if not reservations:
+                return []
+            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
+            return [
+                _submit_reserved(registry, submission_id, script)
+                for submission_id, _token in reservations
+            ]
+        raise ValueError("Unknown capacity request")
+    if action == "close":
+        registry.close_worker(worker_id, state=message["state"])
+        return None
+    if action == "cleanup_cache":
+        from nro.orchestration.execution_cache import cleanup_cache
+
+        cleanup_cache(registry)
+        return None
+    raise ValueError("Unknown worker operation")
+
+
+def dispatch(registry, message: dict, *, values: dict, message_id: str) -> object:
+    """Apply one validated command through the service's registry authority."""
+    global _STOP
+    if message["operation"] == "server_shutdown":
+        from nro.orchestration.scheduler_bus import publish_shutdown
+
+        publish_shutdown(
+            registry.paths.control,
+            token=os.environ["NRO_SCHEDULER_TOKEN"],
+            generation=int(os.environ["NRO_SCHEDULER_GENERATION"]),
+        )
+        _STOP = True
+        result = {"stopping": True}
+    elif message["operation"] == "worker":
+        result = worker_operation(registry, message)
+    elif message["operation"] == "admit":
+        request_id = admit(
+            registry,
+            message["payload"],
+            checkout=Path(message["checkout"]),
+            site_values=values,
+            request_id=message_id,
+        )
+        result = {"request_id": request_id}
+    elif message["operation"] == "admit_many":
+        result = {
+            "request_ids": admit_many(
                 registry,
+                message["entries"],
                 checkout=Path(message["checkout"]),
                 site_values=values,
-                plan=message["plan"],
-                logs_only=message["logs_only"],
-                dry_run=message["dry_run"],
+                message_id=message_id,
             )
-        elif message["operation"] == "cache":
-            BranchStore(registry.paths.control).read().topology.registered_checkout(
-                Path(message["checkout"])
-            )
-            from nro.orchestration.execution_cache import collect_cache
+        }
+    elif message["operation"] == "supply":
+        result = supply(
+            registry,
+            message["request_ids"],
+            message["options"],
+            checkout=Path(message["checkout"]),
+        )
+    elif message["operation"] == "status":
+        result = status(registry, checkout=Path(message["checkout"]), mode=message["mode"])
+    elif message["operation"] == "stop":
+        result = stop(registry, checkout=Path(message["checkout"]), selection=message["selection"])
+    elif message["operation"] == "logs":
+        result = logs(
+            registry,
+            checkout=Path(message["checkout"]),
+            selection=message["selection"],
+            instance_level=message["instance_level"],
+        )
+    elif message["operation"] in {"concurrency", "stop_workers"}:
+        result = pool_operation(
+            registry,
+            checkout=Path(message["checkout"]),
+            operation=message["operation"],
+            concurrency=message.get("concurrency"),
+        )
+    elif message["operation"] == "environment_idle":
+        result = require_environment_idle(
+            registry,
+            checkout=Path(message["checkout"]),
+            environment=Path(message["environment"]),
+        )
+    elif message["operation"] == "installation_activity":
+        result = installation_activity(registry, checkout=Path(message["checkout"]))
+    elif message["operation"] == "installation_prepare":
+        result = installation_prepare(
+            registry,
+            checkout=Path(message["checkout"]),
+            action=message["action"],
+        )
+    elif message["operation"] == "installation_progress":
+        result = installation_progress(registry, checkout=Path(message["checkout"]))
+    elif message["operation"] == "purge_snapshot":
+        from nro.orchestration.branch_purge import snapshot
 
-            collection = collect_cache(
-                registry,
-                dry_run=message["dry_run"],
-                service=message["service"],
-                approved=None
-                if message["approved"] is None
-                else tuple(map(Path, message["approved"])),
-            )
-            result = dict(
-                paths=list(map(str, collection.paths)),
-                retained=list(map(str, collection.retained)),
-                reason=collection.reason,
-            )
-        elif message["operation"] == "repair_prepare":
-            from nro.orchestration.branch_repair import prepare
+        result = snapshot(registry, checkout=Path(message["checkout"]), site_values=values)
+    elif message["operation"] == "purge":
+        from nro.orchestration.branch_purge import purge
 
-            result = prepare(
-                registry,
-                checkout=Path(message["checkout"]),
-                reservation=message.get("reservation"),
-                allow_stop=message.get("allow_stop", False),
-            )
-        elif message["operation"] == "repair_finish":
-            from nro.orchestration.branch_repair import finish
+        result = purge(
+            registry,
+            checkout=Path(message["checkout"]),
+            site_values=values,
+            plan=message["plan"],
+            logs_only=message["logs_only"],
+            dry_run=message["dry_run"],
+        )
+    elif message["operation"] == "cache":
+        BranchStore(registry.paths.control).read().topology.registered_checkout(
+            Path(message["checkout"])
+        )
+        from nro.orchestration.execution_cache import collect_cache
 
-            result = finish(
-                registry, checkout=Path(message["checkout"]), reservation=message["reservation"]
-            )
-        elif message["operation"] == "promotion_preview":
-            from nro.orchestration.promotion import preview
+        collection = collect_cache(
+            registry,
+            dry_run=message["dry_run"],
+            service=message.get("service"),
+            approved=None if message["approved"] is None else tuple(map(Path, message["approved"])),
+        )
+        result = dict(
+            paths=list(map(str, collection.paths)),
+            retained=list(map(str, collection.retained)),
+            reason=collection.reason,
+        )
+    elif message["operation"] == "repair_prepare":
+        from nro.orchestration.branch_repair import prepare
 
-            result = preview(
-                registry,
-                checkout=Path(message["checkout"]),
-                source=message["source"],
-                requests=message["requests"],
-                pr=message["pr"],
-                attest=message["attest"],
-            )
-        elif message["operation"] == "promotion_publish":
-            from nro.orchestration.promotion import publish
+        result = prepare(
+            registry,
+            checkout=Path(message["checkout"]),
+            reservation=message.get("reservation"),
+            allow_stop=message.get("allow_stop", False),
+        )
+    elif message["operation"] == "repair_finish":
+        from nro.orchestration.branch_repair import finish
 
-            result = publish(
-                registry,
-                checkout=Path(message["checkout"]),
-                report=message["report"],
-                replace=message["replace"],
-                attest=message["attest"],
+        result = finish(
+            registry, checkout=Path(message["checkout"]), reservation=message["reservation"]
+        )
+    elif message["operation"] == "promotion_preview":
+        from nro.orchestration.promotion import preview
+
+        result = preview(
+            registry,
+            checkout=Path(message["checkout"]),
+            source=message["source"],
+            requests=message["requests"],
+            pr=message["pr"],
+            attest=message["attest"],
+        )
+    elif message["operation"] == "promotion_publish":
+        from nro.orchestration.promotion import publish
+
+        result = publish(
+            registry,
+            checkout=Path(message["checkout"]),
+            report=message["report"],
+            replace=message["replace"],
+            attest=message["attest"],
+        )
+    elif message["operation"] == "publish":
+        topology = BranchStore(registry.paths.control).read().topology
+        name = topology.registered_checkout(Path(message["checkout"]))
+        with registry.connection() as db:
+            owner = db.execute(
+                "SELECT registry_id FROM request_owners WHERE request_id=?",
+                (message["request"],),
+            ).fetchone()
+            if owner is None or owner[0] != topology.records[name].registry_id:
+                raise ValueError("Publication request belongs to another branch")
+        destination = Path(message["destination"]).expanduser().resolve()
+        if any(
+            destination.is_relative_to(Path(values[key]).resolve())
+            for key in ("bids", "work", "development", "registry")
+        ):
+            raise ValueError(
+                "Standalone publication must be outside managed data and control stores"
             )
-        elif message["operation"] == "publish":
-            topology = BranchStore(registry.paths.control).read().topology
-            name = topology.registered_checkout(Path(message["checkout"]))
-            with registry.connection() as db:
-                owner = db.execute(
-                    "SELECT registry_id FROM request_owners WHERE request_id=?",
-                    (message["request"],),
+        from nro.orchestration.publish import publish
+
+        result = {
+            "destination": str(
+                publish(
+                    registry,
+                    request_id=message["request"],
+                    destination=destination,
+                    validate=message["validate"],
+                    compiled=True,
+                )
+            )
+        }
+    elif message["operation"] == "branch_update":
+        from nro.orchestration.branch_operations import update
+
+        result = update(
+            registry,
+            checkout=Path(message["checkout"]),
+            branch=message["branch"],
+            action=message["action"],
+            revision=message["revision"],
+            parent=message.get("parent"),
+        )
+    else:
+        raise ValueError("Unsupported scheduler operation")
+    return result
+
+
+def _message_response(registry, record: dict, *, values: dict) -> dict:
+    """Execute one message; its durable response is the processed-message record."""
+    from nro.orchestration.registry import Registry
+
+    operation_registry = Registry.for_project(
+        record["payload"].get("project", ""),
+        bids_root=values["bids"],
+        registry_path=values["registry"],
+    )
+    try:
+        response = {
+            "result": dispatch(
+                operation_registry,
+                record["payload"],
+                values=values,
+                message_id=record["id"],
+            )
+        }
+    except (ValueError, RuntimeError, OSError, KeyError, TypeError, sqlite3.Error) as error:
+        response = {"error": str(error)}
+    return response
+
+
+def _branch_reports(registry) -> dict[str, dict]:
+    """Build one cached report for every active branch with an attached checkout."""
+    reports = {}
+    topology = BranchStore(registry.paths.control).read().topology
+    for name, record in topology.records.items():
+        if record.retired or not record.checkouts:
+            continue
+        reports[name] = status(registry, checkout=record.checkouts[0], mode="cached")
+    return reports
+
+
+def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
+    """Publish the complete cached read model without exposing SQLite to readers."""
+    from nro.engine.io import atomic_write_json
+    from nro.orchestration.control_paths import ControlPaths
+    from nro.orchestration.registry import utcnow
+    from nro.orchestration.scheduler_bus import PROTOCOL
+
+    with registry.connection() as db:
+        workers = [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,state,resource_class,memory_gb,slurm_job_id,updated_at FROM workers"
+            )
+        ]
+        submissions = [
+            dict(row)
+            for row in db.execute(
+                "SELECT id,state,slurm_job_id,memory_gb FROM scheduler_submissions "
+                "WHERE state IN ('prepared','submitted','running','cancel_requested')"
+            )
+        ]
+    atomic_write_json(
+        ControlPaths(registry.paths.control).service_snapshot,
+        {
+            "protocol": PROTOCOL,
+            "generation": generation,
+            "published_at": utcnow(),
+            "service_active": active,
+            "workers": workers,
+            "submissions": submissions,
+            "branches": _branch_reports(registry),
+        },
+        sort_keys=True,
+        mode=0o664,
+        durable=True,
+    )
+
+
+def publish_worker_controls(registry, *, generation: int) -> None:
+    """Publish worker shutdown and attempt-cancellation state atomically."""
+    from nro.engine.io import atomic_write_json
+    from nro.orchestration.control_paths import ControlPaths
+
+    with registry.connection() as db:
+        rows = [dict(row) for row in db.execute("SELECT id,state FROM workers")]
+        cancelled: dict[str, list[int]] = {}
+        for row in db.execute(
+            "SELECT worker_id,id FROM attempts WHERE state='cancel_requested' AND worker_id IS NOT NULL"
+        ):
+            cancelled.setdefault(str(row["worker_id"]), []).append(int(row["id"]))
+        tokens = {
+            str(row["key"]).removeprefix("worker_token:"): str(row["value"])
+            for row in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'worker_token:%'")
+        }
+    root = ControlPaths(registry.paths.control).service_workers
+    for row in rows:
+        worker_id = str(row["id"])
+        token = tokens.get(worker_id)
+        if token is None:
+            continue
+        atomic_write_json(
+            root / worker_id / "control.json",
+            {
+                "protocol": 1,
+                "generation": generation,
+                "worker_id": worker_id,
+                "worker_token": token,
+                "state": row["state"],
+                "cancel_attempts": sorted(cancelled.get(worker_id, ())),
+            },
+            sort_keys=True,
+            mode=0o664,
+        )
+
+
+def apply_worker_presence(registry) -> bool:
+    """Coalesce all new worker heartbeats into one registry transaction."""
+    from nro.engine.io import read_json
+    from nro.orchestration.control_paths import ControlPaths
+    from nro.orchestration.registry import utcnow
+
+    records = []
+    root = ControlPaths(registry.paths.control).service_workers
+    for path in root.glob("*/presence.json"):
+        try:
+            value = read_json(path)
+            worker_id = str(value["worker_id"])
+            token = str(value["worker_token"])
+            state = str(value["state"])
+            sequence = int(value["sequence"])
+            if path.parent.name != worker_id or state not in {"idle", "running", "draining"}:
+                continue
+            records.append((worker_id, token, state, sequence))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    if not records:
+        return False
+    visible_changed = False
+    with registry.connection(write=True) as db:
+        for worker_id, token, state, sequence in records:
+            try:
+                current = db.execute(
+                    "SELECT w.state,m.value AS token FROM workers w "
+                    "LEFT JOIN metadata m ON m.key=? WHERE w.id=?",
+                    (f"worker_token:{worker_id}", worker_id),
                 ).fetchone()
-                if owner is None or owner[0] != topology.records[name].registry_id:
-                    raise ValueError("Publication request belongs to another branch")
-            destination = Path(message["destination"]).expanduser().resolve()
-            if any(
-                destination.is_relative_to(Path(values[key]).resolve())
-                for key in ("bids", "work", "development", "registry")
-            ):
-                raise ValueError(
-                    "Standalone publication must be outside managed data and control stores"
+                previous = db.execute(
+                    "SELECT value FROM metadata WHERE key=?",
+                    (f"worker_presence_sequence:{worker_id}",),
+                ).fetchone()
+                if (
+                    current is None
+                    or current["token"] != token
+                    or previous
+                    and int(previous[0]) >= sequence
+                ):
+                    continue
+                visible_changed = visible_changed or (
+                    current["state"] != "shutdown_requested" and current["state"] != state
                 )
-            from nro.orchestration.publish import publish
+                db.execute(
+                    "INSERT INTO metadata(key,value) VALUES (?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (f"worker_presence_sequence:{worker_id}", str(sequence)),
+                )
+                db.execute(
+                    """UPDATE workers SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
+                       lease_expires_at=?,updated_at=? WHERE id=?""",
+                    (state, time.time() + 120.0, utcnow(), worker_id),
+                )
+            except (ValueError, TypeError, sqlite3.Error):
+                continue
+    return visible_changed
 
-            result = {
-                "destination": str(
-                    publish(
-                        registry,
-                        request_id=message["request"],
-                        destination=destination,
-                        validate=message["validate"],
-                        compiled=True,
+
+def _registry_busy(registry) -> bool:
+    """Return whether active execution requires the service to remain available."""
+    with registry.connection() as db:
+        queries = (
+            "SELECT 1 FROM attempts WHERE state IN ('queued','running','cancel_requested') LIMIT 1",
+            "SELECT 1 FROM workers WHERE state IN ('idle','running','draining','shutdown_requested') LIMIT 1",
+            "SELECT 1 FROM scheduler_submissions WHERE state IN ('prepared','submitted','running','cancel_requested') LIMIT 1",
+        )
+        return any(db.execute(query).fetchone() for query in queries)
+
+
+def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> int:
+    """Own scheduler access until all durable work has remained quiescent."""
+    from nro.configuration.site import settings
+    from nro.orchestration.registry import Registry
+    from nro.orchestration.scheduler_bus import (
+        acknowledge_message,
+        activate,
+        collect_transport_garbage,
+        consume_message,
+        deactivate,
+        pending_messages,
+        publish_active,
+        publish_response,
+        read_response,
+    )
+    from nro.orchestration.scheduler_implementation import require_worker_source
+
+    global _STOP
+    _STOP = False
+    values = settings()[0]
+    control = Path(values["registry"])
+    require_worker_source(control)
+    registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
+    registry.initialize()
+    with registry.connection(write=True) as db:
+        row = db.execute("SELECT value FROM metadata WHERE key='scheduler_generation'").fetchone()
+        generation = int(row[0]) + 1 if row else 1
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES ('scheduler_generation',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(generation),),
+        )
+    active = activate(control, launch_token, generation)
+    os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
+    os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
+    idle_since = None
+    last_heartbeat = 0.0
+    last_cleanup = 0.0
+    try:
+        publish_status_snapshot(registry, generation=generation, active=True)
+        publish_worker_controls(registry, generation=generation)
+        while not _STOP:
+            now = time.monotonic()
+            if now - last_heartbeat >= 5.0:
+                active = publish_active(
+                    control,
+                    token=launch_token,
+                    generation=generation,
+                    job_id=active.get("job_id"),
+                )
+                last_heartbeat = now
+            if now - last_cleanup >= 3600.0:
+                collect_transport_garbage(control)
+                last_cleanup = now
+            presence_changed = apply_worker_presence(registry)
+            batch = pending_messages(control)
+            changed = False
+            for path in batch:
+                try:
+                    record = consume_message(path)
+                    response = read_response(control, record["id"])
+                    if response is None:
+                        response = _message_response(registry, record, values=values)
+                        publish_response(control, record["id"], response)
+                    acknowledge_message(path)
+                    payload = record["payload"]
+                    changed = (
+                        changed
+                        or payload.get("operation") != "worker"
+                        or payload.get("action")
+                        not in {
+                            "heartbeat",
+                            "shutdown_requested",
+                            "attempt_cancel_requested",
+                            "required_memory",
+                        }
                     )
-                )
-            }
-        elif message["operation"] == "branch_update":
-            from nro.orchestration.branch_operations import update
+                except BaseException as error:
+                    print(f"Scheduler deferred {path}: {type(error).__name__}: {error}", flush=True)
+                    try:
+                        publish_response(control, path.stem, {"error": str(error)})
+                        acknowledge_message(path)
+                    except BaseException:
+                        # A transient filesystem error leaves the message for retry.
+                        pass
+            if changed or presence_changed:
+                generation += 1
+                with registry.connection(write=True) as db:
+                    db.execute(
+                        "UPDATE metadata SET value=? WHERE key='scheduler_generation'",
+                        (str(generation),),
+                    )
+                publish_status_snapshot(registry, generation=generation, active=True)
+                publish_worker_controls(registry, generation=generation)
+            if batch or _registry_busy(registry):
+                idle_since = None
+            elif idle_since is None:
+                idle_since = time.monotonic()
+            elif time.monotonic() - idle_since >= idle_grace:
+                break
+            time.sleep(0.2 if batch else 1.0)
+        publish_status_snapshot(registry, generation=generation, active=False)
+        return 0
+    finally:
+        deactivate(control, launch_token)
 
-            result = update(
-                registry,
-                checkout=Path(message["checkout"]),
-                branch=message["branch"],
-                action=message["action"],
-                revision=message["revision"],
-                parent=message.get("parent"),
-            )
-        else:
-            raise ValueError("Unsupported scheduler operation")
-    except (ValueError, RuntimeError, OSError, KeyError, TypeError) as error:
-        print(json.dumps({"error": str(error)}))
-        raise SystemExit(1) from error
-    print(json.dumps({"result": result}))
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the internal controller parser."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--launch-token")
+    parser.add_argument("--bids-root", type=Path)
+    parser.add_argument("--idle-grace", type=float, default=30.0)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the controller, or reject the removed one-shot transport."""
+    args = build_parser().parse_args(argv)
+    if not args.serve or not args.launch_token or args.bids_root is None:
+        raise SystemExit("scheduler_service must be started through the scheduler bus")
+    raise SystemExit(
+        serve(
+            launch_token=args.launch_token,
+            bids_root=args.bids_root,
+            idle_grace=args.idle_grace,
+        )
+    )
 
 
 if __name__ == "__main__":

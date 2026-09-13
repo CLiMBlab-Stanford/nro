@@ -33,6 +33,41 @@ class ControlPaths:
         return self.scheduler / "registry.sqlite3"
 
     @property
+    def service(self) -> Path:
+        """Return the ephemeral scheduler service's durable exchange directory."""
+        return self.scheduler / "service"
+
+    @property
+    def service_inbox(self) -> Path:
+        """Return the inbox used by commands and workers."""
+        return self.service / "inbox"
+
+    @property
+    def service_responses(self) -> Path:
+        """Return the scheduler response directory."""
+        return self.service / "responses"
+
+    @property
+    def service_workers(self) -> Path:
+        """Return the worker mailbox and presence directory."""
+        return self.service / "workers"
+
+    @property
+    def service_active(self) -> Path:
+        """Return the active controller record."""
+        return self.service / "active.json"
+
+    @property
+    def service_launch(self) -> Path:
+        """Return the atomic controller launch claim."""
+        return self.service / "launch"
+
+    @property
+    def service_snapshot(self) -> Path:
+        """Return the atomic cached scheduler read model."""
+        return self.service / "status.json"
+
+    @property
     def catalog(self) -> Path:
         """Return the shared branch catalog."""
         return self.shared / "branches.json"
@@ -97,6 +132,10 @@ class ControlPaths:
             self.shared,
             self.scheduler,
             self.database,
+            self.service,
+            self.service_inbox,
+            self.service_responses,
+            self.service_workers,
             self.catalog,
             self.cache,
             self.implementations,

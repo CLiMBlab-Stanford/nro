@@ -110,7 +110,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
             parser.error(
                 f"{command} requires the central/main installation; a development installation does not grant maintenance authority"
             )
-    _command_main(command)(values, prog=f"{prog} {command}")
+    from nro.orchestration.scheduler_client import SchedulerError
+
+    try:
+        _command_main(command)(values, prog=f"{prog} {command}")
+    except SchedulerError as error:
+        raise SystemExit(str(error)) from None
 
 
 if __name__ == "__main__":

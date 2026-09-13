@@ -1,7 +1,6 @@
 """Shared installation drains execution and publishes tagged main source."""
 
 import json
-import sqlite3
 
 import pytest
 
@@ -10,79 +9,92 @@ from nro.orchestration import worker_control
 from nro.orchestration.registry import Registry
 
 
-def test_pool_drain_requires_confirmation_before_mutation(tmp_path):
+def _mock_service(monkeypatch, tmp_path, responses):
+    implementation = tmp_path / "implementation.json"
+    implementation.write_text("{}")
+    operations = []
+    values = iter(responses)
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.implementation_path",
+        lambda control: implementation,
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_client.maintenance",
+        lambda *args, operation, **fields: operations.append((operation, fields)) or next(values),
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_client.shutdown_service",
+        lambda *args, **kwargs: {"shutdown": True},
+    )
+    monkeypatch.setattr("nro.orchestration.scheduler_bus.read_active", lambda control: None)
+    return operations
+
+
+def test_pool_drain_requires_confirmation_before_mutation(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
-    registry.initialize()
-    registry.register_worker("worker", resource_class="large")
+    operations = _mock_service(
+        monkeypatch,
+        tmp_path,
+        ({"workers": 1, "submissions": 0, "attempts": 0, "ingestion": 0},),
+    )
 
     with pytest.raises(RuntimeError, match="not changed"):
         shared_installation.prepare_pool(
             registry, checkout=tmp_path / "main", confirm=lambda activity: None
         )
 
-    with registry.connection() as db:
-        assert (
-            db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone() is None
-        )
-        assert db.execute("SELECT state FROM workers WHERE id='worker'").fetchone()[0] == "idle"
+    assert [operation for operation, _ in operations] == ["installation_activity"]
 
 
 def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
-    registry.initialize()
-    registry.register_worker("worker", resource_class="large")
-    with sqlite3.connect(registry.paths.database) as db:
-        db.execute(
-            "INSERT INTO requests VALUES "
-            "('request','user','demo',1,'anat','{}',2,NULL,'active','now','now')"
-        )
-    monkeypatch.setattr(
-        shared_installation, "cancel_worker_allocations", lambda registry, shutdown: (0, [])
+    operations = _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 1, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
     )
-    monkeypatch.setattr(shared_installation, "wait_for_worker_shutdown", lambda registry: None)
 
     result = shared_installation.prepare_pool(
         registry, checkout=tmp_path / "main", confirm=lambda activity: "drain"
     )
 
-    assert result["workers"] == 1
-    with registry.connection() as db:
-        assert db.execute("SELECT state FROM requests WHERE id='request'").fetchone()[0] == "active"
-        assert db.execute("SELECT state FROM workers WHERE id='worker'").fetchone()[0] == (
-            "terminated"
-        )
-        assert (
-            db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone()[0]
-            == "installation"
-        )
-        assert (
-            db.execute("SELECT value FROM metadata WHERE key='installation_action'").fetchone()[0]
-            == "drain"
-        )
+    assert result["workers"] == 0
+    assert [operation for operation, _ in operations] == [
+        "installation_activity",
+        "installation_prepare",
+    ]
 
 
 def test_pool_stop_interrupts_workers_without_waiting_for_attempts(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
-    registry.initialize()
-    registry.register_worker("worker", resource_class="large", slurm_job_id="101")
-    events = []
-    original_shutdown = registry.request_worker_shutdown
-
-    def shutdown(**options):
-        events.append("shutdown")
-        return original_shutdown(**options)
-
-    monkeypatch.setattr(registry, "request_worker_shutdown", shutdown)
-    monkeypatch.setattr(shared_installation, "_executing", lambda registry: (1, 0))
-    monkeypatch.setattr(
-        shared_installation,
-        "cancel_worker_allocations",
-        lambda registry, request: (events.append("cancel") or 1, []),
-    )
-    monkeypatch.setattr(
-        shared_installation,
-        "wait_for_worker_shutdown",
-        lambda registry: events.append("confirmed"),
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 1, "submissions": 0, "attempts": 1, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "stop",
+                "done": True,
+                "stopped_jobs": ["101"],
+                "failures": [],
+            },
+        ),
     )
 
     result = shared_installation.prepare_pool(
@@ -90,43 +102,50 @@ def test_pool_stop_interrupts_workers_without_waiting_for_attempts(tmp_path, mon
     )
 
     assert result["action"] == "stop"
-    assert result["stopped_jobs"] == 1
-    assert result["finalized"] == {"workers": 1, "attempts": 0, "ingestion": 0}
-    assert events == ["shutdown", "cancel", "confirmed"]
-    with registry.connection() as db:
-        assert db.execute("SELECT state FROM workers WHERE id='worker'").fetchone()[0] == (
-            "terminated"
-        )
-        assert (
-            db.execute("SELECT value FROM metadata WHERE key='installation_action'").fetchone()[0]
-            == "stop"
-        )
+    assert result["stopped_jobs"] == ["101"]
+    assert result["done"] is True
 
 
-def test_legacy_maintenance_barrier_asks_for_an_action_when_resumed(tmp_path, monkeypatch):
+def test_installation_progress_is_polled_until_workers_stop(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
-    registry.initialize()
-    checkout = (tmp_path / "main").resolve()
-    registry.register_worker("worker", resource_class="large", slurm_job_id="101")
-    with registry.connection(write=True) as db:
-        db.execute("INSERT INTO metadata VALUES ('maintenance_mode','installation')")
-        db.execute("INSERT INTO metadata VALUES ('installation_checkout',?)", (str(checkout),))
-    choices = []
-    monkeypatch.setattr(shared_installation, "_executing", lambda registry: (1, 0))
-    monkeypatch.setattr(
-        shared_installation, "cancel_worker_allocations", lambda registry, request: (1, [])
+    checkout = tmp_path / "main"
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 1, "submissions": 0, "attempts": 1, "ingestion": 0},
+            {
+                "workers": 1,
+                "submissions": 0,
+                "attempts": 1,
+                "ingestion": 0,
+                "action": "drain",
+                "done": False,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
     )
-    monkeypatch.setattr(shared_installation, "wait_for_worker_shutdown", lambda registry: None)
 
     result = shared_installation.prepare_pool(
         registry,
         checkout=checkout,
-        confirm=lambda activity: choices.append(activity) or "stop",
+        confirm=lambda activity: "drain",
+        poll_interval=0,
+        report_interval=999,
     )
 
-    assert result["resuming"] is True
-    assert result["action"] == "stop"
-    assert len(choices) == 1
+    assert result["done"] is True
 
 
 def test_worker_cancellation_accepts_an_already_finished_allocation(monkeypatch):

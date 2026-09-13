@@ -5,10 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from nro.configuration.store import ConfigStore
-from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.engine.cli import (
+    CoreSelection,
+    add_core_selection_arguments,
+    core_selection,
+    matches_instance_selectors,
+)
 from nro.orchestration.catalog import MODULES, normalize_module, terminal_modules
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.manifests import assess_registry
@@ -20,6 +26,8 @@ from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
 DEFAULT_CONCURRENCY = 50
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
+_RESUMABLE_STATUSES = frozenset({"Queued", "Stopped", "Error"})
+_DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Blocked"})
 
 
 def _confirm_repair_with_workers(activity: dict) -> bool:
@@ -62,6 +70,81 @@ def _report_unavailable(plan: PlanningResult) -> None:
             f"  {item['project']}/sub-{item['participant']} {item['module']}: {item['reason']}",
             file=sys.stderr,
         )
+
+
+def _resumable_rows(
+    rows: list[dict], selection: CoreSelection, *, visible_ids: set[int] | None = None
+) -> list[dict]:
+    """Select registered work that can be resumed without broadening demand."""
+    modules = {normalize_module(value) for value in selection.modules}
+    workflows = set(selection.workflows)
+    selected = []
+    for row in rows:
+        if visible_ids is not None and int(row["id"]) not in visible_ids:
+            continue
+        status = str(row["status"])
+        if status not in _RESUMABLE_STATUSES and not (
+            row.get("demanded") and status in _DEMAND_GATED_RESUME_STATUSES
+        ):
+            continue
+        if selection.projects and row["project"] not in selection.projects:
+            continue
+        if selection.participants and row["participant"] not in selection.participants:
+            continue
+        if modules and row["module"] not in modules:
+            continue
+        row_workflows = set(filter(None, str(row.get("workflow_ids") or "").split(",")))
+        if workflows and not workflows.intersection(row_workflows):
+            continue
+        if not matches_instance_selectors(
+            json.loads(row["entities_json"]), selection.instance_entities
+        ):
+            continue
+        selected.append(row)
+    return selected
+
+
+def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSelection:
+    """Derive the smallest planner selection that can reproduce exact instance keys."""
+    entities = [json.loads(row["entities_json"]) for row in rows]
+    requested_workflows = set(selection.workflows)
+    workflows = tuple(
+        dict.fromkeys(
+            workflow
+            for row in rows
+            for workflow in str(row.get("workflow_ids") or "").split(",")
+            if workflow and (not requested_workflows or workflow in requested_workflows)
+        )
+    )
+    if not workflows:
+        raise ValueError("Resumable work has no registered workflow")
+    models = tuple(
+        dict.fromkeys(
+            f"{entity['task']}/{entity['model']}"
+            for row, entity in zip(rows, entities)
+            if row["module"] == "firstlevels" and entity.get("task") and entity.get("model")
+        )
+    )
+    return replace(
+        selection,
+        projects=tuple(dict.fromkeys(str(row["project"]) for row in rows)),
+        participants=tuple(dict.fromkeys(str(row["participant"]) for row in rows)),
+        modules=tuple(dict.fromkeys(str(row["module"]) for row in rows)),
+        workflows=workflows,
+        runs={},
+        spaces=tuple(
+            dict.fromkeys(str(entity["space"]) for entity in entities if entity.get("space"))
+        ),
+        smoothing=tuple(
+            dict.fromkeys(
+                int(entity["smoothing"])
+                for entity in entities
+                if entity.get("smoothing") is not None
+            )
+        ),
+        models=models,
+        model_sets=None,
+    )
 
 
 def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
@@ -125,6 +208,11 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
             "Asks before stopping active work"
         ),
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume matching queued, stopped, failed, or still-demanded incomplete work",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -142,11 +230,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if record.get("mode") in {"shared", "branch"} and not record.get("ready") and not args.repair:
         raise SystemExit("The installation is undergoing setup or maintenance")
     try:
-        selection = core_selection(args)
+        selection = core_selection(args, apply_planner_defaults=not args.resume)
     except ValueError as error:
         raise SystemExit(str(error)) from error
     bids_root = site.bids_root()
     if args.repair:
+        if args.resume:
+            raise SystemExit("--repair and --resume are mutually exclusive")
         explicit_selections = {
             "--participant": args.participant,
             "--project": args.project,
@@ -260,10 +350,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         return
 
     modules = tuple(normalize_module(value) for value in selection.modules)
-    if (selection.models or selection.model_sets) and "firstlevels" not in modules:
+    if (selection.models or selection.model_sets) and modules and "firstlevels" not in modules:
         raise SystemExit("--model and --model-set require -m firstlevels")
-    if set(modules).issubset({"anat", "func"}) and (
-        args.space is not None or args.smoothing is not None
+    if (
+        modules
+        and set(modules).issubset({"anat", "func"})
+        and (args.space is not None or args.smoothing is not None)
     ):
         raise SystemExit(
             "--space and --smoothing apply only when the terminal module is "
@@ -316,6 +408,27 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             memory_gb=args.memory,
             max_memory_gb=args.max_memory,
         )
+    resumed_rows: list[dict] = []
+    if args.resume:
+        if branch_execution:
+            from nro.orchestration.scheduler_client import status as scheduler_status
+
+            report = scheduler_status(
+                Path(values["registry"]), bids_root, checkout=site.CHECKOUT, mode="cached"
+            )
+            resumed_rows = _resumable_rows(
+                report["rows"], selection, visible_ids=set(report["visible_ids"])
+            )
+        else:
+            resumed_rows = _resumable_rows(registry.instance_status_snapshot(), selection)
+        if not resumed_rows:
+            raise SystemExit("No registered work matching the selectors is resumable")
+        try:
+            selection = _resume_plan_selection(selection, resumed_rows)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        projects = list(selection.projects)
+        modules = tuple(normalize_module(value) for value in selection.modules)
     store = ConfigStore()
     workflows = {workflow_id: store.resolve(workflow_id) for workflow_id in selection.workflows}
     registered_workflows = {
@@ -340,6 +453,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         max_memory_gb=args.max_memory,
         models=selection.models,
         model_sets=selection.model_sets,
+        target_instance_keys=(
+            frozenset(str(row.get("logical_key") or row["instance_key"]) for row in resumed_rows)
+            if args.resume
+            else None
+        ),
     )
     if selection.participants:
         absent = sorted(set(selection.participants) - plan.present_participants)
@@ -353,6 +471,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 for item in unavailable
             )
             raise SystemExit(f"No requested work is available: {details}")
+        if args.resume:
+            raise SystemExit(
+                "Registered resumable work no longer matches the current BIDS data and definitions"
+            )
         raise SystemExit("The requested project, participant, and run filters matched no work")
 
     participant_count = plan.participant_count
@@ -409,12 +531,15 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             participants=matched_participants,
             instances=len(all_instances),
             unavailable=_unavailable_records(plan),
+            resumed=len(resumed_rows),
         )
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
+            action = "Resumed" if args.resume else "Created"
             print(
-                f"Created {len(request_ids)} branch request(s); submitted {len(result['submitted_workers'])} worker(s)."
+                f"{action} {len(request_ids)} branch request(s); submitted "
+                f"{len(result['submitted_workers'])} worker(s)."
             )
             _report_unavailable(plan)
         return
@@ -484,12 +609,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         "cancel_requested": len(prematurely_running),
         "submitted_workers": submitted,
         "unavailable": _unavailable_records(plan),
+        "resumed": len(resumed_rows),
     }
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
+        action = "Resumed" if args.resume else "Created"
         print(
-            f"Created {len(request_ids)} request(s) for {participant_count} "
+            f"{action} {len(request_ids)} request(s) for {participant_count} "
             f"project/participant match(es): {len(all_instances)} instance(s), "
             f"{fresh} already fresh."
         )

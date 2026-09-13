@@ -94,6 +94,18 @@ class ExecutionRecipe:
     command: tuple[str, ...]
     runtime_config: Path
 
+    def as_dict(self) -> dict[str, Any]:
+        """Encode the immutable command and runtime configuration path."""
+        return {"command": list(self.command), "runtime_config": str(self.runtime_config)}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ExecutionRecipe":
+        """Decode an execution recipe from a scheduler assignment."""
+        return cls(
+            command=tuple(str(item) for item in value["command"]),
+            runtime_config=Path(value["runtime_config"]),
+        )
+
 
 @dataclass(frozen=True)
 class ResourceRequest:
@@ -434,6 +446,55 @@ class ExecutionEnvelope:
     output_prefix: str | None
     expected_outputs: tuple[Path, ...]
     log_path: Path
+
+    def as_dict(self) -> dict[str, Any]:
+        """Encode an assignment for the durable worker transport."""
+        return {
+            "instance_id": self.instance_id,
+            "attempt_id": self.attempt_id,
+            "instance_key": self.instance_key,
+            "module": self.module,
+            "project": self.project,
+            "participant": self.participant,
+            "entities": dict(self.entities),
+            "scope": self.scope,
+            "manifest_path": str(self.manifest_path),
+            "revision_fingerprint": self.revision_fingerprint,
+            "config_fingerprint": self.config_fingerprint,
+            "instance_contract": dict(self.instance_contract),
+            "contract_fingerprint": self.contract_fingerprint,
+            "execution": self.execution.as_dict(),
+            "input_paths": [str(path) for path in self.input_paths],
+            "output_root": str(self.output_root),
+            "output_prefix": self.output_prefix,
+            "expected_outputs": [str(path) for path in self.expected_outputs],
+            "log_path": str(self.log_path),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ExecutionEnvelope":
+        """Decode an assignment received through the durable worker transport."""
+        return cls(
+            instance_id=int(value["instance_id"]),
+            attempt_id=int(value["attempt_id"]),
+            instance_key=str(value["instance_key"]),
+            module=str(value["module"]),
+            project=str(value["project"]),
+            participant=str(value["participant"]),
+            entities=dict(value["entities"]),
+            scope=str(value["scope"]),
+            manifest_path=Path(value["manifest_path"]),
+            revision_fingerprint=str(value["revision_fingerprint"]),
+            config_fingerprint=str(value["config_fingerprint"]),
+            instance_contract=dict(value["instance_contract"]),
+            contract_fingerprint=str(value["contract_fingerprint"]),
+            execution=ExecutionRecipe.from_dict(value["execution"]),
+            input_paths=tuple(Path(path) for path in value["input_paths"]),
+            output_root=Path(value["output_root"]),
+            output_prefix=value.get("output_prefix"),
+            expected_outputs=tuple(Path(path) for path in value["expected_outputs"]),
+            log_path=Path(value["log_path"]),
+        )
 
     @classmethod
     def from_registry_row(cls, row: Mapping[str, Any]) -> "ExecutionEnvelope":

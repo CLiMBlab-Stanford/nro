@@ -10,44 +10,8 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
 from nro.orchestration.releases import ReleaseStore, tagged_source
 from nro.orchestration.scheduler_implementation import activate
-from nro.orchestration.worker_control import (
-    cancel_worker_allocations,
-    wait_for_worker_shutdown,
-)
-
-
-def _executing(registry: Registry) -> tuple[int, int]:
-    """Count running derivative attempts and ingestion stages."""
-    with registry.connection() as db:
-        attempts = int(
-            db.execute(
-                "SELECT COUNT(*) FROM attempts WHERE state IN ('running','cancel_requested')"
-            ).fetchone()[0]
-        )
-    from nro.bidsify.index import IngestionIndex
-
-    ingestion = sum(row["state"] == "running" for row in IngestionIndex(registry).rows())
-    return attempts, ingestion
-
 
 MaintenanceAction = Literal["drain", "stop"]
-
-
-def _maintenance(registry: Registry) -> tuple[str | None, str | None, str | None]:
-    with registry.connection() as db:
-        rows = {
-            str(row["key"]): str(row["value"])
-            for row in db.execute(
-                "SELECT key,value FROM metadata "
-                "WHERE key IN "
-                "('maintenance_mode','installation_checkout','installation_action')"
-            )
-        }
-    return (
-        rows.get("maintenance_mode"),
-        rows.get("installation_checkout"),
-        rows.get("installation_action"),
-    )
 
 
 def prepare_pool(
@@ -60,76 +24,95 @@ def prepare_pool(
 ) -> dict:
     """Quiesce workers under an installation barrier while preserving demand."""
     checkout = Path(checkout).expanduser().resolve()
-    registry.initialize()
-    mode, owner, saved_action = _maintenance(registry)
-    if mode not in {None, "installation"}:
-        raise RuntimeError(f"Shared registry is already in {mode} maintenance")
-    if mode == "installation" and owner != str(checkout):
-        raise RuntimeError(
-            f"Shared installation maintenance belongs to {owner or 'another checkout'}"
-        )
-    activity = registry.worker_pool_activity()
-    attempts, ingestion = _executing(registry)
-    active = bool(activity["workers"] or activity["submissions"] or attempts or ingestion)
-    summary = {
-        "workers": len(activity["workers"]),
-        "submissions": len(activity["submissions"]),
-        "attempts": attempts,
-        "ingestion": ingestion,
-        "resuming": mode == "installation",
-    }
-    action = saved_action
-    if active and action is None:
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    if not implementation_path(registry.paths.control).is_file():
+        # Initial activation has no controller implementation to launch. This
+        # is the one normal offline bootstrap of the scheduler database.
+        registry.initialize()
+        activity = registry.worker_pool_activity()
+        if activity["workers"] or activity["submissions"]:
+            raise RuntimeError(
+                "A legacy worker pool is still active; stop it before the first scheduler activation"
+            )
+        with registry.connection(write=True) as db:
+            db.executemany(
+                "INSERT INTO metadata(key,value) VALUES (?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (
+                    ("maintenance_mode", "installation"),
+                    ("installation_checkout", str(checkout)),
+                    ("installation_action", "drain"),
+                ),
+            )
+        return {
+            "workers": 0,
+            "submissions": 0,
+            "attempts": 0,
+            "ingestion": 0,
+            "action": "drain",
+            "done": True,
+            "stopped_jobs": [],
+            "failures": [],
+        }
+    from nro.orchestration.scheduler_bus import read_active
+    from nro.orchestration.scheduler_client import maintenance, shutdown_service
+
+    control, bids_root = registry.paths.control, registry.paths.bids_root
+    summary = maintenance(
+        control,
+        bids_root,
+        checkout=checkout,
+        operation="installation_activity",
+    )
+    active = any(summary.values())
+    action = None
+    if active:
         action = confirm(summary)
         if action is None:
-            detail = (
-                "the worker pool was not changed"
-                if mode is None
-                else "the existing maintenance barrier remains in place"
-            )
-            raise RuntimeError(f"Shared installation cancelled; {detail}")
+            raise RuntimeError("Shared installation cancelled; the worker pool was not changed")
     action = action or "drain"
-    if action not in {"drain", "stop"}:
-        raise RuntimeError(f"Shared installation has an invalid maintenance action: {action}")
-    with registry.connection(write=True) as db:
-        db.execute(
-            """INSERT INTO metadata(key,value) VALUES ('maintenance_mode','installation')
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value"""
+    progress = maintenance(
+        control,
+        bids_root,
+        checkout=checkout,
+        operation="installation_prepare",
+        action=action,
+    )
+    next_report = 0.0
+    while not progress["done"]:
+        if progress["failures"]:
+            raise RuntimeError(
+                "Could not stop worker allocation(s): " + "; ".join(progress["failures"])
+            )
+        now = time.monotonic()
+        if now >= next_report:
+            print(
+                f"Waiting for {progress['attempts']} derivative attempt(s), "
+                f"{progress['ingestion']} ingestion stage(s), and "
+                f"{progress['workers'] + progress['submissions']} worker allocation(s)...",
+                flush=True,
+            )
+            next_report = now + report_interval
+        time.sleep(poll_interval)
+        progress = maintenance(
+            control,
+            bids_root,
+            checkout=checkout,
+            operation="installation_progress",
         )
-        db.execute(
-            """INSERT INTO metadata(key,value) VALUES ('installation_checkout',?)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
-            (str(checkout),),
-        )
-        db.execute(
-            """INSERT INTO metadata(key,value) VALUES ('installation_action',?)
-               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
-            (action,),
-        )
-
-    if action == "drain":
-        next_report = 0.0
-        while True:
-            attempts, ingestion = _executing(registry)
-            if not attempts and not ingestion:
-                break
-            now = time.monotonic()
-            if now >= next_report:
-                print(
-                    f"Waiting for {attempts} derivative attempt(s) and "
-                    f"{ingestion} ingestion stage(s) to finish...",
-                    flush=True,
-                )
-                next_report = now + report_interval
-            time.sleep(poll_interval)
-
-    shutdown = registry.request_worker_shutdown(all_users=True)
-    stopped, failures = cancel_worker_allocations(registry, shutdown)
-    if failures:
-        raise RuntimeError("Could not stop worker allocation(s): " + "; ".join(failures))
-    wait_for_worker_shutdown(registry)
-    finalized = registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
-    return {**summary, "action": action, "stopped_jobs": stopped, "finalized": finalized}
+    shutdown_service(
+        control,
+        bids_root,
+        checkout=checkout,
+        allow_changed_checkout=True,
+    )
+    deadline = time.monotonic() + 60
+    while read_active(control) is not None:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Scheduler did not release installation maintenance")
+        time.sleep(0.1)
+    return {**summary, **progress}
 
 
 def publish(checkout: Path, registry: Registry) -> dict:

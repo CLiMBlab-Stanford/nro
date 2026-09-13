@@ -143,8 +143,9 @@ class Planner:
         max_memory_gb: int,
         models: Sequence[str] = (),
         model_sets: Sequence[str] | None = None,
+        target_instance_keys: frozenset[str] | None = None,
     ) -> PlanningResult:
-        """Construct requests, dropping targets covered within each workflow."""
+        """Construct requests, optionally limited to exact registered targets."""
         from nro.configuration.site import definitions_root, settings
         from nro.orchestration.source_snapshots import source_fingerprint
 
@@ -196,7 +197,9 @@ class Planner:
                         group_participants.append(participant)
                         for instance in planned:
                             group_instances[instance.key] = instance
-                            if instance.module == module:
+                            if instance.module == module and (
+                                target_instance_keys is None or instance.key in target_instance_keys
+                            ):
                                 terminal_keys.append(instance.key)
                     if not terminal_keys:
                         continue

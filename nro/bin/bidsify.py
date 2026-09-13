@@ -16,7 +16,6 @@ from nro.bidsify.store import IngestionStore, ReviewBusyError
 from nro.configuration.site import bids_root as configured_bids_root
 from nro.configuration.site import settings
 from nro.orchestration.registry import Registry
-from nro.orchestration.submission import _submit_workers, _write_worker_script
 
 
 def build_parser(*, prog="nro bidsify"):
@@ -191,14 +190,27 @@ def main(argv=None, *, prog="nro bidsify"):
         pin = json.loads(args.execution) if args.execution else None
         branch_paths = validate_execution(pin) if pin else None
         bids_root = configured_bids_root()
-        registry = Registry.for_project("", bids_root=bids_root)
+        central = bool(pin) or implementation_path(Path(site_values["registry"])).exists()
+        if central:
+            from types import SimpleNamespace
+
+            from nro.orchestration.registry import RegistryPaths
+
+            registry = SimpleNamespace(
+                paths=RegistryPaths.for_project(
+                    "", bids_root=bids_root, registry_path=site_values["registry"]
+                )
+            )
+        else:
+            registry = Registry.for_project("", bids_root=bids_root)
         config = load_config(args.config)
         if not args.request and not config["servers"]:
             raise ValueError(
                 "Configure Flywheel servers in the definitions store: bidsify/main.yml"
             )
-        registry.initialize()
-        registry.recover_orphaned_attempts()
+        if not central:
+            registry.initialize()
+            registry.recover_orphaned_attempts()
         store = IngestionStore(registry, branch_paths=branch_paths, execution=pin)
         records = []
         if args.request:
@@ -333,16 +345,42 @@ def main(argv=None, *, prog="nro bidsify"):
         queued = [store.get(r["id"]) for r in records if store.get(r["id"])["state"] == "queued"]
         if queued and not args.no_submit:
             memory = max(r["config"]["memory_gb"] for r in queued)
-            script = _write_worker_script(
-                registry,
-                bids_root=bids_root,
-                partition=site_values["partition"],
-                account=site_values["account"],
-                hours=max(r["config"]["hours"] for r in queued),
-                memory_gb=memory,
-                cpus=max(r["config"]["cpus"] for r in queued),
-            )
-            jobs = _submit_workers(registry, None, script, memory)
+            if central:
+                from nro.configuration.site import CHECKOUT
+                from nro.orchestration.scheduler_client import supply
+
+                result = supply(
+                    Path(site_values["registry"]),
+                    bids_root,
+                    checkout=CHECKOUT,
+                    request_ids=[],
+                    options={
+                        "local": False,
+                        "no_submit": False,
+                        "memory": memory,
+                        "max_memory": memory,
+                        "partition": site_values["partition"],
+                        "account": site_values["account"],
+                        "time": max(r["config"]["hours"] for r in queued),
+                        "cpus": max(r["config"]["cpus"] for r in queued),
+                        "worker_idle_timeout": 30.0,
+                        "drain_minutes": 15.0,
+                    },
+                )
+                jobs = result["submitted_workers"]
+            else:
+                from nro.orchestration.submission import _submit_workers, _write_worker_script
+
+                script = _write_worker_script(
+                    registry,
+                    bids_root=bids_root,
+                    partition=site_values["partition"],
+                    account=site_values["account"],
+                    hours=max(r["config"]["hours"] for r in queued),
+                    memory_gb=memory,
+                    cpus=max(r["config"]["cpus"] for r in queued),
+                )
+                jobs = _submit_workers(registry, None, script, memory)
             print("Submitted workers: " + (", ".join(jobs) or "existing pool has capacity"))
         for record in records:
             print(f"Resume: nro bidsify --request {record['id']}")

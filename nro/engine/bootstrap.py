@@ -63,26 +63,50 @@ def check_workers(site: Path) -> None:
     database = paths.database
     if not database.exists():
         return
-    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
-        try:
-            workers = db.execute(
-                "SELECT slurm_job_id FROM workers WHERE state IN "
-                "('idle','running','draining','shutdown_requested')"
-            ).fetchall()
-            submissions = db.execute(
-                "SELECT slurm_job_id FROM scheduler_submissions WHERE state IN "
-                "('prepared','submitted','running','cancel_requested')"
-            ).fetchall()
-        except sqlite3.DatabaseError as error:
-            raise RuntimeError(f"Cannot establish whether workers are active: {error}") from error
-    records = workers + submissions
+    from nro.orchestration.scheduler_bus import read_active, read_snapshot
+
+    snapshot = read_snapshot(paths.root)
+    if snapshot is not None:
+        workers = [
+            row
+            for row in snapshot.get("workers", ())
+            if row["state"] in {"idle", "running", "draining", "shutdown_requested"}
+        ]
+        submissions = list(snapshot.get("submissions", ()))
+        records = workers + submissions
+    elif read_active(paths.root) is not None:
+        raise RuntimeError("Stop or drain the shared worker pool before maintenance.")
+    else:
+        # An installation predating scheduler snapshots may be inspected only
+        # after confirming that no controller owns the database.
+        with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+            try:
+                workers = [
+                    {"slurm_job_id": row[0]}
+                    for row in db.execute(
+                        "SELECT slurm_job_id FROM workers WHERE state IN "
+                        "('idle','running','draining','shutdown_requested')"
+                    )
+                ]
+                submissions = [
+                    {"slurm_job_id": row[0]}
+                    for row in db.execute(
+                        "SELECT slurm_job_id FROM scheduler_submissions WHERE state IN "
+                        "('prepared','submitted','running','cancel_requested')"
+                    )
+                ]
+            except sqlite3.DatabaseError as error:
+                raise RuntimeError(
+                    f"Cannot establish whether workers are active: {error}"
+                ) from error
+        records = workers + submissions
     if not records:
         return
-    if any(not row[0] for row in records):
+    if any(not row.get("slurm_job_id") for row in records):
         raise RuntimeError(
             "Stop or drain the shared worker pool before maintaining this installation."
         )
-    job_ids = sorted({str(row[0]) for row in records})
+    job_ids = sorted({str(row["slurm_job_id"]) for row in records})
     try:
         result = subprocess.run(
             ["squeue", "--noheader", "--jobs", ",".join(job_ids), "--format", "%T"],
@@ -108,24 +132,15 @@ def check_branch_environment(site: Path, environment: Path) -> None:
     binding = ControlPaths(Path(values["registry"])).scheduler / "implementation.json"
     if not binding.exists():
         return
-    central = json.loads(binding.read_text())
-    result = subprocess.run(
-        [central["python"], "-I", "-B", "-m", "nro.orchestration.scheduler_service"],
-        cwd=central["checkout"],
-        env={**os.environ, "NRO_SITE_CONFIG": central["site"]},
-        text=True,
-        input=json.dumps(
-            dict(operation="environment_idle", checkout=str(ROOT), environment=str(environment))
-        ),
-        stdout=subprocess.PIPE,
-        check=False,
+    from nro.orchestration.scheduler_client import maintenance
+
+    maintenance(
+        Path(values["registry"]),
+        Path(values["bids"]),
+        checkout=ROOT,
+        operation="environment_idle",
+        environment=str(environment),
     )
-    try:
-        response = json.loads(result.stdout)
-    except ValueError as error:
-        raise RuntimeError("Cannot verify environment safety with the central scheduler") from error
-    if result.returncode or response.get("error"):
-        raise RuntimeError(response.get("error", "Central environment check failed"))
 
 
 def _fixed_launcher_record(text: str) -> dict | None:

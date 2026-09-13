@@ -44,23 +44,15 @@ def main():
             or Path(args.control).resolve() != Path(values["registry"]).resolve()
         ):
             raise ValueError("Ingestion paths differ from the scheduler-approved execution")
-        if pin["branch"] != "main":
-            # The central worker validated the execution pin before launch. The
-            # development process receives paths only and never opens scheduler
-            # tables through its own Registry implementation.
-            registry = SimpleNamespace(
-                paths=SimpleNamespace(
-                    control=Path(args.control).resolve(),
-                    bids_root=paths.bids,
-                ),
-                detached_ingestion=True,
-            )
-        else:
-            from nro.orchestration.registry import Registry
-
-            registry = Registry.for_project(
-                "", bids_root=args.bids_root, registry_path=args.control
-            )
+        # The parent worker and controller have already claimed this record.
+        # Scientific stage processes receive paths, not scheduler authority.
+        registry = SimpleNamespace(
+            paths=SimpleNamespace(
+                control=Path(args.control).resolve(),
+                bids_root=paths.bids,
+            ),
+            detached_ingestion=True,
+        )
     else:
         from nro.orchestration.registry import Registry
 

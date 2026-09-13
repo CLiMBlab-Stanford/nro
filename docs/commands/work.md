@@ -7,6 +7,10 @@
 Plan requested terminal instances, register upstream demand, assess outputs,
 and supply workers. Fresh intermediates can be skipped even when the instance
 needs execution. No upfront catalog of all space/smoothing combinations is needed.
+The command starts the ephemeral scheduler controller when none is active and
+then communicates through durable request files. Concurrent invocations share
+the same controller. It exits automatically after registered work and workers
+become idle; users do not need to manage it.
 
 Omitting `--module` requests every workflow endpoint, currently `dynconn`,
 `networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
@@ -54,12 +58,27 @@ dependencies or using a separate checkout with the shared pool.
 | `--local` | Execute a worker locally, without submitting a Slurm allocation. |
 | `--no-submit` | Register/assess demand without launching workers. |
 | `--no-inherit` | In a development branch, compute matching work locally instead of reusing ancestor artifacts. |
+| `--resume` | Recreate demand for matching resumable work already known to the registry. |
 | `--json` | Structured planning result. |
 | `--repair` | Rebuild this branch's scientific registry after central activation; see below. |
 
 Inheritance is enabled by default. `--no-inherit` affects only the new request;
 it does not delete ancestor outputs or change the registered branch tree. The
 option is unavailable before branch execution is activated.
+
+Use `--resume` when the original sequence of requests is inconvenient to
+reconstruct. A bare invocation selects registered work with status `Queued`,
+`Stopped`, or `Error`. It also selects `Missing`, `Stale`, or `Blocked` work
+that still has demand. Those three states do not create demand on their own.
+The shared selectors narrow the selection; omitted selectors mean all existing
+resumable work rather than the usual workflow endpoints and default target.
+
+Resume replans only the selected instance identities against the current BIDS
+data and definitions, then captures the current execution source. It does not
+request work that has never carried demand. If an old identity no longer exists
+under the current scientific definitions, the command reports that it cannot
+be resumed instead of substituting different work. Add `--no-submit` to restore
+demand without supplying workers.
 
 With an activated central scheduler, `--repair` covers the current branch across
 all projects. It restores scientific records from the admitted graph history,
@@ -93,9 +112,11 @@ Report registered instances, including errors and blocked-dependency summaries.
 Source discovery alone does not create status rows; existing owned artifacts
 can be adopted without demand. An empty registry prints headers without rows.
 
-By default, status uses the saved registry state without checking files.
+By default, status uses the last atomic scheduler snapshot without starting a
+controller or checking files.
 `--update` performs the full assessment, updates the registry, and reports the
-result. Use `--json` for structured output or `--no-pager` to bypass `less`.
+result, starting a controller if needed. Use `--json` for structured output or
+`--no-pager` to bypass `less`.
 The pager uses colors and pinned headers when supported.
 
 After central activation, `--update` first recompiles registered selections

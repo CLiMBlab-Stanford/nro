@@ -88,11 +88,24 @@ attempts, workers, and submissions. Consequently, concurrency limits and
 reusable worker capacity are enforced across simultaneous requests from
 different projects and branches.
 
-All SQLite access is serialized by the same atomic directory lock. SQLite uses
-rollback journaling rather than WAL for cross-node safety. Transactions are
-short and never span scientific computation. Lock ownership records a unique
-token, host, process, user, and Slurm identity; recovery requires a grace period
-and positive evidence that the owner is terminal.
+An automatically managed Slurm controller is the only normal client of the
+shared scheduler SQLite database. Checkout processes may compile scientific
+state in their branch-owned registries, which contain no attempts or worker-pool
+state. User commands and workers send scheduler messages through the control
+filesystem. Atomic launch election and fencing permit only the current
+controller to consume them. The controller uses rollback journaling and short
+transactions; no transaction spans scientific computation, Slurm waiting, or
+bulk filesystem work. Request and response files survive controller failure and
+can be replayed safely by its replacement.
+
+The controller publishes an atomic JSON read model after relevant changes.
+Cached observation reads that snapshot without starting the controller or
+opening SQLite. Mutating commands start the service when needed, display a
+lightweight progress indicator while awaiting a response, and fail after a
+bounded timeout rather than hanging indefinitely. The controller exits after
+demand, attempts, workers, ingestion, and pending messages remain idle for a
+short grace period. Installation and repair use a deliberate shutdown barrier
+before entering their exceptional offline maintenance phase.
 
 Registry state separates:
 
@@ -182,24 +195,29 @@ instance represents exactly one pair.
 ## Workers and Slurm
 
 Slurm jobs are reusable foreground workers, not one-job-per-module wrappers.
-Workers claim compatible ready instances transactionally and supervise one
-module subprocess at a time. A claim returns a typed `ExecutionEnvelope`; an
-`ExecutionLauncher` owns subprocess creation and supervision. Workers renew
-leases, poll durable cancellation, and terminate the whole subprocess group
-when required.
+Workers request compatible ready instances through ordered scheduler events and
+supervise one module subprocess at a time. A claim returns a typed
+`ExecutionEnvelope`; an `ExecutionLauncher` owns subprocess creation and
+supervision. Atomic presence files renew worker leases without a database write
+for every heartbeat. Workers poll durable control files and terminate the whole
+subprocess group when required. Neither the worker nor its scientific subprocess
+can open the scheduler database.
 
-Workers drain before wall-time and pre-submit `afterany` successors. The
-registry, not queued Slurm count, enforces shared concurrency. Confirmed OOMs
-increase the instance memory tier geometrically up to the request ceiling;
-higher-tier workers may accept lower-tier instances.
+Workers drain before wall-time and request successor capacity from the
+controller. The registry, not queued Slurm count, enforces shared concurrency.
+Confirmed OOMs increase the instance memory tier geometrically up to the request
+ceiling; higher-tier workers may accept lower-tier instances.
 
 ## Observation and mutation
 
-`log` is observational. By default, `status` reads saved state. `status --update`
-performs authoritative assessment and updates the registry; it can cancel an
-attempt whose registered contract has become obsolete. `run` and workers also
-assess artifacts and grow the worker pool. `set`, `stop`, `purge`, and
-`publish` are explicit mutation commands with distinct responsibilities.
+`log` is observational. By default, `status` reads the last atomic scheduler
+snapshot. `status --update` starts the controller if needed, performs
+authoritative assessment, updates the registry, and publishes a new snapshot;
+it can cancel an attempt whose registered contract has become obsolete. `run`
+and worker events also assess artifacts and grow the worker pool. `set`, `stop`,
+`purge`, and `publish` are explicit mutation commands with distinct
+responsibilities. `scene` discovers files directly and does not require a live
+controller.
 
 ## Publication
 

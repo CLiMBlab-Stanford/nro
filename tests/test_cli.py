@@ -38,6 +38,18 @@ def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -
     assert calls == [(["-p", "t12"], "nro run")]
 
 
+def test_dispatcher_reports_scheduler_failure_without_internal_traceback(monkeypatch) -> None:
+    from nro.orchestration.scheduler_client import SchedulerError
+
+    def command_main(_argv, *, prog):
+        raise SchedulerError(f"{prog}: scheduler unavailable")
+
+    monkeypatch.setattr(cli, "_command_main", lambda command: command_main)
+
+    with pytest.raises(SystemExit, match="nro status: scheduler unavailable"):
+        cli.main(["status"])
+
+
 def test_installed_command_help_uses_subcommand_syntax(capsys) -> None:
     with pytest.raises(SystemExit) as error:
         cli.main(["run", "--help"])

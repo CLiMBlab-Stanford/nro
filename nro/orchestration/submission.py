@@ -80,6 +80,7 @@ def _write_worker_script(
     lines.extend(
         (
             "set -euo pipefail",
+            "export NRO_PROCESS_ROLE=worker",
             "exec " + shlex.join(source.command(command, site=site_path)),
         )
     )

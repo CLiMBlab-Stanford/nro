@@ -1,4 +1,4 @@
-"""Account for every registered ingestion namespace under the shared worker lock."""
+"""Account for every registered ingestion namespace inside the controller."""
 
 from nro.orchestration.branch_store import BranchStore
 
@@ -8,8 +8,8 @@ from .store import ACTIVE, IngestionStore
 class IngestionIndex:
     """Aggregate runtime accounting without merging session identities or review leases.
 
-    Namespace reads use the atomically published branch catalog. Callers hold
-    the global registry lock when making scheduling or recovery decisions.
+    Namespace reads use the atomically published branch catalog. The scheduler
+    controller serializes scheduling and recovery decisions.
     Retired branches still count until their running stages have stopped.
     """
 
@@ -61,7 +61,13 @@ class IngestionIndex:
         return active, ready, limit
 
     def claim(self, worker: str, memory_gb: int) -> dict | None:
-        """Claim from one namespace under the existing global capacity checks."""
+        """Claim from one namespace after the controller applies capacity checks."""
+        active = next(
+            (row for row in self.rows() if row["state"] == "running" and row["worker"] == worker),
+            None,
+        )
+        if active is not None:
+            return active
         for store in self.stores():
             record = store.claim(worker, memory_gb)
             if record is not None:
@@ -69,18 +75,38 @@ class IngestionIndex:
         return None
 
     def set_concurrency_locked(self, concurrency: int) -> int:
-        """Update active requests in every namespace under the caller's scheduler lock."""
+        """Update active requests in every namespace during a controller operation."""
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError("Concurrency must be a positive integer")
         changed = 0
         for store in self.stores():
-            for row in store.rows():
-                if row["state"] in ACTIVE:
-                    row["config"]["concurrency"] = concurrency
-                    store.write_locked(row)
-                    changed += 1
+            with store._lock():
+                for row in store.rows():
+                    if row["state"] in ACTIVE:
+                        row["config"]["concurrency"] = concurrency
+                        store.write_locked(row)
+                        changed += 1
         return changed
 
     def recover_locked(self, dead_workers: set[str]) -> int:
         """Release stages only for workers whose shutdown has been confirmed."""
-        return sum(store.recover_locked(dead_workers) for store in self.stores())
+        recovered = 0
+        for store in self.stores():
+            with store._lock():
+                recovered += store.recover_locked(dead_workers)
+        return recovered
+
+    def clear_publication_barriers_locked(self, db) -> None:
+        """Remove project barriers whose publication stage no longer runs."""
+        active = {
+            row["id"]
+            for row in self.rows()
+            if row["state"] == "running" and row["stage"] == "publish"
+        }
+        rows = db.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE 'bids_publication:%'"
+        ).fetchall()
+        db.executemany(
+            "DELETE FROM metadata WHERE key=? AND value=?",
+            [(row["key"], row["value"]) for row in rows if row["value"] not in active],
+        )

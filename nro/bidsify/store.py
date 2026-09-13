@@ -1,7 +1,8 @@
-"""Durable ingestion records, serialized by the central registry lock.
+"""Durable ingestion records, serialized by a dedicated filesystem lock.
 
 The ingestion directory survives derivative registry repair. Records are
-atomic JSON documents; worker claims share the lock used by derivative claims.
+atomic JSON documents. The scheduler controller coordinates worker claims with
+derivative capacity separately.
 """
 
 import getpass
@@ -41,7 +42,7 @@ class IngestionStore:
         branch: str | None = None,
         execution: dict | None = None,
     ):
-        """Bind production or isolated debugging records under the central lock.
+        """Bind production or isolated debugging records and their lock.
 
         The caller authorizes branch_paths. Development data never become raw
         inputs for scientific planning, which retains the shared BIDS root.
@@ -62,6 +63,17 @@ class IngestionStore:
             if self.branch == "main"
             else control.branch(self.branch) / "ingestion"
         )
+
+    @contextmanager
+    def _lock(self):
+        """Serialize ingestion JSON without opening the scheduler database."""
+        from nro.orchestration.registry import RegistryLock
+
+        with RegistryLock(
+            self.root.with_name(self.root.name + ".lock"),
+            self.root.with_name(self.root.name + ".lock.recovery"),
+        ):
+            yield
 
     def project_root(self, project: str) -> Path:
         """Resolve a publication destination without changing scientific source paths."""
@@ -91,7 +103,7 @@ class IngestionStore:
         return json.loads((self.root / f"{identifier(request_id)}.json").read_text())
 
     def write_locked(self, record: dict) -> None:
-        """Publish a record; callers must hold the registry lock."""
+        """Publish a record; callers must hold this store's ingestion lock."""
         from .paths import secure_directory
 
         self.require_record(record)
@@ -136,7 +148,7 @@ class IngestionStore:
             .is_relative_to(self.registry.paths.bids_root.resolve())
         ):
             raise ValueError("Shared ingestion staging must be outside the BIDS tree")
-        with self.registry.connection(write=True):
+        with self._lock():
             matches = [
                 r
                 for r in self.rows()
@@ -253,7 +265,7 @@ class IngestionStore:
         """
         if seconds <= 0:
             raise ValueError("Review lease duration must be positive")
-        with self.registry.connection(write=True):
+        with self._lock():
             record = self.get(request_id)
             lease = self._review(request_id)
             if lease and lease["expires"] > time.time():
@@ -281,14 +293,14 @@ class IngestionStore:
         """Extend an unexpired lease without reviving lost ownership or changing decisions."""
         if seconds <= 0:
             raise ValueError("Review lease duration must be positive")
-        with self.registry.connection(write=True):
+        with self._lock():
             lease = self._require_review(request_id, token)
             lease["expires"] = time.time() + seconds
             self._write_review(request_id, lease)
 
     def release_review(self, request_id: str, token: str) -> None:
         """Release this terminal's lease, leaving any replacement owner's lease intact."""
-        with self.registry.connection(write=True):
+        with self._lock():
             lease = self._review(request_id)
             if lease and lease["token"] == token:
                 self._review_path(request_id).unlink()
@@ -339,7 +351,7 @@ class IngestionStore:
         Missing BIDS labels can be filled before organization; resolved labels
         cannot be reassigned. Completing a destination checks its reservation.
         """
-        with self.registry.connection(write=True):
+        with self._lock():
             current = self.get(record["id"])
             self._require_review(record["id"], review_token)
             if current["revision"] != expected_revision:
@@ -435,7 +447,7 @@ class IngestionStore:
 
     def admit_pending(self, request_id: str) -> dict:
         """Pin an unclaimed queue when its owner reopens the reviewer."""
-        with self.registry.connection(write=True):
+        with self._lock():
             row = self.get(request_id)
             if (
                 self.execution
@@ -460,7 +472,7 @@ class IngestionStore:
             owner = BranchStore(self.registry.paths.control).read().topology.records[self.branch]
             if owner.retired:
                 return None
-        with self.registry.connection(write=True) as db:
+        with self.registry.connection(write=True) as db, self._lock():
             owner = db.execute("SELECT state FROM workers WHERE id=?", (worker,)).fetchone()
             if owner is None or owner["state"] == "shutdown_requested":
                 return None
@@ -493,6 +505,22 @@ class IngestionStore:
                     continue
                 if self.branch != "main" and not row.get("execution"):
                     continue
+                barrier_key = f"bids_publication:{row['project']}"
+                if row["stage"] == "publish" and self.branch == "main":
+                    busy = db.execute(
+                        """SELECT 1 FROM attempts a JOIN instances i ON i.id=a.instance_id
+                           WHERE i.project=? AND a.state IN ('queued','running','cancel_requested')
+                           LIMIT 1""",
+                        (row["project"],),
+                    ).fetchone()
+                    barrier = db.execute(
+                        "SELECT value FROM metadata WHERE key=?", (barrier_key,)
+                    ).fetchone()
+                    if busy or barrier is not None:
+                        continue
+                    db.execute(
+                        "INSERT INTO metadata(key,value) VALUES (?,?)", (barrier_key, row["id"])
+                    )
                 row.update(
                     state="running",
                     worker=worker,
@@ -507,13 +535,17 @@ class IngestionStore:
         self, request_id: str, worker: str, *, state: str, changes: dict | None = None
     ) -> None:
         """Finish only the stage still owned by this worker."""
-        with self.registry.connection(write=True):
+        with self.registry.connection(write=True) as db, self._lock():
             row = self.get(request_id)
             if row["state"] != "running" or row["worker"] != worker:
                 raise ValueError("Ingestion worker no longer owns this request")
             row.update(changes or {})
             row.update(state=state, worker=None, revision=row["revision"] + 1)
             self.write_locked(row)
+            db.execute(
+                "DELETE FROM metadata WHERE key=? AND value=?",
+                (f"bids_publication:{row['project']}", request_id),
+            )
 
     def recover_locked(self, dead_workers: set[str]) -> int:
         """Release attempts owned by workers already established to be dead."""

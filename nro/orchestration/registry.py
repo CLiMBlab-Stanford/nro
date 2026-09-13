@@ -16,6 +16,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -46,6 +47,11 @@ if TYPE_CHECKING:
 
 APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
 SCHEMA_VERSION = 17
+_WAIT_NOTICE_SECONDS = 0.75
+_WAIT_FRAMES = ("·", "•", "●", "•")
+_WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
+_CLEAR_LINE = "\r\x1b[2K"
+_RESET = "\x1b[0m"
 
 
 def utcnow() -> str:
@@ -93,6 +99,24 @@ def ensure_shared_directory(path: str | Path) -> Path:
 def _atomic_text(path: Path, text: str) -> None:
     ensure_shared_directory(path.parent)
     atomic_write_text(path, text, mode=0o664, durable=True)
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a tree despite transient NFS directory-entry visibility."""
+    for attempt in range(5):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 4:
+                # Open files become temporary .nfs entries. The completed
+                # repair must not fail merely because NFS defers cleanup of
+                # its now-detached quarantine.
+                shutil.rmtree(path, ignore_errors=True)
+                return
+            time.sleep(0.05 * (attempt + 1))
 
 
 def _instance_relative_directory(instance: dict) -> Path:
@@ -235,28 +259,96 @@ class RegistryLock:
 
         Slurm may report an expired job ID as an error instead of an empty
         result. Only that specific diagnostic establishes absence on failure.
+        Accounting provides a bounded fallback when the live queue is
+        temporarily unavailable.
         """
-        if not shutil.which("squeue"):
+        if shutil.which("squeue"):
+            try:
+                result = subprocess.run(
+                    ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T"],
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    env={**os.environ, "LC_ALL": "C"},
+                )
+            except (OSError, subprocess.SubprocessError):
+                result = None
+            if result is not None:
+                if not result.returncode:
+                    return not bool(result.stdout.strip())
+                if (
+                    not result.stdout.strip()
+                    and result.stderr.strip() == "slurm_load_jobs error: Invalid job id specified"
+                ):
+                    return True
+        return RegistryLock._slurm_accounting_terminal(job_id)
+
+    @staticmethod
+    def _slurm_accounting_terminal(job_id: str) -> bool | None:
+        """Return terminal state from Slurm accounting when it is conclusive."""
+        if not shutil.which("sacct"):
             return None
         try:
             result = subprocess.run(
-                ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T"],
+                [
+                    "sacct",
+                    "--jobs",
+                    str(job_id),
+                    "--noheader",
+                    "--parsable2",
+                    "--format",
+                    "JobIDRaw,State",
+                ],
                 check=False,
                 text=True,
                 capture_output=True,
-                timeout=15,
+                timeout=10,
                 env={**os.environ, "LC_ALL": "C"},
             )
         except (OSError, subprocess.SubprocessError):
             return None
         if result.returncode:
-            if (
-                not result.stdout.strip()
-                and result.stderr.strip() == "slurm_load_jobs error: Invalid job id specified"
-            ):
-                return True
             return None
-        return not bool(result.stdout.strip())
+        states = {
+            fields[1].split(maxsplit=1)[0].split("+", 1)[0].upper()
+            for line in result.stdout.splitlines()
+            if len(fields := line.split("|")) >= 2 and fields[0].strip() == str(job_id)
+        }
+        if not states:
+            return None
+        active = {
+            "CONFIGURING",
+            "COMPLETING",
+            "PENDING",
+            "REQUEUED",
+            "REQUEUE_FED",
+            "REQUEUE_HOLD",
+            "RESIZING",
+            "RUNNING",
+            "SIGNALING",
+            "STAGE_OUT",
+            "STOPPED",
+            "SUSPENDED",
+        }
+        terminal = {
+            "BOOT_FAIL",
+            "CANCELLED",
+            "COMPLETED",
+            "DEADLINE",
+            "FAILED",
+            "NODE_FAIL",
+            "OUT_OF_MEMORY",
+            "PREEMPTED",
+            "REVOKED",
+            "SPECIAL_EXIT",
+            "TIMEOUT",
+        }
+        if states <= terminal:
+            return True
+        if states & active:
+            return False
+        return None
 
     @staticmethod
     def _slurm_out_of_memory(job_id: str) -> bool | None:
@@ -324,27 +416,79 @@ class RegistryLock:
             except OSError:
                 pass
 
+    def _show_wait(self, frame: int) -> bool:
+        """Refresh the interactive registry-wait indicator."""
+        if not sys.stderr.isatty():
+            return False
+        owner = self._read_owner() or {}
+        job = owner.get("slurm_job_id")
+        host = str(owner.get("hostname") or "").split(".", 1)[0]
+        if job:
+            detail = f" (held by Slurm job {job}" + (f" on {host})" if host else ")")
+        elif owner.get("pid") and host:
+            detail = f" (held by process {owner['pid']} on {host})"
+        else:
+            detail = ""
+        marker = _WAIT_FRAMES[frame % len(_WAIT_FRAMES)]
+        if "NO_COLOR" not in os.environ:
+            color = _WAIT_COLORS[frame % len(_WAIT_COLORS)]
+            marker = f"{color}{marker}{_RESET}"
+        sys.stderr.write(f"{_CLEAR_LINE}{marker} Waiting for registry access{detail}...")
+        sys.stderr.flush()
+        return True
+
+    def _owner_is_old(self) -> bool:
+        """Return whether lock recovery may need a scheduler query."""
+        try:
+            return time.time() - self.path.stat().st_mtime >= self.stale_after
+        except OSError:
+            return False
+
+    @staticmethod
+    def _clear_wait(visible: bool) -> None:
+        """Remove an interactive registry-wait indicator."""
+        if visible:
+            sys.stderr.write(_CLEAR_LINE)
+            sys.stderr.flush()
+
     def acquire(self) -> "RegistryLock":
         """Acquire the lock, recovering only demonstrably abandoned ownership.
 
         Raise RegistryLockTimeout when the configured waiting period expires.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
-        deadline = time.monotonic() + self.timeout
+        started = time.monotonic()
+        deadline = started + self.timeout
         delay = 0.05
+        frame = 0
+        wait_visible = False
         while True:
             try:
                 self.path.mkdir(mode=0o2775)
                 self.path.chmod(0o2775)
             except FileExistsError:
-                self._recover_if_safe()
+                now = time.monotonic()
+                if now - started >= _WAIT_NOTICE_SECONDS or self._owner_is_old():
+                    wait_visible = self._show_wait(frame) or wait_visible
+                    frame += 1
+                try:
+                    self._recover_if_safe()
+                except BaseException:
+                    self._clear_wait(wait_visible)
+                    raise
                 if time.monotonic() >= deadline:
+                    self._clear_wait(wait_visible)
                     raise RegistryLockTimeout(
                         f"Timed out waiting for registry lock {self.path}; owner={self._read_owner()}"
                     )
-                time.sleep(random.uniform(delay, min(2.0, delay * 2.0)))
+                try:
+                    time.sleep(random.uniform(delay, min(2.0, delay * 2.0)))
+                except BaseException:
+                    self._clear_wait(wait_visible)
+                    raise
                 delay = min(2.0, delay * 1.6)
                 continue
+            self._clear_wait(wait_visible)
             try:
                 _atomic_text(self.owner_path, json.dumps(asdict(self.owner), indent=2) + "\n")
             except BaseException:
@@ -392,6 +536,7 @@ CREATE TABLE metadata (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
 
 CREATE TABLE bids_projects (
     project TEXT PRIMARY KEY,
@@ -749,6 +894,10 @@ class Registry(WorkflowRegistry):
         Schema incompatibility raises RuntimeError. Writes commit on success and
         roll back on failure; the context releases its connection and lock.
         """
+        if os.environ.get("NRO_PROCESS_ROLE") == "worker":
+            raise RuntimeError(
+                "Workers and scientific subprocesses cannot open the scheduler registry"
+            )
         self._prepare_directories()
         with self._lock():
             self._initialize_locked()
@@ -775,6 +924,10 @@ class Registry(WorkflowRegistry):
         behavior: the worker-control tables must still have the fields used by
         the current repair procedure.
         """
+        if os.environ.get("NRO_PROCESS_ROLE") == "worker":
+            raise RuntimeError(
+                "Workers and scientific subprocesses cannot open the scheduler registry"
+            )
         self._prepare_directories()
         with self._lock():
             self._initialize_locked()
@@ -802,20 +955,16 @@ class Registry(WorkflowRegistry):
 
     @contextlib.contextmanager
     def read_connection(self) -> Iterator[sqlite3.Connection]:
-        """Open a strictly read-only SQLite connection without the registry lock.
+        """Open a query-only connection while holding the registry lock.
 
-        This is for observational tools such as ``nro.bin.log``. Mutating
-        operations and freshness assessment must continue through
-        :meth:`connection`, which owns the cross-host lock.
+        SQLite file locks alone are not reliable enough to coordinate registry
+        access across the site's compute nodes. Observational commands use the
+        same cross-host lock as mutations, while ``query_only`` prevents their
+        connections from changing registry state.
         """
-        database = self.existing_database_path()
-        uri = database.resolve().as_uri() + "?mode=ro"
-        connection = sqlite3.connect(uri, uri=True, timeout=60.0)
-        connection.row_factory = sqlite3.Row
-        try:
+        with self.connection() as connection:
+            connection.execute("PRAGMA query_only=ON")
             yield connection
-        finally:
-            connection.close()
 
     def initialize(self) -> None:
         """Create and validate the private registry structure without requesting work."""
@@ -927,7 +1076,7 @@ class Registry(WorkflowRegistry):
                 raise
         if retain_backup:
             return quarantine
-        shutil.rmtree(quarantine)
+        _remove_tree(quarantine)
         return None
 
     def workflow_history(self, workflow_id: str) -> list[dict]:
@@ -1573,6 +1722,9 @@ class Registry(WorkflowRegistry):
         resource_class: str,
         memory_gb: int = 32,
         slurm_job_id: str | None = None,
+        user_name: str | None = None,
+        hostname: str | None = None,
+        pid: int | None = None,
         lease_seconds: float = 120.0,
     ) -> None:
         """Register or refresh a worker lease and its scheduler allocation.
@@ -1580,6 +1732,9 @@ class Registry(WorkflowRegistry):
         Workers registering during maintenance are marked for shutdown.
         """
         now = utcnow()
+        worker_user = user_name if user_name is not None else getpass.getuser()
+        worker_host = hostname if hostname is not None else socket.gethostname()
+        worker_pid = pid if pid is not None else os.getpid()
         with self.connection(write=True) as db:
             repair = db.execute(
                 "SELECT value FROM metadata WHERE key='maintenance_mode'"
@@ -1591,17 +1746,19 @@ class Registry(WorkflowRegistry):
                                     hostname, pid, lease_expires_at, started_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET state=excluded.state, lease_expires_at=excluded.lease_expires_at,
-                    slurm_job_id=excluded.slurm_job_id, updated_at=excluded.updated_at
+                    user_name=excluded.user_name, resource_class=excluded.resource_class,
+                    memory_gb=excluded.memory_gb, slurm_job_id=excluded.slurm_job_id,
+                    hostname=excluded.hostname, pid=excluded.pid, updated_at=excluded.updated_at
                 """,
                 (
                     worker_id,
-                    getpass.getuser(),
+                    worker_user,
                     resource_class,
                     memory_gb,
                     slurm_job_id,
                     state,
-                    socket.gethostname(),
-                    os.getpid(),
+                    worker_host,
+                    worker_pid,
                     time.time() + lease_seconds,
                     now,
                     now,
@@ -1787,6 +1944,7 @@ class Registry(WorkflowRegistry):
             from nro.bidsify.index import IngestionIndex
 
             ingestion = IngestionIndex(self).recover_locked(set(selected))
+            IngestionIndex(self).clear_publication_barriers_locked(db)
             attempts = db.execute(
                 f"""UPDATE attempts SET state='cancelled', completed_at=?
                     WHERE worker_id IN ({placeholders})
@@ -1858,6 +2016,10 @@ class Registry(WorkflowRegistry):
                   AND t.memory_gb <= ?
                   AND {dependency_state.WRITE_READY}
                   AND t.artifact_state != 'fresh'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM metadata publication
+                      WHERE publication.key='bids_publication:' || t.project
+                  )
                   AND NOT (
                       t.module IN ('dynconn', 'microparcellation')
                       AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
@@ -1960,6 +2122,24 @@ class Registry(WorkflowRegistry):
             from nro.orchestration.contracts import ExecutionEnvelope
 
             return ExecutionEnvelope.from_registry_row(instance)
+
+    def current_worker_assignment(self, worker_id: str) -> "ExecutionEnvelope | None":
+        """Recover the active assignment after an interrupted scheduler response."""
+        with self.connection() as db:
+            row = db.execute(
+                """SELECT i.*,a.id AS attempt_id,a.log_path,
+                          COALESCE(e.command_json,i.command_json) AS command_json
+                   FROM attempts a JOIN instances i ON i.id=a.instance_id
+                   LEFT JOIN attempt_execution e ON e.attempt_id=a.id
+                   WHERE a.worker_id=? AND a.state IN ('queued','running','cancel_requested')
+                   ORDER BY a.id DESC LIMIT 1""",
+                (worker_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        from nro.orchestration.contracts import ExecutionEnvelope
+
+        return ExecutionEnvelope.from_registry_row(dict(row))
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
         """Return whether the current attempt has been marked for cancellation."""
@@ -2187,7 +2367,7 @@ class Registry(WorkflowRegistry):
     ) -> int | None:
         row = db.execute(
             """
-            SELECT a.instance_id, a.worker_id, a.memory_gb AS attempt_memory,
+            SELECT a.instance_id, a.worker_id, a.memory_gb AS attempt_memory,a.oom_detected,
                    t.memory_gb, t.max_memory_gb
             FROM attempts a JOIN instances t ON t.id=a.instance_id WHERE a.id=?
             """,
@@ -2195,6 +2375,12 @@ class Registry(WorkflowRegistry):
         ).fetchone()
         if row is None:
             raise KeyError(f"Unknown attempt: {attempt_id}")
+        if row["oom_detected"]:
+            return (
+                int(row["memory_gb"])
+                if int(row["memory_gb"]) > int(row["attempt_memory"])
+                else None
+            )
         completed = utcnow()
         db.execute(
             """
@@ -2811,6 +2997,7 @@ class Registry(WorkflowRegistry):
                 from nro.bidsify.index import IngestionIndex
 
                 recovered += IngestionIndex(self).recover_locked({worker_id})
+                IngestionIndex(self).clear_publication_barriers_locked(db)
                 attempts = db.execute(
                     "SELECT id, instance_id FROM attempts WHERE worker_id=? AND state IN ('queued', 'running', 'cancel_requested')",
                     (worker_id,),
