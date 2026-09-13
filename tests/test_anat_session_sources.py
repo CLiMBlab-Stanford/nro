@@ -85,6 +85,61 @@ def test_session_source_brain_extraction_consumes_preprocessed_image(
     assert plan.output == session_dir / raw.name
 
 
+def test_session_plans_keep_repeated_anatomicals_distinct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+
+    def image(modality: str, run: str, series: float) -> AnatImage:
+        path = raw_dir / f"sub-1_ses-1_run-{run}_{modality}.nii.gz"
+        path.write_bytes(b"raw")
+        return AnatImage(
+            image=path,
+            json=None,
+            modality=modality,
+            session_id="ses-1",
+            entities={"sub": "1", "ses": "1", "run": run},
+            time_kind="series",
+            time_value=series,
+        )
+
+    t1w_run_1 = image("T1w", "1", 1.0)
+    t1w_run_2 = image("T1w", "2", 3.0)
+    t2w_run_1 = image("T2w", "1", 2.0)
+    t2w_run_2 = image("T2w", "2", 4.0)
+    session_dir = tmp_path / "derivatives" / "sub-1" / "ses-1" / "anat"
+    work_dir = tmp_path / "work" / "sub-1" / "ses-1"
+    monkeypatch.setattr(
+        anat_steps,
+        "preprocessing_session_anat_dir",
+        lambda *_args, **_kwargs: session_dir,
+    )
+    monkeypatch.setattr(
+        anat_steps,
+        "preprocessing_session_work_dir",
+        lambda *_args, **_kwargs: work_dir,
+    )
+
+    plans = anat_steps._plan_session_anatomicals(
+        images=(t1w_run_1, t1w_run_2, t2w_run_1, t2w_run_2),
+        project="project",
+        preprocessing_id="preprocessing",
+        sub_id="sub-1",
+    )
+
+    assert len({plan.staged_preprocessed for plan in plans}) == 4
+    assert len({plan.registration_matrix for plan in plans if plan.registration_matrix}) == 2
+    for run, t1w, t2w in (
+        ("1", t1w_run_1, t2w_run_1),
+        ("2", t1w_run_2, t2w_run_2),
+    ):
+        t2w_plan = next(plan for plan in plans if plan.source is t2w)
+        t1w_plan = next(plan for plan in plans if plan.source is t1w)
+        assert t2w_plan.registration_reference == t1w_plan.staged_preprocessed
+        assert f"run-{run}" in t2w_plan.registration_matrix.name
+
+
 def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     destination = tmp_path / "destination.nii.gz"

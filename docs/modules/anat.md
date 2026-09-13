@@ -14,7 +14,9 @@ are available. Single images are copied. Acquisition metadata and filename
 ordering resolve selection reproducibly.
 
 T1w and T2w availability determines the graph. T2w images can be registered to
-T1w; a T1w/T2w myelin proxy exists only when both modalities are available.
+T1w. When a session contains repeated acquisitions, shared acquisition entities
+identify the corresponding T1w; acquisition order resolves remaining ties. A
+T1w/T2w myelin proxy exists only when both modalities are available.
 This ratio is not a quantitative myelin measurement. Review the manifest's
 selected sources before comparing subjects with different acquisition schemes.
 

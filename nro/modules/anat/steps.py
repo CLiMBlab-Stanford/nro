@@ -31,6 +31,18 @@ from .constants import (
 
 next_step = new_step_counter()
 
+_ANATOMICAL_PAIR_ENTITIES = (
+    "acq",
+    "ce",
+    "rec",
+    "run",
+    "echo",
+    "flip",
+    "inv",
+    "mt",
+    "part",
+)
+
 
 @dataclass(frozen=True)
 class _SessionAnatomicalPlan:
@@ -44,6 +56,24 @@ class _SessionAnatomicalPlan:
     mask: Path
     metadata_output: Path
     metadata: dict[str, object]
+
+
+def _paired_t1w(t2w: AnatImage, candidates: Sequence[AnatImage]) -> AnatImage:
+    """Choose the T1w acquisition that best matches one session T2w."""
+
+    def rank(candidate: AnatImage) -> tuple[int, int, int, float, str]:
+        shared = [
+            entity
+            for entity in _ANATOMICAL_PAIR_ENTITIES
+            if entity in t2w.entities and entity in candidate.entities
+        ]
+        conflicts = sum(t2w.entities[entity] != candidate.entities[entity] for entity in shared)
+        matches = sum(t2w.entities[entity] == candidate.entities[entity] for entity in shared)
+        comparable_time = t2w.time_kind == candidate.time_kind
+        distance = abs(t2w.time_value - candidate.time_value) if comparable_time else float("inf")
+        return conflicts, -matches, not comparable_time, distance, candidate.image.name
+
+    return min(candidates, key=rank)
 
 
 def _plan_session_anatomicals(
@@ -80,11 +110,11 @@ def _plan_session_anatomicals(
             execution_context.require_output(output_dir)
             execution_context.require_output(work_dir)
         staged = {
-            image.modality: work_dir
+            image.image: work_dir
             / f"{image.image.name.removesuffix('.nii.gz').removesuffix('.nii')}_desc-preproc_{image.modality}.nii.gz"
             for image in session_images
         }
-        has_paired_anatomicals = "T1w" in staged and "T2w" in staged
+        t1w_images = [image for image in session_images if image.modality == "T1w"]
         for image in session_images:
             payload: dict[str, object] = {}
             if image.json is not None and image.json.exists():
@@ -93,14 +123,17 @@ def _plan_session_anatomicals(
             payload["BiasCorrection"] = "N4BiasFieldCorrection"
             registration_reference: Optional[Path] = None
             registration_matrix: Optional[Path] = None
-            final_source = staged[image.modality]
-            if image.modality == "T2w" and has_paired_anatomicals:
-                registration_reference = staged["T1w"]
+            staged_preprocessed = staged[image.image]
+            final_source = staged_preprocessed
+            if image.modality == "T2w" and t1w_images:
+                registration_reference = staged[_paired_t1w(image, t1w_images).image]
+                source_prefix = image.image.name.removesuffix(".nii.gz").removesuffix(".nii")
+                source_prefix = source_prefix.removesuffix(f"_{image.modality}")
                 final_source = work_dir / (
                     f"{image.image.name.removesuffix('.nii.gz').removesuffix('.nii')}_space-T1w.nii.gz"
                 )
                 registration_matrix = work_dir / (
-                    f"{sub_id}_{session_id}_from-T2w_to-T1w_mode-image_xfm.mat"
+                    f"{source_prefix}_from-T2w_to-T1w_mode-image_xfm.mat"
                 )
                 payload["SpatialReference"] = "T1w"
                 payload["TransformToT1w"] = str(registration_matrix)
@@ -116,7 +149,7 @@ def _plan_session_anatomicals(
                 _SessionAnatomicalPlan(
                     source=image,
                     staged_raw=work_dir / image.image.name,
-                    staged_preprocessed=staged[image.modality],
+                    staged_preprocessed=staged_preprocessed,
                     registration_reference=registration_reference,
                     registration_matrix=registration_matrix,
                     final_source=final_source,
