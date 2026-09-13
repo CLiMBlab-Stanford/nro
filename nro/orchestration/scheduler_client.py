@@ -27,7 +27,7 @@ _CLEAR = "\r\x1b[2K"
 
 
 class SchedulerError(RuntimeError):
-    """Report a bounded scheduler transport or service failure."""
+    """Report a scheduler transport or service failure."""
 
 
 @dataclass(frozen=True)
@@ -178,6 +178,7 @@ def exchange(
     from nro.orchestration.scheduler_bus import (
         message_path,
         publish_message,
+        read_active,
         read_launch,
         read_response,
         read_startup_error,
@@ -190,6 +191,8 @@ def exchange(
         raise SchedulerError(f"Could not start the central scheduler: {error}") from error
     started = time.monotonic()
     last_recovery_check = started
+    active_token: str | None = None
+    active_started: float | None = None
     frame = 0
     notice = False
     while True:
@@ -213,8 +216,30 @@ def exchange(
             if "result" not in response:
                 raise SchedulerError("Central scheduler returned a malformed response")
             return response["result"]
-        elapsed = time.monotonic() - started
-        if timeout is not None and elapsed >= timeout:
+        now = time.monotonic()
+        active = read_active(endpoint.control)
+        if active is not None:
+            token = str(active["token"])
+            if token != active_token:
+                active_token = token
+                active_started = now
+        elif active_token is not None:
+            launch_token = str(launch.get("token") or "") if launch is not None else ""
+            if launch_token and launch_token != active_token:
+                active_token = None
+                active_started = None
+
+        job_id = str(launch.get("job_id") or "") if launch is not None else ""
+        waiting_for_slurm = (
+            active_started is None and bool(job_id) and not job_id.startswith("local-")
+        )
+        if active_started is not None:
+            timed_elapsed = now - active_started
+        elif waiting_for_slurm:
+            timed_elapsed = None
+        else:
+            timed_elapsed = now - started
+        if timeout is not None and timed_elapsed is not None and timed_elapsed >= timeout:
             if notice:
                 sys.stderr.write(_CLEAR)
                 sys.stderr.flush()
@@ -222,12 +247,17 @@ def exchange(
                 f"Central scheduler did not respond within {timeout:g} seconds; "
                 f"request {message_id} remains queued"
             )
-        now = time.monotonic()
         if now - last_recovery_check >= 5.0:
             _ensure_service(endpoint, explicit=False)
             last_recovery_check = now
+        elapsed = now - started
         if elapsed >= 0.75:
-            notice = _wait_notice(frame, "Waiting for the scheduler...") or notice
+            message_text = (
+                "Waiting for the scheduler allocation..."
+                if waiting_for_slurm
+                else "Waiting for the scheduler..."
+            )
+            notice = _wait_notice(frame, message_text) or notice
             frame += 1
         time.sleep(0.1 if elapsed < 2 else 0.5)
 
