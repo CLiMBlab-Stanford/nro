@@ -46,7 +46,7 @@ def _main(argv=None, *, prog="nro setup"):
             deep=False, with_oslom=not args.without_oslom, slurm=not args.local
         )
         for result in results:
-            print(f"{'OK' if result['ok'] else 'MISSING'} {result['name']}: {result['detail']}")
+            print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
         if any(not result["ok"] and result["required"] for result in results):
             parser.exit(
                 1, "Shared resources are unavailable; ask the site maintainer to check them.\n"
@@ -105,10 +105,13 @@ def _main(argv=None, *, prog="nro setup"):
         if not args.without_oslom:
             install_oslom(offline=args.offline)
         results = check_installation(
-            deep=True, with_oslom=not args.without_oslom, slurm=not args.local
+            deep=True,
+            with_oslom=not args.without_oslom,
+            slurm=not args.local,
+            container_execution=args.local,
         )
         for result in results:
-            print(f"{'OK' if result['ok'] else 'MISSING'} {result['name']}: {result['detail']}")
+            print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
         if any(not r["ok"] and r["required"] for r in results):
             raise RuntimeError("Required checks failed; correct the settings and rerun ./install")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

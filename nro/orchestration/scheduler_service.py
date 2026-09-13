@@ -1223,6 +1223,7 @@ def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> in
         pending_messages,
         publish_active,
         publish_response,
+        publish_startup_error,
         read_response,
     )
     from nro.orchestration.scheduler_implementation import require_worker_source
@@ -1233,16 +1234,22 @@ def serve(*, launch_token: str, bids_root: Path, idle_grace: float = 30.0) -> in
     control = Path(values["registry"])
     require_worker_source(control)
     registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
-    registry.initialize()
-    with registry.connection(write=True) as db:
-        row = db.execute("SELECT value FROM metadata WHERE key='scheduler_generation'").fetchone()
-        generation = int(row[0]) + 1 if row else 1
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES ('scheduler_generation',?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (str(generation),),
-        )
-    active = activate(control, launch_token, generation)
+    try:
+        registry.initialize()
+        with registry.connection(write=True) as db:
+            row = db.execute(
+                "SELECT value FROM metadata WHERE key='scheduler_generation'"
+            ).fetchone()
+            generation = int(row[0]) + 1 if row else 1
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES ('scheduler_generation',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(generation),),
+            )
+        active = activate(control, launch_token, generation)
+    except BaseException as error:
+        publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")
+        raise
     os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
     os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
     signal.signal(signal.SIGTERM, _request_stop)

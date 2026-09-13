@@ -158,7 +158,7 @@ def capture_worker_implementation(control: Path, bids_root: Path, *, check_check
 
 
 def capture_maintenance_implementation(control: Path, bids_root: Path, checkout: Path):
-    """Capture a tagged shared checkout while it upgrades its installed release."""
+    """Capture a tagged shared checkout while it upgrades or resumes its installation."""
     path = implementation_path(control)
     record = json.loads(path.read_text())
     checkout = checkout.resolve()
@@ -167,8 +167,8 @@ def capture_maintenance_implementation(control: Path, bids_root: Path, checkout:
     installed = installation_record(checkout)
     if (
         installed.get("mode") != "shared"
-        or not installed.get("ready")
         or installed.get("site") != record.get("site")
+        or str(Path(installed.get("environment", "")) / "bin/python") != record.get("python")
     ):
         raise ValueError("The active shared installation is unavailable")
     values = settings(path=Path(record["site"]))[0]

@@ -97,6 +97,13 @@ Maintenance is explicit:
 ./install --maintain
 ```
 
+The installer runs its scheduler controller locally. Maintenance does not request a
+Slurm allocation or wait for capacity in the scientific partition.
+
+Shared setup verifies container images by checksum without launching them on the login
+host. To test container execution explicitly, run `nro doctor --deep` in the same kind
+of Slurm allocation used for scientific work.
+
 When shared work is active, the installer reports it and offers three choices. A
 graceful drain prevents new claims, lets running derivative and ingestion stages
 finish, and then stops the workers. An immediate stop interrupts running work and
