@@ -89,6 +89,11 @@ class ModuleDescriptor:
     validate_public_definition: Callable | None = None
     canonical_processing: Callable | None = None
 
+    @property
+    def derivative_class(self) -> str:
+        """Return the public derivative collection that stores this module's artifacts."""
+        return "preprocessing" if self.name in {"anat", "func"} else self.configuration_class
+
     def processing_for(self, entities: dict) -> dict:
         """Combine module policy with any instance-specific scientific definition."""
         return {
@@ -100,7 +105,7 @@ class ModuleDescriptor:
 BUILTIN_MODULES = (
     ModuleDescriptor(
         name="anat",
-        configuration_class="preprocessing",
+        configuration_class="anat",
         scope="subject",
         output_format="BIDS anatomical images, surfaces, transforms, and module manifest",
         resource_class="large",
@@ -110,7 +115,7 @@ BUILTIN_MODULES = (
     ),
     ModuleDescriptor(
         name="func",
-        configuration_class="preprocessing",
+        configuration_class="func",
         scope="run",
         output_format="BIDS functional images, confounds, transforms, and module manifest",
         resource_class="large",

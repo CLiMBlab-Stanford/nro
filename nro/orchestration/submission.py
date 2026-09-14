@@ -6,6 +6,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from nro.engine.execution import thread_environment
 from nro.engine.io import atomic_write_text
 
 from .execution_cache import cache_publication
@@ -81,6 +82,8 @@ def _write_worker_script(
         (
             "set -euo pipefail",
             "export NRO_PROCESS_ROLE=worker",
+            f"export NRO_ALLOCATED_CPUS={cpus}",
+            *(f"export {key}={value}" for key, value in thread_environment(cpus).items()),
             "exec " + shlex.join(source.command(command, site=site_path)),
         )
     )

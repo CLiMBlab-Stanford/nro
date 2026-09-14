@@ -1,0 +1,20 @@
+fsaverage_template: fsaverage6
+container:
+  image: site:qunex
+  engine: site:runtime
+  cleanenv: true
+  bind: site:binds
+  home: null
+  inner_setup: >-
+    set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;
+    qx_setup_rc=$?; set -e; if [ "$qx_setup_rc" -ne 0 ]; then
+    echo "QuNex environment setup failed with status $qx_setup_rc" >&2;
+    exit "$qx_setup_rc"; fi
+  no_container: false
+selection_strategy: first
+mni_template: site:mni_template
+synthstrip_container: site:synthstrip
+freesurfer_subjects_dir: null
+fs_subject: null
+force: false
+verbose: false

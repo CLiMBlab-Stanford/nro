@@ -1,7 +1,7 @@
 # Workflows and configuration
 
 Scientific defaults ship with nro as packaged `main` configurations, grouped by
-derivative class. The external definitions store may contain small site-specific
+configuration class. The external definitions store may contain small site-specific
 overrides and named alternatives; see [definitions stores](definitions.md). A
 workflow selects configuration IDs, and `main` is the default workflow. Module
 pages show the packaged configurations and explain which steps consume their
@@ -48,6 +48,10 @@ unsupported strategies, out-of-range values, and conflicting settings such as
 values, including groups not used by the selected strategy. Requirements tied
 to a selected strategy are checked when that strategy is selected.
 
+Workflow validation also checks cross-module interfaces. When func requests an
+fsaverage-family output, its `fsaverage_template`, its requested space, and the
+template selected by anat must match.
+
 Equivalent numeric forms normalize to the field's declared type: `50` and
 `50.0` are equivalent for an integer count, while `50.5`, `"50"`, and `true`
 are rejected. Comments, mapping order, and explicit values equal to inherited
@@ -72,7 +76,7 @@ creating a new workflow revision with the updated runtime configuration.
 Artifact contracts use a separate scientific fingerprint that excludes fields
 explicitly marked as execution-only:
 
-- Preprocessing thread settings, `force`, `verbose`, and `func.io_chunk_vols`.
+- Anat and func `force` and `verbose`, plus func `io_chunk_vols`.
 - Clean `force` and `verbose`.
 - Firstlevels `spatial_block_size`.
 - Microparcellation `overwrite` and `connectivity.temporal_block_size`.
@@ -125,14 +129,15 @@ orchestration settings, separate from scientific contracts.
 
 ## Configuration classes
 
-| Derivative class | Modules | Parameter reference |
-| --- | --- | --- |
-| `preprocessing` | anat, func | [Anat](modules/anat.md), [func](modules/func.md) |
-| `clean` | clean | [Clean](modules/clean.md) |
-| `dynconn` | dynconn | [Dynamic connectivity](modules/dynconn.md) |
-| `microparcellation` | microparcellation | [Microparcellation](modules/microparcellation.md) |
-| `networks` | networks | [Networks](modules/networks.md) |
-| `firstlevels` | firstlevels | [First-level models](modules/firstlevels.md) |
+| Configuration class | Module | Public derivative class | Parameter reference |
+| --- | --- | --- | --- |
+| `anat` | anat | `preprocessing` | [Anat](modules/anat.md) |
+| `func` | func | `preprocessing` | [Func](modules/func.md) |
+| `clean` | clean | `clean` | [Clean](modules/clean.md) |
+| `dynconn` | dynconn | `dynconn` | [Dynamic connectivity](modules/dynconn.md) |
+| `microparcellation` | microparcellation | `microparcellation` | [Microparcellation](modules/microparcellation.md) |
+| `networks` | networks | `networks` | [Networks](modules/networks.md) |
+| `firstlevels` | firstlevels | `firstlevels` | [First-level models](modules/firstlevels.md) |
 
 [Task models](task-models.md) are separate from firstlevels configurations.
 They define event predictors, contrasts, and HRFs. The firstlevels configuration

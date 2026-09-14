@@ -16,6 +16,7 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 from nro.modules.func import module as func
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext, InputBinding
+from nro.orchestration.runner import ContainerSpec
 
 pytestmark = pytest.mark.integration
 
@@ -68,16 +69,11 @@ def functional_case(tmp_path, monkeypatch):
         json.dumps({"RepetitionTime": 2.0, "PhaseEncodingDirection": "j", "TotalReadoutTime": 0.05})
     )
     config_path = (
-        Path(func.__file__).parents[2]
-        / "configuration/starters/configs/preprocessing/main_preprocessing.yml"
+        Path(func.__file__).parents[2] / "configuration/starters/configs/func/main_func.yml"
     )
     cfg = yaml.safe_load(config_path.read_text())
     configure({"common": {"qunex_container": "/tmp/qunex.sif"}, "get_confounds": cfg["confounds"]})
-    values = {
-        field.name: cfg["func"][field.name]
-        for field in fields(func.Options)
-        if field.name in cfg["func"]
-    }
+    values = {field.name: cfg[field.name] for field in fields(func.Options) if field.name in cfg}
     values.update(
         fsaverage_template=cfg["fsaverage_template"],
         out_dir=logical.parent / "ses-1/func",
@@ -86,7 +82,12 @@ def functional_case(tmp_path, monkeypatch):
         preprocessing_id="main",
         sub_id="sub-1",
         ses_id="ses-1",
-        container=None,
+        container=ContainerSpec(
+            image=tmp_path / "synbold.sif",
+            engine="true",
+            home_dir=paths.work
+            / "demo/derivatives/preprocessing/main/sub-1/ses-1/func/run/_qunex_home",
+        ),
         synbold_disco_image=tmp_path / "synbold.sif",
         synbold_disco_license=tmp_path / "license",
         synbold_disco_engine="singularity",
@@ -132,6 +133,8 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     job = func.build_module(
         inputs, replace(options, clean_ica_aroma=aroma), execution_context=context
     )
+    assert job._container is not None
+    assert job._container.home_dir.is_relative_to(context.paths.development)
     graph = job._graph.freeze()
     assert any(image in step.inputs for step in graph.steps)
     assert any("space-fsaverage6" in path.name for step in graph.steps for path in step.outputs)

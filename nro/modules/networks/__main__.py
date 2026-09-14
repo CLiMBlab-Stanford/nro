@@ -196,14 +196,14 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     micro_config = micro_configuration.get("resolved") or {}
     participant_id = f"sub-{participant}"
     output_spaces = tuple(
-        str(value) for value in configurations["preprocessing"]["resolved"]["func"]["output_spaces"]
+        str(value) for value in configurations["func"]["resolved"]["output_spaces"]
     )
     if args.space not in output_spaces:
         raise SystemExit(
             f"space-{args.space} is not published by preprocessing; "
             f"choose from {', '.join(output_spaces)}"
         )
-    preprocessing_id = str(configurations["preprocessing"]["directory"])
+    preprocessing_id = str(configurations["anat"]["directory"])
     anat_manifest_path = anatomical_manifest_path(
         participant_id,
         project=args.project,

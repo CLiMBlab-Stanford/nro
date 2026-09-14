@@ -54,13 +54,17 @@ def main(
         / args.project
     )
     runs = selected_runs(
-        discover_raw_runs(project_root / f"sub-{participant}"), args.model, participant
+        discover_raw_runs(project_root / f"sub-{participant}"),
+        args.model,
+        participant,
+        config.get("input_filter"),
     )
     run_module(
         runs=runs,
         participant=participant,
         project_root=project_root,
-        preprocessing_id=config["preprocessing_directory"],
+        preprocessing_id=config["functional_directory"],
+        anatomical_preprocessing_id=config["anatomical_directory"],
         config_id=config_id,
         model_id=args.model,
         model=model,

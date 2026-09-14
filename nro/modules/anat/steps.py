@@ -215,6 +215,8 @@ def _brain_extract_anat_copy(
     tmp_mask = mask.parent / f"{mask.name}.tmp.nii.gz"
 
     def prepare() -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        mask.parent.mkdir(parents=True, exist_ok=True)
         tmp_img.unlink(missing_ok=True)
         tmp_mask.unlink(missing_ok=True)
 

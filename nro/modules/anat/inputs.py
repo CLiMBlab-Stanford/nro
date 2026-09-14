@@ -35,8 +35,8 @@ class AnatImage:
 
 
 def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatImage:
-    """Load the metadata used to order and combine one anatomical image."""
-    img = Path(path).resolve()
+    """Load ordering metadata while preserving the image's logical BIDS path."""
+    img = Path(path).expanduser().absolute()
     if not img.exists():
         raise FileNotFoundError(f"Missing anatomical image: {img}")
     js = sidecar_json_path(img)

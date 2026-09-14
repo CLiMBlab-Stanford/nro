@@ -139,10 +139,7 @@ def main(
         if matches_filter(run.entities, config.get("input_filter"))
     )
     spaces = tuple(
-        str(value)
-        for value in snapshot["configurations"]["preprocessing"]["resolved"]["func"][
-            "output_spaces"
-        ]
+        str(value) for value in snapshot["configurations"]["func"]["resolved"]["output_spaces"]
     )
     if args.space not in spaces:
         raise SystemExit(

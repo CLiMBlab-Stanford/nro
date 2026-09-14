@@ -105,8 +105,10 @@ thresholds reject implausible reference alignment. `syn_base_*` and
 schedules; they apply only to the relevant registration branch. `topup_config`
 selects the TOPUP settings. `io_chunk_vols` bounds I/O chunks, not scientific
 temporal filtering. Thread/force/logging controls have the same role as in anat.
-The shared `fsaverage_template` setting selects the surface target and must
-match any fsaverage-family entry in `func.output_spaces`.
+The `fsaverage_template` setting selects func's surface target. When
+`output_spaces` requests an fsaverage-family result, all three must agree: the
+requested space, this setting, and the template selected by the workflow's
+`anat` configuration.
 
 `marss_mode` defaults to `auto`. Its correction rule follows the publication's
 recommendation to apply MARSS at multiband factors of six or greater. The
@@ -128,9 +130,8 @@ masks. `n_acompcor` and `acompcor_max_voxels` bound aCompCor extraction.
 `nonsteady_*` controls initial-volume stabilization detection. aCompCor and FD
 are available as confounds but are not selected by the default clean regex.
 
-```{literalinclude} ../../nro/configuration/starters/configs/preprocessing/main_preprocessing.yml
+```{literalinclude} ../../nro/configuration/starters/configs/func/main_func.yml
 :language: yaml
-:start-at: func:
 ```
 
 Implementation: [module](../autoapi/nro/modules/func/module/index.rst),

@@ -140,7 +140,7 @@ def make_target_config(
         manifest_path = anatomical_manifest_path(
             sub_id,
             project=project,
-            preprocessing_id=config["preprocessing_directory"],
+            preprocessing_id=config["anatomical_directory"],
             bids_root=None if execution_context is None else execution_context.paths.bids,
         )
         if execution_context is not None and target.space == "fsnative":
@@ -161,7 +161,7 @@ def make_target_config(
             config.get("mask"),
             project=project,
             participant=participant,
-            preprocessing_directory=config["preprocessing_directory"],
+            preprocessing_directory=config["anatomical_directory"],
             space=target.space,
             execution_context=execution_context,
         )
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     selected_runs = tuple(
         run for run in source_runs if matches_filter(run.entities, config.get("input_filter"))
     )
-    preprocessing_config = snapshot["configurations"]["preprocessing"]["resolved"]
+    preprocessing_config = snapshot["configurations"]["func"]["resolved"]
     output_spaces = tuple(str(value) for value in preprocessing_config["func"]["output_spaces"])
     if args.space not in output_spaces:
         raise SystemExit(

@@ -1,6 +1,6 @@
-"""Resolve named nro workflows and derivative-class configurations.
+"""Resolve named nro workflows and module-specific configurations.
 
-Workflow files are named ``<ID>_workflow.yml``. They map derivative classes to
+Workflow files are named ``<ID>_workflow.yml``. They map configuration classes to
 configuration IDs; omitted classes default to ``main``. Configuration files
 are named ``<ID>_<CLASS>.yml`` and contain only options local to that class.
 Upstream configuration relationships are supplied by the workflow.
@@ -31,6 +31,16 @@ PACKAGED_CONFIGS = Path(__file__).parent / "starters/configs"
 
 DERIVATIVE_CLASSES: tuple[str, ...] = (
     "preprocessing",
+    "clean",
+    "dynconn",
+    "microparcellation",
+    "networks",
+    "firstlevels",
+)
+
+CONFIGURATION_CLASSES: tuple[str, ...] = (
+    "anat",
+    "func",
     "clean",
     "dynconn",
     "microparcellation",
@@ -102,7 +112,7 @@ def fingerprint(value: Any) -> str:
 class ResolvedConfiguration:
     """Resolved class configuration with its source ID, values, and fingerprint."""
 
-    derivative_class: str
+    configuration_class: str
     config_id: str
     path: Path
     values: dict[str, Any]
@@ -112,8 +122,16 @@ class ResolvedConfiguration:
     def scientific_fingerprint(self) -> str:
         """Identify the named scientific settings, excluding execution controls."""
         return configuration_fingerprint(
-            self.derivative_class, self.config_id, self.values, scientific=True
+            self.configuration_class, self.config_id, self.values, scientific=True
         )
+
+    def module_fingerprint(self, module: str) -> str:
+        """Identify settings that can affect one module in a shared class."""
+        if self.configuration_class != module:
+            raise ValueError(
+                f"Configuration class {self.configuration_class!r} does not configure {module!r}"
+            )
+        return self.scientific_fingerprint
 
 
 def configuration_fingerprint(
@@ -186,7 +204,7 @@ class ConfigStore:
 
     def configuration_path(self, derivative_class: str, config_id: str) -> Path:
         """Return an external configuration or the packaged ``main`` default."""
-        if derivative_class not in DERIVATIVE_CLASSES:
+        if derivative_class not in CONFIGURATION_CLASSES:
             raise WorkflowError(f"Unknown derivative class: {derivative_class}")
         config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
         filename = f"{config_id}_{derivative_class}.yml"
@@ -237,7 +255,7 @@ class ConfigStore:
             raise WorkflowError(f"{path}: {error}") from error
         flexible_filter = (
             override.pop("input_filter", None)
-            if derivative_class in {"dynconn", "microparcellation"}
+            if derivative_class in {"dynconn", "firstlevels", "microparcellation"}
             else None
         )
         values = _deep_merge(base, override)
@@ -296,7 +314,7 @@ class ConfigStore:
             declared = self._read_mapping(path) if document is None else dict(document)
             values = self._merge_configuration(derivative_class, values, declared, path=path)
         return ResolvedConfiguration(
-            derivative_class=derivative_class,
+            configuration_class=derivative_class,
             config_id=config_id,
             path=path,
             values=values,
@@ -324,14 +342,14 @@ class ConfigStore:
         declared = self._read_mapping(path) if document is None else document
         if not isinstance(declared, Mapping) or any(not isinstance(key, str) for key in declared):
             raise WorkflowError(f"{path}: Workflow must contain a mapping with string keys")
-        unknown = sorted(set(declared) - set(DERIVATIVE_CLASSES))
+        unknown = sorted(set(declared) - set(CONFIGURATION_CLASSES))
         if unknown:
             raise WorkflowError(
-                f"Unknown derivative class(es) in {path.name}: {', '.join(unknown)}"
+                f"Unknown configuration class(es) in {path.name}: {', '.join(unknown)}"
             )
         selections: dict[str, str] = {}
         configurations: dict[str, ResolvedConfiguration] = {}
-        for derivative_class in DERIVATIVE_CLASSES:
+        for derivative_class in CONFIGURATION_CLASSES:
             value = declared.get(derivative_class, "main")
             if not isinstance(value, str) or not value.strip():
                 raise WorkflowError(
@@ -340,13 +358,24 @@ class ConfigStore:
             config_id = value.strip()
             selections[derivative_class] = config_id
             configurations[derivative_class] = self.load_configuration(derivative_class, config_id)
+        requested_fsaverage = sorted(
+            space
+            for space in configurations["func"].values["output_spaces"]
+            if space.startswith("fsaverage")
+        )
+        anatomical_fsaverage = configurations["anat"].values["fsaverage_template"]
+        if requested_fsaverage and requested_fsaverage != [anatomical_fsaverage]:
+            raise WorkflowError(
+                f"{path}: func.output_spaces must use the selected anat.fsaverage_template "
+                f"({anatomical_fsaverage})"
+            )
         resolved = {
             "workflow_id": workflow_id,
             "selections": selections,
             # This key is part of the stable fingerprint serialization.
             "configs": {
                 derivative_class: configurations[derivative_class].fingerprint
-                for derivative_class in DERIVATIVE_CLASSES
+                for derivative_class in CONFIGURATION_CLASSES
             },
         }
         return ResolvedWorkflow(
@@ -399,7 +428,7 @@ def main(argv: list[str] | None = None) -> None:
             "path": str(resolved.configurations[derivative_class].path),
             "fingerprint": resolved.configurations[derivative_class].fingerprint,
         }
-        for derivative_class in DERIVATIVE_CLASSES
+        for derivative_class in CONFIGURATION_CLASSES
     ]
     if args.json:
         print(

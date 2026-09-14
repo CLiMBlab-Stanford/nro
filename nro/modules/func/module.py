@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -208,7 +207,6 @@ class Options:
     preprocessing_id: str
     sub_id: str
     ses_id: Optional[str]
-    nthreads: int
     force: bool
     output_grid: str
     topup_config: str
@@ -247,6 +245,7 @@ class Options:
     sbref_max_rigid_rotation_degrees: float
     sbref_min_support_overlap: float
     sbref_min_intensity_correlation: float
+    anatomical_preprocessing_id: Optional[str] = None
 
 
 def _functional_config_payload(opts: Options) -> dict[str, object]:
@@ -336,10 +335,17 @@ def build_module(
     if execution_context is not None:
         if execution_context.project != opts.project:
             raise ValueError("Functional project differs from its execution context")
+        container = opts.container
+        if container is not None and container.home_dir is not None:
+            container = replace(
+                container,
+                home_dir=execution_context.output_path(container.home_dir, private=True),
+            )
         opts = replace(
             opts,
             out_dir=execution_context.output_path(opts.out_dir),
             work_dir=execution_context.output_path(opts.work_dir, private=True),
+            container=container,
         )
     require_existing_path(inputs.epi, "epi")
     require_existing_path(inputs.epi_json, "epi-json")
@@ -362,7 +368,7 @@ def build_module(
     anat_manifest = anatomical_manifest_path(
         opts.sub_id,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
+        preprocessing_id=opts.anatomical_preprocessing_id or opts.preprocessing_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -424,7 +430,7 @@ def build_module(
         for hemi, source_hemi in (("L", "lh"), ("R", "rh"))
         for surface in ("white", "pial", "midthickness")
     }
-    env = neuroimaging_environment(opts.nthreads, subjects_dir=subjects_dir)
+    env = neuroimaging_environment(subjects_dir=subjects_dir)
     raw_repetition_time = epi_input_meta.get("RepetitionTime")
     try:
         repetition_time = float(raw_repetition_time) if raw_repetition_time is not None else None
@@ -3133,16 +3139,16 @@ def _build_argparser() -> argparse.ArgumentParser:
         default=SETTINGS.common.preprocessing_id,
         help="Preprocessing collection name under derivatives/preprocessing/.",
     )
+    p.add_argument(
+        "--anatomical-preprocessing-id",
+        default=SETTINGS.common.anatomical_preprocessing_id,
+        help="Preprocessing collection containing the shared anatomical derivative.",
+    )
     p.add_argument("--fsaverage-template", default=cfg.fsaverage_template)
     p.add_argument("--sub-id", required=True, help="Subject identifier, e.g. sub-c001")
     p.add_argument("--ses-id", default=None, help="Optional session identifier, e.g. ses-ex31524")
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
 
-    p.add_argument(
-        "--nthreads",
-        type=int,
-        default=max(int(cfg.nthreads_min), (os.cpu_count() or 1) // int(cfg.nthreads_divisor)),
-    )
     p.add_argument(
         "--debug-first-nvols",
         type=int,
@@ -3342,9 +3348,9 @@ def main(
         work_dir=work_dir,
         project=project,
         preprocessing_id=str(args.preprocessing_id),
+        anatomical_preprocessing_id=str(args.anatomical_preprocessing_id),
         sub_id=str(args.sub_id),
         ses_id=ses_id,
-        nthreads=int(args.nthreads),
         force=bool(args.force),
         output_grid=str(args.output_grid),
         topup_config=str(args.topup_config),

@@ -32,6 +32,7 @@ def _main(argv=None, *, prog="nro setup"):
         raise SystemExit(result.returncode)
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("--resources-only", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--prepared-maintenance", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--maintain", action="store_true")
     parser.add_argument("--non-interactive", action="store_true")
     parser.add_argument("--offline", action="store_true")
@@ -52,12 +53,19 @@ def _main(argv=None, *, prog="nro setup"):
                 1, "Shared resources are unavailable; ask the site maintainer to check them.\n"
             )
         return
+    if args.prepared_maintenance and (
+        not args.maintain or os.environ.get("NRO_SETUP_CHILD") != "1"
+    ):
+        parser.error("--prepared-maintenance is reserved for the shared installer")
     if installation_record().get("mode") == "shared" and not args.maintain:
         parser.error("Shared resource maintenance requires --maintain")
     try:
-        from nro.engine.bootstrap import check_workers
+        from nro.engine.bootstrap import check_installation_barrier, check_workers
 
-        check_workers(site_file())
+        if args.prepared_maintenance:
+            check_installation_barrier(site_file(), CHECKOUT)
+        else:
+            check_workers(site_file())
         path = site_file()
         if not path.exists():
             if args.non_interactive:

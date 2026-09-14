@@ -81,11 +81,11 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ("firstlevels", {"ar_grid": [1]}, "ar_grid"),
         ("firstlevels", {"aggregation_weighting": "unknown"}, "aggregation_weighting"),
         ("firstlevels", {"low_pass": 0.1}, "low_pass"),
-        ("preprocessing", {"func": {"bbregister_dof": 5}}, "bbregister_dof"),
-        ("preprocessing", {"func": {"output_spaces": []}}, "output_spaces"),
+        ("func", {"bbregister_dof": 5}, "bbregister_dof"),
+        ("func", {"output_spaces": []}, "output_spaces"),
         (
-            "preprocessing",
-            {"func": {"output_spaces": ["fsaverage"]}},
+            "func",
+            {"output_spaces": ["fsaverage"]},
             "fsaverage_template",
         ),
     ],
@@ -177,6 +177,7 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     )
     assert original.scientific_fingerprint != changed.scientific_fingerprint
     values = store.load_configuration("firstlevels", "main").values
+    assert values["input_filter"] == {}
     assert values["aggregation_weighting"] == "precision"
     assert scientific_values("firstlevels", values) != scientific_values(
         "firstlevels", {**values, "ar_grid": values["ar_grid"][::-1]}
@@ -218,38 +219,23 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
 
 
 def test_marss_cutoff_is_scientific_only_when_auto_mode_uses_it(store):
-    defaults = store.load_configuration("preprocessing", "main")
+    defaults = store.load_configuration("func", "main")
     changed_auto = store.load_configuration(
-        "preprocessing",
+        "func",
         "main",
-        document={
-            **defaults.values,
-            "func": {
-                **defaults.values["func"],
-                "marss_min_multiband_factor": 5,
-            },
-        },
+        document={**defaults.values, "marss_min_multiband_factor": 5},
     )
     assert defaults.scientific_fingerprint != changed_auto.scientific_fingerprint
 
     diagnose = store.load_configuration(
-        "preprocessing",
+        "func",
         "main",
-        document={
-            **defaults.values,
-            "func": {**defaults.values["func"], "marss_mode": "diagnose"},
-        },
+        document={**defaults.values, "marss_mode": "diagnose"},
     )
     changed_diagnose = store.load_configuration(
-        "preprocessing",
+        "func",
         "main",
-        document={
-            **diagnose.values,
-            "func": {
-                **diagnose.values["func"],
-                "marss_min_multiband_factor": 5,
-            },
-        },
+        document={**diagnose.values, "marss_min_multiband_factor": 5},
     )
     assert diagnose.fingerprint != changed_diagnose.fingerprint
     assert diagnose.scientific_fingerprint == changed_diagnose.scientific_fingerprint
@@ -280,9 +266,13 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
     runtime = tmp_path / "main_firstlevels.yml"
     values = store.load_configuration("firstlevels", "main").values
     runtime.write_text(yaml.safe_dump(values))
-    with pytest.raises(ValueError, match="preprocessing_directory"):
+    with pytest.raises(ValueError, match="anatomical_directory"):
         load_runtime_configuration(runtime, "firstlevels")
-    values.update(preprocessing_directory="main", preprocessing_aroma=True)
+    values.update(
+        anatomical_directory="main",
+        functional_directory="main",
+        preprocessing_aroma=True,
+    )
     runtime.write_text(yaml.safe_dump(values))
     assert load_runtime_configuration(runtime, "firstlevels")[1] == values
     with pytest.raises(ValueError, match="Recursive YAML"):

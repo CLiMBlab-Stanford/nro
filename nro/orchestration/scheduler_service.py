@@ -247,6 +247,7 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
             registry,
             memory_gb=options["memory"],
             drain_seconds=options["drain_minutes"] * 60,
+            cpus=options["cpus"],
             poll_interval=options.get("worker_poll_interval", 5.0),
             stdout=sys.stderr,
             wait=False,

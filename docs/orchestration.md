@@ -68,7 +68,7 @@ cross-branch invalidation.
 
 ## Configuration and freshness
 
-Workflows select one configuration ID per derivative class from the external
+Workflows select one configuration ID per configuration class from the external
 [definitions store](definitions.md). Resolution produces a complete scientific
 configuration and a separate execution snapshot. Equivalent compiled
 definitions share work even when their source YAML differs in formatting.

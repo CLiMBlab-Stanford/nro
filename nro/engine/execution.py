@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from collections.abc import Iterable
@@ -9,9 +10,41 @@ from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from nro.engine.io import atomic_copy_file
 from nro.orchestration.runner_graph import Step
 
-from .io import atomic_copy_file
+_THREAD_ENVIRONMENT_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def allocated_cpus() -> int:
+    """Return the CPU count assigned to the current worker process."""
+    for variable in ("NRO_ALLOCATED_CPUS", "SLURM_CPUS_PER_TASK"):
+        value = os.environ.get(variable)
+        if value is None:
+            continue
+        try:
+            cpus = int(value)
+        except ValueError as error:
+            raise ValueError(f"{variable} must be a positive integer") from error
+        if cpus < 1:
+            raise ValueError(f"{variable} must be a positive integer")
+        return cpus
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except AttributeError:
+        return max(1, os.cpu_count() or 1)
+
+
+def thread_environment(cpus: int | None = None) -> dict[str, str]:
+    """Limit common numerical libraries to the worker's CPU allocation."""
+    thread_count = str(allocated_cpus() if cpus is None else max(1, int(cpus)))
+    return {variable: thread_count for variable in _THREAD_ENVIRONMENT_VARIABLES}
 
 
 def new_step_counter(start: int = 1) -> Callable[[], int]:
@@ -112,18 +145,12 @@ def require_existing_path(path: Path | None, description: str) -> None:
         raise SystemExit(f"Missing required file for {description}: {path}")
 
 
-def neuroimaging_environment(
-    nthreads: int,
-    *,
-    subjects_dir: Path,
-) -> dict[str, str]:
+def neuroimaging_environment(*, subjects_dir: Path) -> dict[str, str]:
     """Build the common FSL, ITK, and FreeSurfer process environment."""
-    thread_count = str(max(1, int(nthreads)))
     environment = {
         "FSLOUTPUTTYPE": "NIFTI_GZ",
-        "OMP_NUM_THREADS": thread_count,
-        "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": thread_count,
         "SUBJECTS_DIR": str(subjects_dir),
+        **thread_environment(),
     }
     from nro.configuration.site import settings
 

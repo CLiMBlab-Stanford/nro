@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +8,7 @@ import pytest
 import yaml
 
 from nro.bin.scene import _viewer_command, build_parser, scene_id
+from nro.engine import viewer_broker
 from nro.engine.cli import core_selection
 from nro.engine.scenes import (
     SceneSource,
@@ -62,46 +62,117 @@ def test_scene_viewer_requires_one_generated_scene(tmp_path: Path) -> None:
         )
 
 
-def test_scene_viewer_uses_an_x11_slurm_allocation(monkeypatch) -> None:
+def test_scene_viewer_uses_the_persistent_broker(monkeypatch, tmp_path: Path) -> None:
     calls = []
-    monkeypatch.setenv("DISPLAY", "localhost:10.0")
-    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
-    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
-
-    run_x11(
-        ["/opt/workbench/wb_view", "/data/example.scene"], partition="interactive", account="lab"
-    )
-
-    argv, options = calls[0]
-    assert argv[:3] == ["/usr/bin/srun", "--x11", "--partition=interactive"]
-    assert "--account=lab" in argv
-    assert argv[-2:] == ["/opt/workbench/wb_view", "/data/example.scene"]
-    assert options == {"check": True}
-
-
-def test_scene_viewer_reuses_an_existing_slurm_allocation(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setenv("DISPLAY", "localhost:10.0")
-    monkeypatch.setenv("SLURM_JOB_ID", "1234")
     monkeypatch.setattr(
-        shutil, "which", lambda _name: pytest.fail("existing allocations do not invoke srun")
+        "nro.engine.slurm.open_viewer",
+        lambda scene, **options: calls.append((scene, options)),
     )
-    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)))
 
     run_x11(
-        ["/opt/workbench/wb_view", "/data/example.scene"],
+        ["/opt/workbench/wb_view", "-scene-load-hd", "/data/example.scene", "1"],
+        partition="interactive",
+        account="lab",
+        control=tmp_path / "control",
+    )
+
+    scene, options = calls[0]
+    assert scene == Path("/data/example.scene")
+    assert options == {
+        "viewer": Path("/opt/workbench/wb_view"),
+        "partition": "interactive",
+        "account": "lab",
+        "control": tmp_path / "control",
+    }
+
+
+def test_viewer_broker_launch_requests_twelve_hours_and_fixed_resources(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls = []
+    viewer = tmp_path / "wb_view"
+    viewer.touch()
+    monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setattr(viewer_broker.shutil, "which", lambda _name: "/usr/bin/srun")
+    monkeypatch.setattr(
+        viewer_broker.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)) or SimpleNamespace(pid=123),
+    )
+
+    _process, _token, _log = viewer_broker._launch(
+        tmp_path,
+        viewer=viewer,
         partition="interactive",
         account="lab",
     )
 
-    assert calls == [(["/opt/workbench/wb_view", "/data/example.scene"], {"check": True})]
+    command, options = calls[0]
+    assert command[:3] == ["/usr/bin/srun", "--x11", "--partition=interactive"]
+    assert "--account=lab" in command
+    assert "--cpus-per-task=2" in command
+    assert "--mem=32G" in command
+    assert "--time=12:00:00" in command
+    assert command[-2:] == ["--viewer", str(viewer)]
+    assert options["start_new_session"] is True
 
 
-def test_scene_viewer_requires_an_x11_display(monkeypatch) -> None:
+def test_viewer_broker_requires_x11_only_when_starting(monkeypatch, tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    viewer = tmp_path / "wb_view"
+    scene.touch()
+    viewer.touch()
     monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     with pytest.raises(ValueError, match="DISPLAY"):
-        run_x11(["wb_view", "example.scene"], partition="interactive", account=None)
+        viewer_broker.open_viewer(
+            scene,
+            viewer=viewer,
+            partition="interactive",
+            account=None,
+            control=tmp_path / "control",
+        )
+
+
+def test_viewer_broker_reuses_a_live_allocation(monkeypatch, tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    viewer = tmp_path / "wb_view"
+    scene.touch()
+    viewer.touch()
+    active = {"token": "token", "host": "node", "port": 1234}
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    monkeypatch.setattr(viewer_broker, "state_directory", lambda _control: tmp_path)
+    monkeypatch.setattr(viewer_broker, "_live_active", lambda _root: active)
+    monkeypatch.setattr(
+        viewer_broker,
+        "_exchange",
+        lambda selected, payload: {"ok": True, "pid": 456},
+    )
+    monkeypatch.setattr(
+        viewer_broker,
+        "_launch",
+        lambda *_args, **_kwargs: pytest.fail("live brokers must be reused"),
+    )
+
+    assert (
+        viewer_broker.open_viewer(
+            scene,
+            viewer=viewer,
+            partition="interactive",
+            account=None,
+            control=tmp_path / "control",
+        )
+        == 456
+    )
+
+
+def test_viewer_broker_survives_a_disconnected_client() -> None:
+    class DisconnectedStream:
+        @staticmethod
+        def sendall(_payload):
+            raise BrokenPipeError
+
+    viewer_broker._send_response(DisconnectedStream(), {"ok": True})
 
 
 def test_surface_base_scene_references_existing_geometry(tmp_path: Path) -> None:

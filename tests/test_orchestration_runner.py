@@ -6,10 +6,32 @@ from pathlib import Path
 
 import pytest
 
-from nro.engine.execution import collect_bind_directories
+from nro.engine.execution import allocated_cpus, collect_bind_directories, thread_environment
 from nro.orchestration.manifests import file_record
 from nro.orchestration.runner import ContainerSpec, Runner
 from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
+
+
+def test_allocated_cpus_prefers_explicit_worker_allocation(monkeypatch) -> None:
+    monkeypatch.setenv("NRO_ALLOCATED_CPUS", "3")
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "5")
+
+    assert allocated_cpus() == 3
+    assert set(thread_environment().values()) == {"3"}
+
+
+def test_allocated_cpus_uses_slurm_allocation(monkeypatch) -> None:
+    monkeypatch.delenv("NRO_ALLOCATED_CPUS", raising=False)
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "5")
+
+    assert allocated_cpus() == 5
+
+
+def test_allocated_cpus_rejects_invalid_worker_allocation(monkeypatch) -> None:
+    monkeypatch.setenv("NRO_ALLOCATED_CPUS", "0")
+
+    with pytest.raises(ValueError, match="positive integer"):
+        allocated_cpus()
 
 
 def test_bind_collection_uses_existing_ancestors_for_future_outputs(

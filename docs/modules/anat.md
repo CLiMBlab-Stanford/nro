@@ -70,19 +70,17 @@ Required metadata includes `inputs`, `selection_strategy`, `outputs`,
 ## Configuration
 
 `fsaverage_template` selects either `fsaverage6`, the packaged default, or the
-full-resolution `fsaverage` surface target. `anat.selection_strategy` controls
+full-resolution `fsaverage` surface target. `selection_strategy` controls
 acquisition combination. `mni_template`
 selects the registration target; `synthstrip_container` selects brain extraction.
 `freesurfer_subjects_dir` and `fs_subject` override FreeSurfer storage and identity.
-`nthreads`, `nthreads_divisor`, and `nthreads_min` determine tool thread allocation;
-Slurm CPUs are a separate worker resource. `force` requests re-execution;
+Scientific tools use the worker's CPU allocation, which `nro run --cpus` sets.
+`force` requests re-execution;
 `verbose` changes logging. `container` controls the runtime, image, binds, home,
-environment isolation, and inner setup command for preprocessing.
+environment isolation, and inner setup command for anatomy.
 
-```{literalinclude} ../../nro/configuration/starters/configs/preprocessing/main_preprocessing.yml
+```{literalinclude} ../../nro/configuration/starters/configs/anat/main_anat.yml
 :language: yaml
-:start-at: fsaverage_template:
-:end-before: func:
 ```
 
 Implementation: [module construction](../autoapi/nro/modules/anat/module/index.rst),

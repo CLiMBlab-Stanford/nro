@@ -442,6 +442,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
                 _viewer_command(viewer, scenes),
                 partition=values["viewing_partition"],
                 account=values["account"] or None,
+                control=Path(values["registry"]),
             )
         except ValueError as error:
             raise SystemExit(str(error)) from error

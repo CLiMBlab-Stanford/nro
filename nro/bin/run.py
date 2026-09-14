@@ -575,7 +575,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if args.local:
         from nro.orchestration.scheduler_implementation import run_local_worker
 
-        run_local_worker(registry, memory_gb=args.memory, drain_seconds=args.drain_minutes * 60)
+        run_local_worker(
+            registry,
+            memory_gb=args.memory,
+            drain_seconds=args.drain_minutes * 60,
+            cpus=args.cpus,
+        )
     elif not args.no_submit:
         tier = args.memory
         scripts: dict[int, Path] = {}

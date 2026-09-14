@@ -9,7 +9,7 @@ from nro.bin.run import build_parser as run_parser
 from nro.bin.status import build_parser as status_parser
 from nro.bin.stop import build_parser as stop_parser
 from nro.configuration.paths import REGISTRY_PATH
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore
+from nro.configuration.store import CONFIGURATION_CLASSES, DERIVATIVE_CLASSES, ConfigStore
 from nro.orchestration.catalog import BUILTIN_MODULES, MODULES
 from nro.orchestration.contracts import (
     ExecutionEnvelope,
@@ -145,8 +145,9 @@ def test_default_registry_is_lab_wide(monkeypatch) -> None:
 def test_workflow_api_exposes_configurations_by_derivative_class() -> None:
     workflow = ConfigStore().resolve("main")
 
-    assert set(workflow.configurations) == set(DERIVATIVE_CLASSES)
-    assert workflow.configuration("preprocessing").derivative_class == "preprocessing"
+    assert set(workflow.configurations) == set(CONFIGURATION_CLASSES)
+    assert workflow.configuration("anat").configuration_class == "anat"
+    assert workflow.configuration("func").configuration_class == "func"
     assert not hasattr(workflow, "stages")
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import configure_preprocessing, load_runtime_configuration
+from nro.configuration.runtime import configure_func, load_runtime_configuration
 from nro.engine.bids import (
     discover_raw_runs,
     parse_selectors,
@@ -75,11 +75,11 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="preprocessing",
+        derivative_class="func",
         execution_context=execution_context,
     )
-    preprocessing_id, cfg = load_runtime_configuration(runtime_config, "preprocessing")
-    configure_preprocessing(args.project, preprocessing_id, cfg)
+    preprocessing_id, cfg = load_runtime_configuration(runtime_config, "func")
+    configure_func(args.project, preprocessing_id, cfg)
 
     from nro.modules.func.module import main as run_func
 
@@ -92,8 +92,6 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         preprocessing_id,
         "--sub-id",
         sub_id,
-        "--nthreads",
-        str(cfg["func"]["nthreads"]),
     ]
     if ses_id:
         module_argv.extend(("--ses-id", ses_id))

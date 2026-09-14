@@ -383,6 +383,7 @@ def build_module(
     space: str,
     smoothing: int,
     work_root: Path,
+    anatomical_preprocessing_id: str | None = None,
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> tuple[Runner, Path]:
@@ -454,7 +455,7 @@ def build_module(
                             project_root
                             / "derivatives"
                             / "preprocessing"
-                            / preprocessing_id
+                            / (anatomical_preprocessing_id or preprocessing_id)
                             / f"sub-{participant}"
                             / "anat"
                         )
@@ -576,6 +577,7 @@ def run_module(
     space: str,
     smoothing: int,
     work_root: Path,
+    anatomical_preprocessing_id: str | None = None,
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> Path:
@@ -589,6 +591,7 @@ def run_module(
         participant=participant,
         project_root=project_root,
         preprocessing_id=preprocessing_id,
+        anatomical_preprocessing_id=anatomical_preprocessing_id,
         config_id=config_id,
         model_id=model_id,
         model=model,

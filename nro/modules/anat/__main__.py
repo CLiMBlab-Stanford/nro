@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import configure_preprocessing, load_runtime_configuration
+from nro.configuration.runtime import configure_anat, load_runtime_configuration
 from nro.orchestration.runtime import select_runtime_config
 
 
@@ -45,11 +45,11 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="preprocessing",
+        derivative_class="anat",
         execution_context=execution_context,
     )
-    preprocessing_id, cfg = load_runtime_configuration(runtime_config, "preprocessing")
-    configure_preprocessing(args.project, preprocessing_id, cfg)
+    preprocessing_id, cfg = load_runtime_configuration(runtime_config, "anat")
+    configure_anat(args.project, preprocessing_id, cfg)
     t1w, t2w = _anatomicals(
         args.project, sub_id, bids_root=execution_context.paths.bids if execution_context else None
     )
@@ -63,8 +63,6 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         preprocessing_id,
         "--sub-id",
         sub_id,
-        "--nthreads",
-        str(cfg["anat"]["nthreads"]),
     ]
     for path in t1w:
         module_argv.extend(("--t1w", str(path)))

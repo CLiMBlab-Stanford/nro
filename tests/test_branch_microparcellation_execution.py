@@ -97,7 +97,7 @@ def case(tmp_path, monkeypatch):
             / "configuration/starters/configs/microparcellation/main_microparcellation.yml"
         ).read_text()
     )
-    cfg["preprocessing_directory"] = "main"
+    cfg["anatomical_directory"] = "main"
     monkeypatch.setattr(entry, "select_runtime_config", lambda **kwargs: tmp_path / "runtime.yml")
     monkeypatch.setattr(entry, "load_runtime_configuration", lambda *args: ("main", cfg))
     monkeypatch.setattr(
@@ -105,7 +105,7 @@ def case(tmp_path, monkeypatch):
         "load_runtime_workflow_snapshot",
         lambda *args: {
             "configurations": {
-                "preprocessing": {"resolved": {"func": {"output_spaces": ["T1w", "fsnative"]}}},
+                "func": {"resolved": {"output_spaces": ["T1w", "fsnative"]}},
                 "clean": {"directory": "main"},
             }
         },

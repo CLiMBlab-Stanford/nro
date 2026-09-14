@@ -37,10 +37,12 @@ Module constructors must not execute image processing while building the graph.
 
 ## Reuse and ownership
 
-Workflows select configurations for derivative classes. `anat` and `func`
-share the `preprocessing` class. Configuration lineages include upstream
-choices, allowing equivalent workflows to share results. Directory labels are
-not reliable substitutes for lineage identity.
+Workflows select module-specific configuration classes. `anat` and `func` have
+independent configurations but publish to the shared `preprocessing` derivative
+class. Functional variants that select equivalent anatomy reuse the same
+anatomical instance. Configuration lineages include upstream choices, allowing
+equivalent workflows to share results. Directory labels are not reliable
+substitutes for lineage identity.
 
 Public artifacts are durable results under a project's `derivatives` tree.
 Private intermediates live under WORK and support resumption. Ownership receipts

@@ -227,8 +227,8 @@ def test_real_fieldmaps_default_to_base_registration_without_anatomical_syn(
 
 
 def test_fieldmap_anatomical_syn_cli_default_is_disabled() -> None:
-    config = ConfigStore().load_configuration("preprocessing", "main").values
-    assert config["func"]["fieldmap_syn_refine"] is False
+    config = ConfigStore().load_configuration("func", "main").values
+    assert config["fieldmap_syn_refine"] is False
 
 
 def test_synbold_reference_is_reserved_for_fieldmapless_fallback() -> None:

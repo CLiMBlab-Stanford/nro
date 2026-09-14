@@ -23,10 +23,10 @@ module. Lab-wide planning, state, and workers remain in `nro/orchestration`.
 
 `nro/configuration/store.py` resolves configurations and workflows from the
 external [definitions store](definitions.md). Its `configs/` directory contains
-one directory per derivative class. Workflows live in `workflows/`. Processing
+one directory per configuration class. Workflows live in `workflows/`. Processing
 requests accept identifiers; `nro paths` selects the store root.
 
-A derivative configuration contains only local parameters. A workflow selects
+A module configuration contains only local parameters. A workflow selects
 configuration IDs and therefore supplies upstream lineage. The complete base
 for each class lives in nro's packaged `main_<CLASS>.yml`; an optional external
 `main` override and then a selected named YAML file are overlaid in that order.
@@ -37,6 +37,9 @@ runtime values without a second merge or another configuration source.
 Configuration lineages form a DAG independent of participant instances.
 Equivalent lineages reuse a derivative directory. A changed definition creates
 a workflow revision, while the all-`main` lineage reserves directory `main`.
+The `anat` and `func` configuration classes combine into the public
+`preprocessing` lineage. Anatomy is identified separately within that lineage,
+which prevents a functional-only variant from duplicating anatomical work.
 
 ## Instance specifications and contracts
 

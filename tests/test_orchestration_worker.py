@@ -197,15 +197,13 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     anat = _spec(
         key="anat:" + "a" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=anat_output,
         inputs=(raw,),
     )
-    anat = anat.evolve(
-        config_fingerprint=workflow.configuration("preprocessing").scientific_fingerprint
-    )
+    anat = anat.evolve(config_fingerprint=workflow.configuration("anat").scientific_fingerprint)
     network = _spec(
         key="networks:" + "b" * 64,
         module="networks",
@@ -475,9 +473,9 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     instance = _spec(
         key="anat:" + "0" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=derivative,
         inputs=(raw,),
     ).evolve(
@@ -613,9 +611,9 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
     upstream = _spec(
         key="anat:" + "h" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
     )
     downstream = _spec(
@@ -668,9 +666,9 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     instance = _spec(
         key="anat:" + "j" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
     )
     registry.create_request(
@@ -710,9 +708,9 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
     upstream = _spec(
         key="anat:" + "k" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
     )
     downstream = _spec(
@@ -894,9 +892,9 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(
     instance = _spec(
         key="anat:" + "9" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "anat.txt",
     )
     registry.create_request(
@@ -928,9 +926,9 @@ def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> N
         anat = _spec(
             key="anat:" + marker * 64,
             module="anat",
-            lineage=registered.lineages["preprocessing"],
-            config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-            runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+            lineage=registered.anatomy_lineage,
+            config_fingerprint=workflow.configuration("anat").fingerprint,
+            runtime_config=registry.runtime_config_path(registered, "anat"),
             output=tmp_path / participant / "anat.txt",
         ).evolve(participant=participant)
         network = _spec(
@@ -1232,12 +1230,12 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    runtime = registry.runtime_config_path(registered, "preprocessing")
+    runtime = registry.runtime_config_path(registered, "anat")
     anat = _spec(
         key="anat:" + "7" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=runtime,
         output=tmp_path / "anat.txt",
     )
@@ -1245,8 +1243,8 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
         _spec(
             key=f"func:{index}" + "8" * 63,
             module="func",
-            lineage=registered.lineages["preprocessing"],
-            config_fingerprint=workflow.configuration("preprocessing").fingerprint,
+            lineage=registered.anatomy_lineage,
+            config_fingerprint=workflow.configuration("anat").fingerprint,
             runtime_config=runtime,
             output=tmp_path / f"func-{index}.txt",
             dependencies=(anat.key,),
@@ -1715,9 +1713,9 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
     upstream = _spec(
         key="anat:" + "c" * 64,
         module="anat",
-        lineage=registered.lineages["preprocessing"],
-        config_fingerprint=workflow.configuration("preprocessing").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "preprocessing"),
+        lineage=registered.anatomy_lineage,
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
     )
     downstream = _spec(
@@ -1770,16 +1768,20 @@ def test_fatal_instance_failure_cancels_active_transitive_descendants(tmp_path: 
     specs = []
     previous = None
     for index, module in enumerate(("anat", "func", "clean")):
+        configuration_class = module
+        lineage = (
+            registered.anatomy_lineage
+            if module == "anat"
+            else registered.lineages["preprocessing"]
+            if module == "func"
+            else registered.lineages["clean"]
+        )
         spec = _spec(
             key=f"{module}:" + chr(ord("e") + index) * 64,
             module=module,
-            lineage=registered.lineages["preprocessing" if module in {"anat", "func"} else "clean"],
-            config_fingerprint=workflow.configuration(
-                "preprocessing" if module in {"anat", "func"} else "clean"
-            ).fingerprint,
-            runtime_config=registry.runtime_config_path(
-                registered, "preprocessing" if module in {"anat", "func"} else "clean"
-            ),
+            lineage=lineage,
+            config_fingerprint=workflow.configuration(configuration_class).fingerprint,
+            runtime_config=registry.runtime_config_path(registered, configuration_class),
             output=tmp_path / "outputs" / f"{module}.txt",
             dependencies=((previous.key,) if previous else ()),
         )

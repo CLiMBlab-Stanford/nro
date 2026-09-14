@@ -8,9 +8,12 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.store import (
+    CONFIGURATION_CLASSES,
     DERIVATIVE_CLASSES,
     UPSTREAM_CLASS,
+    ResolvedConfiguration,
     ResolvedWorkflow,
+    configuration_fingerprint,
     fingerprint,
 )
 
@@ -67,6 +70,9 @@ class RegisteredWorkflow:
     lineages: dict[str, int]
     lineage_fingerprints: dict[str, str]
     directories: dict[str, str]
+    anatomy_lineage: int
+    anatomy_lineage_fingerprint: str
+    anatomy_directory: str
     created: bool
 
     @property
@@ -74,15 +80,47 @@ class RegisteredWorkflow:
         """Return the workflow ID qualified by its registered revision."""
         return f"{self.workflow_id}@{self.revision}"
 
+    def directory_for(self, configuration_class: str) -> str:
+        """Return the public directory selected for one configuration class."""
+        if configuration_class == "anat":
+            return self.anatomy_directory
+        if configuration_class == "func":
+            return self.directories["preprocessing"]
+        return self.directories[configuration_class]
+
 
 CONFIGURATION_FILE_SUFFIX = {
-    "preprocessing": "preprocess",
+    "anat": "anat",
+    "func": "func",
     "clean": "clean",
     "dynconn": "dynconn",
     "microparcellation": "microparcellation",
     "networks": "networks",
     "firstlevels": "firstlevels",
 }
+
+
+def _lineage_configuration(
+    workflow: ResolvedWorkflow, derivative_class: str
+) -> ResolvedConfiguration:
+    """Return the configuration payload that identifies one artifact lineage."""
+    if derivative_class != "preprocessing":
+        return workflow.configuration(derivative_class)
+    anat = workflow.configuration("anat")
+    func = workflow.configuration("func")
+    config_id = (
+        "main"
+        if anat.config_id == func.config_id == "main"
+        else f"{anat.config_id}+{func.config_id}"
+    )
+    values = {"anat": anat.values, "func": func.values}
+    return ResolvedConfiguration(
+        configuration_class="preprocessing",
+        config_id=config_id,
+        path=func.path,
+        values=values,
+        fingerprint=configuration_fingerprint("preprocessing", config_id, values),
+    )
 
 
 class WorkflowRegistry:
@@ -107,47 +145,71 @@ class WorkflowRegistry:
             "definition_fingerprint": workflow.fingerprint,
             "selections": workflow.selections,
             "configurations": {
-                derivative_class: {
-                    "config_id": workflow.configurations[derivative_class].config_id,
-                    "config_fingerprint": workflow.configurations[derivative_class].fingerprint,
-                    "source": str(workflow.configurations[derivative_class].path),
-                    "resolved": workflow.configurations[derivative_class].values,
-                    "directory": directories[derivative_class],
+                configuration_class: {
+                    "config_id": workflow.configurations[configuration_class].config_id,
+                    "config_fingerprint": workflow.configurations[configuration_class].fingerprint,
+                    "source": str(workflow.configurations[configuration_class].path),
+                    "resolved": workflow.configurations[configuration_class].values,
+                    "directory": (
+                        directories["anatomy"]
+                        if configuration_class == "anat"
+                        else directories["preprocessing"]
+                        if configuration_class == "func"
+                        else directories[configuration_class]
+                    ),
                 }
-                for derivative_class in DERIVATIVE_CLASSES
+                for configuration_class in CONFIGURATION_CLASSES
             },
         }
         _atomic_text(destination, yaml.safe_dump(data, sort_keys=False))
 
         runtime_directory = destination.parent / f"{revision}_runtime"
         ensure_shared_directory(runtime_directory)
-        for derivative_class in DERIVATIVE_CLASSES:
-            values = dict(workflow.configurations[derivative_class].values)
-            if derivative_class in {"clean", "firstlevels"}:
-                values["preprocessing_directory"] = directories["preprocessing"]
-                if derivative_class == "firstlevels":
-                    values["preprocessing_aroma"] = workflow.configuration("preprocessing").values[
-                        "func"
-                    ]["clean_ica_aroma"]
-            elif derivative_class in {"dynconn", "microparcellation"}:
-                values["preprocessing_directory"] = directories["preprocessing"]
+        for configuration_class in CONFIGURATION_CLASSES:
+            values = dict(workflow.configurations[configuration_class].values)
+            if configuration_class == "func":
+                values["anatomical_directory"] = directories["anatomy"]
+            elif configuration_class in {"clean", "firstlevels"}:
+                values["functional_directory"] = directories["preprocessing"]
+                values["anatomical_directory"] = directories["anatomy"]
+                if configuration_class == "firstlevels":
+                    values["preprocessing_aroma"] = workflow.configuration("func").values[
+                        "clean_ica_aroma"
+                    ]
+            elif configuration_class in {"dynconn", "microparcellation"}:
+                values["anatomical_directory"] = directories["anatomy"]
                 values["clean_directory"] = directories["clean"]
-            elif derivative_class == "networks":
+            elif configuration_class == "networks":
+                values["anatomical_directory"] = directories["anatomy"]
                 values["microparcellation_directory"] = directories["microparcellation"]
-            suffix = CONFIGURATION_FILE_SUFFIX[derivative_class]
-            runtime_path = runtime_directory / f"{directories[derivative_class]}_{suffix}.yml"
+            suffix = CONFIGURATION_FILE_SUFFIX[configuration_class]
+            directory = (
+                directories["anatomy"]
+                if configuration_class == "anat"
+                else directories["preprocessing"]
+                if configuration_class == "func"
+                else directories[configuration_class]
+            )
+            runtime_path = runtime_directory / f"{directory}_{suffix}.yml"
             _atomic_text(runtime_path, yaml.safe_dump(values, sort_keys=False))
 
     def runtime_config_path(self, registered: RegisteredWorkflow, derivative_class: str) -> Path:
         """Return the stored runtime configuration path for a registered lineage."""
-        if derivative_class not in DERIVATIVE_CLASSES:
-            raise ValueError(f"Unknown derivative class: {derivative_class}")
+        if derivative_class not in CONFIGURATION_CLASSES:
+            raise ValueError(f"Unknown configuration class: {derivative_class}")
         suffix = CONFIGURATION_FILE_SUFFIX[derivative_class]
+        directory = (
+            registered.anatomy_directory
+            if derivative_class == "anat"
+            else registered.directories["preprocessing"]
+            if derivative_class == "func"
+            else registered.directories[derivative_class]
+        )
         return (
             self.paths.workflows
             / registered.workflow_id
             / f"{registered.revision}_runtime"
-            / f"{registered.directories[derivative_class]}_{suffix}.yml"
+            / f"{directory}_{suffix}.yml"
         )
 
     def register_workflow(self, workflow: ResolvedWorkflow) -> RegisteredWorkflow:
@@ -173,7 +235,9 @@ class WorkflowRegistry:
                     {
                         "selections": workflow.selections,
                         "configurations": {
-                            derivative_class: workflow.configurations[derivative_class].values
+                            derivative_class: _lineage_configuration(
+                                workflow, derivative_class
+                            ).values
                             for derivative_class in DERIVATIVE_CLASSES
                         },
                     },
@@ -227,7 +291,7 @@ class WorkflowRegistry:
                 # so filesystem freshness checks always use the config that
                 # was actually resolved for this invocation.
                 for derivative_class, lineage_id in lineages.items():
-                    resolved = workflow.configurations[derivative_class]
+                    resolved = _lineage_configuration(workflow, derivative_class)
                     db.execute(
                         """UPDATE configuration_lineages
                            SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
@@ -263,7 +327,7 @@ class WorkflowRegistry:
                     return allocated_new_label
 
                 for derivative_class in DERIVATIVE_CLASSES:
-                    resolved = workflow.configurations[derivative_class]
+                    resolved = _lineage_configuration(workflow, derivative_class)
                     upstream_class = UPSTREAM_CLASS[derivative_class]
                     upstream_id = lineages.get(upstream_class) if upstream_class else None
                     upstream_lineage = (
@@ -354,7 +418,45 @@ class WorkflowRegistry:
                         (revision_id, derivative_class, lineage_id),
                     )
 
-        self._snapshot_workflow(workflow, revision, directories)
+            # ``anat`` and ``func`` share the preprocessing derivative class,
+            # but func-only changes must not create duplicate anatomical work.
+            # Reuse the oldest preprocessing lineage with the same
+            # anatomy-specific scientific settings and place its anatomy in
+            # that lineage's directory.
+            anatomy_fingerprint = workflow.configuration("anat").scientific_fingerprint
+            anatomy_lineage = None
+            for candidate in db.execute(
+                """SELECT id, directory_label, resolved_yaml
+                   FROM configuration_lineages
+                   WHERE derivative_class='preprocessing' ORDER BY id"""
+            ):
+                try:
+                    candidate_values = yaml.safe_load(candidate["resolved_yaml"])
+                    if "fsaverage_template" in candidate_values:
+                        candidate_values = {
+                            **candidate_values["anat"],
+                            "fsaverage_template": candidate_values["fsaverage_template"],
+                            "container": candidate_values["container"],
+                        }
+                    else:
+                        candidate_values = candidate_values["anat"]
+                    candidate_fingerprint = configuration_fingerprint(
+                        "anat",
+                        workflow.configuration("anat").config_id,
+                        candidate_values,
+                        scientific=True,
+                    )
+                except (TypeError, ValueError, KeyError, yaml.YAMLError):
+                    continue
+                if candidate_fingerprint == anatomy_fingerprint:
+                    anatomy_lineage = candidate
+                    break
+            if anatomy_lineage is None:
+                raise RuntimeError("Registered preprocessing lineage could not be recovered")
+            anatomy_lineage_id = int(anatomy_lineage["id"])
+            anatomy_directory = str(anatomy_lineage["directory_label"])
+
+        self._snapshot_workflow(workflow, revision, {**directories, "anatomy": anatomy_directory})
         return RegisteredWorkflow(
             workflow_id=workflow.workflow_id,
             revision=revision,
@@ -363,5 +465,8 @@ class WorkflowRegistry:
             lineages=lineages,
             lineage_fingerprints=lineage_fingerprints,
             directories=directories,
+            anatomy_lineage=anatomy_lineage_id,
+            anatomy_lineage_fingerprint=anatomy_fingerprint,
+            anatomy_directory=anatomy_directory,
             created=created,
         )
