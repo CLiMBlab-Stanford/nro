@@ -175,9 +175,22 @@ private-state transactions. Run every test before a release or a major merge:
 
 Run only the integration tier with `-m integration`.
 
+Before a release, rehearse maintenance from the current release to the candidate:
+
+```bash
+./install --rehearse-upgrade
+```
+
+The main release check runs formatting, lint, the complete test suite, this isolated
+upgrade rehearsal, and a warning-free documentation build. Configure `Version advances`
+as a required check in the repository settings so a version cannot merge after one of
+these steps fails. The rehearsal covers orchestration and source replacement; it does
+not probe site containers or Slurm.
+
 Installation tests isolate site settings and mock scheduler mutations. Scientific
-unit tests use small synthetic inputs; they do not replace visual inspection
-and deployment-specific container tests on real acquisitions.
+unit tests use small synthetic inputs. The upgrade test crosses real process and source
+snapshot boundaries in temporary storage. These checks do not replace visual inspection
+or deployment-specific container tests on real acquisitions.
 
 ## Python style
 

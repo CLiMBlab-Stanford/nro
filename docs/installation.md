@@ -121,6 +121,20 @@ activates that release automatically. Runtime checks compare the installation's
 commit, tree, package version, environment, site, and source fingerprint with the
 active release record. The installer never repairs or resets the registry silently.
 
+Before publishing an update, rehearse the transition from the newest release tag:
+
+```bash
+./install --rehearse-upgrade
+```
+
+Pass a Git ref after the option to select another baseline. The rehearsal clones that
+revision into a temporary directory, gives it an isolated registry and BIDS root, then
+replaces its executable source with the current working tree. It exercises installation
+maintenance through the real source launcher and one-shot scheduler. It does not alter
+the configured site, shared installation, user launcher, or scientific data. The check
+does not install or validate third-party scientific software; use `nro doctor --deep`
+for those deployment checks.
+
 The shared checkout, environment, and site file must be readable and traversable
 by users. Restrict write access to maintainers using filesystem ownership or
 ACLs. Shared setup creates new files with a readable umask; it does not rewrite

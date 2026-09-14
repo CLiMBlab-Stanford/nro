@@ -50,12 +50,15 @@ paths.
 `main` contains released code and is the repository's default branch. Changes enter
 it through pull requests. Every merge must update `pyproject.toml` to a later
 `MAJOR.MINOR.PATCH` version. The smallest permitted change is the next patch version.
-The main-version check runs on pull requests to enforce this rule.
+The `Version advances` check runs on pull requests to enforce this rule. The same check
+also requires formatting, lint, all tests, an isolated upgrade rehearsal, and a
+warning-free documentation build. Make it a required check in the repository settings.
 
 Use patch releases for compatible fixes and minor releases for new features or
 intentional interface changes during the 0.x series. Tag an approved release as
 `vMAJOR.MINOR.PATCH`; the package version omits the `v`. Do not move or replace a
-published release tag.
+published release tag. Run `./install --rehearse-upgrade` before merging; pass an
+explicit Git ref when the intended baseline is not the newest reachable release tag.
 
 Pushing a version tag starts the GitHub Release workflow. It rejects a tag whose
 version differs from `pyproject.toml`, whose target is not on `main`, or whose name is

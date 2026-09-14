@@ -356,9 +356,45 @@ def _main(argv=None) -> None:
     parser.add_argument("--dev", action="store_true", help="Include the locked test dependencies")
     parser.add_argument("--accept-qunex-license", action="store_true")
     parser.add_argument("--local", action="store_true", help="Do not require Slurm")
+    parser.add_argument(
+        "--rehearse-upgrade",
+        nargs="?",
+        const="",
+        metavar="BASELINE",
+        help="test an isolated upgrade from BASELINE or the newest release tag",
+    )
     args = parser.parse_args(argv)
     if not sys.platform.startswith("linux"):
         parser.error("nro supports Linux only")
+    if args.rehearse_upgrade is not None:
+        incompatible = [
+            args.mode,
+            args.maintain,
+            args.drain,
+            args.site,
+            args.bin_dir,
+            args.set_default,
+            args.replace_launcher,
+            args.convert_to_branch,
+            args.non_interactive,
+            args.offline,
+            args.without_oslom,
+            args.with_bidsify,
+            args.without_marss,
+            args.dev,
+            args.accept_qunex_license,
+            args.local,
+        ]
+        if any(incompatible):
+            parser.error("--rehearse-upgrade cannot be combined with installation options")
+        from nro.engine.upgrade_rehearsal import rehearse
+
+        baseline = args.rehearse_upgrade or None
+        result = rehearse(ROOT, baseline=baseline)
+        print(f"Upgrade rehearsal passed: {result['baseline']}")
+        print(f"  active source:    {result['baseline_source']}")
+        print(f"  candidate source: {result['candidate_source']}")
+        return
     record_path = ROOT / RECORD
     existing = json.loads(record_path.read_text()) if record_path.exists() else None
     default_record = None
