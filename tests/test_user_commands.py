@@ -775,6 +775,52 @@ def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     assert len(status_output.splitlines()) == 1
 
 
+def test_main_repair_uses_lab_wide_scheduler_during_release_transition(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    import os
+
+    from nro.configuration import site
+
+    binding = tmp_path / "implementation.json"
+    binding.write_text("{}")
+    monkeypatch.setattr(
+        site,
+        "installation_record",
+        lambda: {
+            "mode": "shared",
+            "ready": True,
+            "site": os.environ["NRO_SITE_CONFIG"],
+        },
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.implementation_path",
+        lambda _control: binding,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_repair.repair",
+        lambda registry, **options: (
+            calls.append((registry, options))
+            or {
+                "repaired": True,
+                "registry": str(registry.paths.database),
+                "backup": str(tmp_path / "backup"),
+                "instances": 0,
+                "unavailable": [],
+                "schema": SCHEMA_VERSION,
+            }
+        ),
+    )
+
+    run_main(["--repair", "--json"])
+
+    assert len(calls) == 1
+    assert calls[0][1]["checkout"] == site.CHECKOUT
+    assert calls[0][1]["allow_release_transition"] is True
+    assert json.loads(capsys.readouterr().out)["repaired"] is True
+
+
 def test_run_repair_registers_existing_artifacts_without_demand(
     tmp_path: Path,
     capsys,

@@ -80,15 +80,15 @@ complexity, runtime cost, or maintenance burden.
 
 ## Shared scheduler repair
 
-`nro run --repair` repairs the current branch's scientific database after central
-activation. To replace the shared scheduler itself, use the designated, approved
-main checkout:
+On a development branch, `nro run --repair` repairs that branch's scientific database.
+On `main`, it replaces shared scheduling state. The explicit release command provides
+the same shared repair operation:
 
 ```bash
 nro release --repair-scheduler
 ```
 
-The command always asks for confirmation. It stops the entire pool, discards
+Shared repair asks for confirmation when work is active. It stops the entire pool, discards
 active scheduling history, and keeps a backup with an index of original paths.
 Branch scientific databases, runtime configurations, ingestion records, and
 public derivatives remain in place. Private completion certificates are archived
@@ -96,6 +96,7 @@ because their registry IDs belong to the old database.
 
 Main artifacts are rediscovered from disk without creating demand. Other branches
 register their outputs against current compiled contracts when work is next
-requested. The operation does not migrate an obsolete schema. It requires the
-old worker-control tables to remain readable so shutdown can be confirmed.
-After a release update, run `./install --maintain` to install and activate it.
+requested. The operation rebuilds instead of migrating an obsolete schema. It requires
+the old worker-control tables to remain readable so shutdown can be confirmed. After a
+release update, `./install --maintain` performs this rebuild itself when needed, then
+installs and activates the release.

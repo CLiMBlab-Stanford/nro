@@ -528,7 +528,12 @@ def _main(argv=None) -> None:
                         return None
                     print("Enter d to drain, s to stop now, or n to cancel.")
 
-            prepare_pool(shared_registry, checkout=ROOT, confirm=confirm_drain)
+            prepare_pool(
+                shared_registry,
+                checkout=ROOT,
+                confirm=confirm_drain,
+                rebuild_schema=True,
+            )
 
     with maintenance_lock(ROOT, mode):
         if prepare_shared is not None:

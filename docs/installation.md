@@ -119,7 +119,10 @@ an active pool.
 After updating `main` to a newer tagged release, `./install --maintain` records and
 activates that release automatically. Runtime checks compare the installation's
 commit, tree, package version, environment, site, and source fingerprint with the
-active release record. The installer never repairs or resets the registry silently.
+active release record. If the release changes the private scheduler schema, the
+installer rebuilds that state before starting the candidate coordinator. It reports
+the rebuild and retains a backup. Public derivatives and branch runtime state remain
+in place; requests and attempt history do not.
 
 Before publishing an update, rehearse the transition from the newest release tag:
 
@@ -129,9 +132,10 @@ Before publishing an update, rehearse the transition from the newest release tag
 
 Pass a Git ref after the option to select another baseline. The rehearsal clones that
 revision into a temporary directory, gives it an isolated registry and BIDS root, then
-replaces its executable source with the current working tree. It exercises installation
-maintenance through the real source launcher and one-shot scheduler. It does not alter
-the configured site, shared installation, user launcher, or scientific data. The check
+replaces its executable source with the current working tree. It gives the baseline an
+obsolete scheduler schema, then exercises candidate maintenance and the real one-shot
+scheduler. It does not alter the configured site, shared installation, user launcher,
+or scientific data. The check
 does not install or validate third-party scientific software; use `nro doctor --deep`
 for those deployment checks.
 
