@@ -368,17 +368,28 @@ def _validate_instance_record(
     module = str(record.get("module"))
     from nro.orchestration.catalog import module_descriptor
 
-    if module_descriptor(module).configuration_class != derivative_class:
+    if module_descriptor(module).derivative_class != derivative_class:
         raise ValueError("module does not belong to the recorded derivative class")
     if record.get("lineage_fingerprint") != marker.get("lineage_fingerprint"):
         raise ValueError("instance and root lineage fingerprints differ")
     entities = record.get("entities")
     if not isinstance(entities, Mapping):
         raise ValueError("instance entities are missing")
+    contract = record.get("artifact_contract")
+    if not isinstance(contract, Mapping):
+        raise ValueError("artifact contract is missing")
+    # Anatomy can be reused by several functional lineages that publish under
+    # the same preprocessing class. Its own configuration fingerprint is the
+    # stable identity; other modules use their complete lineage fingerprint.
+    identity_fingerprint = (
+        str(contract.get("configuration"))
+        if module == "anat"
+        else str(record["lineage_fingerprint"])
+    )
     expected_key = instance_key(
         project,
         module,
-        str(record["lineage_fingerprint"]),
+        identity_fingerprint,
         str(record.get("participant")),
         {str(key): str(value) for key, value in entities.items()},
     )
@@ -386,9 +397,6 @@ def _validate_instance_record(
         raise ValueError("instance key does not match its semantic identity")
     if path.stem != expected_key.split(":", 1)[-1]:
         raise ValueError("instance record filename does not match its key")
-    if not isinstance(record.get("artifact_contract"), Mapping):
-        raise ValueError("artifact contract is missing")
-    contract = record["artifact_contract"]
     if contract.get("module") != module or contract.get("entities") != dict(
         sorted(entities.items())
     ):

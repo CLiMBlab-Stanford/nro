@@ -99,8 +99,12 @@ def test_different_checkout_submits_central_worker(central, monkeypatch, tmp_pat
         memory_gb=2,
         cpus=1,
     )
+    script_text = script.read_text()
+    assert "export NRO_ALLOCATED_CPUS=1" in script_text
+    assert "export OMP_NUM_THREADS=1" in script_text
+    assert "export OPENBLAS_NUM_THREADS=1" in script_text
     command = shlex.split(
-        next(line for line in script.read_text().splitlines() if line.startswith("exec "))
+        next(line for line in script_text.splitlines() if line.startswith("exec "))
     )[1:]
     assert command[0] == str(python)
     assert not any(str(development) in item for item in command)

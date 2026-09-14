@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         execution_context=execution_context,
     )
     workflow_snapshot = load_runtime_workflow_snapshot(runtime_config)
-    preprocessing_func = workflow_snapshot["configurations"]["preprocessing"]["resolved"]["func"]
+    preprocessing_func = workflow_snapshot["configurations"]["func"]["resolved"]
     if args.space not in preprocessing_func["output_spaces"]:
         available = ", ".join(str(value) for value in preprocessing_func["output_spaces"])
         raise SystemExit(
@@ -82,7 +82,9 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         "--project",
         args.project,
         "--preprocessing-id",
-        cfg["preprocessing_directory"],
+        cfg["functional_directory"],
+        "--anatomical-preprocessing-id",
+        cfg["anatomical_directory"],
         "--clean-id",
         clean_id,
         "--sub-id",

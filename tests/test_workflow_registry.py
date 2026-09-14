@@ -9,12 +9,20 @@ import pytest
 import yaml
 
 from nro.configuration.runtime import load_runtime_configuration
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore, WorkflowError
+from nro.configuration.store import (
+    CONFIGURATION_CLASSES,
+    DERIVATIVE_CLASSES,
+    ConfigStore,
+    WorkflowError,
+)
 from nro.modules.anat.__main__ import build_parser as anat_parser
 from nro.modules.clean.__main__ import build_parser as clean_parser
 from nro.modules.func.__main__ import build_parser as func_parser
 from nro.modules.microparcellation.__main__ import build_parser as microparcellation_parser
 from nro.modules.networks.__main__ import build_parser as networks_parser
+from nro.orchestration.branch_admission import _workflow as import_workflow
+from nro.orchestration.compiled_request import export_workflow
+from nro.orchestration.planner import Planner
 from nro.orchestration.registry import APPLICATION_ID, SCHEMA_VERSION, Registry
 from nro.orchestration.runtime import select_runtime_config
 from nro.qc.registration import build_parser as registration_parser
@@ -43,11 +51,12 @@ def test_repository_main_workflow_resolves() -> None:
     resolved = ConfigStore().resolve("main")
 
     assert resolved.selections == {
-        derivative_class: "main" for derivative_class in DERIVATIVE_CLASSES
+        configuration_class: "main" for configuration_class in CONFIGURATION_CLASSES
     }
     assert resolved.configurations["microparcellation"].values["input_filter"] == {}
     assert resolved.path.parent.name == "workflows"
-    assert resolved.configurations["preprocessing"].path.parent.name == "preprocessing"
+    assert resolved.configurations["anat"].path.parent.name == "anat"
+    assert resolved.configurations["func"].path.parent.name == "func"
 
 
 def test_registry_requires_the_current_schema_without_implicit_migration(
@@ -127,7 +136,7 @@ def test_registration_qc_retains_its_qctype_specific_interface() -> None:
 def test_private_runtime_environment_rejects_external_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    external = tmp_path / "external_preprocess.yml"
+    external = tmp_path / "external_func.yml"
     _write_yaml(external, {})
     monkeypatch.setenv("NRO_RUNTIME_CONFIG", str(external))
 
@@ -135,47 +144,61 @@ def test_private_runtime_environment_rejects_external_paths(
         select_runtime_config(
             project="demo",
             workflow_id="main",
-            derivative_class="preprocessing",
+            derivative_class="func",
             bids_root=tmp_path / "bids",
         )
 
 
 def test_store_reads_only_organized_configuration_files(tmp_path: Path) -> None:
     (tmp_path / "workflows").mkdir()
-    (tmp_path / "configs" / "preprocessing").mkdir(parents=True)
+    (tmp_path / "configs" / "anat").mkdir(parents=True)
     _write_yaml(
         tmp_path / "workflows" / "experiment_workflow.yml",
-        {"preprocessing": "experiment"},
+        {"anat": "experiment"},
     )
     _write_yaml(
-        tmp_path / "configs" / "preprocessing" / "experiment_preprocessing.yml",
-        {"anat": {"nthreads": 7}},
+        tmp_path / "configs" / "anat" / "experiment_anat.yml",
+        {"verbose": True},
     )
     resolved = _test_store(tmp_path).resolve("experiment")
 
-    assert resolved.configurations["preprocessing"].values["anat"]["nthreads"] == 7
+    assert resolved.configurations["anat"].values["verbose"] is True
     assert resolved.path.parent.name == "workflows"
 
 
 def test_workflow_defaults_omitted_classes_and_rejects_upstream_keys(tmp_path: Path) -> None:
-    _write_yaml(tmp_path / "workflows" / "experiment_workflow.yml", {"preprocessing": "experiment"})
-    _write_yaml(tmp_path / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(tmp_path / "workflows" / "experiment_workflow.yml", {"func": "experiment"})
+    _write_yaml(tmp_path / "configs" / "func" / "experiment_func.yml", {})
     store = _test_store(tmp_path)
     resolved = store.resolve("experiment")
 
-    assert resolved.selections["preprocessing"] == "experiment"
+    assert resolved.selections["func"] == "experiment"
     assert all(
         resolved.selections[derivative_class] == "main"
-        for derivative_class in DERIVATIVE_CLASSES[1:]
+        for derivative_class in set(CONFIGURATION_CLASSES) - {"func"}
     )
 
     _write_yaml(tmp_path / "workflows" / "bad_workflow.yml", {"clean": "bad"})
     _write_yaml(
         tmp_path / "configs" / "clean" / "bad_clean.yml",
-        {"preprocessing_directory": "not-allowed"},
+        {"functional_directory": "not-allowed"},
     )
     with pytest.raises(WorkflowError, match="belong in a workflow"):
         store.resolve("bad")
+
+
+def test_workflow_rejects_mismatched_anat_and_func_surface_spaces(tmp_path: Path) -> None:
+    _write_yaml(
+        tmp_path / "workflows" / "mismatch_workflow.yml",
+        {"func": "mismatch"},
+    )
+    _write_yaml(
+        tmp_path / "configs" / "func" / "mismatch_func.yml",
+        {"fsaverage_template": "fsaverage", "output_spaces": ["fsaverage"]},
+    )
+
+    with pytest.raises(WorkflowError, match="anat.fsaverage_template"):
+        _test_store(tmp_path).resolve("mismatch")
 
 
 def test_missing_referenced_config_is_an_error(tmp_path: Path) -> None:
@@ -189,11 +212,11 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     configs = tmp_path / "configs"
     configs.mkdir()
     bids = tmp_path / "bids"
-    _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"preprocessing": "experiment"})
-    _write_yaml(configs / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"func": "experiment"})
+    _write_yaml(configs / "configs" / "func" / "experiment_func.yml", {})
     _write_yaml(
         configs / "workflows" / "experiment_nogsr_workflow.yml",
-        {"preprocessing": "experiment", "clean": "nogsr"},
+        {"func": "experiment", "clean": "nogsr"},
     )
     _write_yaml(configs / "configs" / "clean" / "nogsr_clean.yml", {"standardize": False})
 
@@ -212,6 +235,71 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     assert second.directories["networks"] == "experiment_nogsr"
 
 
+def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    (subject / "anat").mkdir(parents=True)
+    (subject / "anat" / "sub-01_T1w.nii.gz").write_bytes(b"anat")
+    (subject / "func").mkdir()
+    bold = subject / "func" / "sub-01_task-rest_bold.nii.gz"
+    bold.write_bytes(b"bold")
+    bold.with_name("sub-01_task-rest_bold.json").write_text(
+        '{"RepetitionTime": 2.0}', encoding="utf-8"
+    )
+    _write_yaml(configs / "workflows" / "variant_workflow.yml", {"func": "variant"})
+    _write_yaml(configs / "configs" / "func" / "variant_func.yml", {"clean_ica_aroma": False})
+
+    store = _test_store(configs)
+    registry = Registry.for_project("demo", bids_root=bids)
+    main_workflow = store.resolve("main")
+    variant_workflow = store.resolve("variant")
+    main = registry.register_workflow(main_workflow)
+    variant = registry.register_workflow(variant_workflow)
+
+    assert main.lineages["preprocessing"] != variant.lineages["preprocessing"]
+    assert main.directories["preprocessing"] == "main"
+    assert variant.directories["preprocessing"] == "variant"
+    assert variant.anatomy_lineage == main.anatomy_lineage
+    assert variant.anatomy_directory == main.anatomy_directory == "main"
+
+    planner = Planner(registry, bids_root=bids)
+    main_specs = planner.plan_subject(
+        project="demo",
+        participant="01",
+        module="func",
+        workflow=main_workflow,
+        registered=main,
+    )
+    variant_specs = planner.plan_subject(
+        project="demo",
+        participant="01",
+        module="func",
+        workflow=variant_workflow,
+        registered=variant,
+    )
+    main_anat = next(spec for spec in main_specs if spec.module == "anat")
+    variant_anat = next(spec for spec in variant_specs if spec.module == "anat")
+    assert variant_anat.key == main_anat.key
+    assert variant_anat.output_root == main_anat.output_root
+
+    central = Registry.for_project("demo", bids_root=tmp_path / "central" / "bids")
+    exported = export_workflow(registry, variant)
+    assert any(
+        binding["derivative_class"] == "anat"
+        and binding["configuration_lineage_id"] == variant.anatomy_lineage
+        for binding in exported["bindings"]
+    )
+    with central.connection(write=True) as db:
+        _revision, lineage_mapping = import_workflow(
+            db,
+            exported,
+            "dev-owner",
+        )
+    assert variant.anatomy_lineage in lineage_mapping
+
+
 def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     tmp_path: Path,
 ) -> None:
@@ -219,8 +307,8 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     configs.mkdir()
     bids = tmp_path / "bids"
     workflow_path = configs / "workflows" / "experiment_workflow.yml"
-    _write_yaml(workflow_path, {"preprocessing": "experiment"})
-    _write_yaml(configs / "configs" / "preprocessing" / "experiment_preprocessing.yml", {})
+    _write_yaml(workflow_path, {"func": "experiment"})
+    _write_yaml(configs / "configs" / "func" / "experiment_func.yml", {})
     _write_yaml(configs / "configs" / "clean" / "nogsr_clean.yml", {"standardize": False})
 
     store = _test_store(configs)
@@ -228,7 +316,7 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     registry.register_workflow(store.resolve("experiment"))
     _write_yaml(
         workflow_path,
-        {"preprocessing": "experiment", "clean": "nogsr"},
+        {"func": "experiment", "clean": "nogsr"},
     )
     second = registry.register_workflow(store.resolve("experiment"))
     repeated = registry.register_workflow(store.resolve("experiment"))
@@ -252,8 +340,11 @@ def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
         derivative_class: "main" for derivative_class in DERIVATIVE_CLASSES
     }
 
-    preprocess_id, _ = load_runtime_configuration(
-        registry.runtime_config_path(registered, "preprocessing"), "preprocessing"
+    anat_id, _ = load_runtime_configuration(
+        registry.runtime_config_path(registered, "anat"), "anat"
+    )
+    func_id, func = load_runtime_configuration(
+        registry.runtime_config_path(registered, "func"), "func"
     )
     clean_id, clean = load_runtime_configuration(
         registry.runtime_config_path(registered, "clean"), "clean"
@@ -265,8 +356,10 @@ def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
     networks_id, networks = load_runtime_configuration(
         registry.runtime_config_path(registered, "networks"), "networks"
     )
-    assert (preprocess_id, clean_id, micro_id, networks_id) == ("main",) * 4
-    assert clean["preprocessing_directory"] == "main"
+    assert (anat_id, func_id, clean_id, micro_id, networks_id) == ("main",) * 5
+    assert func["anatomical_directory"] == "main"
+    assert clean["functional_directory"] == "main"
+    assert clean["anatomical_directory"] == "main"
     assert micro["clean_directory"] == "main"
     assert networks["microparcellation_directory"] == "main"
 
@@ -291,16 +384,16 @@ def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -
 
 def test_changed_named_config_gets_new_lineage_reused_by_contents(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
-    _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"preprocessing": "alternate"})
-    _write_yaml(configs / "workflows" / "same_content_workflow.yml", {"preprocessing": "alternate"})
-    _write_yaml(configs / "configs" / "preprocessing" / "alternate_preprocessing.yml", {})
+    _write_yaml(configs / "workflows" / "experiment_workflow.yml", {"func": "alternate"})
+    _write_yaml(configs / "workflows" / "same_content_workflow.yml", {"func": "alternate"})
+    _write_yaml(configs / "configs" / "func" / "alternate_func.yml", {})
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     first = registry.register_workflow(store.resolve("experiment"))
 
     _write_yaml(
-        configs / "configs" / "preprocessing" / "alternate_preprocessing.yml",
-        {"anat": {"nthreads": 7}},
+        configs / "configs" / "func" / "alternate_func.yml",
+        {"output_grid": "t1_native"},
     )
     changed = registry.register_workflow(store.resolve("experiment"))
     matching = registry.register_workflow(store.resolve("same_content"))
@@ -329,21 +422,21 @@ def test_numeric_directory_names_skip_existing_workflow_name(tmp_path: Path) -> 
     configs = tmp_path / "configs"
     configs.mkdir()
     bids = tmp_path / "bids"
-    _write_yaml(configs / "workflows" / "experiment-2_workflow.yml", {"preprocessing": "alternate"})
-    _write_yaml(configs / "configs" / "preprocessing" / "alternate_preprocessing.yml", {})
+    _write_yaml(configs / "workflows" / "experiment-2_workflow.yml", {"func": "alternate"})
+    _write_yaml(configs / "configs" / "func" / "alternate_func.yml", {})
     workflow_path = configs / "workflows" / "experiment_workflow.yml"
-    _write_yaml(workflow_path, {"preprocessing": "first"})
-    _write_yaml(configs / "configs" / "preprocessing" / "first_preprocessing.yml", {})
+    _write_yaml(workflow_path, {"func": "first"})
+    _write_yaml(configs / "configs" / "func" / "first_func.yml", {})
     _write_yaml(
-        configs / "configs" / "preprocessing" / "second_preprocessing.yml",
-        {"anat": {"nthreads": 7}},
+        configs / "configs" / "func" / "second_func.yml",
+        {"output_grid": "t1_native"},
     )
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)
 
     occupied = registry.register_workflow(store.resolve("experiment-2"))
     first = registry.register_workflow(store.resolve("experiment"))
-    _write_yaml(workflow_path, {"preprocessing": "second"})
+    _write_yaml(workflow_path, {"func": "second"})
     second = registry.register_workflow(store.resolve("experiment"))
 
     assert occupied.directories["preprocessing"] == "experiment-2"

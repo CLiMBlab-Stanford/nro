@@ -10,7 +10,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from nro.configuration.store import ConfigStore
-from nro.engine.bids import discover_raw_runs
+from nro.engine.bids import BidsRun, discover_raw_runs
 from nro.engine.cifti import indexed_cifti_indices, load_indexed_cifti_map
 from nro.modules.firstlevels.compiler import compile_model, realize_run_node
 from nro.modules.firstlevels.contract import validate_completion
@@ -19,6 +19,7 @@ from nro.modules.firstlevels.estimation import meta_records
 from nro.modules.firstlevels.io import load_fit, save_fit
 from nro.modules.firstlevels.models import validate_model
 from nro.modules.firstlevels.module import run_module
+from nro.modules.firstlevels.planning import selected_runs
 from nro.modules.firstlevels.statistics import (
     Estimate,
     aggregate,
@@ -35,6 +36,23 @@ def load_model(identifier, config=None):
         identifier,
         config or ConfigStore().load_configuration("firstlevels", "main").values,
     )
+
+
+def test_stable_input_filter_limits_firstlevel_runs(tmp_path: Path) -> None:
+    runs = tuple(
+        BidsRun(
+            participant="01",
+            session=session,
+            stem=f"sub-01_ses-{session}_task-langlocSN_run-1",
+            entities={"ses": session, "task": "langlocSN", "run": "1"},
+            path=tmp_path / f"sub-01_ses-{session}_task-langlocSN_run-1_bold.nii.gz",
+        )
+        for session in ("keep", "drop")
+    )
+
+    selected = selected_runs(runs, "langlocSN/main", "01", {"ses": ["keep"]})
+
+    assert selected == (runs[0],)
 
 
 def build_design(node, events, confounds, tr, config):

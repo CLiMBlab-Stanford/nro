@@ -49,7 +49,7 @@ dependencies or using a separate checkout with the shared pool.
 | Additional option | Behavior/default |
 | --- | --- |
 | `--concurrency N` | Shared limit, default 50. |
-| `--cpus N` | CPUs per Slurm worker, default 2. |
+| `--cpus N` | CPUs and scientific-process threads per worker, default 2. |
 | `--time HOURS` | Worker allocation duration, default 24 hours. |
 | `--memory GB` | Initial worker memory, default 32 GB. |
 | `--max-memory GB` | Maximum retry memory tier, default 256 GB. |

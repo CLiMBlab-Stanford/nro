@@ -62,7 +62,7 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    runtime = registry.runtime_config_path(registered, "preprocessing")
+    runtime = registry.runtime_config_path(registered, "anat")
 
     def spec(key, output, dependencies=()):
         return InstanceSpec.create(
@@ -72,7 +72,7 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.lineages["preprocessing"],
+            configuration_lineage_id=registered.anatomy_lineage,
             config_fingerprint="test",
             directory_label="main",
             runtime_config=runtime,

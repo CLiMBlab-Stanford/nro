@@ -7,7 +7,7 @@ from nro.orchestration import branch_status
 
 
 def test_verify_compiles_current_checkout_without_creating_demand(tmp_path, monkeypatch):
-    registration = SimpleNamespace(directories={"preprocessing": "main"})
+    registration = SimpleNamespace(directory_for=lambda _: "main")
     scientific = SimpleNamespace(instances=lambda: (), register_workflow=lambda _: registration)
     monkeypatch.setattr(
         branch_status,

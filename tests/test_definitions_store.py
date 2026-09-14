@@ -13,7 +13,7 @@ import yaml
 from nro.bin.definitions import main
 from nro.configuration import site
 from nro.configuration.definitions import _publish, create_store, ensure_store, validate_store
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.modules.firstlevels.task_models import load_task_model, scientific_model, select_models
 
 
@@ -21,9 +21,9 @@ def test_create_has_only_generic_starters(tmp_path):
     root = create_store(tmp_path / "store")
     counts = validate_store(root)
     assert counts == dict(configs=2, workflows=3, models=0, event_ids=0, event_tsvs=0, bidsify=1)
-    for kind in DERIVATIVE_CLASSES:
+    for kind in CONFIGURATION_CLASSES:
         assert not (root / "configs" / kind / f"main_{kind}.yml").exists()
-    for kind in set(DERIVATIVE_CLASSES) - {"networks"}:
+    for kind in set(CONFIGURATION_CLASSES) - {"networks"}:
         assert (root / "configs" / kind / ".gitkeep").is_file()
     assert not (root / ".git").exists()
     assert (root / ".gitignore").is_file()
@@ -105,7 +105,7 @@ def test_relocation_preserves_compiled_identities(definitions_fixture, tmp_path)
     shutil.copytree(definitions_fixture, copied)
     first, second = ConfigStore(definitions_fixture), ConfigStore(copied)
     assert first.resolve().fingerprint == second.resolve().fingerprint
-    for kind in DERIVATIVE_CLASSES:
+    for kind in CONFIGURATION_CLASSES:
         a, b = first.load_configuration(kind, "main"), second.load_configuration(kind, "main")
         assert a.path == b.path
         assert a.fingerprint == b.fingerprint

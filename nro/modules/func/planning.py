@@ -90,15 +90,13 @@ def plan_instances(
 ) -> tuple[InstanceSpec, ...]:
     """Construct one preprocessing instance per selected raw BOLD run."""
     anat = upstream["anat"][0]
-    lineage = context.registered.lineages[descriptor.configuration_class]
-    directory_label = context.registered.directories[descriptor.configuration_class]
+    lineage = context.registered.lineages["preprocessing"]
+    directory_label = context.registered.directories["preprocessing"]
     runtime_config = context.runtime_config(descriptor.configuration_class)
     output_root = (
         context.project_root / "derivatives" / "preprocessing" / directory_label / context.sub_id
     )
-    sdc_from_sbref_pair = bool(
-        context.workflow.configuration("preprocessing").values["func"]["sdc_from_sbref_pair"]
-    )
+    sdc_from_sbref_pair = bool(context.workflow.configuration("func").values["sdc_from_sbref_pair"])
     inventories: dict[tuple[Path, bool], _SessionInventory] = {}
     result: list[InstanceSpec] = []
     for run in context.runs:
@@ -113,7 +111,7 @@ def plan_instances(
                 key=instance_key(
                     context.project,
                     descriptor.name,
-                    context.registered.lineage_fingerprints[descriptor.configuration_class],
+                    context.registered.lineage_fingerprints["preprocessing"],
                     context.participant,
                     entities,
                 ),

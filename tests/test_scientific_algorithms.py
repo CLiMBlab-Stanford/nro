@@ -81,9 +81,9 @@ class ScientificAlgorithmTests(unittest.TestCase):
         )
 
     def test_synbold_default_comes_from_central_store(self):
-        config = ConfigStore().load_configuration("preprocessing", "main").values
+        config = ConfigStore().load_configuration("func", "main").values
         self.assertEqual(
-            Path(config["func"]["synbold_disco_image"]),
+            Path(config["synbold_disco_image"]),
             Path("/juice6/u/nlp/climblab/apptainer/images/synbold-disco_v1.4.sif"),
         )
 

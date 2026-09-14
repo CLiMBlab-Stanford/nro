@@ -6,7 +6,7 @@ databases, logs, and generated derivatives outside this repository.
 
 * `configs/CLASS/ID_CLASS.yml`: optional module-configuration overrides. Packaged
   `main` configurations supply defaults when the store has no matching file.
-* `workflows/ID_workflow.yml`: configuration selections for each derivative class.
+* `workflows/ID_workflow.yml`: configuration selections for each configuration class.
 * `models/TASK/VARIANT.yml`: task predictors, contrasts, and model-set membership.
 * `events/TASK/`: standard event tables and an `index.yml` listing their IDs.
 * `bidsify/PROFILE.yml`: Flywheel servers, protocol rules, and ingestion settings.

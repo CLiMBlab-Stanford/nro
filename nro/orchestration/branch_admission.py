@@ -14,12 +14,18 @@ from nro.orchestration.execution_cache import cache_publication
 from nro.orchestration.registry import utcnow
 
 
-def _workflow(db, payload: dict, owner: str) -> tuple[int, dict[int, int]]:
+def _workflow(
+    db, payload: dict, owner: str, *, required_lineages: set[int] | None = None
+) -> tuple[int, dict[int, int]]:
+    """Import a workflow and any auxiliary lineages used by its instance graph."""
     revision = payload["revision"]
     lineages, bindings, dependencies = (
         payload[key] for key in ("lineages", "bindings", "dependencies")
     )
-    needed = {row["configuration_lineage_id"] for row in bindings}
+    needed = {
+        *(row["configuration_lineage_id"] for row in bindings),
+        *(required_lineages or ()),
+    }
     while True:
         expanded = needed | {
             row["upstream_configuration_lineage_id"]
@@ -216,7 +222,12 @@ def _admit_resolved(
             raise ValueError("Inherited artifact changed before admission; resolve it again")
         keys[item.spec.key] = row["instance_key"]
         external[row["instance_key"]] = int(row["id"])
-    revision_id, lineages = _workflow(db, payload["workflow"], owner)
+    revision_id, lineages = _workflow(
+        db,
+        payload["workflow"],
+        owner,
+        required_lineages={item.spec.configuration_lineage_id for item in plan.work},
+    )
     specs = []
     for item in plan.work:
         spec = item.spec

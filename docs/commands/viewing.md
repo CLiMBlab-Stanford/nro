@@ -13,16 +13,22 @@ images, CIFTIs, and surface files without rerunning scientific processing. It
 creates one scene for each selected participant, space, smoothing level, and
 requested session or run group. The command prints every generated scene path.
 Add `--open` to launch the `wb_view` executable beside the configured
-`wb_command`. Outside a Slurm allocation, the viewer runs through `srun --x11`
-on the site's `viewing_partition`. Inside an allocation, it runs directly on
-the allocated node because Slurm cannot add X11 forwarding to a nested job
-step. Workbench loads the first scene state directly and hides its scene-loader
+`wb_command`. The first call starts a private `srun --x11` viewer broker on the
+site's `viewing_partition`. The broker has 2 CPUs and 32 GB of memory and remains
+available for its full 12-hour allocation. Later calls reuse it and may open
+several independent Workbench processes without waiting for another allocation.
+Inside an existing Slurm allocation, the viewer runs directly because Slurm
+cannot add X11 forwarding to a nested job step.
+
+Workbench loads the first scene state directly and hides its scene-loader
 dialog. Because this operation selects one scene state, `--open` requires
-selectors that generate exactly one scene. The viewer remains attached to the
-terminal until it closes. A dedicated viewing allocation does not register as
-an nro worker or count toward the shared concurrency limit. Opening a GUI
-requires an SSH connection with X forwarding and a Slurm installation
-configured to support it.
+selectors that generate exactly one scene. The viewer broker does not register
+as an nro worker or count toward the shared concurrency limit. It remains tied
+to the X11 connection that created it. If that display disappears, the next
+request replaces the broker. Opening a GUI requires an SSH connection with X
+forwarding and a Slurm installation configured to support it.
+Broker and Workbench output is written under the current user's private
+`viewers/uid-<UID>/` directory in the central nro store.
 
 Linked scenes are the default. They refer directly to source derivatives and
 do not duplicate large CIFTIs or surface geometry. `--publish` instead copies

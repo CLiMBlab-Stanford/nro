@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -104,7 +103,6 @@ class Options:
     container: Optional[ContainerSpec]
     synthstrip_image: Optional[Path]
     force: bool
-    nthreads: int
 
 
 def build_module(
@@ -121,11 +119,18 @@ def build_module(
     if execution_context is not None:
         if execution_context.project != opts.project:
             raise ValueError("Anatomical project differs from its execution context")
+        container = opts.container
+        if container is not None and container.home_dir is not None:
+            container = replace(
+                container,
+                home_dir=execution_context.output_path(container.home_dir, private=True),
+            )
         opts = replace(
             opts,
             out_dir=execution_context.output_path(opts.out_dir),
             work_dir=execution_context.output_path(opts.work_dir, private=True),
             freesurfer_subjects_dir=execution_context.output_path(opts.freesurfer_subjects_dir),
+            container=container,
         )
         for image in (*inputs.t1w, *inputs.t2w):
             for path in (image.image, image.json):
@@ -146,7 +151,7 @@ def build_module(
 
     public_inputs = [item.image for item in all_images]
     public_inputs.extend(item.json for item in all_images if item.json is not None)
-    env = neuroimaging_environment(opts.nthreads, subjects_dir=opts.freesurfer_subjects_dir)
+    env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
     binds = collect_bind_directories(
         [
             *(item.image for item in all_images),
@@ -1155,11 +1160,6 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--freesurfer-subjects-dir", type=Path, default=cfg.freesurfer_subjects_dir)
     p.add_argument("--out-dir", type=Path, default=cfg.out_dir)
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
-    p.add_argument(
-        "--nthreads",
-        type=int,
-        default=max(int(cfg.nthreads_min), (os.cpu_count() or 1) // int(cfg.nthreads_divisor)),
-    )
     p.add_argument("--force", action="store_true", default=cfg.force)
     p.add_argument("--verbose", action="store_true", default=cfg.verbose)
     p.add_argument("--container", type=Path, default=DEFAULT_CONTAINER)
@@ -1249,7 +1249,6 @@ def main(
             container=container,
             synthstrip_image=synthstrip_image,
             force=bool(args.force),
-            nthreads=int(args.nthreads),
         ),
         execution_context=execution_context,
     )

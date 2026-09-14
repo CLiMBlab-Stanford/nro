@@ -44,8 +44,9 @@ nro run -m firstlevels --model-set development
 Task and model selection are independent of workflow configuration. A model
 variant can be fitted under different denoising configurations by selecting
 different workflows. Each instance includes all runs of its task for that
-participant. Partial run selectors other than task are rejected because they
-would redefine the same subject-level artifact.
+participant that match the configuration's `input_filter`. Partial CLI run
+selectors other than task are rejected because they would redefine the same
+subject-level artifact without changing its identity.
 
 ## Processing and branches
 
@@ -151,6 +152,7 @@ These names are BIDS-like, not a claim of validator compliance.
 
 | Key | Effect |
 | --- | --- |
+| `input_filter` | Restrict source runs by stable BIDS entity values. Alternatives for one entity form a set; different entities intersect. |
 | `confounds_regex` | Select continuous nuisance candidates from `confounds.tsv`; selected global signal columns are rejected. |
 | `temporal_mask_regex` | One-hot columns whose union excludes frames from estimation. |
 | `nuisance_variance_explained` | Desired fraction of standardized nuisance variance, subject to the rank cap. |

@@ -23,9 +23,7 @@ def templateflow_roots() -> tuple[Path, ...]:
     if configured:
         candidates.append(Path(configured).expanduser())
 
-    mni_template = (
-        ConfigStore().load_configuration("preprocessing", "main").values["anat"].get("mni_template")
-    )
+    mni_template = ConfigStore().load_configuration("anat", "main").values.get("mni_template")
     if mni_template:
         candidates.append(Path(mni_template).expanduser().parent.parent)
 

@@ -30,10 +30,10 @@ def isolated_site(tmp_path, monkeypatch):
 
 
 def test_lab_defaults_preserve_preprocessing_identity(isolated_site):
-    config = ConfigStore().load_configuration("preprocessing", "main")
-    assert config.fingerprint == "04d9b64bbed28533736ccd866f4243dff61cda1ea025f83c9f5be520754b3919"
-    assert config.values["fsaverage_template"] == "fsaverage6"
-    assert "fsaverage6" in config.values["func"]["output_spaces"]
+    anatomy = ConfigStore().load_configuration("anat", "main")
+    functional = ConfigStore().load_configuration("func", "main")
+    assert anatomy.values["fsaverage_template"] == "fsaverage6"
+    assert "fsaverage6" in functional.values["output_spaces"]
 
 
 def test_fsaverage6_midthickness_is_derived_from_pinned_surfaces(tmp_path):
@@ -85,14 +85,16 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
         },
     )
     store = ConfigStore()
-    preprocessing = store.load_configuration("preprocessing", "main").values
+    anatomy = store.load_configuration("anat", "main").values
+    functional = store.load_configuration("func", "main").values
     clean = store.load_configuration("clean", "main").values
-    assert preprocessing["container"]["image"] == clean["container"]
+    assert anatomy["container"]["image"] == functional["container"]["image"]
+    assert functional["container"]["image"] == clean["container"]
     assert clean["container"].startswith(str(tmp_path))
-    assert preprocessing["container"]["engine"] == clean["container_engine"] == "apptainer"
-    assert preprocessing["container"]["bind"] == clean["container_bind"] == []
-    assert preprocessing["func"]["synbold_disco_license"] == str(tmp_path / "license")
-    assert preprocessing["anat"]["mni_template"].startswith(str(tmp_path / "templates"))
+    assert functional["container"]["engine"] == clean["container_engine"] == "apptainer"
+    assert functional["container"]["bind"] == clean["container_bind"] == []
+    assert functional["synbold_disco_license"] == str(tmp_path / "license")
+    assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
 
 
 def test_invalid_path_update_is_atomic(isolated_site):
@@ -254,12 +256,18 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
         "publish",
         lambda checkout, registry: events.append(("publish", checkout)),
     )
-    monkeypatch.setattr(bootstrap.subprocess, "run", lambda command, **options: None)
+    commands = []
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda command, **options: commands.append(command),
+    )
     monkeypatch.setattr(bootstrap, "connect_user", lambda *args, **options: None)
 
     bootstrap.main(["--maintain", "--offline"])
 
     assert events == [("drain", root), ("publish", root)]
+    assert "--prepared-maintenance" in commands[1]
     assert json.loads((root / bootstrap.RECORD).read_text())["ready"] is True
 
 
@@ -319,6 +327,35 @@ def test_maintenance_rejects_active_workers(tmp_path):
     save_settings(config, {"registry": str(control)})
     with pytest.raises(RuntimeError, match="Stop or drain"):
         bootstrap.check_workers(config)
+
+
+def test_prepared_shared_setup_verifies_its_installation_barrier(tmp_path):
+    control = tmp_path / "registry"
+    scheduler = control / "shared/scheduler"
+    scheduler.mkdir(parents=True)
+    checkout = tmp_path / "main"
+    checkout.mkdir()
+    with sqlite3.connect(scheduler / "registry.sqlite3") as db:
+        db.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        db.executemany(
+            "INSERT INTO metadata(key,value) VALUES (?,?)",
+            (
+                ("maintenance_mode", "installation"),
+                ("installation_checkout", str(checkout.resolve())),
+            ),
+        )
+    config = tmp_path / "site.toml"
+    save_settings(config, {"registry": str(control)})
+
+    bootstrap.check_installation_barrier(config, checkout)
+
+    with sqlite3.connect(scheduler / "registry.sqlite3") as db:
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key='installation_checkout'",
+            (str(tmp_path / "other"),),
+        )
+    with pytest.raises(RuntimeError, match="not owned"):
+        bootstrap.check_installation_barrier(config, checkout)
 
 
 @pytest.mark.parametrize(

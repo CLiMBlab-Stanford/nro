@@ -2,6 +2,7 @@
 
 __all__ = [
     "ConfigStore",
+    "CONFIGURATION_CLASSES",
     "DERIVATIVE_CLASSES",
     "ResolvedConfiguration",
     "ResolvedWorkflow",

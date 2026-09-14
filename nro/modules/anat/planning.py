@@ -41,8 +41,8 @@ def plan_instances(
 ) -> tuple[InstanceSpec, ...]:
     """Construct the one subject-level anatomical instance."""
     del upstream
-    lineage = context.registered.lineages[descriptor.configuration_class]
-    directory_label = context.registered.directories[descriptor.configuration_class]
+    lineage = context.registered.anatomy_lineage
+    directory_label = context.registered.anatomy_directory
     inputs = raw_anatomical_inputs(context.subject_dir)
     if not inputs:
         raise ParticipantUnavailableError(f"No T1w or T2w images found under {context.subject_dir}")
@@ -52,7 +52,7 @@ def plan_instances(
             key=instance_key(
                 context.project,
                 descriptor.name,
-                context.registered.lineage_fingerprints[descriptor.configuration_class],
+                context.registered.anatomy_lineage_fingerprint,
                 context.participant,
                 entities,
             ),
@@ -64,7 +64,7 @@ def plan_instances(
             configuration_lineage_id=lineage,
             config_fingerprint=context.workflow.configuration(
                 descriptor.configuration_class
-            ).scientific_fingerprint,
+            ).module_fingerprint(descriptor.name),
             directory_label=directory_label,
             runtime_config=context.runtime_config(descriptor.configuration_class),
             command=(

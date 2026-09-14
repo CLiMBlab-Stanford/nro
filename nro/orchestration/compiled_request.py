@@ -49,6 +49,21 @@ def decode_spec(value: dict) -> InstanceSpec:
 def export_workflow(scientific, registered) -> dict:
     """Detach the workflow and configuration lineage data needed for admission."""
     with scientific.connection() as db:
+        bindings = [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM workflow_bindings WHERE workflow_revision_id=?",
+                (registered.revision_id,),
+            )
+        ]
+        if not any(binding["derivative_class"] == "anat" for binding in bindings):
+            bindings.append(
+                {
+                    "workflow_revision_id": registered.revision_id,
+                    "derivative_class": "anat",
+                    "configuration_lineage_id": registered.anatomy_lineage,
+                }
+            )
         return dict(
             revision=dict(
                 db.execute(
@@ -56,13 +71,7 @@ def export_workflow(scientific, registered) -> dict:
                 ).fetchone()
             ),
             lineages=[dict(row) for row in db.execute("SELECT * FROM configuration_lineages")],
-            bindings=[
-                dict(row)
-                for row in db.execute(
-                    "SELECT * FROM workflow_bindings WHERE workflow_revision_id=?",
-                    (registered.revision_id,),
-                )
-            ],
+            bindings=bindings,
             dependencies=[
                 dict(row) for row in db.execute("SELECT * FROM configuration_lineage_dependencies")
             ],

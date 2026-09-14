@@ -8,7 +8,21 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.anat import constants as anat_constants
 from nro.modules.anat import steps as anat_steps
-from nro.modules.anat.inputs import AnatImage
+from nro.modules.anat.inputs import AnatImage, load_anat_image
+
+
+def test_anatomical_input_preserves_its_logical_bids_path(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "sub-1_T1w.nii.gz"
+    source.parent.mkdir()
+    source.write_bytes(b"image")
+    logical = tmp_path / "dataset" / "sub-1" / "ses-1" / "anat" / "sub-1_ses-1_T1w.nii.gz"
+    logical.parent.mkdir(parents=True)
+    logical.symlink_to(source)
+
+    image = load_anat_image(logical)
+
+    assert image.image == logical
+    assert image.image.resolve() == source
 
 
 def test_gray_matter_aseg_labels_have_named_definitions() -> None:
@@ -142,8 +156,8 @@ def test_session_plans_keep_repeated_anatomicals_distinct(
 
 def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
-    destination = tmp_path / "destination.nii.gz"
-    mask = tmp_path / "mask.nii.gz"
+    destination = tmp_path / "missing" / "anat" / "destination.nii.gz"
+    mask = tmp_path / "missing" / "anat" / "mask.nii.gz"
     synthstrip = tmp_path / "synthstrip"
 
     step = anat_steps._brain_extract_anat_copy(
@@ -158,3 +172,6 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
     assert step.command[2] == str(source)
     assert step.inputs == (source,)
     assert step.outputs == (destination, mask)
+    assert step.prepare is not None
+    step.prepare()
+    assert destination.parent.is_dir()

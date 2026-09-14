@@ -9,7 +9,8 @@ from .parsing import parse_mapping
 from .schema import compile_configuration
 
 _RUNTIME_SUFFIX = {
-    "preprocessing": "_preprocess.yml",
+    "anat": "_anat.yml",
+    "func": "_func.yml",
     "clean": "_clean.yml",
     "dynconn": "_dynconn.yml",
     "microparcellation": "_microparcellation.yml",
@@ -56,35 +57,35 @@ def configure(settings: dict[str, Any]) -> None:
 
 
 def load_runtime_configuration(
-    path: str | Path, derivative_class: str
+    path: str | Path, configuration_class: str
 ) -> tuple[str, dict[str, Any]]:
     """Read a fully resolved private configuration without applying defaults."""
     from nro.configuration.site import require_execution_support
 
     require_execution_support()
     try:
-        suffix = _RUNTIME_SUFFIX[derivative_class]
+        suffix = _RUNTIME_SUFFIX[configuration_class]
     except KeyError as error:
-        raise ValueError(f"Unknown derivative class: {derivative_class}") from error
+        raise ValueError(f"Unknown configuration class: {configuration_class}") from error
     resolved_path = Path(path).expanduser().resolve()
     if not resolved_path.name.endswith(suffix):
         raise ValueError(
-            f"{derivative_class} runtime config must be named <ID>{suffix}: {resolved_path}"
+            f"{configuration_class} runtime config must be named <ID>{suffix}: {resolved_path}"
         )
     if not resolved_path.is_file():
         raise ValueError(f"Runtime config does not exist: {resolved_path}")
     try:
         values = parse_mapping(resolved_path.read_text(encoding="utf-8"), source=str(resolved_path))
-        values = compile_configuration(derivative_class, values, runtime=True)
+        values = compile_configuration(configuration_class, values, runtime=True)
     except ValueError as error:
         raise ValueError(f"Invalid runtime config {resolved_path}: {error}") from error
     return resolved_path.name[: -len(suffix)], values
 
 
-def configure_preprocessing(project: str, preprocessing_id: str, values: dict[str, Any]) -> None:
-    """Adapt a resolved preprocessing configuration to module settings."""
+def _container_arguments(values: dict[str, Any]) -> dict[str, Any]:
+    """Translate a resolved container block to the module CLI field names."""
     container = values["container"]
-    container_args = {
+    return {
         "no_container": container["no_container"],
         "container_engine": container["engine"],
         "container_cleanenv": container["cleanenv"],
@@ -92,23 +93,59 @@ def configure_preprocessing(project: str, preprocessing_id: str, values: dict[st
         "container_home": container["home"],
         "container_inner_setup": container["inner_setup"],
     }
+
+
+def configure_anat(project: str, anatomy_id: str, values: dict[str, Any]) -> None:
+    """Adapt a resolved anatomical configuration to module settings."""
+    container_args = _container_arguments(values)
     configure(
         {
             "common": {
                 "project": project,
-                "preprocessing_id": preprocessing_id,
-                "qunex_container": container["image"],
+                "preprocessing_id": anatomy_id,
+                "anatomical_preprocessing_id": anatomy_id,
+                "qunex_container": values["container"]["image"],
                 "multi_session_label": "ses-multi",
             },
             "preprocess_anat": {
-                **values["anat"],
+                **{
+                    key: value
+                    for key, value in values.items()
+                    if key not in {"container", "fsaverage_template"}
+                },
                 "fsaverage_template": values["fsaverage_template"],
                 **container_args,
                 "out_dir": None,
                 "work_dir": None,
             },
+        }
+    )
+
+
+def configure_func(project: str, preprocessing_id: str, values: dict[str, Any]) -> None:
+    """Adapt a resolved functional configuration to module settings."""
+    container_args = _container_arguments(values)
+    configure(
+        {
+            "common": {
+                "project": project,
+                "preprocessing_id": preprocessing_id,
+                "anatomical_preprocessing_id": values["anatomical_directory"],
+                "qunex_container": values["container"]["image"],
+                "multi_session_label": "ses-multi",
+            },
             "preprocess": {
-                **values["func"],
+                **{
+                    key: value
+                    for key, value in values.items()
+                    if key
+                    not in {
+                        "anatomical_directory",
+                        "confounds",
+                        "container",
+                        "fsaverage_template",
+                    }
+                },
                 "fsaverage_template": values["fsaverage_template"],
                 **container_args,
                 "work_dir": None,
@@ -124,7 +161,8 @@ def configure_clean(project: str, clean_id: str, values: dict[str, Any]) -> None
         {
             "common": {
                 "project": project,
-                "preprocessing_id": values["preprocessing_directory"],
+                "preprocessing_id": values["functional_directory"],
+                "anatomical_preprocessing_id": values["anatomical_directory"],
                 "clean_id": clean_id,
                 "qunex_container": values["container"],
                 "default_container_engine": values["container_engine"],

@@ -11,7 +11,7 @@ import yaml
 
 from nro.configuration.events import EventStore, task_key
 from nro.configuration.site import definitions_root
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore, validate_config_id
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 
 STARTERS = Path(__file__).parent / "starters"
 CATEGORIES = ("configs", "workflows", "models", "events", "bidsify")
@@ -67,7 +67,7 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
                         paths.append(path)
         files[category] = sorted(paths)
 
-    for kind in DERIVATIVE_CLASSES:
+    for kind in CONFIGURATION_CLASSES:
         check(store.configs / kind, lambda kind=kind: store.load_configuration(kind, "main"))
     for path in files["configs"]:
         relative = path.relative_to(store.configs)
@@ -75,7 +75,7 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         suffix = f"_{kind}.yml"
         if (
             len(relative.parts) != 2
-            or kind not in DERIVATIVE_CLASSES
+            or kind not in CONFIGURATION_CLASSES
             or not path.name.endswith(suffix)
         ):
             errors.append(f"Unexpected configuration filename: {path}")
@@ -182,7 +182,7 @@ def create_store(root: Path | None = None) -> Path:
             ignore=shutil.ignore_patterns("*.swp", "*.swo", "*~", ".DS_Store", "__pycache__"),
         )
         (staged / "gitignore").rename(staged / ".gitignore")
-        for kind in DERIVATIVE_CLASSES:
+        for kind in CONFIGURATION_CLASSES:
             directory = staged / "configs" / kind
             (directory / f"main_{kind}.yml").unlink()
             if not any(directory.iterdir()):

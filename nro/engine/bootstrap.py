@@ -126,6 +126,33 @@ def check_workers(site: Path) -> None:
         )
 
 
+def check_installation_barrier(site: Path, checkout: Path) -> None:
+    """Confirm that the outer installer owns the coordinated maintenance barrier."""
+    values = settings(path=site)[0]
+    paths = ControlPaths(Path(values["registry"]))
+    paths.require_current_layout()
+    if not paths.database.is_file():
+        raise RuntimeError("Shared installation maintenance was not prepared")
+    try:
+        with sqlite3.connect(f"file:{paths.database}?mode=ro", uri=True) as db:
+            rows = dict(
+                db.execute(
+                    "SELECT key,value FROM metadata WHERE key IN "
+                    "('maintenance_mode','installation_checkout')"
+                )
+            )
+    except sqlite3.DatabaseError as error:
+        raise RuntimeError(f"Cannot verify shared installation maintenance: {error}") from error
+    if rows != {
+        "maintenance_mode": "installation",
+        "installation_checkout": str(Path(checkout).resolve()),
+    }:
+        raise RuntimeError(
+            "Shared installation maintenance is not owned by this installer; "
+            "rerun ./install --maintain"
+        )
+
+
 def check_branch_environment(site: Path, environment: Path) -> None:
     """Ask central Python about environment pins while holding the installation lock."""
     values = settings(path=site)[0]
@@ -530,6 +557,8 @@ def _main(argv=None) -> None:
         ]
         if mode != "branch":
             command += ["--maintain"]
+        if mode == "shared":
+            command += ["--prepared-maintenance"]
         if args.non_interactive:
             command += ["--non-interactive"]
         if args.offline:

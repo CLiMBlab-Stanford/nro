@@ -140,61 +140,58 @@ CONTAINER = {
     "inner_setup": SETUP,
     "no_container": BOOL,
 }
-THREADS = {
-    "nthreads": EXEC_COUNT,
-    "nthreads_divisor": EXEC_COUNT,
-    "nthreads_min": EXEC_COUNT,
+EXECUTION_CONTROLS = {
     "force": EXEC_BOOL,
     "verbose": EXEC_BOOL,
 }
 
 SCHEMAS = {
-    "preprocessing": {
+    "anat": {
         "fsaverage_template": enum("fsaverage", "fsaverage6"),
         "container": CONTAINER,
-        "anat": {
-            **THREADS,
-            "selection_strategy": enum("first", "robust_average"),
-            "mni_template": TEXT,
-            "synthstrip_container": TEXT,
-            "freesurfer_subjects_dir": OPTIONAL_TEXT,
-            "fs_subject": OPTIONAL_TEXT,
+        **EXECUTION_CONTROLS,
+        "selection_strategy": enum("first", "robust_average"),
+        "mni_template": TEXT,
+        "synthstrip_container": TEXT,
+        "freesurfer_subjects_dir": OPTIONAL_TEXT,
+        "fs_subject": OPTIONAL_TEXT,
+    },
+    "func": {
+        "fsaverage_template": enum("fsaverage", "fsaverage6"),
+        "container": CONTAINER,
+        **EXECUTION_CONTROLS,
+        "sdc_method": enum("syn", "synbold_disco"),
+        "synbold_disco_image": TEXT,
+        "synbold_disco_license": TEXT,
+        "bbregister_surf": enum("white", "pial"),
+        "bbregister_init": enum("coreg", "fsl", "header", "rr"),
+        "bbregister_dof": Field("int", choices=(6, 9, 12)),
+        "output_grid": enum("t1_native", "t1_epi_vox"),
+        "topup_config": TEXT,
+        "ica_aroma_cmd": OPTIONAL_TEXT,
+        "use_jacobian": BOOL,
+        "fieldmap_syn_refine": BOOL,
+        "synbold_overlap_erosion_voxels": NONNEGATIVE_INT,
+        "synbold_min_overlap_voxels": COUNT,
+        "synbold_max_rigid_translation_mm": POSITIVE,
+        "synbold_max_rigid_rotation_degrees": POSITIVE,
+        "sbref_max_rigid_displacement_mm": POSITIVE,
+        "sbref_max_rigid_rotation_degrees": POSITIVE,
+        "sbref_min_support_overlap": FRACTION,
+        "sbref_min_intensity_correlation": Field("float", minimum=-1, maximum=1),
+        **{
+            f"syn_{stage}_{key}": TEXT
+            for stage in ("base", "refine")
+            for key in ("transform", "convergence", "shrink_factors", "smoothing_sigmas")
         },
-        "func": {
-            **THREADS,
-            "sdc_method": enum("syn", "synbold_disco"),
-            "synbold_disco_image": TEXT,
-            "synbold_disco_license": TEXT,
-            "bbregister_surf": enum("white", "pial"),
-            "bbregister_init": enum("coreg", "fsl", "header", "rr"),
-            "bbregister_dof": Field("int", choices=(6, 9, 12)),
-            "output_grid": enum("t1_native", "t1_epi_vox"),
-            "topup_config": TEXT,
-            "ica_aroma_cmd": OPTIONAL_TEXT,
-            "use_jacobian": BOOL,
-            "fieldmap_syn_refine": BOOL,
-            "synbold_overlap_erosion_voxels": NONNEGATIVE_INT,
-            "synbold_min_overlap_voxels": COUNT,
-            "synbold_max_rigid_translation_mm": POSITIVE,
-            "synbold_max_rigid_rotation_degrees": POSITIVE,
-            "sbref_max_rigid_displacement_mm": POSITIVE,
-            "sbref_max_rigid_rotation_degrees": POSITIVE,
-            "sbref_min_support_overlap": FRACTION,
-            "sbref_min_intensity_correlation": Field("float", minimum=-1, maximum=1),
-            **{
-                f"syn_{stage}_{key}": TEXT
-                for stage in ("base", "refine")
-                for key in ("transform", "convergence", "shrink_factors", "smoothing_sigmas")
-            },
-            "clean_ica_aroma": BOOL,
-            "ica_aroma_denoise_type": enum("nonaggr", "aggr", "both"),
-            "marss_mode": enum("off", "diagnose", "auto"),
-            "marss_min_multiband_factor": Field("int", minimum=2),
-            "sdc_from_sbref_pair": BOOL,
-            "debug_first_nvols": NONNEGATIVE_INT,
-            "io_chunk_vols": EXEC_COUNT,
-            "output_spaces": Field("list", item=TEXT, nonempty=True),
-        },
+        "clean_ica_aroma": BOOL,
+        "ica_aroma_denoise_type": enum("nonaggr", "aggr", "both"),
+        "marss_mode": enum("off", "diagnose", "auto"),
+        "marss_min_multiband_factor": Field("int", minimum=2),
+        "sdc_from_sbref_pair": BOOL,
+        "debug_first_nvols": NONNEGATIVE_INT,
+        "io_chunk_vols": EXEC_COUNT,
+        "output_spaces": Field("list", item=TEXT, nonempty=True),
         "confounds": {
             "aseg_in_epi": OPTIONAL_TEXT,
             "brain_mask_in_epi": OPTIONAL_TEXT,
@@ -231,6 +228,7 @@ SCHEMAS = {
         "wb_command": TEXT,
     },
     "firstlevels": {
+        "input_filter": Field("filter"),
         **DENOISING,
         "aggregation_weighting": enum("equal", "precision"),
         "noise_model": enum("ols", "ar1"),
@@ -362,12 +360,17 @@ SCHEMAS = {
 }
 
 RUNTIME_FIELDS = {
-    "preprocessing": {},
-    "clean": {"preprocessing_directory": TEXT},
-    "firstlevels": {"preprocessing_directory": TEXT, "preprocessing_aroma": BOOL},
-    "microparcellation": {"preprocessing_directory": TEXT, "clean_directory": TEXT},
-    "dynconn": {"preprocessing_directory": TEXT, "clean_directory": TEXT},
-    "networks": {"microparcellation_directory": TEXT},
+    "anat": {},
+    "func": {"anatomical_directory": TEXT},
+    "clean": {"functional_directory": TEXT, "anatomical_directory": TEXT},
+    "firstlevels": {
+        "functional_directory": TEXT,
+        "anatomical_directory": TEXT,
+        "preprocessing_aroma": BOOL,
+    },
+    "microparcellation": {"anatomical_directory": TEXT, "clean_directory": TEXT},
+    "dynconn": {"anatomical_directory": TEXT, "clean_directory": TEXT},
+    "networks": {"anatomical_directory": TEXT, "microparcellation_directory": TEXT},
 }
 
 
@@ -398,15 +401,14 @@ def normalize_fields(
 
 
 def _relationships(kind: str, values: dict) -> None:
-    if kind == "preprocessing":
+    if kind == "func":
         selected = values["fsaverage_template"]
         requested = sorted(
-            space for space in values["func"]["output_spaces"] if space.startswith("fsaverage")
+            space for space in values["output_spaces"] if space.startswith("fsaverage")
         )
         if requested and requested != [selected]:
             raise DefinitionError(
-                "preprocessing.func.output_spaces must use the selected "
-                f"preprocessing.fsaverage_template ({selected})"
+                f"func.output_spaces must use the selected func.fsaverage_template ({selected})"
             )
     elif kind == "clean":
         low, high = values["low_pass"], values["high_pass"]
@@ -491,13 +493,11 @@ def scientific_values(kind: str, values: dict) -> dict:
             "output": {"overwrite": EXEC_BOOL, "work_directory": Field("str", execution=True)},
         }
     result = select(schema, values)
-    if kind == "preprocessing":
-        func = result.get("func")
-        if isinstance(func, dict):
-            if func.get("marss_mode") == "off":
-                func.pop("marss_mode", None)
-            if func.get("marss_mode") != "auto":
-                func.pop("marss_min_multiband_factor", None)
+    if kind == "func":
+        if result.get("marss_mode") == "off":
+            result.pop("marss_mode", None)
+        if result.get("marss_mode") != "auto":
+            result.pop("marss_min_multiband_factor", None)
     if kind == "dynconn" and result.get("low_rank") is False:
         result.pop("low_rank_options", None)
     return result

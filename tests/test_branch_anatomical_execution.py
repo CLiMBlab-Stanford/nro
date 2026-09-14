@@ -14,7 +14,7 @@ from nro.modules.anat import module as anat
 from nro.modules.anat.inputs import AnatImage
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.runner import Runner
+from nro.orchestration.runner import ContainerSpec, Runner
 from nro.orchestration.runner_graph import Step
 
 pytestmark = pytest.mark.integration
@@ -145,10 +145,14 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         "fsaverage6",
         "average",
         template,
-        None,
+        ContainerSpec(
+            image=synthstrip,
+            engine="true",
+            home_dir=context.paths.work
+            / "demo/derivatives/preprocessing/main/sub-1/anat/_qunex_home",
+        ),
         synthstrip,
         False,
-        2,
     )
     inputs = anat.Inputs(
         "sub-1",
@@ -156,6 +160,8 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         tuple(i for i in images if i.modality == "T2w"),
     )
     job = anat.build_module(inputs, options, execution_context=context)
+    assert job._container is not None
+    assert job._container.home_dir.is_relative_to(context.paths.development)
     graph = job._graph.freeze()
     assert any("to-fsaverage6" in path.name for step in graph.steps for path in step.outputs)
     for step in graph.steps:

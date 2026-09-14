@@ -234,9 +234,10 @@ otherwise derived from their parent directories. `binds` is a TOML list.
 Generic defaults omit CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
-the X11 allocations created by `nro scene --open`; CLIMBLAB uses
-`john`. Both partitions use the `nlp` account. Viewer allocations do not enter
-nro's worker pool or shared concurrency accounting.
+the persistent, user-specific X11 allocation created by `nro scene --open`;
+CLIMBLAB uses `john`. Both partitions use the `nlp` account. The viewer broker
+uses 2 CPUs and 32 GB for up to 12 hours. It does not enter nro's worker pool or
+shared concurrency accounting.
 
 `flywheel_server` and `flywheel_project` are optional defaults for
 `nro bidsify`. The project uses the `GROUP/PROJECT` form. Command-line values

@@ -84,6 +84,10 @@ def build_module(
     ap = argparse.ArgumentParser(prog="clean.py", description=__doc__)
     ap.add_argument("--project", default=SETTINGS.common.project)
     ap.add_argument("--preprocessing-id", default=SETTINGS.common.preprocessing_id)
+    ap.add_argument(
+        "--anatomical-preprocessing-id",
+        default=SETTINGS.common.anatomical_preprocessing_id,
+    )
     ap.add_argument("--clean-id", default=SETTINGS.common.clean_id)
     ap.add_argument("--sub-id", required=True)
     ap.add_argument("--ses-id", default=None)
@@ -277,7 +281,7 @@ def build_module(
     anatomical_path = anatomical_manifest_path(
         args.sub_id,
         project=args.project,
-        preprocessing_id=args.preprocessing_id,
+        preprocessing_id=args.anatomical_preprocessing_id,
         bids_root=bids_root,
     )
     if execution_context is not None:
@@ -381,6 +385,7 @@ def build_module(
     configuration = {
         "clean_id": str(args.clean_id),
         "preprocessing_id": str(args.preprocessing_id),
+        "anatomical_preprocessing_id": str(args.anatomical_preprocessing_id),
         "min_trs": int(args.min_trs),
         "gray_matter_mask_threshold": float(args.gm_mask_threshold),
         "space": str(args.space),

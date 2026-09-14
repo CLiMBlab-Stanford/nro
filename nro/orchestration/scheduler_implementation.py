@@ -255,6 +255,7 @@ def run_local_worker(
     *,
     memory_gb: int,
     drain_seconds: float,
+    cpus: int | None = None,
     poll_interval: float = 5.0,
     stdout=None,
     wait: bool = True,
@@ -263,6 +264,7 @@ def run_local_worker(
     """Run the designated worker in a separate foreground process."""
     import subprocess
 
+    from nro.engine.execution import allocated_cpus, thread_environment
     from nro.orchestration.execution_cache import cache_lock
 
     with cache_lock(registry.paths.control):
@@ -292,7 +294,13 @@ def run_local_worker(
             ),
             site=site,
         )
-        environment = {**os.environ, "NRO_PROCESS_ROLE": "worker"}
+        cpu_count = allocated_cpus() if cpus is None else max(1, int(cpus))
+        environment = {
+            **os.environ,
+            "NRO_PROCESS_ROLE": "worker",
+            "NRO_ALLOCATED_CPUS": str(cpu_count),
+            **thread_environment(cpu_count),
+        }
         environment.pop("SLURM_JOB_ID", None)
         process = subprocess.Popen(command, stdout=stdout, env=environment)
         process.nro_worker_id = worker_id

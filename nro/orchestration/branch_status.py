@@ -61,7 +61,7 @@ def refresh(rows: list[dict], selection) -> None:
                 registered[name] = scientific.register_workflow(workflows[name])
             registration = registered[name]
             derivative_class = module_descriptor(row["module"]).configuration_class
-            if registration.directories[derivative_class] != row["directory_label"]:
+            if registration.directory_for(derivative_class) != row["directory_label"]:
                 continue
             identity = (
                 name,

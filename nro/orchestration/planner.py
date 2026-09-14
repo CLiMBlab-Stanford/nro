@@ -345,8 +345,7 @@ class Planner:
             if not requested_smoothing or any(value < 0 for value in requested_smoothing):
                 raise ValueError("Smoothing levels must be nonnegative integers")
             published_spaces = tuple(
-                str(value)
-                for value in workflow.configuration("preprocessing").values["func"]["output_spaces"]
+                str(value) for value in workflow.configuration("func").values["output_spaces"]
             )
             unavailable = tuple(
                 space for space in requested_spaces if space not in published_spaces

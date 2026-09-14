@@ -10,7 +10,7 @@ import yaml
 
 from nro.configuration.parsing import parse_mapping
 from nro.configuration.site import bids_root as _configured_bids_root
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore, validate_config_id
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 from nro.engine.definition_editor import (
     delete_definition,
     read_definition,
@@ -44,8 +44,8 @@ def definition_target(store: ConfigStore, kind: str, identifier: str) -> Definit
     if kind != "config" or len(identifier.split("/")) != 2:
         raise ValueError("Config IDs must be CLASS/ID, for example clean/alternative")
     derivative_class, config_id = identifier.split("/")
-    if derivative_class not in DERIVATIVE_CLASSES:
-        raise ValueError(f"Choose a configuration class from {', '.join(DERIVATIVE_CLASSES)}")
+    if derivative_class not in CONFIGURATION_CLASSES:
+        raise ValueError(f"Choose a configuration class from {', '.join(CONFIGURATION_CLASSES)}")
     config_id = validate_config_id(config_id, kind="configuration")
     return DefinitionTarget(
         kind,
@@ -103,7 +103,7 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
             + "".join(f"# {line}\n" for line in defaults.splitlines())
         )
     if target.kind == "workflow":
-        return yaml.safe_dump({name: "main" for name in DERIVATIVE_CLASSES}, sort_keys=False)
+        return yaml.safe_dump({name: "main" for name in CONFIGURATION_CLASSES}, sort_keys=False)
     paths = args.events or discover_event_files(
         target.identifier.split("/")[0],
         _configured_bids_root(),

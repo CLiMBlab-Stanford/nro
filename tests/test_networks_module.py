@@ -247,9 +247,10 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         "load_runtime_workflow_snapshot",
         lambda *a: {
             "configurations": {
-                "preprocessing": {
+                "anat": {"directory": "main", "resolved": {}},
+                "func": {
                     "directory": "main",
-                    "resolved": {"func": {"output_spaces": ["T1w"]}},
+                    "resolved": {"output_spaces": ["T1w"]},
                 },
                 "microparcellation": {"resolved": {}},
             }

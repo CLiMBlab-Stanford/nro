@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from nro.engine.bids import resolve_bids_table
+from nro.engine.bids import matches_filter, resolve_bids_table
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import instance_key
 
@@ -22,11 +22,15 @@ def refresh_command(command: tuple[str, ...], processing: dict) -> tuple[str, ..
     return tuple(values)
 
 
-def selected_runs(runs, model_id: str, participant: str) -> tuple:
-    """Select all runs of the registered task for one participant."""
+def selected_runs(runs, model_id: str, participant: str, input_filter: dict | None = None) -> tuple:
+    """Select runs of one task and participant that match the stable input filter."""
     task = model_id.split("/")[0]
     return tuple(
-        run for run in runs if run.entities.get("task") == task and run.participant == participant
+        run
+        for run in runs
+        if run.entities.get("task") == task
+        and run.participant == participant
+        and matches_filter(run.entities, input_filter)
     )
 
 
@@ -35,7 +39,7 @@ def select_model_runs(
 ) -> tuple:
     """Rediscover one registered instance's runs independently of model sets."""
     identifier = f"{entities['task']}/{entities['model']}"
-    return selected_runs(runs, identifier, participant)
+    return selected_runs(runs, identifier, participant, config.get("input_filter"))
 
 
 def direct_inputs(runs, config: dict, participant: str, entities: dict) -> tuple[Path, ...]:
@@ -52,7 +56,9 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
     result = []
     for model_id, document in context.task_models.items():
         source = scientific_model(document)
-        runs = selected_runs(context.runs, model_id, context.participant)
+        runs = selected_runs(
+            context.runs, model_id, context.participant, values.get("input_filter")
+        )
         if not runs:
             continue
         for space, smoothing in context.target_pairs:

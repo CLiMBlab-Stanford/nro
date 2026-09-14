@@ -8,10 +8,13 @@ them consistently.
 
 ```text
 workflow
-  selects one configuration lineage for each derivative class
+  selects one configuration for each configuration class
+
+configuration class
+  owns the scientific settings for one module
 
 derivative class
-  organizes a broad family of outputs
+  organizes a broad family of public outputs and lineages
   is realized by one or more scientific modules
 
 module
@@ -25,21 +28,25 @@ instance
 
 ### Derivative class
 
-A **derivative class** is a broad category of related results and configuration.
+A **derivative class** is a broad category of related results.
 The current classes are `preprocessing`, `clean`, `dynconn`, `microparcellation`,
 `networks`, and `firstlevels`.
 
-Classes organize configuration lineages and derivative directories. They are
-not themselves schedulable. Most classes correspond to one module. The
-`preprocessing` class is the deliberate exception: its configuration and
-derivative tree are shared by the `anat` and `func` modules.
+Classes organize artifact lineages and derivative directories. They are not
+themselves schedulable. Most classes correspond to one module. The
+`preprocessing` class is the deliberate storage exception: its derivative tree
+contains artifacts from the separately configured `anat` and `func` modules.
 
 Use **class** only when discussing this organization. Do not use it as a synonym
 for a Python class, module, or individual scheduled computation.
 
-### Configuration
+### Configuration class and configuration
 
-A **configuration** is the complete set of parameters for one derivative class.
+A **configuration class** is the parameter namespace for one scientific module.
+The current classes are `anat`, `func`, `clean`, `dynconn`,
+`microparcellation`, `networks`, and `firstlevels`.
+
+A **configuration** is the complete set of parameters for one configuration class.
 It has a stable human-readable ID. Configuration files contain the authority;
 Python does not maintain a second default parameter map.
 
@@ -47,10 +54,14 @@ A **configuration lineage** identifies a configuration together with its
 upstream configuration choices. Equivalent lineages share a derivative
 directory. A substantive configuration change changes the applicable instance
 contract and therefore invalidates affected results when they are reassessed.
+The public `preprocessing` lineage combines the selected `anat` and `func`
+configurations. Anatomy instance identity depends only on the `anat`
+configuration, so functional variants that select the same anatomy reuse one
+anatomical instance and directory.
 
 ### Workflow
 
-A **workflow** selects one configuration ID for each derivative class. It
+A **workflow** selects one configuration ID for each configuration class. It
 defines a coherent path from source data through the available derivative
 classes. A workflow does not contain scientific code and is not a runtime
 sequence of steps.

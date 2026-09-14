@@ -35,7 +35,7 @@ def plan_instances(
     )
     base_prefix = str(values.get("prefix") or context.sub_id)
     anat = upstream["anat"][0]
-    preprocessing_label = context.registered.directories["preprocessing"]
+    preprocessing_label = context.registered.anatomy_directory
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}

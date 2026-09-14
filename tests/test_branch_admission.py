@@ -91,10 +91,10 @@ def setup(tmp_path, monkeypatch):
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.lineages["preprocessing"],
+            configuration_lineage_id=registered.anatomy_lineage,
             config_fingerprint="test-science",
             directory_label="main",
-            runtime_config=science.runtime_config_path(registered, "preprocessing"),
+            runtime_config=science.runtime_config_path(registered, "anat"),
             command=(sys.executable, "-m", "nro.probe_" + name, str(out)),
             dependencies=(),
             input_paths=(),
@@ -186,8 +186,8 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     child = prepare("child", parent="parent", demand=False)
     root, paths, _, _, registered, source, _ = child
     spec = parent[2].evolve(
-        configuration_lineage_id=registered.lineages["preprocessing"],
-        runtime_config=branches.registry("child").runtime_config_path(registered, "preprocessing"),
+        configuration_lineage_id=registered.anatomy_lineage,
+        runtime_config=branches.registry("child").runtime_config_path(registered, "anat"),
     )
     plan = branches.resolve_plan(root, paths, (spec,), (spec.key,), (), validate=lambda _: True)
     admit_plan(
