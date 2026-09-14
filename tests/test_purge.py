@@ -8,6 +8,10 @@ import pytest
 from nro.bin.purge import main as purge_main
 from nro.configuration.store import ConfigStore
 from nro.engine.cli import page_text
+from nro.orchestration.branch_purge import (
+    _contains_protected_output,
+    _protected_output_index,
+)
 from nro.orchestration.planner import build_subject_instances
 from nro.orchestration.purge_paths import _remove_path
 from nro.orchestration.registry import Registry, utcnow
@@ -82,6 +86,17 @@ def test_remove_path_stops_pruning_at_nonempty_directory(tmp_path: Path) -> None
     assert retained.is_file()
 
 
+def test_protected_output_index_detects_only_equal_or_descendant_paths(tmp_path: Path) -> None:
+    protected = tmp_path / "derivatives" / "module" / "sub-01" / "result.nii.gz"
+    sibling = tmp_path / "derivatives" / "module-other"
+    index = _protected_output_index((protected,))
+
+    assert _contains_protected_output(protected, index)
+    assert _contains_protected_output(protected.parent, index)
+    assert not _contains_protected_output(sibling, index)
+    assert not _contains_protected_output(protected.parent / "other.nii.gz", index)
+
+
 def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, capsys) -> None:
     bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
     work = tmp_path / "work"
@@ -110,7 +125,8 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
         work
         / "demo"
         / "derivatives"
-        / "preprocessing"
+        / "nro"
+        / "func"
         / "main"
         / "sub-01"
         / "func"
@@ -121,7 +137,8 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
         work
         / "demo"
         / "derivatives"
-        / "preprocessing"
+        / "nro"
+        / "func"
         / "main"
         / "sub-01"
         / "func"
@@ -416,12 +433,12 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
     work = tmp_path / "work"
     selected_work = _write(
         work
-        / "demo/derivatives/microparcellation/main"
+        / "demo/derivatives/nro/microparcellation/main"
         / "space-fsnative_smoothing-0mm/sub-01/scratch.txt"
     ).parent
     preserved_work = _write(
         work
-        / "demo/derivatives/microparcellation/main"
+        / "demo/derivatives/nro/microparcellation/main"
         / "space-fsnative_smoothing-2mm/sub-01/scratch.txt"
     ).parent
 
@@ -467,7 +484,7 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     )
     func_work = _write(
         work
-        / "demo/derivatives/preprocessing/main/sub-01/func"
+        / "demo/derivatives/nro/func/main/sub-01/func"
         / f"{func['output_prefix']}_bold/scratch.txt"
     )
     foreign = _write(bids / "demo/derivatives/other-system/sub-01/foreign_result.nii.gz")

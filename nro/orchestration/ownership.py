@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 import yaml
 
-from nro.configuration.store import DERIVATIVE_CLASSES, UPSTREAM_CLASS, fingerprint
+from nro.configuration.store import CONFIGURATION_CLASSES, UPSTREAM_CLASS, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
+from nro.engine.paths import module_artifact_root, module_namespace_root
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import instance_key
 
@@ -18,26 +19,26 @@ if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
 
 
-OWNERSHIP_VERSION = 1
+OWNERSHIP_VERSION = 2
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
 
 
-def lineage_root(project_root: Path, derivative_class: str, directory_label: str) -> Path:
+def lineage_root(project_root: Path, configuration_class: str, directory_label: str) -> Path:
     """Return the public root assigned to one configuration lineage."""
-    return Path(project_root) / "derivatives" / derivative_class / directory_label
+    return module_artifact_root(project_root, configuration_class, directory_label)
 
 
-def lineage_record_path(project_root: Path, derivative_class: str, directory_label: str) -> Path:
+def lineage_record_path(project_root: Path, configuration_class: str, directory_label: str) -> Path:
     """Return the ownership record for one configuration lineage."""
-    return lineage_root(project_root, derivative_class, directory_label) / (
+    return lineage_root(project_root, configuration_class, directory_label) / (
         f"{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
     )
 
 
 def instance_record_path(
     project_root: Path,
-    derivative_class: str,
+    configuration_class: str,
     directory_label: str,
     module: str,
     key: str,
@@ -45,7 +46,7 @@ def instance_record_path(
     """Return the ownership receipt path for one module instance."""
     digest = key.split(":", 1)[-1]
     return (
-        lineage_root(project_root, derivative_class, directory_label)
+        lineage_root(project_root, configuration_class, directory_label)
         / OWNERSHIP_DIRECTORY
         / "instances"
         / module
@@ -54,10 +55,10 @@ def instance_record_path(
 
 
 def remove_empty_ownership_root(
-    project_root: Path, derivative_class: str, directory_label: str
+    project_root: Path, configuration_class: str, directory_label: str
 ) -> None:
     """Remove a lineage marker after its final instance receipt is purged."""
-    control = lineage_root(project_root, derivative_class, directory_label) / OWNERSHIP_DIRECTORY
+    control = lineage_root(project_root, configuration_class, directory_label) / OWNERSHIP_DIRECTORY
     instances = control / "instances"
     if instances.is_dir():
         for module_directory in instances.iterdir():
@@ -88,14 +89,14 @@ def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dic
             dict(row)
             for row in db.execute(
                 """
-                SELECT dependency.role, parent.derivative_class,
+                SELECT dependency.role, parent.configuration_class,
                        parent.config_id, parent.lineage_fingerprint,
                        parent.directory_label
                 FROM configuration_lineage_dependencies dependency
                 JOIN configuration_lineages parent
                   ON parent.id=dependency.upstream_configuration_lineage_id
                 WHERE dependency.configuration_lineage_id=?
-                ORDER BY dependency.role, parent.derivative_class
+                ORDER BY dependency.role, parent.configuration_class
                 """,
                 (lineage_id,),
             )
@@ -111,7 +112,7 @@ def write_instance_ownership(
         instance = dict(
             db.execute(
                 """
-                SELECT item.*, lineage.derivative_class, lineage.config_id,
+                SELECT item.*, lineage.configuration_class, lineage.config_id,
                        lineage.config_fingerprint, lineage.lineage_fingerprint,
                        lineage.resolved_yaml, lineage.directory_label
                 FROM instances item
@@ -148,7 +149,7 @@ def write_instance_ownership(
     root_record = {
         "record_version": OWNERSHIP_VERSION,
         "owner": "nro",
-        "derivative_class": lineage["derivative_class"],
+        "configuration_class": lineage["configuration_class"],
         "directory_label": lineage["directory_label"],
         "configuration": {
             "id": lineage["config_id"],
@@ -163,7 +164,7 @@ def write_instance_ownership(
         root_record["implementation"] = provenance
     root_path = lineage_record_path(
         project_root,
-        str(lineage["derivative_class"]),
+        str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
     )
     root_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
@@ -198,7 +199,7 @@ def write_instance_ownership(
         receipt["implementation"] = provenance
     receipt_path = instance_record_path(
         project_root,
-        str(lineage["derivative_class"]),
+        str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
         str(instance["module"]),
         str(instance["instance_key"]),
@@ -224,7 +225,7 @@ def missing_instance_ownership(
                 dict(row)
                 for row in db.execute(
                     f"""SELECT i.id,i.instance_key,i.module,i.project,
-                               c.derivative_class,c.directory_label,e.context_json
+                               c.configuration_class,c.directory_label,e.context_json
                         FROM instances i
                         JOIN configuration_lineages c ON c.id=i.configuration_lineage_id
                         LEFT JOIN instance_execution e ON e.instance_id=i.id
@@ -241,10 +242,12 @@ def missing_instance_ownership(
 
             context = ExecutionContext.from_dict(json.loads(row["context_json"]))
             project_root = context.paths.output_project(row["project"])
-        lineage = lineage_record_path(project_root, row["derivative_class"], row["directory_label"])
+        lineage = lineage_record_path(
+            project_root, row["configuration_class"], row["directory_label"]
+        )
         receipt = instance_record_path(
             project_root,
-            row["derivative_class"],
+            row["configuration_class"],
             row["directory_label"],
             row["module"],
             row["instance_key"],
@@ -267,18 +270,18 @@ def read_ownership_records(
     errors: list[str] = []
     for project in projects:
         project_root = Path(bids_root) / project
-        for derivative_class in DERIVATIVE_CLASSES:
-            class_root = project_root / "derivatives" / derivative_class
+        for configuration_class in CONFIGURATION_CLASSES:
+            class_root = module_namespace_root(project_root, configuration_class)
             for marker_path in sorted(
                 class_root.glob(f"*/{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}")
             ):
                 try:
                     marker = json.loads(marker_path.read_text(encoding="utf-8"))
-                    _validate_lineage_record(marker, marker_path, derivative_class)
+                    _validate_lineage_record(marker, marker_path, configuration_class)
                 except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                     errors.append(f"{marker_path}: {error}")
                     continue
-                identity = (derivative_class, str(marker["lineage_fingerprint"]))
+                identity = (configuration_class, str(marker["lineage_fingerprint"]))
                 previous = lineages.get(identity)
                 if previous is None or str(marker["updated_at"]) > str(previous["updated_at"]):
                     lineages[identity] = marker
@@ -290,7 +293,7 @@ def read_ownership_records(
                             receipt,
                             receipt_path,
                             project=project,
-                            derivative_class=derivative_class,
+                            configuration_class=configuration_class,
                             marker=marker,
                         )
                     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
@@ -301,12 +304,12 @@ def read_ownership_records(
 
 
 def _validate_lineage_record(
-    record: Mapping[str, object], path: Path, derivative_class: str
+    record: Mapping[str, object], path: Path, configuration_class: str
 ) -> None:
     if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
         raise ValueError("unsupported ownership record")
-    if record.get("derivative_class") != derivative_class:
-        raise ValueError("derivative class does not match its directory")
+    if record.get("configuration_class") != configuration_class:
+        raise ValueError("configuration class does not match its directory")
     if record.get("directory_label") != path.parent.parent.name:
         raise ValueError("directory label does not match its directory")
     configuration = record.get("configuration")
@@ -316,7 +319,7 @@ def _validate_lineage_record(
         raise ValueError("configuration snapshot is missing")
     expected_configuration = fingerprint(
         {
-            "derivative_class": derivative_class,
+            "module": configuration_class,
             "config_id": configuration.get("id"),
             "values": configuration.get("resolved"),
         }
@@ -326,7 +329,7 @@ def _validate_lineage_record(
     upstream = record.get("upstream")
     if not isinstance(upstream, list):
         raise ValueError("upstream lineage list is missing")
-    expected_parent = UPSTREAM_CLASS[derivative_class]
+    expected_parent = UPSTREAM_CLASS[configuration_class]
     parent_fingerprints = [
         str(item.get("lineage_fingerprint")) for item in upstream if isinstance(item, Mapping)
     ]
@@ -338,13 +341,13 @@ def _validate_lineage_record(
         parent = upstream[0]
         if (
             not isinstance(parent, Mapping)
-            or parent.get("derivative_class") != expected_parent
+            or parent.get("configuration_class") != expected_parent
             or parent.get("role") != expected_parent
         ):
             raise ValueError("upstream lineage has the wrong class or role")
     expected = fingerprint(
         {
-            "derivative_class": derivative_class,
+            "module": configuration_class,
             "config_id": configuration.get("id"),
             "upstream": parent_fingerprints[0] if parent_fingerprints else None,
         }
@@ -358,7 +361,7 @@ def _validate_instance_record(
     path: Path,
     *,
     project: str,
-    derivative_class: str,
+    configuration_class: str,
     marker: Mapping[str, object],
 ) -> None:
     if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
@@ -368,8 +371,8 @@ def _validate_instance_record(
     module = str(record.get("module"))
     from nro.orchestration.catalog import module_descriptor
 
-    if module_descriptor(module).derivative_class != derivative_class:
-        raise ValueError("module does not belong to the recorded derivative class")
+    if module_descriptor(module).configuration_class != configuration_class:
+        raise ValueError("module does not match the recorded configuration class")
     if record.get("lineage_fingerprint") != marker.get("lineage_fingerprint"):
         raise ValueError("instance and root lineage fingerprints differ")
     entities = record.get("entities")
@@ -378,14 +381,7 @@ def _validate_instance_record(
     contract = record.get("artifact_contract")
     if not isinstance(contract, Mapping):
         raise ValueError("artifact contract is missing")
-    # Anatomy can be reused by several functional lineages that publish under
-    # the same preprocessing class. Its own configuration fingerprint is the
-    # stable identity; other modules use their complete lineage fingerprint.
-    identity_fingerprint = (
-        str(contract.get("configuration"))
-        if module == "anat"
-        else str(record["lineage_fingerprint"])
-    )
+    identity_fingerprint = str(record["lineage_fingerprint"])
     expected_key = instance_key(
         project,
         module,

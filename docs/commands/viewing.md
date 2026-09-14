@@ -58,14 +58,14 @@ nro qc registration t20 -p nptl -w main
 
 Here the participant is positional and `-p` means **project**, unlike the
 common selectors used by `run` and `status`. `-w`/`--workflow` chooses the
-preprocessing lineage; the default is `main`. `--output-dir` overrides the QC
+anatomical and functional outputs; the default is `main`. `--output-dir` overrides the QC
 destination. `--sagittal-coordinate MM` selects the displayed world-space
 left/right coordinate (default −20 mm); `--slab-thickness VOXELS` defaults to 3.
 
-The command assembles registration views from completed preprocessing outputs
-for visual inspection. It is ad hoc QC, not an automatically scheduled sixth
-scientific module and not a numerical pass/fail classifier. Outputs normally
-live under the preprocessing lineage's nested
+The command assembles registration views from completed `anat` and `func`
+outputs for visual inspection. It is ad hoc QC, not a scheduled scientific
+module and not a numerical pass/fail classifier. Outputs normally live under
+the selected `func` derivative's nested
 `derivatives/qc/registration/sub-ID/` directory, not as a BIDS datatype beneath
 the original subject. Inspect both anatomy and EPI alignment; a plausible image
 alone does not validate every transform or motion estimate.

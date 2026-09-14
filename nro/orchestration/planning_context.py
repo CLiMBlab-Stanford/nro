@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from nro.configuration.markup import SubjectMarkup
 from nro.configuration.store import ResolvedWorkflow, fingerprint
 from nro.engine.bids import BidsRun
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
@@ -52,7 +53,16 @@ class SubjectPlanningContext:
     memory_gb: int
     max_memory_gb: int
     task_models: Mapping[str, dict] | None = None
+    source_markup: SubjectMarkup | None = None
 
     def runtime_config(self, configuration_class: str) -> Path:
-        """Return the registered runtime configuration path for a derivative class."""
+        """Return the registered runtime path for one configuration class."""
         return self.registry.runtime_config_path(self.registered, configuration_class)
+
+    def processing_contract(self, descriptor, **values) -> dict:
+        """Combine module policy with this subject's captured source markup."""
+        processing = dict(descriptor.processing_contract())
+        if self.source_markup is not None:
+            processing["source_markup"] = self.source_markup.as_dict()
+        processing.update(values)
+        return processing

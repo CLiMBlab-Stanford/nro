@@ -182,8 +182,8 @@ def test_execution_paths_keep_raw_data_shared_and_outputs_local(tmp_path):
     from nro.orchestration.execution_context import ExecutionContext, InputBinding
 
     paths = BranchPaths("feature", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "DEV")
-    logical = paths.bids / "demo/derivatives/preprocessing/main/sub-01/anat"
-    selected = paths.bids / "demo/derivatives/preprocessing/other/sub-01/anat"
+    logical = paths.bids / "demo/derivatives/nro/anat/main/sub-01/anat"
+    selected = paths.bids / "demo/derivatives/nro/anat/other/sub-01/anat"
     context = ExecutionContext(
         paths, "demo", "child", (InputBinding("main", "parent", 3, logical, selected, "sub-01"),)
     )
@@ -192,7 +192,7 @@ def test_execution_paths_keep_raw_data_shared_and_outputs_local(tmp_path):
     assert context.input_path(raw) == raw
     assert context.output_path(logical / "sub-01_result.nii") == (
         paths.development
-        / "feature/BIDS/demo/derivatives/preprocessing/main/sub-01/anat/sub-01_result.nii"
+        / "feature/BIDS/demo/derivatives/nro/anat/main/sub-01/anat/sub-01_result.nii"
     )
     with pytest.raises(ValueError, match="not selected"):
         context.input_path(logical / "sub-02_result.nii")
@@ -212,7 +212,7 @@ def test_debug_bids_cannot_supply_scientific_inputs(tmp_path):
     paths = BranchPaths("dev", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "DEV")
     raw = paths.source_project("demo") / "sub-01/anat"
     debug = paths.output_project("demo") / "sub-01/anat"
-    artifact = paths.source_project("demo") / "derivatives/anat/main/sub-01/anat"
+    artifact = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/anat"
     context = ExecutionContext(paths, "demo", "child", ())
     with pytest.raises(ValueError, match="not selected"):
         context.input_path(debug / "sub-01_T1w.nii.gz")

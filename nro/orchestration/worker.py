@@ -587,6 +587,16 @@ class Worker:
                         "NRO_RUNTIME_CONFIG": str(instance.execution.runtime_config),
                         "NRO_CONFIGURATION_FINGERPRINT": instance.config_fingerprint,
                         "NRO_RUNNER_GRAPH_SIGNATURE": started_runner_graph_signature,
+                        **(
+                            {
+                                "NRO_SOURCE_MARKUP": json.dumps(
+                                    instance.instance_contract["processing"]["source_markup"],
+                                    sort_keys=True,
+                                )
+                            }
+                            if "source_markup" in instance.instance_contract.get("processing", {})
+                            else {}
+                        ),
                     },
                     poll_interval=self.poll_interval,
                     cancellation_state=cancellation_state,

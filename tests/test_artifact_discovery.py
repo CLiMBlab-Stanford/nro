@@ -37,7 +37,7 @@ def test_empty_derivative_tree_never_plans_sources(tmp_path, monkeypatch):
     bids = tmp_path / "bids"
     sources(bids)
     write(bids / "demo/derivatives/unmanaged/main/sub-01/sub-01_result.txt")
-    write(bids / "demo/derivatives/preprocessing/unknown/sub-01/anat/sub-01_partial.txt")
+    write(bids / "demo/derivatives/nro/anat/unknown/sub-01/anat/sub-01_partial.txt")
     write(bids / "demo/derivatives/preprocessing/main/sub-01/ses-01/anat/sub-01_ses-01_T1w.nii.gz")
     registry = Registry.for_project("demo", bids_root=bids)
     calls = spy_planning(monkeypatch)
@@ -50,7 +50,7 @@ def test_anatomy_recovery_skips_functional_discovery_and_duplicate_workflows(tmp
     bids = tmp_path / "bids"
     sources(bids)
     sources(bids, "02")
-    write(bids / "demo/derivatives/preprocessing/main/sub-01/anat/sub-01_partial.txt")
+    write(bids / "demo/derivatives/nro/anat/main/sub-01/anat/sub-01_partial.txt")
     registry = Registry.for_project("demo", bids_root=bids)
     calls = spy_planning(monkeypatch)
 
@@ -70,7 +70,7 @@ def test_clean_recovery_selects_only_existing_run_and_exact_target_pairs(tmp_pat
     for space, smoothing in [("fsnative", 2), ("T1w", 0)]:
         write(
             bids
-            / "demo/derivatives/clean/main/sub-01"
+            / "demo/derivatives/nro/clean/main/sub-01"
             / f"sub-01_task-rest_run-1_space-{space}_smoothing-{smoothing}mm_partial.txt"
         )
     registry = Registry.for_project("demo", bids_root=bids)
@@ -115,9 +115,7 @@ def test_owned_records_restore_without_planning_but_new_run_is_discovered(tmp_pa
     assert first.instances == 2
     assert calls == []
 
-    write(
-        bids / "demo/derivatives/preprocessing/main/sub-01/func/sub-01_task-rest_run-2_partial.txt"
-    )
+    write(bids / "demo/derivatives/nro/func/main/sub-01/func/sub-01_task-rest_run-2_partial.txt")
     registry.reinitialize()
     second = register_existing_artifacts(registry, bids_root=bids, inventory={"demo": ("01",)})
     assert second.instances == 3
@@ -131,7 +129,7 @@ def test_microparcellation_recovery_does_not_plan_networks(tmp_path, monkeypatch
     sources(bids)
     write(
         bids
-        / "demo/derivatives/microparcellation/main/sub-01"
+        / "demo/derivatives/nro/microparcellation/main/sub-01"
         / "sub-01_space-fsnative_smoothing-2mm_partial.txt"
     )
     registry = Registry.for_project("demo", bids_root=bids)

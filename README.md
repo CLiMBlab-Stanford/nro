@@ -15,6 +15,11 @@ share existing work.
 Derivatives are produced by _modules_ with configurable settings. Sequences of
 configured modules are organized into _workflows_.
 
+All module artifacts live under
+`BIDS/PROJECT/derivatives/nro/MODULE/MODULE_ID/`. Anatomy and functional
+processing have separate directories, so workflows can select either
+configuration independently.
+
 The main processing graph contains these modules:
 
 - `anat` prepares anatomical images.
@@ -39,7 +44,7 @@ The arrows show dependencies:
 [anat] ── "direct anatomical inputs" ──► {clean, networks, firstlevels}
 ```
 
-Version 0.0.1 is the first release. nro follows
+nro follows
 [Semantic Versioning](https://semver.org/), and `main` contains released code.
 Each published version has an annotated Git tag and a corresponding GitHub Release.
 During the 0.x series, public interfaces may still change. The project retains
@@ -171,8 +176,9 @@ nro qc registration 01 -p example
 The equivalent engine entry point is
 `.nro-env/bin/python -m nro.qc registration 01 -p example`.
 
-Workflow settings are selected with `-w`; the default is `main`. Configuration
-files live in a separate [definitions store](docs/definitions.md). Use
+Workflow settings are selected with `-w`; the default is `main`. Configuration,
+model, and optional source-markup files live in a separate
+[definitions store](docs/definitions.md). Use
 `nro paths show` to find it and `nro definitions validate` to check its contents.
 
 ## Documentation
@@ -190,7 +196,7 @@ Sphinx site compatible with Read the Docs.
 | Cloud acquisition | [Flywheel-to-BIDS ingestion](docs/commands/bidsify.md) |
 | Python development | [API guide](docs/api.md), [development and documentation builds](docs/development.md) |
 
-The module guides describe branch conditions and public artifact layouts.
+The module guides describe conditional processing paths and public artifact layouts.
 Working derivatives use BIDS-like names but are not claimed to be fully BIDS
 compliant. Publication and destructive cleanup are separate user commands.
 

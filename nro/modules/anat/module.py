@@ -20,10 +20,10 @@ from nro.engine.io import read_json, require_nonempty_file, write_json
 from nro.engine.manifests import create_json_step
 from nro.engine.neuroimaging import create_n4_bias_correction_step
 from nro.engine.paths import (
+    anat_subject_dir,
+    anat_subject_work_dir,
     anatomical_manifest_path,
-    preprocessing_derivatives_root,
-    preprocessing_subject_anat_dir,
-    preprocessing_subject_work_dir,
+    module_derivatives_root,
     resolve_project_path,
     resolve_project_work_path,
 )
@@ -72,7 +72,7 @@ from .steps import (
     next_step,
 )
 
-LOG = logging.getLogger("preprocess_anat")
+LOG = logging.getLogger("anat")
 DEFAULT_CONTAINER = Path(SETTINGS.common.qunex_container)
 # Standard aseg identifiers from FreeSurferColorLUT.txt:
 # https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/AnatomicalROI/FreeSurferColorLUT
@@ -92,7 +92,7 @@ class Options:
     """Resolved anatomy resources, output paths, selection strategy, and execution controls."""
 
     project: str
-    preprocessing_id: str
+    anat_id: str
     out_dir: Path
     work_dir: Path
     freesurfer_subjects_dir: Path
@@ -164,7 +164,7 @@ def build_module(
         ]
     )
     runner = Runner(
-        module_name="Anatomical Preprocessing Module",
+        module_name="Anatomical Module",
         container=opts.container,
         binds=binds,
         logger=LOG,
@@ -172,9 +172,10 @@ def build_module(
         execution_context=execution_context,
     )
     initialized = opts.work_dir / "initialized.complete"
-    derivative_root = preprocessing_derivatives_root(
+    derivative_root = module_derivatives_root(
+        "anat",
+        opts.anat_id,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -261,7 +262,7 @@ def build_module(
     session_plans = _plan_session_anatomicals(
         images=all_images,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
+        anat_id=opts.anat_id,
         sub_id=inputs.sub_id,
         execution_context=execution_context,
     )
@@ -1080,7 +1081,7 @@ def build_module(
     manifest_path = anatomical_manifest_path(
         inputs.sub_id,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
+        anat_id=opts.anat_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -1143,10 +1144,10 @@ def run(
 
 
 def _build_argparser() -> argparse.ArgumentParser:
-    cfg = SETTINGS.preprocess_anat
+    cfg = SETTINGS.anat
     p = argparse.ArgumentParser(prog="nro.modules.anat.module")
     p.add_argument("--project", default=SETTINGS.common.project)
-    p.add_argument("--preprocessing-id", default=SETTINGS.common.preprocessing_id)
+    p.add_argument("--anat-id", default=SETTINGS.common.anat_id)
     p.add_argument("--sub-id", required=True)
     p.add_argument("--fs-subject", default=cfg.fs_subject)
     p.add_argument("--fsaverage-template", default=cfg.fsaverage_template)
@@ -1188,27 +1189,18 @@ def main(
     t2w = [load_anat_image(resolve_project_path(path, project=project)) for path in args.t2w]
     out_dir = resolve_project_path(
         args.out_dir
-        or preprocessing_subject_anat_dir(
-            str(args.sub_id), project=project, preprocessing_id=str(args.preprocessing_id)
-        ),
+        or anat_subject_dir(str(args.sub_id), project=project, anat_id=str(args.anat_id)),
         project=project,
     )
     work_dir = resolve_project_work_path(
         args.work_dir
-        or (
-            preprocessing_subject_work_dir(
-                str(args.sub_id), project=project, preprocessing_id=str(args.preprocessing_id)
-            )
-            / "anat"
-        ),
+        or (anat_subject_work_dir(str(args.sub_id), project=project, anat_id=str(args.anat_id))),
         project=project,
     )
     subjects_dir = resolve_project_path(
         args.freesurfer_subjects_dir
         or (
-            preprocessing_derivatives_root(
-                project=project, preprocessing_id=str(args.preprocessing_id)
-            )
+            module_derivatives_root("anat", str(args.anat_id), project=project)
             / "code"
             / "freesurfer"
         ),
@@ -1238,7 +1230,7 @@ def main(
         Inputs(sub_id=str(args.sub_id), t1w=tuple(t1w), t2w=tuple(t2w)),
         Options(
             project=project,
-            preprocessing_id=str(args.preprocessing_id),
+            anat_id=str(args.anat_id),
             out_dir=out_dir,
             work_dir=work_dir,
             freesurfer_subjects_dir=subjects_dir,

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from nro.engine.paths import module_artifact_root
+
 
 def artifact_root(
     project_root: Path,
@@ -9,12 +11,8 @@ def artifact_root(
     participant: str,
 ) -> Path:
     """Return one participant's shared firstlevels directory."""
-    return (
-        Path(project_root)
-        / "derivatives"
-        / "firstlevels"
-        / config_id
-        / f"sub-{participant.removeprefix('sub-')}"
+    return module_artifact_root(project_root, "firstlevels", config_id) / (
+        f"sub-{participant.removeprefix('sub-')}"
     )
 
 

@@ -14,7 +14,7 @@ from nro.configuration.site import definitions_root
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 
 STARTERS = Path(__file__).parent / "starters"
-CATEGORIES = ("configs", "workflows", "models", "events", "bidsify")
+CATEGORIES = ("configs", "workflows", "models", "events", "markup", "bidsify")
 
 
 def validate_store(root: Path | None = None) -> dict[str, int]:
@@ -31,7 +31,15 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
     root = Path(root).expanduser().resolve() if root is not None else definitions_root()
     store = ConfigStore(root)
     errors = []
-    counts = dict(configs=0, workflows=0, models=0, event_ids=0, event_tsvs=0, bidsify=0)
+    counts = dict(
+        configs=0,
+        workflows=0,
+        models=0,
+        event_ids=0,
+        event_tsvs=0,
+        markup=0,
+        bidsify=0,
+    )
 
     def check(path, operation):
         try:
@@ -43,7 +51,10 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
     files = {}
     for category in CATEGORIES:
         directory = root / category
-        if not directory.is_dir():
+        # Markup was added after external stores were introduced. Packaged
+        # ``main`` markup is empty, so an older store without this optional
+        # directory has the same compiled behavior as a newly created store.
+        if not directory.is_dir() and category != "markup":
             errors.append(f"Missing directory: {directory}")
         paths = []
         if directory.is_symlink():
@@ -99,6 +110,17 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         identifier = f"{path.parent.name}/{path.stem}"
         check(path, lambda: scientific_model(load_task_model(identifier, root / "models")))
         counts["models"] += 1
+
+    from nro.configuration.markup import MarkupStore
+
+    markup_store = MarkupStore(root)
+    for path in files["markup"]:
+        if path.parent != root / "markup" or not path.name.endswith("_markup.yml"):
+            errors.append(f"Expected markup/ID_markup.yml: {path}")
+            continue
+        identifier = path.name.removesuffix("_markup.yml")
+        check(path, lambda identifier=identifier: markup_store.load(identifier))
+        counts["markup"] += 1
 
     if (root / "events").is_dir():
         events = EventStore(root / "events")

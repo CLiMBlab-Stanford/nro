@@ -81,9 +81,7 @@ def setup(tmp_path, monkeypatch):
         science = branches.registry(name)
         registered = science.register_workflow(ConfigStore().resolve("main"))
         paths = BranchPaths(name, registry.paths.bids_root, tmp_path / "WORK", tmp_path / "DEV")
-        out = (
-            paths.source_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
-        )
+        out = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
         spec = InstanceSpec.create(
             key="same-logical-key",
             module="probe_" + name,
@@ -91,7 +89,7 @@ def setup(tmp_path, monkeypatch):
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.anatomy_lineage,
+            configuration_lineage_id=registered.lineages["anat"],
             config_fingerprint="test-science",
             directory_label="main",
             runtime_config=science.runtime_config_path(registered, "anat"),
@@ -151,9 +149,7 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
         assert all(row["state"] == "success" for row in db.execute("SELECT state FROM attempts"))
     for name, prepared in (("one", one), ("two", two)):
         _, paths, spec, *_ = prepared
-        output = (
-            paths.output_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
-        )
+        output = paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
         assert output.read_text() == name
         assert not spec.expected_outputs[0].exists()
         row = next(row for row in registry.instance_rows() if row["module"] == "probe_" + name)
@@ -186,7 +182,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     child = prepare("child", parent="parent", demand=False)
     root, paths, _, _, registered, source, _ = child
     spec = parent[2].evolve(
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         runtime_config=branches.registry("child").runtime_config_path(registered, "anat"),
     )
     plan = branches.resolve_plan(root, paths, (spec,), (spec.key,), (), validate=lambda _: True)
@@ -209,9 +205,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     registry.register_worker(worker.worker_id, resource_class="large")
     claimed = registry.claim_ready_instance(worker.worker_id, ("small",))
     worker._execute(claimed)
-    output = (
-        parent[1].output_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
-    )
+    output = parent[1].output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
     if conflict:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("incompatible target")
@@ -274,11 +268,9 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     result = publish(registry, checkout=parent[0], report=report, replace=conflict, attest=True)
     assert result["promoted"] == 1
     assert (
-        paths.output_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
+        paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
     ).read_text() == "parent"
-    output = (
-        parent[1].output_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
-    )
+    output = parent[1].output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
     assert output.read_text() == "parent"
     assess_registry(registry, compiled=True)
     report = preview(

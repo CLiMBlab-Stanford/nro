@@ -316,7 +316,7 @@ def _synthetic_project(tmp_path, domain):
     for i in (1, 2):
         stem = f"sub-01_ses-01_task-langlocSN_run-{i:02}"
         raw = root / "sub-01/ses-01/func"
-        functional = root / "derivatives/preprocessing/main/sub-01/ses-01/func"
+        functional = root / "derivatives/nro/func/main/sub-01/ses-01/func"
         raw.mkdir(parents=True, exist_ok=True)
         functional.mkdir(parents=True, exist_ok=True)
         nib.save(
@@ -377,7 +377,8 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
         runs=discover_raw_runs(root / "sub-01"),
         participant="01",
         project_root=root,
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         config_id="main",
         model_id="langlocSN/main",
         model=model,
@@ -429,8 +430,8 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
     paths = BranchPaths("feature/glm", root.parent, tmp_path / "WORK", tmp_path / "NRO_DEV")
     dev = BranchPaths("dev", paths.bids, paths.work, paths.development)
     runs = discover_raw_runs(root / "sub-01")
-    directory = root / "derivatives/preprocessing/main/sub-01/ses-01/func"
-    other = dev.output_project("demo") / "derivatives/preprocessing/main/sub-01/ses-01/func"
+    directory = root / "derivatives/nro/func/main/sub-01/ses-01/func"
+    other = dev.output_project("demo") / "derivatives/nro/func/main/sub-01/ses-01/func"
     other.mkdir(parents=True)
     for path in directory.glob(runs[1].stem + "_*"):
         shutil.move(path, other / path.name)
@@ -450,14 +451,15 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
         runs=runs,
         participant="01",
         project_root=root,
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         config_id="main",
         model_id="langlocSN/main",
         model=load_task_model("langlocSN/main"),
         config=config,
         space="T1w" if domain == "volume" else "fsnative",
         smoothing=smoothing,
-        work_root=paths.work / "demo/derivatives/firstlevels/main",
+        work_root=paths.work / "demo/derivatives/nro/firstlevels/main",
         execution_context=context,
     )
     assert validate_completion(output)[0]
@@ -470,9 +472,7 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
 def test_all_censored_run_is_an_explicit_omission(tmp_path):
     root = _synthetic_project(tmp_path, "volume")
     config = ConfigStore().load_configuration("firstlevels", "main").values
-    for path in root.glob(
-        "derivatives/preprocessing/main/sub-01/ses-01/func/*confounds_timeseries.tsv"
-    ):
+    for path in root.glob("derivatives/nro/func/main/sub-01/ses-01/func/*confounds_timeseries.tsv"):
         frame = pd.read_csv(path, sep="\t")
         frame["motion_outlier00"] = 1
         frame.to_csv(path, sep="\t", index=False)
@@ -480,7 +480,8 @@ def test_all_censored_run_is_an_explicit_omission(tmp_path):
         runs=discover_raw_runs(root / "sub-01"),
         participant="01",
         project_root=root,
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         config_id="main",
         model_id="langlocSN/main",
         model=load_task_model("langlocSN/main"),
@@ -585,7 +586,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     }
     target = targets[0]
     runtime = yaml.safe_load(target.runtime_config.read_text())
-    assert "preprocessing_aroma" in str(runtime)
+    assert runtime["func_ica_aroma"] is True
     ids = registry.register_instances(specs)
     row = next(row for row in registry.instance_rows() if row["id"] == ids[target.key])
     output = target.expected_outputs[0]
@@ -757,7 +758,8 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
         runs=discover_raw_runs(root / "sub-01"),
         participant="01",
         project_root=root,
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         config_id="main",
         model_id="langlocSN/main",
         model=source,
@@ -938,7 +940,8 @@ def test_disjoint_conditions_produce_subject_contrast_but_no_run_contrasts(tmp_p
         runs=discover_raw_runs(root / "sub-01"),
         participant="01",
         project_root=root,
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         config_id="main",
         model_id="langlocSN/main",
         model=model,

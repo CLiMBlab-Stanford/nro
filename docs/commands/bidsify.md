@@ -56,7 +56,7 @@ nro bidsify -f cni -F cashain/climblab -P climblab_multisession
 ```
 
 A configured `project_sources` mapping lists the sources allowed for the
-BIDS project, including sources at different scanning sites. Nro selects the
+BIDS project, including sources at different scanning sites. nro selects the
 sole matching source or asks the user to choose one by server/project name or
 number. `-f`/`--flywheel-server` and `-F`/`--flywheel-project` narrow that
 choice. If either option is omitted, bidsify uses its corresponding site

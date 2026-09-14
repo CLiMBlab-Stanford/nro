@@ -34,7 +34,7 @@ def graph(tmp_path):
                 participant="01",
                 entities={},
                 scope="subject",
-                configuration_lineage_id=registered.anatomy_lineage,
+                configuration_lineage_id=registered.lineages["anat"],
                 directory_label="main",
                 config_fingerprint=workflow.configuration("anat").fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),

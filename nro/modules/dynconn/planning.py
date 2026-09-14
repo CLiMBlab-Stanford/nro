@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
+from nro.engine.paths import module_derivatives_root
 from nro.engine.targets import is_surface_space, smoothing_entity_value
 from nro.modules.dynconn.paths import output_paths
 from nro.orchestration.contracts import InstanceSpec
@@ -24,16 +24,13 @@ def plan_instances(
 
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
-    values = context.workflow.configuration("dynconn").values
-    output_base = (
-        Path(
-            values.get("output_dir")
-            or context.project_root / "derivatives" / "dynconn" / directory_label
-        )
-        .expanduser()
-        .resolve()
+    output_base = module_derivatives_root(
+        "dynconn",
+        directory_label,
+        project=context.project,
+        bids_root=context.bids_root,
     )
-    base_prefix = str(values.get("prefix") or context.sub_id)
+    base_prefix = context.sub_id
     result = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
@@ -91,7 +88,7 @@ def plan_instances(
                     output_paths(output_root, prefix, domain)[name]
                     for name in ("manifest", "index")
                 ),
-                processing=descriptor.processing_contract(),
+                processing=context.processing_contract(descriptor),
             )
         )
     return tuple(result)

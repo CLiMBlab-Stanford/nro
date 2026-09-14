@@ -13,32 +13,15 @@ workflow
 configuration class
   owns the scientific settings for one module
 
-derivative class
-  organizes a broad family of public outputs and lineages
-  is realized by one or more scientific modules
-
 module
   is instantiated as schedulable work
   contains a complete graph of steps
+  owns one public artifact namespace
 
 instance
   owns one Runner, which owns one RunnerGraph
   produces public and private artifacts
 ```
-
-### Derivative class
-
-A **derivative class** is a broad category of related results.
-The current classes are `preprocessing`, `clean`, `dynconn`, `microparcellation`,
-`networks`, and `firstlevels`.
-
-Classes organize artifact lineages and derivative directories. They are not
-themselves schedulable. Most classes correspond to one module. The
-`preprocessing` class is the deliberate storage exception: its derivative tree
-contains artifacts from the separately configured `anat` and `func` modules.
-
-Use **class** only when discussing this organization. Do not use it as a synonym
-for a Python class, module, or individual scheduled computation.
 
 ### Configuration class and configuration
 
@@ -54,23 +37,24 @@ A **configuration lineage** identifies a configuration together with its
 upstream configuration choices. Equivalent lineages share a derivative
 directory. A substantive configuration change changes the applicable instance
 contract and therefore invalidates affected results when they are reassessed.
-The public `preprocessing` lineage combines the selected `anat` and `func`
-configurations. Anatomy instance identity depends only on the `anat`
-configuration, so functional variants that select the same anatomy reuse one
-anatomical instance and directory.
+Anatomy instance identity depends only on the `anat` configuration. Functional
+variants that select the same anatomy reuse one anatomical instance and
+directory. Each downstream lineage includes its own configuration ID and its
+upstream lineage, so incompatible inputs cannot write into the same directory.
 
 ### Workflow
 
 A **workflow** selects one configuration ID for each configuration class. It
-defines a coherent path from source data through the available derivative
-classes. A workflow does not contain scientific code and is not a runtime
-sequence of steps.
+defines a coherent path from source data through the available modules. A
+workflow does not contain scientific code and is not a runtime sequence of
+steps.
 
 ### Module
 
-A **module** is the complete scientific directed acyclic graph needed to
-realize one kind of schedulable work. The current modules are `anat`, `func`,
-`clean`, `dynconn`, `microparcellation`, `networks`, and `firstlevels`.
+A **module** owns one kind of schedulable scientific work and its public
+artifact namespace. The current modules are `anat`, `func`, `clean`, `dynconn`,
+`microparcellation`, `networks`, and `firstlevels`. Each module's outputs live
+under `derivatives/nro/MODULE/MODULE_ID/`.
 
 A module's graph is determined entirely by resolved BIDS data and its workflow.
 It is fully constructed before freshness is examined. Existing, missing,
@@ -107,7 +91,7 @@ operation with one freshness and recovery boundary.
 Inputs create data-dependency edges. A step may also declare scientific
 parameters that affect its transform without naming a file. If an input or
 scientific declaration changes, the runner reruns that step and its descendants
-while leaving independent branches of the module graph untouched.
+while leaving independent subgraphs untouched.
 
 ### Runner and runner graph
 
@@ -227,13 +211,13 @@ not permanently redefine the instance.
 
 | Terms | Distinction |
 |---|---|
-| Class / module | A class organizes derivative lineages; a module is a scientific DAG. |
+| Configuration class / module | A configuration class defines the accepted settings; the module owns the work graph and public artifacts. Their names currently correspond one-to-one. |
 | Module / instance | A module is the reusable DAG definition; an instance is one schedulable application of it. |
 | Instance / artifact | An instance is work; an artifact is a file or directory used by that work. |
 | Workflow / module | A workflow selects configurations; a module performs scientific computation. |
 | Planner / runner | The planner schedules instances; the runner executes steps inside one instance. |
 | Request / attempt | A request expresses demand; an attempt records one execution. |
-| Space / smoothing | Both are instance selectors from `clean` onward. Nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
+| Space / smoothing | Both are instance selectors from `clean` onward. nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
 
 The planner-facing record hierarchy is defined separately in
 [Instance planning and execution](instance-lifecycle.md).

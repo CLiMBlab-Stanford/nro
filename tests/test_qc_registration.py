@@ -98,7 +98,7 @@ def test_registration_audit_resamples_a_different_grid(tmp_path: Path) -> None:
 def test_registration_output_is_a_nested_derivative_parallel_to_entities(
     tmp_path: Path,
 ) -> None:
-    derivative_root = tmp_path / "derivatives" / "preprocessing" / "main"
+    derivative_root = tmp_path / "derivatives" / "nro" / "func" / "main"
 
     assert registration_output_dir(derivative_root, "sub-t20") == (
         derivative_root / "derivatives" / "qc" / "registration" / "sub-t20"

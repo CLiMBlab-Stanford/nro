@@ -11,12 +11,12 @@ from collections.abc import Callable
 import nro.bin
 
 COMMAND_HELP = {
-    "release": "Inspect installed releases or perform legacy release maintenance.",
+    "release": "Inspect installed releases or perform manual release maintenance.",
     "cutover": "Convert the private-control layout during a maintenance window.",
     "branch": "Register branches and locate their shared scientific registries.",
     "bidsify": "Download, review, convert, and approve BIDS sessions.",
-    "create": "Create a model, config, or workflow definition.",
-    "edit": "Edit an existing model, config, or workflow definition.",
+    "create": "Create a model, config, workflow, or source-markup definition.",
+    "edit": "Edit an existing model, config, workflow, or source-markup definition.",
     "delete": "Delete a definition without removing derivatives.",
     "definitions": "Create or validate an external definitions store.",
     "models": "Inspect, validate, register, and compile task models.",

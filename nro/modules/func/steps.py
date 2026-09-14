@@ -59,7 +59,7 @@ from .constants import (
 )
 
 next_step = new_step_counter()
-LOG = logging.getLogger("preprocess")
+LOG = logging.getLogger("func")
 
 
 def _resolve_sdc_reference_policy(
@@ -684,7 +684,7 @@ def _create_robust_bold_reference_step(
     if nvols < 1:
         raise ValueError("Robust BOLD reference construction requires at least one volume")
     expected_matrices = tuple(final_mats / f"MAT_{index:04d}" for index in range(nvols))
-    confound_cfg = SETTINGS.get_confounds
+    confound_cfg = SETTINGS.func_confounds
     detection_kwargs = {
         "max_vols": int(confound_cfg.nonsteady_max_vols),
         "rel_thresh": float(confound_cfg.nonsteady_rel_thresh),
@@ -2356,25 +2356,9 @@ def _create_confounds_step(
     force: bool,
 ) -> Step:
     par = mc_dir / "motion.par"
-    cmd = [
-        "get_confounds",
-        "--epi",
-        str(epi_4d),
-        "--epi-mean",
-        str(epi_mean_3d),
-        "--mcflirt-par",
-        str(par),
-        "--brain-mask",
-        str(brain_mask_in_epi),
-        "--out-tsv",
-        str(out_tsv),
-        "--out-json",
-        str(out_json),
-    ]
 
     def calculate() -> None:
         ensure_directory(out_tsv.parent)
-        LOG.info("Cmd: %s", Runner._format_cmd(cmd))
         get_confounds(
             epi=epi_4d,
             epi_mean=epi_mean_3d,
@@ -2577,15 +2561,7 @@ def _create_dilated_anatomical_mask_step(
     role: str,
     force: bool,
 ) -> Step:
-    command = [
-        "dilate-anatomical-mask",
-        f"--radius-mm={dilation_mm:.8g}",
-        f"--support={support_mask}",
-        f"--out={output}",
-    ]
-
     def construct() -> None:
-        LOG.info("Cmd: %s", Runner._format_cmd(command))
         make_dilated_anatomical_epi_mask(
             anatomical_mask=anatomical_mask,
             epi_support_mask=support_mask,

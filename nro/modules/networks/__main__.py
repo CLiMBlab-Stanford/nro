@@ -7,15 +7,22 @@ import time
 from itertools import count
 from pathlib import Path
 
+from nro.configuration.markup import load_source_markup
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.cli import stderr
-from nro.engine.paths import anatomical_manifest_path, optional_path
-from nro.engine.publication import write_json_atomic
+from nro.engine.io import atomic_write_json
+from nro.engine.paths import (
+    anatomical_manifest_path,
+    module_derivatives_root,
+    module_work_root,
+    optional_path,
+)
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
+    supported_output_spaces,
     target_output_names,
 )
 from nro.modules.networks.config import (
@@ -113,28 +120,23 @@ def make_target_config(
     if len(targets) != 1:
         raise ValueError(f"Expected one microparcellation target, found {len(targets)}")
     target = targets[0]
-    output_base = Path(
-        config.get("output_dir")
-        or (
-            Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
-            / project
-            / "derivatives"
-            / "networks"
-            / networks_id
-        )
+    output_base = module_derivatives_root(
+        "networks",
+        networks_id,
+        project=project,
+        bids_root=Path(BIDS_PATH if execution_context is None else execution_context.paths.bids),
     )
-    work_base = (
-        Path(WORK_PATH if execution_context is None else execution_context.paths.work)
-        / project
-        / "derivatives"
-        / "networks"
-        / networks_id
+    work_base = module_work_root(
+        "networks",
+        networks_id,
+        project=project,
+        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work),
     )
     if execution_context is not None:
         output_base = execution_context.output_path(output_base)
         work_base = execution_context.output_path(work_base, private=True)
     target_dir, target_prefix = target_output_names(
-        config.get("prefix") or subject_id,
+        subject_id,
         target.space,
         target.smoothing_mm,
     )
@@ -156,7 +158,9 @@ def make_target_config(
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the direct networks-module parser."""
-    parser = argparse.ArgumentParser("Estimate networks for one space and smoothing level")
+    parser = argparse.ArgumentParser(
+        description="Estimate networks for one space and smoothing level."
+    )
     parser.add_argument("-p", "--participant", required=True, help="BIDS participant ID")
     parser.add_argument("-P", "--project", required=True)
     parser.add_argument("-s", "--space", default=DEFAULT_SPACE)
@@ -182,11 +186,11 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     smoothing_mm = args.smoothing
 
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
-    participant = args.participant.replace("sub-", "")
+    participant = args.participant.removeprefix("sub-")
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="networks",
+        configuration_class="networks",
         execution_context=execution_context,
     )
     networks_id, config = load_runtime_configuration(runtime_config, "networks")
@@ -195,19 +199,23 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     micro_configuration = configurations["microparcellation"]
     micro_config = micro_configuration.get("resolved") or {}
     participant_id = f"sub-{participant}"
-    output_spaces = tuple(
-        str(value) for value in configurations["func"]["resolved"]["output_spaces"]
+    load_source_markup(
+        config.get("markup"),
+        args.project,
+        bids_root / args.project / participant_id,
+    )
+    output_spaces = supported_output_spaces(
+        str(configurations["anat"]["resolved"]["fsaverage_template"])
     )
     if args.space not in output_spaces:
         raise SystemExit(
-            f"space-{args.space} is not published by preprocessing; "
-            f"choose from {', '.join(output_spaces)}"
+            f"space-{args.space} is not published by func; choose from {', '.join(output_spaces)}"
         )
-    preprocessing_id = str(configurations["anat"]["directory"])
+    anat_id = str(configurations["anat"]["directory"])
     anat_manifest_path = anatomical_manifest_path(
         participant_id,
         project=args.project,
-        preprocessing_id=preprocessing_id,
+        anat_id=anat_id,
         bids_root=bids_root,
     )
     if execution_context is not None:
@@ -238,20 +246,15 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         for run in discover_raw_runs(bids_root / args.project / participant_id)
         if matches_filter(run.entities, micro_config.get("input_filter"))
     )
-    micro_base = (
-        Path(
-            micro_config.get("output_dir")
-            or bids_root
-            / args.project
-            / "derivatives"
-            / "microparcellation"
-            / config["microparcellation_directory"]
-        )
-        .expanduser()
-        .resolve()
+    micro_base = module_derivatives_root(
+        "microparcellation",
+        config["microparcellation_directory"],
+        project=args.project,
+        bids_root=bids_root,
     )
-    micro_prefix = str(micro_config.get("prefix") or participant_id)
-    micro_target, micro_target_prefix = target_output_names(micro_prefix, args.space, smoothing_mm)
+    micro_target, micro_target_prefix = target_output_names(
+        participant_id, args.space, smoothing_mm
+    )
     micro_subject = micro_base / participant_id
     from nro.modules.microparcellation.paths import output_paths as micro_output_paths
 
@@ -350,7 +353,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
             outputs=(output_index,),
             inputs=(manifest,),
             force=bool(args.overwrite),
-            action=lambda: write_json_atomic(output_index, index_payload()),
+            action=lambda: atomic_write_json(output_index, index_payload()),
             validate=validate_index,
             completion_boundary=True,
         )

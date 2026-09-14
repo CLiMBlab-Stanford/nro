@@ -134,12 +134,12 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         "find_fsaverage_template_surface",
         lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
     )
-    base = context.paths.source_project("demo") / "derivatives/preprocessing/main"
+    base = context.paths.source_project("demo") / "derivatives/nro/anat/main"
     options = anat.Options(
         "demo",
         "main",
         base / "sub-1/anat",
-        context.paths.work / "demo/derivatives/preprocessing/main/sub-1/anat",
+        context.paths.work / "demo/derivatives/nro/anat/main/sub-1",
         base / "code/freesurfer",
         "sub-1",
         "fsaverage6",
@@ -148,8 +148,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         ContainerSpec(
             image=synthstrip,
             engine="true",
-            home_dir=context.paths.work
-            / "demo/derivatives/preprocessing/main/sub-1/anat/_qunex_home",
+            home_dir=context.paths.work / "demo/derivatives/nro/anat/main/sub-1/_qunex_home",
         ),
         synthstrip,
         False,
@@ -186,7 +185,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         )
     )
     assert configuration.validate is not None and configuration.validate()[0]
-    owner = context.paths.output_project("demo") / "derivatives/preprocessing/main"
+    owner = context.paths.output_project("demo") / "derivatives/nro/anat/main"
     assert (owner / "sub-1/anat").is_dir()
     assert (owner / "code/freesurfer").is_dir()
     manifest = next(s for s in graph.steps if s.completion_boundary)

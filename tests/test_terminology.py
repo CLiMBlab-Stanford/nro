@@ -3,13 +3,17 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from nro.bin.log import build_parser as log_parser
 from nro.bin.purge import build_parser as purge_parser
 from nro.bin.run import build_parser as run_parser
 from nro.bin.status import build_parser as status_parser
 from nro.bin.stop import build_parser as stop_parser
 from nro.configuration.paths import REGISTRY_PATH
-from nro.configuration.store import CONFIGURATION_CLASSES, DERIVATIVE_CLASSES, ConfigStore
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.engine.paths import module_artifact_root
+from nro.modules import MODULE_NAMES
 from nro.orchestration.catalog import BUILTIN_MODULES, MODULES
 from nro.orchestration.contracts import (
     ExecutionEnvelope,
@@ -25,24 +29,25 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_code_defines_the_canonical_system_vocabulary() -> None:
-    assert DERIVATIVE_CLASSES == (
-        "preprocessing",
-        "clean",
-        "dynconn",
-        "microparcellation",
-        "networks",
-        "firstlevels",
-    )
-    assert MODULES == (
+    assert MODULE_NAMES == (
         "anat",
         "func",
         "clean",
-        "microparcellation",
         "dynconn",
+        "microparcellation",
         "networks",
         "firstlevels",
     )
+    assert CONFIGURATION_CLASSES == MODULES == MODULE_NAMES
     assert tuple(descriptor.name for descriptor in BUILTIN_MODULES) == MODULES
+
+
+def test_module_artifact_roots_reject_unknown_or_unsafe_components(tmp_path: Path) -> None:
+    expected = tmp_path / "derivatives" / "nro" / "clean" / "main"
+    assert module_artifact_root(tmp_path, "clean", "main") == expected
+    for module, module_id in (("unknown", "main"), ("clean", "../other"), ("clean", "")):
+        with pytest.raises(ValueError):
+            module_artifact_root(tmp_path, module, module_id)
 
 
 def test_instance_spec_has_the_documented_contract_hierarchy() -> None:
@@ -142,7 +147,7 @@ def test_default_registry_is_lab_wide(monkeypatch) -> None:
     assert registry.paths.database == REGISTRY_PATH / "shared/scheduler/registry.sqlite3"
 
 
-def test_workflow_api_exposes_configurations_by_derivative_class() -> None:
+def test_workflow_api_exposes_configurations_by_class() -> None:
     workflow = ConfigStore().resolve("main")
 
     assert set(workflow.configurations) == set(CONFIGURATION_CLASSES)
@@ -161,8 +166,8 @@ def test_fresh_registry_uses_class_and_module_columns(tmp_path: Path) -> None:
             for table in ("configuration_lineages", "workflow_bindings", "requests", "instances")
         }
 
-    assert "derivative_class" in columns["configuration_lineages"]
-    assert "derivative_class" in columns["workflow_bindings"]
+    assert "configuration_class" in columns["configuration_lineages"]
+    assert "configuration_class" in columns["workflow_bindings"]
     assert "target_module" in columns["requests"]
     assert "module" in columns["instances"]
     assert all("stage" not in table_columns for table_columns in columns.values())

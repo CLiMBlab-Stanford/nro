@@ -130,6 +130,22 @@ def test_scheduler_exchange_reports_startup_failure(monkeypatch, tmp_path) -> No
         scheduler_client.exchange(endpoint, {"operation": "status"})
 
 
+def test_scheduler_exchange_preserves_keyboard_interrupt(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
+    monkeypatch.setattr(
+        scheduler_client,
+        "_ensure_coordinator",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        scheduler_client.exchange(endpoint, {"operation": "purge"})
+
+
 def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_path) -> None:
     from nro.orchestration import scheduler_bus, scheduler_client
 
@@ -148,7 +164,11 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
     monkeypatch.setattr(
         scheduler_bus, "update_launch_job", lambda _claim, job: calls.setdefault("job", job)
     )
-    process = SimpleNamespace(pid=123, returncode=0, communicate=lambda: ("", ""))
+    process = SimpleNamespace(
+        pid=123,
+        returncode=0,
+        communicate=lambda timeout=None: ("", ""),
+    )
     monkeypatch.setattr(
         scheduler_client.subprocess,
         "Popen",
@@ -218,6 +238,39 @@ def test_direct_exchange_recovers_committed_response_after_connection_loss(
     monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}) == {"committed": True}
+
+
+def test_durable_purge_waits_for_live_service_to_process_journal(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    active = {
+        "protocol": 1,
+        "token": "token",
+        "generation": 2,
+        "host": "node.example",
+        "port": 41000,
+    }
+    responses = iter((None, {"result": {"removed": 12}}))
+    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
+    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
+    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: next(responses))
+    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
+    monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        scheduler_rpc,
+        "request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a durable purge bypassed the scheduler journal")
+        ),
+    )
+
+    result = scheduler_client.exchange(endpoint, {"operation": "purge"})
+
+    assert result == {"removed": 12}
 
 
 def test_supply_skips_service_when_preflight_finds_no_capacity(monkeypatch, tmp_path) -> None:
@@ -677,7 +730,8 @@ def test_run_repair_registers_existing_artifacts_without_demand(
         bids
         / "demo"
         / "derivatives"
-        / "preprocessing"
+        / "nro"
+        / "anat"
         / "main"
         / "sub-01"
         / "anat"
@@ -721,6 +775,7 @@ def test_repair_registers_only_existing_artifacts_and_their_dependencies(
         bids
         / "demo"
         / "derivatives"
+        / "nro"
         / "clean"
         / "main"
         / "sub-01"

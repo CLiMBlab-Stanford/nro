@@ -79,6 +79,16 @@ def _wait_notice(frame: int, message: str) -> bool:
     return True
 
 
+def _progress_notice(record: dict | None, fallback: str) -> str:
+    """Render one bounded progress record for the interactive wait line."""
+    if record is None:
+        return fallback
+    phase = str(record["phase"])
+    completed = int(record["completed"])
+    total = int(record["total"])
+    return f"{phase}: {completed:,}/{total:,}..." if total else f"{phase}..."
+
+
 def _start_service(endpoint: SchedulerEndpoint) -> str | None:
     """Submit one controller when this caller wins the atomic launch claim."""
     from nro.configuration.site import settings
@@ -151,7 +161,14 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
 
 def _run_once(endpoint: SchedulerEndpoint) -> bool:
     """Run the pinned coordinator locally for a bounded request batch."""
-    from nro.orchestration.scheduler_bus import claim_launch, release_launch, update_launch_job
+    from nro.orchestration.scheduler_bus import (
+        claim_launch,
+        consume_message,
+        pending_messages,
+        read_progress,
+        release_launch,
+        update_launch_job,
+    )
 
     claim = claim_launch(endpoint.control)
     if claim is None:
@@ -181,7 +198,46 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
             env=environment,
         )
         update_launch_job(claim, f"local-{process.pid}")
-        stdout, stderr = process.communicate()
+        notice_text = "Applying scheduler updates..."
+        pending_ids = []
+        for path in pending_messages(endpoint.control, minimum_age=0.0):
+            pending_ids.append(path.stem)
+            try:
+                payload = consume_message(path)["payload"]
+            except (OSError, ValueError):
+                continue
+            if payload.get("operation") == "purge":
+                count = len(payload.get("plan", ()))
+                suffix = f" for {count:,} instances" if count else ""
+                notice_text = f"Applying a pending purge{suffix}..."
+                break
+        started = time.monotonic()
+        frame = 0
+        notice = False
+        try:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started >= 0.75:
+                        progress = next(
+                            (
+                                record
+                                for identifier in pending_ids
+                                if (record := read_progress(endpoint.control, identifier))
+                                is not None
+                            ),
+                            None,
+                        )
+                        notice = (
+                            _wait_notice(frame, _progress_notice(progress, notice_text)) or notice
+                        )
+                        frame += 1
+        finally:
+            if notice:
+                sys.stderr.write(_CLEAR)
+                sys.stderr.flush()
         if process.returncode:
             detail = stderr.strip() or stdout.strip() or f"status {process.returncode}"
             raise SchedulerError(f"One-shot scheduler update failed: {detail}")
@@ -233,6 +289,7 @@ def exchange(
         publish_message,
         read_active,
         read_launch,
+        read_progress,
         read_response,
         read_startup_error,
     )
@@ -250,7 +307,7 @@ def exchange(
             require_service=require_service,
             start_epoch=start_epoch,
         )
-    except BaseException as error:
+    except Exception as error:
         raise SchedulerError(f"Could not start scheduler coordination: {error}") from error
     started = time.monotonic()
     last_recovery_check = started
@@ -295,16 +352,18 @@ def exchange(
                 from nro.orchestration.scheduler_rpc import request
 
                 attempted_endpoint = endpoint_identity
-                try:
-                    direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
-                    response = request(
-                        active,
-                        record,
-                        timeout=direct_timeout,
-                        durable=durable,
-                    )
-                except (ConnectionError, OSError, TimeoutError, ValueError):
-                    response = None
+                response = None
+                if not (durable and message.get("operation") == "purge"):
+                    try:
+                        direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
+                        response = request(
+                            active,
+                            record,
+                            timeout=direct_timeout,
+                            durable=durable,
+                        )
+                    except (ConnectionError, OSError, TimeoutError, ValueError):
+                        response = None
                 if response is not None:
                     if response.get("error") == "Scheduler endpoint is obsolete":
                         response = None
@@ -351,11 +410,13 @@ def exchange(
             attempted_endpoint = None
         elapsed = now - started
         if elapsed >= 0.75:
-            message_text = (
+            progress = read_progress(endpoint.control, message_id) if durable else None
+            fallback = (
                 "Waiting for the scheduler allocation..."
                 if waiting_for_slurm
                 else "Waiting for the scheduler..."
             )
+            message_text = _progress_notice(progress, fallback)
             notice = _wait_notice(frame, message_text) or notice
             frame += 1
         time.sleep(0.1 if elapsed < 2 else 0.5)

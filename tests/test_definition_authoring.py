@@ -186,6 +186,17 @@ def test_config_and_workflow_initialization(store, tmp_path):
     assert yaml.safe_load(expanded.read_text())["networks"] == "main"
 
 
+def test_markup_initialization_and_publication(store, tmp_path):
+    draft = tmp_path / "markup.yml"
+    create(["markup", "alternative", "--output", str(draft)])
+    assert yaml.safe_load(draft.read_text()) == {}
+    draft.write_text(
+        "demo:\n  sub-01:\n    T1w: anat/sub-01_T1w.nii.gz\n    exclude:\n      - ses-bad\n"
+    )
+    create(["markup", "alternative", "--file", str(draft), "--yes"])
+    assert definition_target(store, "markup", "alternative").path.read_text() == draft.read_text()
+
+
 def test_copy_model_removes_execution_membership(store, tmp_path):
     output = tmp_path / "draft.yml"
     create(["model", "langlocSN/dev", "--from", "langlocSN/main", "--output", str(output)])
@@ -202,6 +213,7 @@ def test_copy_model_removes_execution_membership(store, tmp_path):
         ("config", "clean/main", "minimum_temporal_rank: wrong\n"),
         ("workflow", "alternate", "clean: absent\n"),
         ("workflow", "alternate", "unknown: main\n"),
+        ("markup", "alternate", "demo:\n  sub-01:\n    exclude: ses-bad\n"),
     ],
 )
 def test_validation_rejects_invalid_staged_definitions(store, kind, identifier, text):

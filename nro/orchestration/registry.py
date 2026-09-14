@@ -17,9 +17,10 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
@@ -28,7 +29,7 @@ import yaml
 
 from nro.configuration.paths import BIDS_PATH, REGISTRY_PATH
 from nro.configuration.store import (
-    DERIVATIVE_CLASSES,
+    CONFIGURATION_CLASSES,
     fingerprint,
 )
 from nro.engine.cli import matches_instance_selectors as matches_selectors
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 
 
 APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 _WAIT_NOTICE_SECONDS = 0.75
 _WAIT_FRAMES = ("·", "•", "●", "•")
 _WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
@@ -207,6 +208,7 @@ class LockOwner:
     slurm_job_id: str | None
     slurm_array_task_id: str | None
     acquired_at: str
+    lease_expires_at: float | None
 
 
 class RegistryLockTimeout(TimeoutError):
@@ -225,12 +227,16 @@ class RegistryLock:
         *,
         timeout: float = 120.0,
         stale_after: float = 300.0,
+        lease_seconds: float | None = None,
     ) -> None:
         """Configure lock paths and waiting/recovery thresholds in seconds."""
+        if lease_seconds is not None and lease_seconds <= 0:
+            raise ValueError("Lock lease duration must be positive")
         self.path = path
         self.recovery_path = recovery_path
         self.timeout = timeout
         self.stale_after = stale_after
+        self.lease_seconds = lease_seconds
         self.owner = LockOwner(
             token=uuid.uuid4().hex,
             hostname=socket.gethostname(),
@@ -239,8 +245,11 @@ class RegistryLock:
             slurm_job_id=os.environ.get("SLURM_JOB_ID"),
             slurm_array_task_id=os.environ.get("SLURM_ARRAY_TASK_ID"),
             acquired_at=utcnow(),
+            lease_expires_at=None,
         )
         self._held = False
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
 
     @property
     def owner_path(self) -> Path:
@@ -370,6 +379,12 @@ class RegistryLock:
     def _owner_definitively_dead(self, owner: dict | None) -> bool:
         if owner is None:
             return False
+        lease_expires_at = owner.get("lease_expires_at")
+        if lease_expires_at is not None:
+            try:
+                return time.time() > float(lease_expires_at)
+            except (TypeError, ValueError):
+                return False
         try:
             age = time.time() - self.path.stat().st_mtime
         except OSError:
@@ -389,6 +404,60 @@ class RegistryLock:
         if owner.get("hostname") != socket.gethostname():
             return False
         return False
+
+    def _renew_lease(self) -> bool:
+        """Renew this owner's cross-host lease while fencing recovery."""
+        if self.lease_seconds is None or not self._held:
+            return False
+        try:
+            self.recovery_path.mkdir(mode=0o2775)
+            self.recovery_path.chmod(0o2775)
+        except FileExistsError:
+            return False
+        try:
+            current = self._read_owner()
+            if not current or current.get("token") != self.owner.token:
+                return False
+            self.owner = replace(
+                self.owner,
+                lease_expires_at=time.time() + self.lease_seconds,
+            )
+            _atomic_text(self.owner_path, json.dumps(asdict(self.owner), indent=2) + "\n")
+            return True
+        finally:
+            try:
+                self.recovery_path.rmdir()
+            except OSError:
+                pass
+
+    def _heartbeat(self) -> None:
+        """Renew a long-lived lease until release begins."""
+        assert self.lease_seconds is not None
+        interval = min(15.0, self.lease_seconds / 3.0)
+        while not self._heartbeat_stop.wait(interval):
+            try:
+                self._renew_lease()
+            except OSError:
+                # A transient shared-filesystem failure is retried. If renewal
+                # remains impossible, expiry makes recovery possible elsewhere.
+                pass
+
+    def _start_heartbeat(self) -> None:
+        if self.lease_seconds is None:
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat,
+            name="nro-lock-heartbeat",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join()
+            self._heartbeat_thread = None
 
     def _recover_if_safe(self) -> bool:
         try:
@@ -490,17 +559,24 @@ class RegistryLock:
                 continue
             self._clear_wait(wait_visible)
             try:
+                if self.lease_seconds is not None:
+                    self.owner = replace(
+                        self.owner,
+                        lease_expires_at=time.time() + self.lease_seconds,
+                    )
                 _atomic_text(self.owner_path, json.dumps(asdict(self.owner), indent=2) + "\n")
             except BaseException:
                 shutil.rmtree(self.path, ignore_errors=True)
                 raise
             self._held = True
+            self._start_heartbeat()
             return self
 
     def release(self) -> None:
         """Release the lock owned by this object and remove its owner record."""
         if not self._held:
             return
+        self._stop_heartbeat()
         current = self._read_owner()
         if not current or current.get("token") != self.owner.token:
             self._held = False
@@ -1335,7 +1411,7 @@ class Registry(WorkflowRegistry):
         ordered = sorted(
             records,
             key=lambda item: (
-                DERIVATIVE_CLASSES.index(str(item["derivative_class"])),
+                CONFIGURATION_CLASSES.index(str(item["configuration_class"])),
                 str(item["lineage_fingerprint"]),
             ),
         )
@@ -1343,7 +1419,7 @@ class Registry(WorkflowRegistry):
         now = utcnow()
         with self.connection(write=True) as db:
             for record in ordered:
-                derivative_class = str(record["derivative_class"])
+                configuration_class = str(record["configuration_class"])
                 lineage_fingerprint = str(record["lineage_fingerprint"])
                 directory_label = str(record["directory_label"])
                 configuration = record["configuration"]
@@ -1352,17 +1428,17 @@ class Registry(WorkflowRegistry):
                 existing = db.execute(
                     """SELECT id, config_id, directory_label
                        FROM configuration_lineages
-                       WHERE derivative_class=? AND lineage_fingerprint=?""",
-                    (derivative_class, lineage_fingerprint),
+                       WHERE configuration_class=? AND lineage_fingerprint=?""",
+                    (configuration_class, lineage_fingerprint),
                 ).fetchone()
                 collision = db.execute(
                     """SELECT lineage_fingerprint FROM configuration_lineages
-                       WHERE derivative_class=? AND directory_label=?""",
-                    (derivative_class, directory_label),
+                       WHERE configuration_class=? AND directory_label=?""",
+                    (configuration_class, directory_label),
                 ).fetchone()
                 if collision and str(collision["lineage_fingerprint"]) != lineage_fingerprint:
                     raise ValueError(
-                        f"Derivative directory {derivative_class}/{directory_label} "
+                        f"Derivative directory {configuration_class}/{directory_label} "
                         "declares conflicting configuration lineages"
                     )
                 if existing:
@@ -1387,12 +1463,12 @@ class Registry(WorkflowRegistry):
                     cursor = db.execute(
                         """
                         INSERT INTO configuration_lineages(
-                            derivative_class, config_id, config_fingerprint,
+                            configuration_class, config_id, config_fingerprint,
                             lineage_fingerprint, resolved_yaml, directory_label, created_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            derivative_class,
+                            configuration_class,
                             str(configuration["id"]),
                             str(configuration["fingerprint"]),
                             lineage_fingerprint,
@@ -1575,7 +1651,7 @@ class Registry(WorkflowRegistry):
         with manager as db:
             rows = db.execute(
                 """
-                SELECT t.*, ci.directory_label, ci.lineage_fingerprint, ci.derivative_class,
+                SELECT t.*, ci.directory_label, ci.lineage_fingerprint, ci.configuration_class,
                        EXISTS(
                          SELECT 1 FROM workflow_bindings binding
                          WHERE binding.configuration_lineage_id=t.configuration_lineage_id
@@ -2267,7 +2343,9 @@ class Registry(WorkflowRegistry):
         placeholders = ",".join("?" for _ in ids)
         token = uuid.uuid4().hex
         with RegistryLock(
-            scheduler / "artifact-mutation.lock", scheduler / "artifact-mutation.recovery-lock"
+            scheduler / "artifact-mutation.lock",
+            scheduler / "artifact-mutation.recovery-lock",
+            lease_seconds=300.0,
         ):
             with self.connection(write=True) as db:
                 if db.execute(
@@ -3127,7 +3205,8 @@ class Registry(WorkflowRegistry):
                 raise KeyError(f"Unknown nro request: {request_id}")
             instances = db.execute(
                 """
-                SELECT t.*,ci.derivative_class FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
+                SELECT t.*,ci.configuration_class,ci.directory_label
+                FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
                 JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
                 WHERE rt.request_id=? AND rt.role='target' ORDER BY t.participant, t.instance_key
                 """,
@@ -3141,7 +3220,7 @@ class Registry(WorkflowRegistry):
                 instances = [
                     row
                     for row in db.execute(
-                        """SELECT t.*,ci.derivative_class,
+                        """SELECT t.*,ci.configuration_class,ci.directory_label,
                     COALESCE(e.logical_key,t.instance_key) AS logical_key FROM request_artifacts rt
                     JOIN instances t ON t.id=rt.instance_id JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
                     LEFT JOIN instance_execution e ON e.instance_id=t.id WHERE rt.request_id=?""",

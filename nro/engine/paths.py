@@ -5,6 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
+from nro.modules import MODULE_NAMES
+
+
+def _directory_component(value: str, *, label: str) -> str:
+    """Validate one internally assigned derivative-directory component."""
+    value = str(value)
+    if not value or value in {".", ".."} or Path(value).name != value:
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return value
 
 
 def project_data_root(project: str, *, bids_root: Path | None = None) -> Path:
@@ -17,105 +26,133 @@ def project_work_root(project: str) -> Path:
     return (Path(WORK_PATH) / project).resolve()
 
 
-def preprocessing_derivatives_root(
-    *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def module_namespace_root(project_root: Path, module: str) -> Path:
+    """Locate one module's public namespace below a selected project root."""
+    if module not in MODULE_NAMES:
+        raise ValueError(f"Unknown module {module!r}; choose from {', '.join(MODULE_NAMES)}")
+    return Path(project_root) / "derivatives" / "nro" / module
+
+
+def module_artifact_root(project_root: Path, module: str, module_id: str) -> Path:
+    """Locate a module artifact root below an already selected project root."""
+    module_id = _directory_component(module_id, label="module ID")
+    return module_namespace_root(project_root, module) / module_id
+
+
+def module_derivatives_root(
+    module: str, module_id: str, *, project: str, bids_root: Path | None = None
 ) -> Path:
-    """Locate a preprocessing lineage without creating it."""
-    return (
-        project_data_root(project, bids_root=bids_root)
-        / "derivatives"
-        / "preprocessing"
-        / preprocessing_id
+    """Locate one module configuration's public derivative root."""
+    return module_artifact_root(project_data_root(project, bids_root=bids_root), module, module_id)
+
+
+def module_work_root(
+    module: str,
+    module_id: str,
+    *,
+    project: str,
+    work_root: Path | None = None,
+) -> Path:
+    """Locate one module configuration's private work root."""
+    project_root = (
+        project_work_root(project) if work_root is None else Path(work_root).resolve() / project
     )
+    return module_artifact_root(project_root, module, module_id)
 
 
-def preprocessing_work_root(*, project: str, preprocessing_id: str) -> Path:
-    """Locate a preprocessing lineage in private work storage."""
-    return project_work_root(project) / "derivatives" / "preprocessing" / preprocessing_id
-
-
-def preprocessing_subject_dir(
-    sub_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def module_subject_dir(
+    sub_id: str,
+    *,
+    module: str,
+    module_id: str,
+    project: str,
+    bids_root: Path | None = None,
 ) -> Path:
-    """Locate a subject's preprocessing artifacts under the selected root."""
-    return (
-        preprocessing_derivatives_root(
-            project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
-        )
-        / sub_id
-    )
+    """Locate one subject within a module derivative root."""
+    return module_derivatives_root(module, module_id, project=project, bids_root=bids_root) / sub_id
 
 
-def preprocessing_session_dir(
-    sub_id: str, ses_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def module_session_dir(
+    sub_id: str,
+    ses_id: str,
+    *,
+    module: str,
+    module_id: str,
+    project: str,
+    bids_root: Path | None = None,
 ) -> Path:
-    """Locate one preprocessing session under its subject."""
+    """Locate one session within a module's subject directory."""
     return (
-        preprocessing_subject_dir(
-            sub_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
+        module_subject_dir(
+            sub_id,
+            module=module,
+            module_id=module_id,
+            project=project,
+            bids_root=bids_root,
         )
         / ses_id
     )
 
 
-def preprocessing_subject_anat_dir(
-    sub_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def anat_subject_dir(
+    sub_id: str, *, project: str, anat_id: str, bids_root: Path | None = None
 ) -> Path:
     """Locate subject-level anatomical derivatives."""
     return (
-        preprocessing_subject_dir(
-            sub_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
+        module_subject_dir(
+            sub_id, module="anat", module_id=anat_id, project=project, bids_root=bids_root
         )
         / "anat"
     )
 
 
-def preprocessing_session_anat_dir(
-    sub_id: str, ses_id: str, *, project: str, preprocessing_id: str
-) -> Path:
+def anat_session_dir(sub_id: str, ses_id: str, *, project: str, anat_id: str) -> Path:
     """Locate session-level anatomical derivatives."""
     return (
-        preprocessing_session_dir(
-            sub_id, ses_id, project=project, preprocessing_id=preprocessing_id
-        )
+        module_session_dir(sub_id, ses_id, module="anat", module_id=anat_id, project=project)
         / "anat"
     )
 
 
-def preprocessing_subject_work_dir(sub_id: str, *, project: str, preprocessing_id: str) -> Path:
-    """Locate a subject's private preprocessing work."""
-    return preprocessing_work_root(project=project, preprocessing_id=preprocessing_id) / sub_id
+def anat_subject_work_dir(sub_id: str, *, project: str, anat_id: str) -> Path:
+    """Locate a subject's private anatomical work."""
+    return module_work_root("anat", anat_id, project=project) / sub_id
 
 
-def preprocessing_session_work_dir(
-    sub_id: str, ses_id: str, *, project: str, preprocessing_id: str
-) -> Path:
-    """Locate a session's private preprocessing work."""
-    return (
-        preprocessing_subject_work_dir(sub_id, project=project, preprocessing_id=preprocessing_id)
-        / ses_id
-    )
+def anat_session_work_dir(sub_id: str, ses_id: str, *, project: str, anat_id: str) -> Path:
+    """Locate a session's private anatomical work."""
+    return anat_subject_work_dir(sub_id, project=project, anat_id=anat_id) / ses_id
 
 
-def preprocess_subject_func_dir(
-    sub_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def func_subject_dir(
+    sub_id: str, *, project: str, func_id: str, bids_root: Path | None = None
 ) -> Path:
     """Locate functional derivatives for data without session directories."""
     return (
-        preprocessing_subject_dir(
-            sub_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
+        module_subject_dir(
+            sub_id, module="func", module_id=func_id, project=project, bids_root=bids_root
         )
         / "func"
     )
 
 
-def preprocess_session_func_dir(
-    sub_id: str, ses_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+def func_session_dir(
+    sub_id: str,
+    ses_id: str,
+    *,
+    project: str,
+    func_id: str,
+    bids_root: Path | None = None,
 ) -> Path:
     """Locate functional derivatives for one BIDS session."""
     return (
-        preprocessing_session_dir(
-            sub_id, ses_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
+        module_session_dir(
+            sub_id,
+            ses_id,
+            module="func",
+            module_id=func_id,
+            project=project,
+            bids_root=bids_root,
         )
         / "func"
     )
@@ -126,51 +163,35 @@ def functional_manifest_path(
     run_stem: str,
     *,
     project: str,
-    preprocessing_id: str,
+    func_id: str,
     ses_id: str | None = None,
     bids_root: Path | None = None,
 ) -> Path:
     """Return the fixed public contract for one preprocessed BOLD run."""
     directory = (
-        preprocess_session_func_dir(
-            sub_id, ses_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
-        )
+        func_session_dir(sub_id, ses_id, project=project, func_id=func_id, bids_root=bids_root)
         if ses_id is not None
-        else preprocess_subject_func_dir(
-            sub_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
-        )
+        else func_subject_dir(sub_id, project=project, func_id=func_id, bids_root=bids_root)
     )
     return directory / f"{run_stem}_desc-preprocessFunc_manifest.json"
 
 
-def preprocess_subject_func_work_dir(sub_id: str, *, project: str, preprocessing_id: str) -> Path:
+def func_subject_work_dir(sub_id: str, *, project: str, func_id: str) -> Path:
     """Locate subject-level private functional work."""
-    return (
-        preprocessing_subject_work_dir(sub_id, project=project, preprocessing_id=preprocessing_id)
-        / "func"
-    )
+    return module_work_root("func", func_id, project=project) / sub_id / "func"
 
 
-def preprocess_session_func_work_dir(
-    sub_id: str, ses_id: str, *, project: str, preprocessing_id: str
-) -> Path:
+def func_session_work_dir(sub_id: str, ses_id: str, *, project: str, func_id: str) -> Path:
     """Locate session-level private functional work."""
-    return (
-        preprocessing_session_work_dir(
-            sub_id, ses_id, project=project, preprocessing_id=preprocessing_id
-        )
-        / "func"
-    )
+    return module_work_root("func", func_id, project=project) / sub_id / ses_id / "func"
 
 
 def anatomical_manifest_path(
-    sub_id: str, *, project: str, preprocessing_id: str, bids_root: Path | None = None
+    sub_id: str, *, project: str, anat_id: str, bids_root: Path | None = None
 ) -> Path:
     """Return the fixed anatomical completion manifest under the selected root."""
     return (
-        preprocessing_subject_anat_dir(
-            sub_id, project=project, preprocessing_id=preprocessing_id, bids_root=bids_root
-        )
+        anat_subject_dir(sub_id, project=project, anat_id=anat_id, bids_root=bids_root)
         / f"{sub_id}_desc-preprocessAnat_manifest.json"
     )
 
@@ -216,13 +237,12 @@ def optional_path(value: object) -> Path | None:
 
 def clean_root(*, project: str, clean_id: str, bids_root: Path | None = None) -> Path:
     """Locate a cleaning lineage under a project derivative root."""
-    return project_data_root(project, bids_root=bids_root) / "derivatives" / "clean" / clean_id
+    return module_derivatives_root("clean", clean_id, project=project, bids_root=bids_root)
 
 
 def clean_work_root(*, project: str, clean_id: str, work_root: Path | None = None) -> Path:
     """Locate a cleaning lineage in private work storage."""
-    root = project_work_root(project) if work_root is None else Path(work_root) / project
-    return root / "derivatives" / "clean" / clean_id
+    return module_work_root("clean", clean_id, project=project, work_root=work_root)
 
 
 def clean_subject_dir(

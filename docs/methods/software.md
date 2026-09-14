@@ -40,11 +40,11 @@ executable already present at a site. Python versions are locked in `uv.lock`;
 TemplateFlow object versions/checksums are in the installed resource catalog.
 See [installation](../installation.md) for acquisition and verification.
 
-MARSS is an optional GPLv3 package invoked through a process boundary. Nro does
+MARSS is an optional GPLv3 package invoked through a process boundary. nro does
 not copy or modify its implementation. The integration follows Tubiolo,
 Williams, and Van Snellenberg (2024),
 [*Characterization and Mitigation of a Simultaneous Multi-Slice fMRI Artifact*](https://doi.org/10.1002/hbm.70066).
-The official package estimates and subtracts the artifact. Nro validates its
+The official package estimates and subtracts the artifact. nro validates its
 outputs and replaces the full 4D artifact file with a slice-wise rank-one
 factorization whose reconstruction error is checked and recorded.
 

@@ -1,11 +1,11 @@
 # Functional preprocessing
 
-`func` prepares one BOLD run using the subject's completed anatomy. Its outputs
-share the `preprocessing` lineage with `anat`. Computation across spaces shares
-motion estimation, distortion correction, and ICA-AROMA; spaces are not separate
+`func` prepares one BOLD run using the subject's completed anatomy. It has its
+own configuration and output directory. Computation across spaces shares motion
+estimation, distortion correction, and ICA-AROMA; spaces are not separate
 functional instances.
 
-## Inputs and branch selection
+## Inputs and processing choices
 
 The resolver reads inherited BIDS JSON metadata, the BOLD header, matching
 SBRefs, and eligible spin-echo fieldmaps. It uses run entities, acquisition
@@ -14,12 +14,16 @@ references. Sidecars need not be adjacent to the NIfTI if inheritance supplies
 the metadata. Header timing can supply TR where permitted by the resolver.
 
 An eligible opposite-phase fieldmap pair takes precedence and uses FSL TOPUP.
-Otherwise `sdc_method` selects `synbold_disco` or anatomical `syn`. SynBOLD
-requires phase-encoding and readout metadata; if these are absent, the graph
-uses anatomical SyN and records the reason. `sdc_from_sbref_pair` permits the
-resolver to consider SBRef pairs. `fieldmap_syn_refine` adds the configured
-registration refinement to fieldmap correction. The manifest records requested
-and resolved methods; do not assume every run used the default branch.
+One malformed optional fieldmap does not hide other valid candidates; the
+resolver records a warning and continues with the usable files. Otherwise
+`sdc_method` selects `synbold_disco` or anatomical `syn`. SynBOLD requires
+phase-encoding and readout metadata; if these are absent, the graph uses
+anatomical SyN and records the reason. `sdc_from_sbref_pair` switches automatic
+TOPUP selection from dedicated fieldmaps to opposite-phase SBRefs. Explicit
+associations written during bidsification still take precedence.
+`fieldmap_syn_refine` adds the configured registration refinement to fieldmap
+correction. The manifest records requested and resolved methods; do not assume
+every run used the default path.
 
 ## Processing sequence
 
@@ -35,7 +39,7 @@ and resolved methods; do not assume every run used the default branch.
 2. Estimate the MARSS correction in native scanner space before data used by the
    rest of preprocessing are resampled. Motion parameters are estimated without
    retaining the resampled motion-estimation series. The official MARSS package
-   performs the correction. Nro stores its slice-wise rank-one artifact as a 3D
+   performs the correction. nro stores its slice-wise rank-one artifact as a 3D
    loading map and a slice-by-time table, then removes the temporary 4D artifact.
 3. Prepare BOLD/SBRef references and estimate rigid motion with FSL MCFLIRT.
    Reference-pose checks protect registration against badly aligned or
@@ -63,11 +67,12 @@ and resolved methods; do not assume every run used the default branch.
    `ica_aroma_denoise_type` selects aggressive or nonaggressive regression.
    `ica_aroma_cmd` can replace the bundled implementation with an external command.
    Classification and estimation policies are recorded with the outputs.
-9. Produce T1w/MNI volumes and left/right fsnative/template GIFTI time courses
-   according to `output_spaces`. The packaged template target is `fsaverage6`;
-   filenames record that exact space. Native surfaces and registration spheres
-   come from anatomy. Publish sidecars, confounds, transforms, masks, and the
-   run manifest only after validating required products.
+9. Produce T1w/MNI volumes and left/right fsnative/template GIFTI time courses.
+   The selected `anat` configuration defines the fsaverage target; the packaged
+   target is `fsaverage6`. Filenames record each exact space. Native surfaces
+   and registration spheres come from anatomy. Publish sidecars, confounds,
+   transforms, masks, and the run manifest only after validating required
+   products.
 
 Large published images use staged writes. Freshness checks are not a guarantee
 against arbitrary external corruption: interrupted writes from older software
@@ -81,13 +86,13 @@ unwarping, including uncorrected 7 T acquisitions, are not yet supported.
 ## Public artifacts
 
 Run outputs are under
-`derivatives/preprocessing/LINEAGE/sub-ID/[ses-ID/]func/`. Names retain the
+`derivatives/nro/func/FUNC_ID/sub-ID/[ses-ID/]func/`. Names retain the
 run's BIDS entities and add space, hemisphere, and processing descriptions.
 Products include preprocessed BOLD images, their JSON sidecars, brain masks,
 registration transforms/QC images, and `desc-confounds_timeseries.tsv` with
 column metadata. AROMA-enabled runs also retain corresponding no-AROMA products
-and classification records. Fieldmap-derived products exist only on applicable
-branches. MARSS-enabled runs also contain native artifact loadings, artifact
+and classification records. Fieldmap-derived products exist only when used.
+MARSS-enabled runs also contain native artifact loadings, artifact
 timecourses, a mean-absolute artifact map, slice-correlation tables and heatmap,
 and decision metadata. Pass-through runs use zero-valued artifact placeholders
 to keep the output signature fixed. The functional manifest identifies every
@@ -102,13 +107,13 @@ required manifest and sidecar fields; the
 The SynBOLD overlap, translation, rotation, and SBRef support/correlation
 thresholds reject implausible reference alignment. `syn_base_*` and
 `syn_refine_*` are ANTs transform, convergence, shrink-factor, and smoothing
-schedules; they apply only to the relevant registration branch. `topup_config`
+schedules; they apply only to the relevant registration path. `topup_config`
 selects the TOPUP settings. `io_chunk_vols` bounds I/O chunks, not scientific
 temporal filtering. Thread/force/logging controls have the same role as in anat.
-The `fsaverage_template` setting selects func's surface target. When
-`output_spaces` requests an fsaverage-family result, all three must agree: the
-requested space, this setting, and the template selected by the workflow's
-`anat` configuration.
+Space is not a `func` configuration field. The selected `anat`
+`fsaverage_template` defines the available template surface, while `--space`
+selects downstream work at request time. Changing a requested space does not
+create a new `func` configuration or directory.
 
 `marss_mode` defaults to `auto`. Its correction rule follows the publication's
 recommendation to apply MARSS at multiband factors of six or greater. The
@@ -117,9 +122,9 @@ slice-correlation score is diagnostic and does not control correction. MARSS
 Lower-factor data and data with missing or unsupported slice metadata produce a
 documented pass-through result. `marss_min_multiband_factor` changes the cutoff;
 values below six are experimental because the correction estimate averages
-fewer simultaneously acquired slices. The installer includes the MARSS dependency by default. Pass
-`--without-marss` only when all functional configurations use `marss_mode: off`
-or `diagnose`.
+fewer simultaneously acquired slices. The installer includes the MARSS
+dependency by default. Pass `--without-marss` only when all functional
+configurations use `marss_mode: off` or `diagnose`.
 
 `confounds.aseg_in_epi` and `brain_mask_in_epi` override confound extraction
 masks. `n_acompcor` and `acompcor_max_voxels` bound aCompCor extraction.

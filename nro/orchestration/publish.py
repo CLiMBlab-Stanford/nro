@@ -10,6 +10,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from nro.engine.paths import module_artifact_root
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry, utcnow
 
@@ -24,14 +25,16 @@ def _sha256(path: Path) -> str:
 
 def _derivative_root(project_root: Path, instance: dict) -> Path:
     path = Path(instance["output_root"]).resolve()
-    expected = project_root / "derivatives" / instance["derivative_class"]
+    expected = module_artifact_root(
+        project_root,
+        str(instance["module"]),
+        str(instance["directory_label"]),
+    ).resolve()
     try:
-        relative = path.relative_to(expected)
+        path.relative_to(expected)
     except ValueError as error:
         raise RuntimeError(f"Instance output is outside its derivative dataset: {path}") from error
-    if not relative.parts:
-        raise RuntimeError(f"Instance output does not identify a derivative configuration: {path}")
-    return expected / relative.parts[0]
+    return expected
 
 
 def _portable_manifest(path: Path, seen: set[Path], digests: dict[Path, str]) -> dict:

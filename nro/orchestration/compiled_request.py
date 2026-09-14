@@ -56,14 +56,6 @@ def export_workflow(scientific, registered) -> dict:
                 (registered.revision_id,),
             )
         ]
-        if not any(binding["derivative_class"] == "anat" for binding in bindings):
-            bindings.append(
-                {
-                    "workflow_revision_id": registered.revision_id,
-                    "derivative_class": "anat",
-                    "configuration_lineage_id": registered.anatomy_lineage,
-                }
-            )
         return dict(
             revision=dict(
                 db.execute(

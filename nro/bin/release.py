@@ -1,4 +1,4 @@
-"""Inspect releases or perform legacy approval and scheduler maintenance."""
+"""Inspect releases or perform manual approval and scheduler maintenance."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from nro.orchestration.releases import ReleaseStore
 
 
 def main(argv=None, *, prog="nro release"):
-    """Inspect releases or perform legacy approval and scheduler maintenance."""
+    """Inspect releases or perform manual approval and scheduler maintenance."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument(
         "version", nargs="?", help="Committed main version to approve; omit to list approvals"

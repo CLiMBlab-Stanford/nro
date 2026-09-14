@@ -77,8 +77,11 @@ outputs; retry after the attempts stop. Invalidation and cancellation remain in
 effect, and demand is preserved. `--dry-run` does not invalidate or cancel work.
 
 After an interrupted purge, repeat the operation to recover its mutation lock and
-reservation. Registry repair refuses unresolved mutation reservations. This
-prevents repair from discarding the barrier while files might still be changing.
+reservation. The scheduler retains an approved purge and finishes it before later
+requests, even if the invoking terminal disconnects. Large purges report their
+validation and deletion progress on stderr. Registry repair refuses unresolved
+mutation reservations. This prevents repair from discarding the barrier while
+files might still be changing.
 
 Deletion is destructive and does not move files to trash. A bare invocation
 selects every controlled derivative owned by the current branch across all

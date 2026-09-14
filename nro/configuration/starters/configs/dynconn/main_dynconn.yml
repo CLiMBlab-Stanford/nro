@@ -1,6 +1,5 @@
+markup: main
 input_filter: {}
-output_dir: null
-prefix: null
 overwrite: false
 weighting: precision
 low_rank: true

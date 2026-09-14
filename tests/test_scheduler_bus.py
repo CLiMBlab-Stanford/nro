@@ -37,6 +37,32 @@ def test_message_and_response_survive_independent_readers(tmp_path):
     assert scheduler_bus.read_response(control, message_id) == {"result": {"ok": True}}
 
 
+def test_scheduler_progress_is_atomic_and_transient(tmp_path):
+    control = tmp_path / ".nro"
+    scheduler_bus.prepare(control)
+
+    scheduler_bus.publish_progress(
+        control,
+        "request",
+        phase="Removing artifact paths",
+        completed=25,
+        total=100,
+    )
+
+    record = scheduler_bus.read_progress(control, "request")
+    assert record is not None
+    assert record | {"updated_at": None} == {
+        "protocol": scheduler_bus.PROTOCOL,
+        "id": "request",
+        "phase": "Removing artifact paths",
+        "completed": 25,
+        "total": 100,
+        "updated_at": None,
+    }
+    scheduler_bus.clear_progress(control, "request")
+    assert scheduler_bus.read_progress(control, "request") is None
+
+
 def test_direct_rpc_round_trip() -> None:
     class MemorySocket:
         def __init__(self) -> None:

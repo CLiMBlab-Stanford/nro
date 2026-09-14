@@ -193,11 +193,13 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     raw = tmp_path / "raw.nii.gz"
     raw.write_text("raw")
     anat_output = tmp_path / "outputs" / "anat.txt"
-    network_output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "network.txt"
+    network_output = (
+        bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "network.txt"
+    )
     anat = _spec(
         key="anat:" + "a" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=anat_output,
@@ -454,7 +456,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     registered = registry.register_workflow(workflow)
     raw = tmp_path / "raw_T1w.nii.gz"
     raw.write_text("raw")
-    output_root = bids / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "anat"
+    output_root = bids / "demo" / "derivatives" / "nro" / "anat" / "main" / "sub-01" / "anat"
     derivative = output_root / "sub-01_desc-preproc_T1w.nii.gz"
     derivative.parent.mkdir(parents=True, exist_ok=True)
     derivative.write_text("derivative")
@@ -473,7 +475,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     instance = _spec(
         key="anat:" + "0" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=derivative,
@@ -518,7 +520,7 @@ def test_failed_instance_requires_new_demand_before_retry(tmp_path: Path) -> Non
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "result.txt"
+    output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
     base = _spec(
         key="networks:" + "c" * 64,
         module="networks",
@@ -571,7 +573,7 @@ def test_expired_dead_worker_lease_releases_instance_for_successor(tmp_path: Pat
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "result.txt"
+    output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
     instance = _spec(
         key="networks:" + "d" * 64,
         module="networks",
@@ -611,7 +613,7 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
     upstream = _spec(
         key="anat:" + "h" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
@@ -666,7 +668,7 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     instance = _spec(
         key="anat:" + "j" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
@@ -708,7 +710,7 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
     upstream = _spec(
         key="anat:" + "k" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
@@ -760,7 +762,7 @@ def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "result.txt"
+    output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
     base = _spec(
         key="networks:" + "e" * 64,
         module="networks",
@@ -812,7 +814,7 @@ def test_oom_at_memory_ceiling_is_terminal_error(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "result.txt"
+    output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
     base = _spec(
         key="networks:" + "f" * 64,
         module="networks",
@@ -849,7 +851,7 @@ def test_worker_drains_before_walltime_without_claiming(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = bids / "demo" / "derivatives" / "networks" / "main" / "sub-01" / "result.txt"
+    output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
     instance = _spec(
         key="networks:" + "1" * 64,
         module="networks",
@@ -892,7 +894,7 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(
     instance = _spec(
         key="anat:" + "9" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "anat.txt",
@@ -926,7 +928,7 @@ def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> N
         anat = _spec(
             key="anat:" + marker * 64,
             module="anat",
-            lineage=registered.anatomy_lineage,
+            lineage=registered.lineages["anat"],
             config_fingerprint=workflow.configuration("anat").fingerprint,
             runtime_config=registry.runtime_config_path(registered, "anat"),
             output=tmp_path / participant / "anat.txt",
@@ -1160,6 +1162,48 @@ def test_registry_lock_reports_interactive_wait_owner(tmp_path: Path, monkeypatc
     assert terminal.output.endswith("\r\x1b[2K")
 
 
+def test_expired_registry_lock_lease_is_recoverable_from_another_host(tmp_path: Path) -> None:
+    lock_path = tmp_path / "artifact-mutation.lock"
+    recovery_path = tmp_path / "artifact-mutation.recovery-lock"
+    lock_path.mkdir()
+    (lock_path / "owner.json").write_text(
+        json.dumps(
+            {
+                "token": "abandoned",
+                "hostname": "other-node.example",
+                "pid": 123,
+                "uid": os.getuid(),
+                "slurm_job_id": None,
+                "slurm_array_task_id": None,
+                "acquired_at": "2026-01-01T00:00:00+00:00",
+                "lease_expires_at": time.time() - 1,
+            }
+        )
+    )
+
+    with RegistryLock(lock_path, recovery_path, timeout=0.1, lease_seconds=300):
+        owner = json.loads((lock_path / "owner.json").read_text())
+        assert owner["token"] != "abandoned"
+        assert owner["lease_expires_at"] > time.time()
+
+    assert not lock_path.exists()
+
+
+def test_registry_lock_renews_its_cross_host_lease(tmp_path: Path, monkeypatch) -> None:
+    lock_path = tmp_path / "artifact-mutation.lock"
+    lock = RegistryLock(
+        lock_path,
+        tmp_path / "artifact-mutation.recovery-lock",
+        lease_seconds=3600,
+    )
+    with lock:
+        initial = json.loads((lock_path / "owner.json").read_text())["lease_expires_at"]
+        monkeypatch.setattr("nro.orchestration.registry.time.time", lambda: initial + 10)
+        assert lock._renew_lease()
+        renewed = json.loads((lock_path / "owner.json").read_text())["lease_expires_at"]
+        assert renewed > initial
+
+
 @pytest.mark.parametrize(
     "diagnostic,replacements",
     [
@@ -1234,7 +1278,7 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     anat = _spec(
         key="anat:" + "7" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=runtime,
         output=tmp_path / "anat.txt",
@@ -1243,7 +1287,7 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
         _spec(
             key=f"func:{index}" + "8" * 63,
             module="func",
-            lineage=registered.anatomy_lineage,
+            lineage=registered.lineages["anat"],
             config_fingerprint=workflow.configuration("anat").fingerprint,
             runtime_config=runtime,
             output=tmp_path / f"func-{index}.txt",
@@ -1713,7 +1757,7 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
     upstream = _spec(
         key="anat:" + "c" * 64,
         module="anat",
-        lineage=registered.anatomy_lineage,
+        lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "outputs" / "anat.txt",
@@ -1770,9 +1814,9 @@ def test_fatal_instance_failure_cancels_active_transitive_descendants(tmp_path: 
     for index, module in enumerate(("anat", "func", "clean")):
         configuration_class = module
         lineage = (
-            registered.anatomy_lineage
+            registered.lineages["anat"]
             if module == "anat"
-            else registered.lineages["preprocessing"]
+            else registered.lineages["func"]
             if module == "func"
             else registered.lineages["clean"]
         )

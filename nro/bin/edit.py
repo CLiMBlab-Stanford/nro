@@ -1,4 +1,4 @@
-"""Edit a stored model, config, or workflow through a reviewed temporary copy."""
+"""Edit a stored model, config, workflow, or markup through a reviewed copy."""
 
 from nro.configuration.authoring import main as author
 

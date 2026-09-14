@@ -7,6 +7,7 @@ import time
 from itertools import count
 from pathlib import Path
 
+from nro.configuration.markup import load_source_markup
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import (
@@ -15,13 +16,13 @@ from nro.engine.bids import (
 )
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
-from nro.engine.io import flatten_paths
-from nro.engine.paths import anatomical_manifest_path
-from nro.engine.publication import write_json_atomic
+from nro.engine.io import atomic_write_json, flatten_paths
+from nro.engine.paths import anatomical_manifest_path, module_derivatives_root, module_work_root
 from nro.engine.surface_geometry import surface_geometry
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
+    supported_output_spaces,
     target_output_names,
 )
 from nro.engine.templates import find_mni_gray_matter_mask
@@ -51,7 +52,7 @@ def infer_gray_matter_mask(
     *,
     project,
     participant=None,
-    preprocessing_directory=None,
+    anat_directory=None,
     space,
     execution_context: ExecutionContext | None = None,
 ):
@@ -73,14 +74,12 @@ def infer_gray_matter_mask(
 
     if space.startswith("MNI"):
         return find_mni_gray_matter_mask(space=space, functional=functionals[0][0])
-    if participant is None or preprocessing_directory is None:
-        raise ValueError(
-            "participant and preprocessing_directory are required for a native-space mask"
-        )
+    if participant is None or anat_directory is None:
+        raise ValueError("participant and anat_directory are required for a native-space mask")
     manifest_path = anatomical_manifest_path(
         f"sub-{participant}",
         project=project,
-        preprocessing_id=preprocessing_directory,
+        anat_id=anat_directory,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -118,20 +117,17 @@ def make_target_config(
     if clean_target is None:
         raise ValueError("clean_target must be constructed from source BIDS and requested entities")
     target = clean_target
-    default_base = (
-        Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
-        / project
-        / "derivatives"
-        / "microparcellation"
-        / microparcellation_id
+    output_base = module_derivatives_root(
+        "microparcellation",
+        microparcellation_id,
+        project=project,
+        bids_root=Path(BIDS_PATH if execution_context is None else execution_context.paths.bids),
     )
-    output_base = Path(config.get("output_dir") or default_base)
-    work_base = (
-        Path(WORK_PATH if execution_context is None else execution_context.paths.work)
-        / project
-        / "derivatives"
-        / "microparcellation"
-        / microparcellation_id
+    work_base = module_work_root(
+        "microparcellation",
+        microparcellation_id,
+        project=project,
+        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work),
     )
     if execution_context is not None:
         output_base = execution_context.output_path(output_base)
@@ -140,7 +136,7 @@ def make_target_config(
         manifest_path = anatomical_manifest_path(
             sub_id,
             project=project,
-            preprocessing_id=config["anatomical_directory"],
+            anat_id=config["anat_directory"],
             bids_root=None if execution_context is None else execution_context.paths.bids,
         )
         if execution_context is not None and target.space == "fsnative":
@@ -161,13 +157,11 @@ def make_target_config(
             config.get("mask"),
             project=project,
             participant=participant,
-            preprocessing_directory=config["anatomical_directory"],
+            anat_directory=config["anat_directory"],
             space=target.space,
             execution_context=execution_context,
         )
-    target_name, target_prefix = target_output_names(
-        config.get("prefix") or sub_id, target.space, target.smoothing_mm
-    )
+    target_name, target_prefix = target_output_names(sub_id, target.space, target.smoothing_mm)
     cfg = ModuleConfig(
         inputs=InputsConfig(
             functional=target.functional,
@@ -196,7 +190,7 @@ def make_target_config(
 def build_parser() -> argparse.ArgumentParser:
     """Build the direct microparcellation-module parser."""
     parser = argparse.ArgumentParser(
-        "Compute surface or gray-matter volume microparcels and their dense connectivity"
+        description="Compute surface or gray-matter volume microparcels and dense connectivity."
     )
     parser.add_argument("-p", "--participant", required=True, help="BIDS participant ID")
     parser.add_argument("-P", "--project", required=True)
@@ -219,11 +213,11 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         raise SystemExit("--smoothing must be a nonnegative integer FWHM in mm")
     smoothing_mm = args.smoothing
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
-    participant = args.participant.replace("sub-", "")
+    participant = args.participant.removeprefix("sub-")
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="microparcellation",
+        configuration_class="microparcellation",
         execution_context=execution_context,
     )
     microparcellation_id, config = load_runtime_configuration(runtime_config, "microparcellation")
@@ -234,16 +228,17 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         / args.project
         / participant_id
     )
+    load_source_markup(config.get("markup"), args.project, source_subject)
     source_runs = discover_raw_runs(source_subject)
     selected_runs = tuple(
         run for run in source_runs if matches_filter(run.entities, config.get("input_filter"))
     )
-    preprocessing_config = snapshot["configurations"]["func"]["resolved"]
-    output_spaces = tuple(str(value) for value in preprocessing_config["func"]["output_spaces"])
+    output_spaces = supported_output_spaces(
+        str(snapshot["configurations"]["anat"]["resolved"]["fsaverage_template"])
+    )
     if args.space not in output_spaces:
         raise SystemExit(
-            f"space-{args.space} is not published by preprocessing; "
-            f"choose from {', '.join(output_spaces)}"
+            f"space-{args.space} is not published by func; choose from {', '.join(output_spaces)}"
         )
     clean_target = expected_clean_target(
         selected_runs,
@@ -307,7 +302,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
             outputs=(publication_index,),
             inputs=(manifest,),
             force=bool(args.overwrite),
-            action=lambda: write_json_atomic(publication_index, payload),
+            action=lambda: atomic_write_json(publication_index, payload),
             validate=validate_index,
             completion_boundary=True,
         )

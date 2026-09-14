@@ -46,21 +46,21 @@ def resolve_workflow_runtime(
     *,
     project: str,
     workflow_id: str,
-    derivative_class: str,
+    configuration_class: str,
     bids_root: str | Path = BIDS_PATH,
 ) -> Path:
     """Register a workflow and return one class's immutable runtime config."""
     workflow = ConfigStore().resolve(workflow_id)
     registry = Registry.for_project(project, bids_root=bids_root)
     registered = registry.register_workflow(workflow)
-    return registry.runtime_config_path(registered, derivative_class)
+    return registry.runtime_config_path(registered, configuration_class)
 
 
 def select_runtime_config(
     *,
     project: str,
     workflow_id: str,
-    derivative_class: str,
+    configuration_class: str,
     bids_root: str | Path = BIDS_PATH,
     execution_context=None,
 ) -> Path:
@@ -89,10 +89,10 @@ def select_runtime_config(
         workflow = ConfigStore().resolve(workflow_id)
         registry = Registry.for_project(project, bids_root=bids_root)
         registered = registry.register_workflow(workflow)
-        path = registry.runtime_config_path(registered, derivative_class)
+        path = registry.runtime_config_path(registered, configuration_class)
         os.environ["NRO_RUNTIME_CONFIG"] = str(path)
         os.environ[CONFIGURATION_FINGERPRINT_ENV] = workflow.configuration(
-            derivative_class
+            configuration_class
         ).scientific_fingerprint
         return path
     registry = Registry.for_project(project, bids_root=bids_root)

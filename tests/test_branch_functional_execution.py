@@ -24,9 +24,9 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def functional_case(tmp_path, monkeypatch):
     paths = BranchPaths("feature/test", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV")
-    logical = paths.source_project("demo") / "derivatives/preprocessing/main/sub-1/anat"
+    logical = paths.source_project("demo") / "derivatives/nro/anat/main/sub-1/anat"
     ancestor = BranchPaths("dev", paths.bids, paths.work, paths.development)
-    physical = ancestor.output_project("demo") / "derivatives/preprocessing/main/sub-1/anat"
+    physical = ancestor.output_project("demo") / "derivatives/nro/anat/main/sub-1/anat"
     physical.mkdir(parents=True)
     image = physical / "sub-1_T1w.nii.gz"
     nib.save(nib.Nifti1Image(np.ones((3, 3, 3), dtype=np.float32), np.eye(4)), image)
@@ -72,21 +72,21 @@ def functional_case(tmp_path, monkeypatch):
         Path(func.__file__).parents[2] / "configuration/starters/configs/func/main_func.yml"
     )
     cfg = yaml.safe_load(config_path.read_text())
-    configure({"common": {"qunex_container": "/tmp/qunex.sif"}, "get_confounds": cfg["confounds"]})
+    configure({"common": {"qunex_container": "/tmp/qunex.sif"}, "func_confounds": cfg["confounds"]})
     values = {field.name: cfg[field.name] for field in fields(func.Options) if field.name in cfg}
     values.update(
-        fsaverage_template=cfg["fsaverage_template"],
-        out_dir=logical.parent / "ses-1/func",
-        work_dir=paths.work / "demo/derivatives/preprocessing/main/sub-1/ses-1/func/run",
+        fsaverage_template="fsaverage6",
+        out_dir=(paths.source_project("demo") / "derivatives/nro/func/main/sub-1/ses-1/func"),
+        work_dir=paths.work / "demo/derivatives/nro/func/main/sub-1/ses-1/func/run",
         project="demo",
-        preprocessing_id="main",
+        func_id="main",
+        anat_id="main",
         sub_id="sub-1",
         ses_id="ses-1",
         container=ContainerSpec(
             image=tmp_path / "synbold.sif",
             engine="true",
-            home_dir=paths.work
-            / "demo/derivatives/preprocessing/main/sub-1/ses-1/func/run/_qunex_home",
+            home_dir=paths.work / "demo/derivatives/nro/func/main/sub-1/ses-1/func/run/_qunex_home",
         ),
         synbold_disco_image=tmp_path / "synbold.sif",
         synbold_disco_license=tmp_path / "license",
@@ -148,7 +148,7 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     for step in graph.steps:
         for path in step.outputs:
             context.require_output(path)
-    public = context.paths.output_project("demo") / "derivatives/preprocessing/main"
+    public = context.paths.output_project("demo") / "derivatives/nro/func/main"
     assert not public.exists()
     graph.steps[0].action()
     assert (public / "sub-1/ses-1/func").is_dir()

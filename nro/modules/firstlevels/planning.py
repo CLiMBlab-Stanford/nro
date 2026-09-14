@@ -42,10 +42,12 @@ def select_model_runs(
     return selected_runs(runs, identifier, participant, config.get("input_filter"))
 
 
-def direct_inputs(runs, config: dict, participant: str, entities: dict) -> tuple[Path, ...]:
+def direct_inputs(
+    runs, config: dict, participant: str, entities: dict, *, markup=None
+) -> tuple[Path, ...]:
     """Resolve inherited events; model semantics are tracked in the contract."""
     selected = select_model_runs(runs, config, participant, entities=entities)
-    return tuple(resolve_bids_table(run.path, suffix="events") for run in selected)
+    return tuple(resolve_bids_table(run.path, suffix="events", markup=markup) for run in selected)
 
 
 def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
@@ -119,7 +121,13 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                             ]
                         )
                     ),
-                    input_paths=direct_inputs(runs, values, context.participant, entities),
+                    input_paths=direct_inputs(
+                        runs,
+                        values,
+                        context.participant,
+                        entities,
+                        markup=context.source_markup,
+                    ),
                     output_root=root,
                     output_prefix=prefix,
                     output_format=descriptor.output_format,
@@ -127,7 +135,7 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                     memory_gb=context.memory_gb,
                     max_memory_gb=context.max_memory_gb,
                     expected_outputs=(completion_path(root, prefix),),
-                    processing={**descriptor.processing_contract(), "task_model": source},
+                    processing=context.processing_contract(descriptor, task_model=source),
                 )
             )
     return tuple(result)

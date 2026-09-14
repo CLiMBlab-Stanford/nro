@@ -361,7 +361,7 @@ def get_confounds(
     nonsteady_stable_run: Optional[int] = None,
 ) -> int:
     """Generate one confounds TSV, metadata sidecar, and outlier indicators."""
-    cfg = SETTINGS.get_confounds
+    cfg = SETTINGS.func_confounds
     epi = Path(epi)
     epi_mean = Path(epi_mean)
     mcflirt_par = Path(mcflirt_par)
@@ -588,7 +588,7 @@ def get_confounds(
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Build an fMRIPrep-style confounds table for a registered BOLD run."""
-    cfg = SETTINGS.get_confounds
+    cfg = SETTINGS.func_confounds
     ap = argparse.ArgumentParser(prog="get_confounds.py")
     ap.add_argument(
         "--epi", required=True, type=Path, help="4D EPI (typically a registered BOLD run)"

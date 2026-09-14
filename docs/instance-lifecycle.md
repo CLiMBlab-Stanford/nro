@@ -209,7 +209,7 @@ also become stale when their required upstream generation changes.
 
 Completion validates the attempt, contract, captured inputs, and mutation barriers
 again under the publication lock before writing its manifest and advancing its
-generation. A late completion cannot override cancellation. Nro does not retain
+generation. A late completion cannot override cancellation. nro does not retain
 old derivative generations to let invalidated attempts run to completion.
 
 These rules apply to dependencies resolved across branch boundaries as well as

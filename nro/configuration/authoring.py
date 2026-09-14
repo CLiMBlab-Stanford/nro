@@ -1,4 +1,4 @@
-"""Shared authoring interface for scientific configs, workflows, and task models."""
+"""Shared authoring interface for models, configs, workflows, and source markup."""
 
 import argparse
 import subprocess
@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from nro.configuration.markup import compile_markup
 from nro.configuration.parsing import parse_mapping
 from nro.configuration.site import bids_root as _configured_bids_root
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
@@ -28,7 +29,7 @@ class DefinitionTarget:
     kind: str
     identifier: str
     path: Path
-    derivative_class: str | None = None
+    configuration_class: str | None = None
 
 
 def definition_target(store: ConfigStore, kind: str, identifier: str) -> DefinitionTarget:
@@ -41,17 +42,22 @@ def definition_target(store: ConfigStore, kind: str, identifier: str) -> Definit
         return DefinitionTarget(
             kind, identifier, store.root / "workflows" / f"{identifier}_workflow.yml"
         )
+    if kind == "markup":
+        identifier = validate_config_id(identifier, kind="markup")
+        return DefinitionTarget(
+            kind, identifier, store.root / "markup" / f"{identifier}_markup.yml"
+        )
     if kind != "config" or len(identifier.split("/")) != 2:
         raise ValueError("Config IDs must be CLASS/ID, for example clean/alternative")
-    derivative_class, config_id = identifier.split("/")
-    if derivative_class not in CONFIGURATION_CLASSES:
+    configuration_class, config_id = identifier.split("/")
+    if configuration_class not in CONFIGURATION_CLASSES:
         raise ValueError(f"Choose a configuration class from {', '.join(CONFIGURATION_CLASSES)}")
     config_id = validate_config_id(config_id, kind="configuration")
     return DefinitionTarget(
         kind,
-        f"{derivative_class}/{config_id}",
-        store.configs / derivative_class / f"{config_id}_{derivative_class}.yml",
-        derivative_class,
+        f"{configuration_class}/{config_id}",
+        store.configs / configuration_class / f"{config_id}_{configuration_class}.yml",
+        configuration_class,
     )
 
 
@@ -68,9 +74,11 @@ def validate_definition(store: ConfigStore, target: DefinitionTarget, text: str)
             validate_task_model(value)
         elif target.kind == "workflow":
             store.resolve(target.identifier, document=value)
+        elif target.kind == "markup":
+            compile_markup(value, source=target.path)
         else:
             config_id = target.identifier.split("/")[1]
-            store.load_configuration(target.derivative_class, config_id, document=value)
+            store.load_configuration(target.configuration_class, config_id, document=value)
     except (yaml.YAMLError, OSError, TypeError, KeyError) as error:
         raise ValueError(str(error)) from error
 
@@ -83,7 +91,7 @@ def _choose_column(columns: tuple[str, ...]) -> str:
 def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespace) -> str:
     if args.source:
         source = definition_target(store, target.kind, args.source)
-        if source.derivative_class != target.derivative_class:
+        if source.configuration_class != target.configuration_class:
             raise ValueError("--from must use the same configuration class")
         text = source.path.read_text(encoding="utf-8")
         validate_definition(store, source, text)
@@ -96,7 +104,7 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         if target.kind != "config" or source.identifier.split("/")[1] != "main":
             return text
     if target.kind == "config":
-        defaults = store.configuration_path(target.derivative_class, "main").read_text()
+        defaults = store.configuration_path(target.configuration_class, "main").read_text()
         return (
             "# Add overrides below. Omitted settings follow this class's main config.\n"
             "\n# Current main defaults (reference only):\n"
@@ -104,6 +112,8 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         )
     if target.kind == "workflow":
         return yaml.safe_dump({name: "main" for name in CONFIGURATION_CLASSES}, sort_keys=False)
+    if target.kind == "markup":
+        return "{}\n"
     paths = args.events or discover_event_files(
         target.identifier.split("/")[0],
         _configured_bids_root(),
@@ -119,10 +129,16 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
 def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
     """Build definition-management parsers with object-specific options."""
     parser = argparse.ArgumentParser(
-        prog=prog, description=f"{action.capitalize()} a model, config, or workflow definition."
+        prog=prog,
+        description=f"{action.capitalize()} a model, config, workflow, or markup definition.",
     )
     commands = parser.add_subparsers(dest="kind", required=True)
-    for kind, metavar in (("model", "TASK[/VARIANT]"), ("config", "CLASS/ID"), ("workflow", "ID")):
+    for kind, metavar in (
+        ("model", "TASK[/VARIANT]"),
+        ("config", "CLASS/ID"),
+        ("workflow", "ID"),
+        ("markup", "ID"),
+    ):
         command = commands.add_parser(kind)
         command.add_argument("identifier", metavar=metavar)
         if action != "delete":
@@ -173,7 +189,7 @@ def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, ye
                     raise ValueError(
                         f"Cannot check workflow references in {path}: {error}"
                     ) from error
-                if value.get(target.derivative_class, "main") == config_id:
+                if value.get(target.configuration_class, "main") == config_id:
                     references.append(path.name.removesuffix("_workflow.yml"))
             if references:
                 print(

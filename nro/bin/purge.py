@@ -143,8 +143,8 @@ def _instance_paths(
     sub_id = f"sub-{participant}"
     output_root = Path(instance["output_root"])
     output_prefix = str(instance.get("output_prefix") or "")
-    derivatives_root = registry.paths.project_root / "derivatives"
-    project_work_derivatives = work_root / registry.paths.project / "derivatives"
+    derivatives_root = registry.paths.project_root / "derivatives" / "nro"
+    project_work_derivatives = work_root / registry.paths.project / "derivatives" / "nro"
 
     derivative_paths: list[Path] = []
     work_paths: list[Path] = []
@@ -181,8 +181,8 @@ def _instance_paths(
         )
 
     if module == "anat":
-        preprocessing_root = output_root.parent.parent
-        derivative_paths.append(preprocessing_root / "code" / "freesurfer" / sub_id)
+        anat_root = output_root.parent.parent
+        derivative_paths.append(anat_root / "code" / "freesurfer" / sub_id)
 
     try:
         relative_output = output_root.relative_to(derivatives_root)
@@ -225,7 +225,7 @@ def _instance_paths(
     derivative_paths.append(
         instance_record_path(
             registry.paths.project_root,
-            str(instance["derivative_class"]),
+            str(instance["configuration_class"]),
             str(instance["directory_label"]),
             module,
             str(instance["instance_key"]),
@@ -330,13 +330,13 @@ def _purge_reserved_instances(
                 inventories=inventories,
             )
             derivative_roots = (
-                registry.paths.project_root / "derivatives",
+                registry.paths.project_root / "derivatives" / "nro",
                 registry.paths.control,
             )
             for path in derivatives:
                 prune_root = next(root for root in derivative_roots if _is_within(path, root))
                 derivative_count += int(_remove_path(path, dry_run=dry_run, prune_root=prune_root))
-            work_root_boundary = work_root / registry.paths.project / "derivatives"
+            work_root_boundary = work_root / registry.paths.project / "derivatives" / "nro"
             for path in work:
                 work_count += int(
                     _remove_path(path, dry_run=dry_run, prune_root=work_root_boundary)
@@ -353,13 +353,13 @@ def _purge_reserved_instances(
         lineage_roots = {
             (
                 registry.paths.project_root,
-                str(instance["derivative_class"]),
+                str(instance["configuration_class"]),
                 str(instance["directory_label"]),
             )
             for registry, instance in selected
         }
-        for project_root, derivative_class, directory_label in lineage_roots:
-            remove_empty_ownership_root(project_root, derivative_class, directory_label)
+        for project_root, configuration_class, directory_label in lineage_roots:
+            remove_empty_ownership_root(project_root, configuration_class, directory_label)
 
     return PurgeResult(
         instances=len(instance_ids),

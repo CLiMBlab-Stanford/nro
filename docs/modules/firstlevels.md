@@ -1,11 +1,12 @@
 # First-level models
 
 `firstlevels` estimates task effects within a participant. It fits each run
-independently, then forms session and subject summaries from the available runs. It produces effect, variance, t, and degrees-of-freedom
-maps in either volume or surface space. It never combines participants or fits
+independently, then forms session and subject summaries from the available
+runs. It produces effect, variance, t, and degrees-of-freedom maps in either
+volume or surface space. It never combines participants or fits
 population-level models.
 
-The module branches from `func`; it does not use `clean`. Its nuisance model
+The module depends on `func`; it does not use `clean`. Its nuisance model
 excludes global signal. Where preprocessing applies ICA-AROMA, firstlevels uses
 the corresponding `desc-preprocNoAROMA` outputs. Otherwise it uses `desc-preproc`.
 This choice comes from the preprocessing workflow, not from whichever files
@@ -24,8 +25,9 @@ nro models show mytask/main
 nro run -P example -p 01 -m firstlevels -s fsnative -S 2
 ```
 
-A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including GLMs for
-matching tasks in model set `main`. Use `-m` to restrict the requested branches.
+A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including
+GLMs for matching tasks in model set `main`. Use `-m` to restrict the requested
+endpoints.
 Multiple spaces and smoothing values create independent instances.
 One instance covers a participant, model variant, space, and smoothing value.
 Its run fits are separate steps within that instance, not separate worker jobs.
@@ -48,7 +50,7 @@ participant that match the configuration's `input_filter`. Partial CLI run
 selectors other than task are rejected because they would redefine the same
 subject-level artifact without changing its identity.
 
-## Processing and branches
+## Processing and aggregation
 
 1. Match the registered task. Resolve events
    using BIDS inheritance. A more specific events table replaces a general
@@ -95,7 +97,7 @@ assumptions, weighting, and the limitations of conditional AR inference.
 ## Artifacts
 
 ```text
-derivatives/firstlevels/FIRSTLEVEL_CONFIG_ID/
+derivatives/nro/firstlevels/FIRSTLEVEL_CONFIG_ID/
   sub-ID/
     ses-SESSION/task-TASK/node-run/
     ses-SESSION/task-TASK/node-session/

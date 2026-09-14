@@ -19,7 +19,7 @@ def test_direct_workflow_selection_exports_intrinsic_configuration_fingerprint(
     runtime = select_runtime_config(
         project="demo",
         workflow_id="main",
-        derivative_class="clean",
+        configuration_class="clean",
         bids_root=tmp_path / "bids",
     )
 

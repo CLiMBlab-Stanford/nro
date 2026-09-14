@@ -9,16 +9,18 @@ import time
 from itertools import count
 from pathlib import Path
 
+from nro.configuration.markup import load_source_markup
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
-from nro.engine.io import flatten_paths
-from nro.engine.publication import write_json_atomic
+from nro.engine.io import atomic_write_json, flatten_paths
+from nro.engine.paths import module_derivatives_root, module_work_root
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
+    supported_output_spaces,
     target_output_names,
 )
 from nro.orchestration.execution_context import ExecutionContext
@@ -48,22 +50,23 @@ def make_target_config(
     """Resolve one selected target into an executable module configuration."""
 
     sub_id = f"sub-{participant}"
-    bids_root = Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
-    output_base = Path(
-        config.get("output_dir") or bids_root / project / "derivatives" / "dynconn" / dynconn_id
+    output_base = module_derivatives_root(
+        "dynconn",
+        dynconn_id,
+        project=project,
+        bids_root=Path(BIDS_PATH if execution_context is None else execution_context.paths.bids),
     )
-    work_base = (
-        Path(WORK_PATH if execution_context is None else execution_context.paths.work)
-        / project
-        / "derivatives"
-        / "dynconn"
-        / dynconn_id
+    work_base = module_work_root(
+        "dynconn",
+        dynconn_id,
+        project=project,
+        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work),
     )
     if execution_context is not None:
         output_base = execution_context.output_path(output_base)
         work_base = execution_context.output_path(work_base, private=True)
     target, prefix = target_output_names(
-        config.get("prefix") or sub_id,
+        sub_id,
         clean_target.space,
         clean_target.smoothing_mm,
     )
@@ -123,7 +126,7 @@ def main(
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="dynconn",
+        configuration_class="dynconn",
         execution_context=execution_context,
     )
     dynconn_id, config = load_runtime_configuration(runtime_config, "dynconn")
@@ -133,17 +136,18 @@ def main(
         / args.project
         / f"sub-{participant}"
     )
+    load_source_markup(config.get("markup"), args.project, source_subject)
     runs = tuple(
         run
         for run in discover_raw_runs(source_subject)
         if matches_filter(run.entities, config.get("input_filter"))
     )
-    spaces = tuple(
-        str(value) for value in snapshot["configurations"]["func"]["resolved"]["output_spaces"]
+    spaces = supported_output_spaces(
+        str(snapshot["configurations"]["anat"]["resolved"]["fsaverage_template"])
     )
     if args.space not in spaces:
         raise SystemExit(
-            f"space-{args.space} is not published by preprocessing; choose from {', '.join(spaces)}"
+            f"space-{args.space} is not published by func; choose from {', '.join(spaces)}"
         )
     target = expected_clean_target(
         runs,
@@ -208,7 +212,7 @@ def main(
             inputs=(manifest,),
             outputs=(index,),
             force=bool(args.overwrite),
-            action=lambda: write_json_atomic(index, payload),
+            action=lambda: atomic_write_json(index, payload),
             validate=validate_index,
             completion_boundary=True,
         )

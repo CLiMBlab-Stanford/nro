@@ -1,3 +1,4 @@
+markup: main
 min_trs: 50
 gm_mask_threshold: 0.2
 confounds_regex: '^(global_signal|csf|white_matter|trans_[xyz]|rot_[xyz])(?:_derivative1)?(?:_power2)?$'

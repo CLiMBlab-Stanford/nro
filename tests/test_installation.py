@@ -29,11 +29,12 @@ def isolated_site(tmp_path, monkeypatch):
     return path
 
 
-def test_lab_defaults_preserve_preprocessing_identity(isolated_site):
+def test_lab_defaults_select_medium_fsaverage_anatomy(isolated_site):
     anatomy = ConfigStore().load_configuration("anat", "main")
     functional = ConfigStore().load_configuration("func", "main")
     assert anatomy.values["fsaverage_template"] == "fsaverage6"
-    assert "fsaverage6" in functional.values["output_spaces"]
+    assert "output_spaces" not in functional.values
+    assert "fsaverage_template" not in functional.values
 
 
 def test_fsaverage6_midthickness_is_derived_from_pinned_surfaces(tmp_path):

@@ -16,7 +16,7 @@ The controller exits after work and workers become idle; users do not manage it.
 Omitting `--module` requests every workflow endpoint, currently `dynconn`,
 `networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
 model set `main` unless a model or set is specified. Participants without a
-matching task model can still run the connectivity branches. Explicit `--module`
+matching task model can still run the connectivity paths. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
 
 Selecting an endpoint together with its dependencies creates no extra upstream

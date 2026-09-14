@@ -83,11 +83,12 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ("firstlevels", {"low_pass": 0.1}, "low_pass"),
         ("func", {"bbregister_dof": 5}, "bbregister_dof"),
         ("func", {"output_spaces": []}, "output_spaces"),
-        (
-            "func",
-            {"output_spaces": ["fsaverage"]},
-            "fsaverage_template",
-        ),
+        ("func", {"fsaverage_template": "fsaverage"}, "fsaverage_template"),
+        ("clean", {"space": "T1w"}, "space"),
+        ("clean", {"smoothing": 4}, "smoothing"),
+        ("microparcellation", {"output_dir": "/tmp/other"}, "output_dir"),
+        ("dynconn", {"prefix": "custom"}, "prefix"),
+        ("networks", {"output_dir": "/tmp/other"}, "output_dir"),
     ],
 )
 def test_store_and_authoring_share_semantic_errors(store, kind, values, field):
@@ -266,12 +267,12 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
     runtime = tmp_path / "main_firstlevels.yml"
     values = store.load_configuration("firstlevels", "main").values
     runtime.write_text(yaml.safe_dump(values))
-    with pytest.raises(ValueError, match="anatomical_directory"):
+    with pytest.raises(ValueError, match="anat_directory"):
         load_runtime_configuration(runtime, "firstlevels")
     values.update(
-        anatomical_directory="main",
-        functional_directory="main",
-        preprocessing_aroma=True,
+        anat_directory="main",
+        func_directory="main",
+        func_ica_aroma=True,
     )
     runtime.write_text(yaml.safe_dump(values))
     assert load_runtime_configuration(runtime, "firstlevels")[1] == values

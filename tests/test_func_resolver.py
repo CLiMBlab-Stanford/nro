@@ -72,6 +72,58 @@ def test_fieldmaps_are_resolved_when_sbref_has_no_json(tmp_path: Path, monkeypat
     assert not sbref.with_suffix("").with_suffix(".json").exists()
 
 
+def test_unreadable_optional_fieldmap_does_not_hide_valid_pair(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "sub-01" / "ses-a"
+    stem = "sub-01_ses-a_task-rest_dir-RL_run-1"
+    bold = root / "func" / f"{stem}_bold.nii.gz"
+    _image(bold)
+    bold.with_name(f"{stem}_bold.json").write_text(
+        json.dumps({"PhaseEncodingDirection": "i-", "TotalReadoutTime": 0.05})
+    )
+    intended = "ses-a/func/" + bold.name
+    for direction, ped in (("RL", "i-"), ("LR", "i")):
+        name = f"sub-01_ses-a_acq-rest_dir-{direction}_run-1_epi"
+        fmap = root / "fmap" / f"{name}.nii.gz"
+        _image(fmap)
+        fmap.with_name(f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "PhaseEncodingDirection": ped,
+                    "TotalReadoutTime": 0.05,
+                    "IntendedFor": intended,
+                }
+            )
+        )
+    _image(root / "fmap" / "sub-01_ses-a_acq-unrelated_dir-AP_epi.nii.gz")
+    monkeypatch.setattr(func_resolver, "project_data_root", lambda _project: tmp_path)
+
+    resolved = func_resolver.resolve_func_run_request(
+        project="test",
+        sub_id="sub-01",
+        ses_id="ses-a",
+        run_stem=stem,
+        sdc_from_sbref_pair=False,
+    )
+
+    assert resolved.pair is not None
+    assert {resolved.pair.se1.ped, resolved.pair.se2.ped} == {"i", "i-"}
+    assert resolved.selection_warning is not None
+    assert "Ignored 1 fieldmap candidate" in resolved.selection_warning
+    run = BidsRun(
+        participant="01",
+        session="a",
+        stem=stem,
+        entities={"task": "rest", "dir": "RL", "run": "1"},
+        path=bold,
+    )
+    planned = resolved_func_inputs(
+        run,
+        sdc_from_sbref_pair=False,
+        session_inventory=load_session_inventory(run),
+    )
+    assert all(path in planned for path in (resolved.pair.se1.img, resolved.pair.se2.img))
+
+
 def test_bold_uses_inherited_dataset_metadata(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "dataset_description.json").write_text("{}")
     inherited = tmp_path / "task-story_bold.json"
@@ -181,7 +233,7 @@ def test_bidsification_associations_override_heuristics(tmp_path, monkeypatch, u
         planned_inputs = resolved_func_inputs(
             run,
             sdc_from_sbref_pair=True,
-            session_inventory=load_session_inventory(run, include_fmaps=False),
+            session_inventory=load_session_inventory(run),
         )
         assert sbref in planned_inputs
         assert all(fmap in planned_inputs for fmap in sorted((root / "fmap").glob("*_epi.nii.gz")))

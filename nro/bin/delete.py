@@ -1,4 +1,4 @@
-"""Delete one model, config, or workflow definition without removing derivatives."""
+"""Delete one model, config, workflow, or markup without removing derivatives."""
 
 from nro.configuration.authoring import main as author
 

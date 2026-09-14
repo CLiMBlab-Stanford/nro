@@ -121,6 +121,9 @@ def _current_contract(row: dict) -> tuple[dict, str, bool]:
     except (ValueError, TypeError, KeyError):
         return contract, fingerprint(contract), True
     current = module_descriptor(str(row["module"])).processing_for(json.loads(row["entities_json"]))
+    recorded_processing = contract.get("processing", {})
+    if "source_markup" in recorded_processing:
+        current["source_markup"] = recorded_processing["source_markup"]
     changed = contract.get("processing", {}) != current
     if current:
         contract["processing"] = deepcopy(current)
@@ -465,6 +468,7 @@ def evaluate_assessment(
     freshness.
     """
     if not compiled:
+        from nro.configuration.markup import MarkupStore
         from nro.modules.anat.planning import raw_anatomical_inputs
         from nro.modules.clean.planning import clean_direct_inputs
         from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
@@ -507,8 +511,9 @@ def evaluate_assessment(
 
     states: dict[int, tuple[str, str]] = {}
     input_updates: dict[int, str] = {}
-    raw_runs_by_participant: dict[tuple[str, str], tuple] = {}
-    session_inventories: dict[tuple[Path, bool], object] = {}
+    raw_runs_by_participant: dict[tuple[str, str, str | None], tuple] = {}
+    markups: dict[tuple[str, str, str | None], object] = {}
+    session_inventories: dict[tuple[Path, bool, str | None], object] = {}
     completion_bounds: dict[int, tuple[int, int]] = {}
     remaining = set(by_id)
     while remaining:
@@ -522,7 +527,17 @@ def evaluate_assessment(
             project = str(row["project"])
             participant = str(row["participant"])
             subject_dir = registry.paths.bids_root / project / f"sub-{participant}"
-            participant_key = (project, participant)
+            config = config_values[int(row["configuration_lineage_id"])]
+            module_config = (
+                config[row["module"]] if isinstance(config.get(row["module"]), dict) else config
+            )
+            markup_key = (project, participant, module_config.get("markup"))
+            if not registered_only and markup_key not in markups:
+                markups[markup_key] = MarkupStore().subject(
+                    module_config.get("markup"), project, subject_dir
+                )
+            source_markup = None if registered_only else markups[markup_key]
+            run_key = markup_key
             command = [str(value) for value in json.loads(row["command_json"])]
             expected_module = {
                 "anat": "nro.modules.anat",
@@ -535,9 +550,11 @@ def evaluate_assessment(
             direct_universe_error: str | None = None
             if managed_direct_inputs and row["module"] in {"func", "clean"}:
                 try:
-                    if participant_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[participant_key] = discover_raw_runs(subject_dir)
-                    runs = raw_runs_by_participant[participant_key]
+                    if run_key not in raw_runs_by_participant:
+                        raw_runs_by_participant[run_key] = discover_raw_runs(
+                            subject_dir, markup=source_markup
+                        )
+                    runs = raw_runs_by_participant[run_key]
                     entities = json.loads(row["entities_json"])
                     source_entities = {
                         key: value
@@ -549,25 +566,27 @@ def evaluate_assessment(
                         raise ValueError(
                             f"expected one raw run for {entities}, found {len(matches)}"
                         )
-                    config = config_values[int(row["configuration_lineage_id"])]
                     if row["module"] == "func":
-                        sdc_from_sbref_pair = bool(config["func"]["sdc_from_sbref_pair"])
+                        sdc_from_sbref_pair = bool(module_config["sdc_from_sbref_pair"])
                         inventory_key = (
                             matches[0].path.parent.parent.resolve(),
                             not sdc_from_sbref_pair,
+                            module_config.get("markup"),
                         )
                         if inventory_key not in session_inventories:
                             session_inventories[inventory_key] = load_session_inventory(
-                                matches[0],
-                                include_fmaps=not sdc_from_sbref_pair,
+                                matches[0], markup=source_markup
                             )
                         expected_paths = resolved_func_inputs(
                             matches[0],
                             sdc_from_sbref_pair=sdc_from_sbref_pair,
                             session_inventory=session_inventories[inventory_key],
+                            markup=source_markup,
                         )
                     else:
-                        expected_paths = clean_direct_inputs(matches[0], config)
+                        expected_paths = clean_direct_inputs(
+                            matches[0], module_config, markup=source_markup
+                        )
                     recorded_paths = {
                         str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
                     }
@@ -582,7 +601,8 @@ def evaluate_assessment(
                     direct_universe_error = f"Could not reassess selected direct inputs: {error}"
             elif managed_direct_inputs and row["module"] == "anat":
                 expected_paths = {
-                    str(path.resolve()) for path in raw_anatomical_inputs(subject_dir)
+                    str(path.resolve())
+                    for path in raw_anatomical_inputs(subject_dir, source_markup)
                 }
                 recorded_paths = {
                     str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
@@ -607,13 +627,16 @@ def evaluate_assessment(
             )
             if descriptor.direct_inputs is not None and package in command:
                 try:
-                    if participant_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[participant_key] = discover_raw_runs(subject_dir)
+                    if run_key not in raw_runs_by_participant:
+                        raw_runs_by_participant[run_key] = discover_raw_runs(
+                            subject_dir, markup=source_markup
+                        )
                     paths = descriptor.direct_inputs(
-                        raw_runs_by_participant[participant_key],
-                        config_values[int(row["configuration_lineage_id"])],
+                        raw_runs_by_participant[run_key],
+                        module_config,
                         participant,
                         json.loads(row["entities_json"]),
+                        markup=source_markup,
                     )
                     current_paths = {str(path.resolve()) for path in paths}
                     recorded_paths = {
@@ -629,18 +652,19 @@ def evaluate_assessment(
                 or descriptor.select_runs is not None
             ):
                 try:
-                    config = config_values[int(row["configuration_lineage_id"])]
-                    if participant_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[participant_key] = discover_raw_runs(subject_dir)
-                    expected_runs = raw_runs_by_participant[participant_key]
+                    if run_key not in raw_runs_by_participant:
+                        raw_runs_by_participant[run_key] = discover_raw_runs(
+                            subject_dir, markup=source_markup
+                        )
+                    expected_runs = raw_runs_by_participant[run_key]
                     if descriptor.select_runs is not None:
                         expected_runs = descriptor.select_runs(
                             expected_runs,
-                            config,
+                            module_config,
                             row["participant"],
                             entities=json.loads(row["entities_json"]),
                         )
-                    input_filter = config.get("input_filter", {})
+                    input_filter = module_config.get("input_filter", {})
                     expected_entities = {
                         json.dumps(dict(run.entities), sort_keys=True)
                         for run in expected_runs

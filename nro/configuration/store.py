@@ -26,40 +26,25 @@ from nro.configuration.schema import (
     scientific_values,
 )
 from nro.configuration.site import definitions_root, resolve_resources
+from nro.modules import MODULE_NAMES
 
 PACKAGED_CONFIGS = Path(__file__).parent / "starters/configs"
 
-DERIVATIVE_CLASSES: tuple[str, ...] = (
-    "preprocessing",
-    "clean",
-    "dynconn",
-    "microparcellation",
-    "networks",
-    "firstlevels",
-)
-
-CONFIGURATION_CLASSES: tuple[str, ...] = (
-    "anat",
-    "func",
-    "clean",
-    "dynconn",
-    "microparcellation",
-    "networks",
-    "firstlevels",
-)
+CONFIGURATION_CLASSES = MODULE_NAMES
 
 UPSTREAM_CLASS: dict[str, str | None] = {
-    "preprocessing": None,
-    "clean": "preprocessing",
+    "anat": None,
+    "func": "anat",
+    "clean": "func",
     "dynconn": "clean",
     "microparcellation": "clean",
     "networks": "microparcellation",
-    "firstlevels": "preprocessing",
+    "firstlevels": "func",
 }
 
 
 class WorkflowError(DefinitionError):
-    """A workflow or one of its derivative configurations is invalid."""
+    """A workflow or one of its module configurations is invalid."""
 
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -140,7 +125,7 @@ def configuration_fingerprint(
     """Hash a named snapshot; optionally compare only its scientific settings."""
     if scientific:
         values = scientific_values(kind, compile_configuration(kind, values))
-    return fingerprint({"derivative_class": kind, "config_id": identifier, "values": values})
+    return fingerprint({"module": kind, "config_id": identifier, "values": values})
 
 
 @dataclass(frozen=True)
@@ -154,11 +139,11 @@ class ResolvedWorkflow:
     fingerprint: str
 
     def configuration(self, name: str) -> ResolvedConfiguration:
-        """Return the resolved configuration for a derivative class; unknown names raise KeyError."""
+        """Return one resolved module configuration or reject an unknown name."""
         try:
             return self.configurations[name]
         except KeyError as error:
-            raise WorkflowError(f"Workflow has no derivative class {name!r}") from error
+            raise WorkflowError(f"Workflow has no configuration class {name!r}") from error
 
 
 class ConfigStore:
@@ -176,7 +161,7 @@ class ConfigStore:
 
     @property
     def configs(self) -> Path:
-        """Return the directory containing the derivative-class configurations."""
+        """Return the directory containing module configurations."""
         return self.root / "configs"
 
     def _find(self, filename: str, *, category: str) -> Path:
@@ -202,39 +187,42 @@ class ConfigStore:
         workflow_id = validate_config_id(str(workflow), kind="workflow")
         return workflow_id, self._find(f"{workflow_id}{suffix}", category="workflows")
 
-    def configuration_path(self, derivative_class: str, config_id: str) -> Path:
+    def configuration_path(self, configuration_class: str, config_id: str) -> Path:
         """Return an external configuration or the packaged ``main`` default."""
-        if derivative_class not in CONFIGURATION_CLASSES:
-            raise WorkflowError(f"Unknown derivative class: {derivative_class}")
-        config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
-        filename = f"{config_id}_{derivative_class}.yml"
-        external = self.configs / derivative_class / filename
+        if configuration_class not in CONFIGURATION_CLASSES:
+            raise WorkflowError(f"Unknown configuration class: {configuration_class}")
+        config_id = validate_config_id(config_id, kind=f"{configuration_class} configuration")
+        filename = f"{config_id}_{configuration_class}.yml"
+        external = self.configs / configuration_class / filename
         if not external.resolve().is_relative_to(self.root):
             raise WorkflowError(f"Definition escapes the store: {external}")
         if external.is_file():
             return external
         if config_id == "main":
-            packaged = PACKAGED_CONFIGS / derivative_class / filename
+            packaged = PACKAGED_CONFIGS / configuration_class / filename
             if packaged.is_file():
                 return packaged
         raise WorkflowError(
-            f"Configuration file {str(Path(derivative_class) / filename)!r} was not found "
+            f"Configuration file {str(Path(configuration_class) / filename)!r} was not found "
             f"in store or packaged defaults: {self.root}"
         )
 
     def _merge_configuration(
         self,
-        derivative_class: str,
+        configuration_class: str,
         base: Mapping[str, Any],
         declared: Mapping[str, Any],
         *,
         path: Path,
     ) -> dict[str, Any]:
         """Validate and merge one partial configuration over resolved values."""
-        forbidden = sorted(set(declared) & RUNTIME_FIELDS[derivative_class].keys())
+        forbidden = sorted(set(declared) & RUNTIME_FIELDS[configuration_class].keys())
         if forbidden:
-            raise WorkflowError(f"{path}: {', '.join(forbidden)} belong in a workflow")
-        if derivative_class == "firstlevels" and set(declared) & {
+            raise WorkflowError(
+                f"{path}: {', '.join(forbidden)} are managed by orchestration and cannot "
+                f"be set in a {configuration_class} configuration"
+            )
+        if configuration_class == "firstlevels" and set(declared) & {
             "model",
             "models",
             "task",
@@ -246,16 +234,16 @@ class ConfigStore:
             )
         try:
             override = normalize_fields(
-                SCHEMAS[derivative_class],
+                SCHEMAS[configuration_class],
                 resolve_resources(declared),
-                location=derivative_class,
+                location=configuration_class,
                 complete=False,
             )
         except (ValueError, TypeError) as error:
             raise WorkflowError(f"{path}: {error}") from error
         flexible_filter = (
             override.pop("input_filter", None)
-            if derivative_class in {"dynconn", "firstlevels", "microparcellation"}
+            if configuration_class in {"dynconn", "firstlevels", "microparcellation"}
             else None
         )
         values = _deep_merge(base, override)
@@ -264,13 +252,13 @@ class ConfigStore:
                 raise WorkflowError("Configuration option input_filter must be a mapping")
             values["input_filter"] = deepcopy(dict(flexible_filter))
         try:
-            return compile_configuration(derivative_class, values)
+            return compile_configuration(configuration_class, values)
         except DefinitionError as error:
             raise WorkflowError(f"{path}: {error}") from error
 
     def load_configuration(
         self,
-        derivative_class: str,
+        configuration_class: str,
         config_id: str,
         *,
         document: Mapping[str, Any] | None = None,
@@ -281,18 +269,20 @@ class ConfigStore:
         override keys raise WorkflowError rather than being silently accepted.
         document validates a staged definition without writing it to the store.
         """
-        default_path = PACKAGED_CONFIGS / derivative_class / f"main_{derivative_class}.yml"
+        default_path = PACKAGED_CONFIGS / configuration_class / f"main_{configuration_class}.yml"
         if not default_path.is_file():
             raise WorkflowError(f"Packaged defaults are missing: {default_path}")
-        config_id = validate_config_id(config_id, kind=f"{derivative_class} configuration")
-        external_main = self.configs / derivative_class / f"main_{derivative_class}.yml"
-        target = self.configs / derivative_class / f"{config_id}_{derivative_class}.yml"
-        path = self.configuration_path(derivative_class, config_id) if document is None else target
+        config_id = validate_config_id(config_id, kind=f"{configuration_class} configuration")
+        external_main = self.configs / configuration_class / f"main_{configuration_class}.yml"
+        target = self.configs / configuration_class / f"{config_id}_{configuration_class}.yml"
+        path = (
+            self.configuration_path(configuration_class, config_id) if document is None else target
+        )
         if document is not None and not isinstance(document, Mapping):
             raise WorkflowError("Configuration must contain a mapping")
         try:
             base = compile_configuration(
-                derivative_class,
+                configuration_class,
                 resolve_resources(self._read_mapping(default_path)),
             )
         except (ValueError, TypeError) as error:
@@ -305,20 +295,28 @@ class ConfigStore:
             else {}
         )
         values = self._merge_configuration(
-            derivative_class,
+            configuration_class,
             base,
             main_declared,
             path=external_main if external_main.is_file() or document is not None else default_path,
         )
         if config_id != "main":
             declared = self._read_mapping(path) if document is None else dict(document)
-            values = self._merge_configuration(derivative_class, values, declared, path=path)
+            values = self._merge_configuration(configuration_class, values, declared, path=path)
+        markup_id = values.get("markup")
+        if markup_id is not None:
+            from nro.configuration.markup import MarkupStore
+
+            try:
+                MarkupStore(self.root).path(markup_id)
+            except (FileNotFoundError, ValueError) as error:
+                raise WorkflowError(f"{path}: {error}") from error
         return ResolvedConfiguration(
-            configuration_class=derivative_class,
+            configuration_class=configuration_class,
             config_id=config_id,
             path=path,
             values=values,
-            fingerprint=configuration_fingerprint(derivative_class, config_id, values),
+            fingerprint=configuration_fingerprint(configuration_class, config_id, values),
         )
 
     def resolve(
@@ -349,33 +347,36 @@ class ConfigStore:
             )
         selections: dict[str, str] = {}
         configurations: dict[str, ResolvedConfiguration] = {}
-        for derivative_class in CONFIGURATION_CLASSES:
-            value = declared.get(derivative_class, "main")
+        for configuration_class in CONFIGURATION_CLASSES:
+            value = declared.get(configuration_class, "main")
             if not isinstance(value, str) or not value.strip():
                 raise WorkflowError(
-                    f"Workflow selection {derivative_class!r} must be a nonempty configuration ID"
+                    f"Workflow selection {configuration_class!r} must be a nonempty configuration ID"
                 )
             config_id = value.strip()
-            selections[derivative_class] = config_id
-            configurations[derivative_class] = self.load_configuration(derivative_class, config_id)
-        requested_fsaverage = sorted(
-            space
-            for space in configurations["func"].values["output_spaces"]
-            if space.startswith("fsaverage")
-        )
-        anatomical_fsaverage = configurations["anat"].values["fsaverage_template"]
-        if requested_fsaverage and requested_fsaverage != [anatomical_fsaverage]:
+            selections[configuration_class] = config_id
+            configurations[configuration_class] = self.load_configuration(
+                configuration_class, config_id
+            )
+        markup_ids = {
+            configuration.values.get("markup") for configuration in configurations.values()
+        }
+        if len(markup_ids) != 1:
+            selected = ", ".join(
+                f"{name}={configurations[name].values.get('markup')!r}"
+                for name in CONFIGURATION_CLASSES
+            )
             raise WorkflowError(
-                f"{path}: func.output_spaces must use the selected anat.fsaverage_template "
-                f"({anatomical_fsaverage})"
+                "All module configurations in one workflow must select the same markup "
+                f"so they share one source-BIDS view; found {selected}"
             )
         resolved = {
             "workflow_id": workflow_id,
             "selections": selections,
             # This key is part of the stable fingerprint serialization.
             "configs": {
-                derivative_class: configurations[derivative_class].fingerprint
-                for derivative_class in CONFIGURATION_CLASSES
+                configuration_class: configurations[configuration_class].fingerprint
+                for configuration_class in CONFIGURATION_CLASSES
             },
         }
         return ResolvedWorkflow(
@@ -387,23 +388,23 @@ class ConfigStore:
         )
 
 
-def main_configuration_value(derivative_class: str, *keys: str) -> Any:
+def main_configuration_value(configuration_class: str, *keys: str) -> Any:
     """Read one value from the central store's main class configuration."""
-    value: Any = ConfigStore().load_configuration(derivative_class, "main").values
+    value: Any = ConfigStore().load_configuration(configuration_class, "main").values
     for key in keys:
         value = value[key]
     return deepcopy(value)
 
 
 def main_configuration_factory(
-    derivative_class: str,
+    configuration_class: str,
     *keys: str,
     converter: Callable[[Any], Any] | None = None,
 ) -> Callable[[], Any]:
     """Build a dataclass default factory backed by the central main config."""
 
     def factory() -> Any:
-        value = main_configuration_value(derivative_class, *keys)
+        value = main_configuration_value(configuration_class, *keys)
         return converter(value) if converter is not None else value
 
     return factory
@@ -423,12 +424,12 @@ def main(argv: list[str] | None = None) -> None:
     resolved = ConfigStore().resolve(args.workflow)
     rows = [
         {
-            "class": derivative_class,
-            "configuration": resolved.configurations[derivative_class].config_id,
-            "path": str(resolved.configurations[derivative_class].path),
-            "fingerprint": resolved.configurations[derivative_class].fingerprint,
+            "class": configuration_class,
+            "configuration": resolved.configurations[configuration_class].config_id,
+            "path": str(resolved.configurations[configuration_class].path),
+            "fingerprint": resolved.configurations[configuration_class].fingerprint,
         }
-        for derivative_class in CONFIGURATION_CLASSES
+        for configuration_class in CONFIGURATION_CLASSES
     ]
     if args.json:
         print(
@@ -445,7 +446,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Workflow: {resolved.workflow_id}")
     print(f"Definition: {resolved.path}")
     print(f"Fingerprint: {resolved.fingerprint}")
-    print(f"{'DERIVATIVE CLASS':20} {'CONFIGURATION':24} PATH")
+    print(f"{'CONFIGURATION CLASS':20} {'CONFIGURATION':24} PATH")
     for row in rows:
         print(f"{row['class']:20} {row['configuration']:24} {row['path']}")
 

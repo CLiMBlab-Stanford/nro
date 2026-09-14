@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.engine.paths import anatomical_manifest_path
+from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
 from nro.engine.targets import smoothing_entity_value
 from nro.modules.networks.labeling import reference_paths
 from nro.modules.networks.paths import fixed_output_paths
@@ -26,18 +25,16 @@ def plan_instances(
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     values = context.workflow.configuration("networks").values
-    output_base = (
-        Path(
-            values.get("output_dir")
-            or context.project_root / "derivatives" / "networks" / directory_label
-        )
-        .expanduser()
-        .resolve()
+    output_base = module_derivatives_root(
+        "networks",
+        directory_label,
+        project=context.project,
+        bids_root=context.bids_root,
     )
-    base_prefix = str(values.get("prefix") or context.sub_id)
+    base_prefix = context.sub_id
     labeling_enabled = bool((values.get("labeling") or {}).get("enabled", True))
     anat = upstream["anat"][0]
-    preprocessing_label = context.registered.anatomy_directory
+    anat_label = context.registered.directories["anat"]
     result: list[InstanceSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
@@ -85,7 +82,7 @@ def plan_instances(
                     anatomical_manifest_path(
                         context.sub_id,
                         project=context.project,
-                        preprocessing_id=preprocessing_label,
+                        anat_id=anat_label,
                         bids_root=context.bids_root,
                     ),
                     *(reference_paths() if labeling_enabled else ()),
@@ -99,7 +96,7 @@ def plan_instances(
                 expected_outputs=tuple(
                     fixed_output_paths(output_root, prefix)[name] for name in ("manifest", "index")
                 ),
-                processing=descriptor.processing_contract(),
+                processing=context.processing_contract(descriptor),
             )
         )
     return tuple(result)

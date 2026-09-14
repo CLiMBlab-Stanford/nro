@@ -1,6 +1,7 @@
 # Create, edit, and delete definitions
 
-`nro create`, `nro edit`, and `nro delete` manage task models, scientific configs, and workflows
+`nro create`, `nro edit`, and `nro delete` manage task models, scientific
+configs, workflows, and source markup
 in the selected [definitions store](../definitions.md). They validate and
 save drafts or remove definitions without opening the registry or requesting
 work. Deletion does not require a valid definition.
@@ -9,16 +10,20 @@ work. Deletion does not require a valid definition.
 nro create model newtask
 nro create config clean/alternative
 nro create workflow experiment
+nro create markup main
 
 nro edit model newtask/main
 nro edit config clean/alternative
 nro edit workflow experiment
+nro edit markup main
 ```
 
 Model IDs are `TASK/VARIANT`; a task alone means `TASK/main`. Config IDs are
-`CLASS/ID`, where class is `preprocessing`, `clean`, `microparcellation`,
-`dynconn`, `networks`, or `firstlevels`. Anatomy and functional preprocessing share the
-`preprocessing` config. Workflow IDs have no class prefix.
+`CLASS/ID`, where class is `anat`, `func`, `clean`, `microparcellation`,
+`dynconn`, `networks`, or `firstlevels`. Each module has its own configuration
+class and derivative directory. Workflow and markup IDs have no class prefix.
+Markup files select manual anatomicals and known-bad source paths by BIDS
+project and participant; see [source markup](../definitions.md#source-markup).
 
 If a create target exists, the interactive command announces that it is opening
 the existing definition for editing. Creation-only options such as `--from`
@@ -146,7 +151,8 @@ nro create model spatialFIN/main -P nptl
 
 This recreates a model from current events and initializer defaults. Custom
 contrasts, transformations, and model-set membership are not retained. Review
-the draft and set membership before saving. Config and workflow definitions use
+the draft and set membership before saving. Config, workflow, and markup
+definitions use
 the same staged pattern:
 
 ```bash
@@ -154,6 +160,8 @@ nro delete config clean/alternative
 nro create config clean/alternative
 nro delete workflow experiment
 nro create workflow experiment
+nro delete markup alternative
+nro create markup alternative
 ```
 
 Deleting an external class `main` override restores the packaged defaults.

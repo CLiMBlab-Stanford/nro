@@ -962,6 +962,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         result = snapshot(registry, checkout=Path(message["checkout"]), site_values=values)
     elif message["operation"] == "purge":
         from nro.orchestration.branch_purge import purge
+        from nro.orchestration.scheduler_bus import publish_progress
 
         result = purge(
             registry,
@@ -970,6 +971,13 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             plan=message["plan"],
             logs_only=message["logs_only"],
             dry_run=message["dry_run"],
+            progress=lambda phase, completed, total: publish_progress(
+                registry.paths.control,
+                message_id,
+                phase=phase,
+                completed=completed,
+                total=total,
+            ),
         )
     elif message["operation"] == "cache":
         BranchStore(registry.paths.control).read().topology.registered_checkout(
@@ -1108,6 +1116,7 @@ def _process_record(registry, record: dict, *, values: dict) -> dict:
     """Commit one record once, publish its recovery response, and acknowledge it."""
     from nro.orchestration.scheduler_bus import (
         acknowledge_message,
+        clear_progress,
         message_path,
         publish_response,
         read_response,
@@ -1118,6 +1127,7 @@ def _process_record(registry, record: dict, *, values: dict) -> dict:
         response = _message_response(registry, record, values=values)
         publish_response(registry.paths.control, record["id"], response)
     acknowledge_message(message_path(registry.paths.control, record["id"]))
+    clear_progress(registry.paths.control, record["id"])
     return response
 
 

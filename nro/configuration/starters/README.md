@@ -8,12 +8,15 @@ databases, logs, and generated derivatives outside this repository.
   `main` configurations supply defaults when the store has no matching file.
 * `workflows/ID_workflow.yml`: configuration selections for each configuration class.
 * `models/TASK/VARIANT.yml`: task predictors, contrasts, and model-set membership.
+* `markup/ID_markup.yml`: optional anatomical selections and source exclusions,
+  grouped first by BIDS project and then by participant.
 * `events/TASK/`: standard event tables and an `index.yml` listing their IDs.
 * `bidsify/PROFILE.yml`: Flywheel servers, protocol rules, and ingestion settings.
 
 Run `nro definitions validate PATH` before adopting edits. Select this directory
 with `nro paths set definitions=PATH`; shared installations require `--maintain`.
-Use `nro create`, `nro edit`, and `nro delete` for configs, workflows, and models.
+Use `nro create`, `nro edit`, and `nro delete` for configs, workflows, models,
+and source markup.
 Edit event indexes and ingestion profiles directly, then validate the store.
 
 New stores have no task models, event tables, or configured Flywheel servers.

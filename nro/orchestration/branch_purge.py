@@ -1,8 +1,11 @@
 """Validate branch-selected deletion paths against central ownership and readers."""
 
+import bisect
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
+from typing import Callable
 
 from nro.configuration.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
@@ -14,6 +17,26 @@ from nro.orchestration.purge_paths import (
     _remove_path,
 )
 from nro.orchestration.registry import Registry, utcnow
+
+
+def _protected_output_index(paths) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Resolve protected outputs once and index them for ancestor queries."""
+    exact = frozenset(str(Path(path).resolve()) for path in paths)
+    return exact, tuple(sorted(exact))
+
+
+def _contains_protected_output(
+    path: Path,
+    index: tuple[frozenset[str], tuple[str, ...]],
+) -> bool:
+    """Return whether deleting path would remove an indexed protected output."""
+    exact, ordered = index
+    resolved = str(path.resolve())
+    if resolved in exact:
+        return True
+    prefix = resolved if resolved == os.sep else resolved + os.sep
+    position = bisect.bisect_left(ordered, prefix)
+    return position < len(ordered) and ordered[position].startswith(prefix)
 
 
 def token(row: dict, context_json: str | None) -> str:
@@ -64,7 +87,14 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
 
 
 def purge(
-    registry, *, checkout: Path, site_values: dict, plan: list[dict], logs_only: bool, dry_run: bool
+    registry,
+    *,
+    checkout: Path,
+    site_values: dict,
+    plan: list[dict],
+    logs_only: bool,
+    dry_run: bool,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> dict:
     """Delete confirmed owned paths after fencing all affected readers.
 
@@ -83,19 +113,37 @@ def purge(
         if logs_only and (item["public"] or item["private"]):
             raise ValueError("Log-only purge cannot delete derivative paths")
 
-    def validate(db):
-        protected = [
-            Path(path)
-            for row in db.execute("SELECT id,expected_outputs_json FROM instances")
-            if row["id"] not in ids
-            for path in json.loads(row["expected_outputs_json"])
-        ]
-        for item in plan:
-            row = dict(db.execute("SELECT * FROM instances WHERE id=?", (item["id"],)).fetchone())
-            execution = db.execute(
-                "SELECT context_json FROM instance_execution WHERE instance_id=?", (item["id"],)
-            ).fetchone()
-            if token(row, execution[0] if execution else None) != item["token"]:
+    def report(phase: str, completed: int, total: int) -> None:
+        if progress is not None:
+            progress(phase, completed, total)
+
+    def validate(db, *, phase: str):
+        report(phase, 0, len(plan))
+        rows = {
+            row["id"]: dict(row)
+            for row in db.execute("SELECT * FROM instances")
+            if row["id"] in ids
+        }
+        executions = {
+            row["instance_id"]: row["context_json"]
+            for row in db.execute("SELECT instance_id,context_json FROM instance_execution")
+            if row["instance_id"] in ids
+        }
+        if rows.keys() != ids:
+            raise ValueError("Purge targets changed; generate and confirm a new report")
+        protected = (
+            _protected_output_index(
+                path
+                for row in db.execute("SELECT id,expected_outputs_json FROM instances")
+                if row["id"] not in ids
+                for path in json.loads(row["expected_outputs_json"])
+            )
+            if not logs_only
+            else (frozenset(), ())
+        )
+        for position, item in enumerate(plan, start=1):
+            row = rows[item["id"]]
+            if token(row, executions.get(item["id"])) != item["token"]:
                 raise ValueError("Purge targets changed; generate and confirm a new report")
             context = ExecutionContext.from_dict(owned[item["id"]]["execution_context"])
             for raw in (*item["public"], *item["private"]):
@@ -106,20 +154,23 @@ def purge(
                     context.require_output(path)
                 elif path.resolve() != path:
                     raise ValueError("Manifest path is redirected")
-                if any(other.resolve().is_relative_to(path.resolve()) for other in protected):
+                if _contains_protected_output(path, protected):
                     raise ValueError(
                         "Purge would remove another registered instance; narrow the paths or expand the selection"
                     )
+            if position % 100 == 0 or position == len(plan):
+                report(phase, position, len(plan))
 
     with registry.connection() as db:
-        validate(db)
+        validate(db, phase="Validating purge selection")
     counts = {"instances": len(ids), "derivative_paths": 0, "work_paths": 0}
     if not logs_only:
         from contextlib import nullcontext
 
         with nullcontext() if dry_run else registry.artifact_mutation(ids):
             with registry.connection(write=not dry_run) as db:
-                validate(db)
+                validate(db, phase="Revalidating purge selection")
+                groups = []
                 for kind, counter in (("public", "derivative_paths"), ("private", "work_paths")):
                     targets: dict[Path, Path] = {}
                     for item in plan:
@@ -140,6 +191,11 @@ def purge(
                                 for root in roots
                                 if path.resolve().is_relative_to(root.resolve())
                             )
+                    groups.append((counter, targets))
+                total_paths = sum(len(targets) for _counter, targets in groups)
+                completed_paths = 0
+                report("Removing artifact paths", 0, total_paths)
+                for counter, targets in groups:
                     for path in sorted(targets, key=lambda value: len(value.parts)):
                         counts[counter] += int(
                             _remove_path(
@@ -148,6 +204,9 @@ def purge(
                                 prune_root=targets[path],
                             )
                         )
+                        completed_paths += 1
+                        if completed_paths % 25 == 0 or completed_paths == total_paths:
+                            report("Removing artifact paths", completed_paths, total_paths)
                 if not dry_run:
                     db.executemany(
                         "UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
@@ -161,6 +220,8 @@ def purge(
             events=ControlPaths(registry.paths.control).branch(view["branch"]) / "events",
         )
     )
+    report("Removing logs", 0, 1)
     counts["attempt_logs"] = _purge_attempt_logs(scoped, instance_ids=ids, dry_run=dry_run)
     counts["worker_logs"] = _purge_inactive_worker_logs(registry, dry_run=dry_run)
+    report("Removing logs", 1, 1)
     return counts

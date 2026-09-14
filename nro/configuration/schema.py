@@ -147,6 +147,7 @@ EXECUTION_CONTROLS = {
 
 SCHEMAS = {
     "anat": {
+        "markup": OPTIONAL_TEXT,
         "fsaverage_template": enum("fsaverage", "fsaverage6"),
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
@@ -157,7 +158,7 @@ SCHEMAS = {
         "fs_subject": OPTIONAL_TEXT,
     },
     "func": {
-        "fsaverage_template": enum("fsaverage", "fsaverage6"),
+        "markup": OPTIONAL_TEXT,
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
         "sdc_method": enum("syn", "synbold_disco"),
@@ -191,7 +192,6 @@ SCHEMAS = {
         "sdc_from_sbref_pair": BOOL,
         "debug_first_nvols": NONNEGATIVE_INT,
         "io_chunk_vols": EXEC_COUNT,
-        "output_spaces": Field("list", item=TEXT, nonempty=True),
         "confounds": {
             "aseg_in_epi": OPTIONAL_TEXT,
             "brain_mask_in_epi": OPTIONAL_TEXT,
@@ -208,6 +208,7 @@ SCHEMAS = {
         },
     },
     "clean": {
+        "markup": OPTIONAL_TEXT,
         **DENOISING,
         "min_trs": COUNT,
         "gm_mask_threshold": FRACTION,
@@ -228,6 +229,7 @@ SCHEMAS = {
         "wb_command": TEXT,
     },
     "firstlevels": {
+        "markup": OPTIONAL_TEXT,
         "input_filter": Field("filter"),
         **DENOISING,
         "aggregation_weighting": enum("equal", "precision"),
@@ -243,13 +245,12 @@ SCHEMAS = {
         "wb_command": TEXT,
     },
     "microparcellation": {
+        "markup": OPTIONAL_TEXT,
         "input_filter": Field("filter"),
         "surface": enum("pial", "midthickness", "white", "inflated"),
         "mask": OPTIONAL_TEXT,
         "mask_threshold": Field("float", minimum=0, maximum=1, exclusive_maximum=True),
         "volume_connectivity": Field("int", choices=(6, 18, 26)),
-        "output_dir": OPTIONAL_TEXT,
-        "prefix": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
         "coarsening": {
             "target_vertices": Field("int", minimum=2),
@@ -280,9 +281,8 @@ SCHEMAS = {
         },
     },
     "dynconn": {
+        "markup": OPTIONAL_TEXT,
         "input_filter": Field("filter"),
-        "output_dir": OPTIONAL_TEXT,
-        "prefix": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
         "weighting": enum("precision", "equal"),
         "low_rank": BOOL,
@@ -302,8 +302,7 @@ SCHEMAS = {
         },
     },
     "networks": {
-        "output_dir": OPTIONAL_TEXT,
-        "prefix": OPTIONAL_TEXT,
+        "markup": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
         "parcellation_strategy": enum("ica", "clustering", "oslom"),
         "connectivity": {
@@ -361,16 +360,16 @@ SCHEMAS = {
 
 RUNTIME_FIELDS = {
     "anat": {},
-    "func": {"anatomical_directory": TEXT},
-    "clean": {"functional_directory": TEXT, "anatomical_directory": TEXT},
+    "func": {"anat_directory": TEXT, "fsaverage_template": enum("fsaverage", "fsaverage6")},
+    "clean": {"func_directory": TEXT, "anat_directory": TEXT},
     "firstlevels": {
-        "functional_directory": TEXT,
-        "anatomical_directory": TEXT,
-        "preprocessing_aroma": BOOL,
+        "func_directory": TEXT,
+        "anat_directory": TEXT,
+        "func_ica_aroma": BOOL,
     },
-    "microparcellation": {"anatomical_directory": TEXT, "clean_directory": TEXT},
-    "dynconn": {"anatomical_directory": TEXT, "clean_directory": TEXT},
-    "networks": {"anatomical_directory": TEXT, "microparcellation_directory": TEXT},
+    "microparcellation": {"anat_directory": TEXT, "clean_directory": TEXT},
+    "dynconn": {"anat_directory": TEXT, "clean_directory": TEXT},
+    "networks": {"anat_directory": TEXT, "microparcellation_directory": TEXT},
 }
 
 
@@ -401,16 +400,7 @@ def normalize_fields(
 
 
 def _relationships(kind: str, values: dict) -> None:
-    if kind == "func":
-        selected = values["fsaverage_template"]
-        requested = sorted(
-            space for space in values["output_spaces"] if space.startswith("fsaverage")
-        )
-        if requested and requested != [selected]:
-            raise DefinitionError(
-                f"func.output_spaces must use the selected func.fsaverage_template ({selected})"
-            )
-    elif kind == "clean":
+    if kind == "clean":
         low, high = values["low_pass"], values["high_pass"]
         if low is not None and high is not None and high >= low:
             raise DefinitionError("clean.high_pass must be below clean.low_pass")
