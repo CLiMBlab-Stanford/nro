@@ -21,6 +21,7 @@ def prepare_pool(
     confirm: Callable[[dict], MaintenanceAction | None],
     poll_interval: float = 5.0,
     report_interval: float = 30.0,
+    rebuild_schema: bool = False,
 ) -> dict:
     """Quiesce workers under an installation barrier while preserving demand."""
     checkout = Path(checkout).expanduser().resolve()
@@ -59,6 +60,53 @@ def prepare_pool(
     from nro.orchestration.scheduler_client import maintenance, shutdown_service
 
     control, bids_root = registry.paths.control, registry.paths.bids_root
+    from nro.orchestration.registry import SCHEMA_VERSION
+
+    stored_schema = registry.stored_schema_version()
+    if stored_schema != SCHEMA_VERSION:
+        if not rebuild_schema:
+            raise RuntimeError(
+                f"Scheduler schema {stored_schema} does not match {SCHEMA_VERSION}; "
+                "shared installation maintenance must rebuild it"
+            )
+        if read_active(control) is not None:
+            shutdown_service(
+                control,
+                bids_root,
+                checkout=checkout,
+                allow_changed_checkout=True,
+            )
+            deadline = time.monotonic() + 60
+            while read_active(control) is not None:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Scheduler did not stop before its registry schema rebuild")
+                time.sleep(0.1)
+        activity = registry.worker_pool_activity(for_repair=True)
+        if activity["workers"] or activity["submissions"]:
+            choice = confirm(
+                {
+                    "workers": len(activity["workers"]),
+                    "submissions": len(activity["submissions"]),
+                    "attempts": 0,
+                    "ingestion": 0,
+                }
+            )
+            if choice != "stop":
+                raise RuntimeError(
+                    "An incompatible scheduler schema cannot be drained by the new release; "
+                    "wait for current work to finish or rerun maintenance and choose stop"
+                )
+            from nro.orchestration.worker_control import stop_worker_pool_for_repair
+
+            stop_worker_pool_for_repair(registry)
+        from nro.orchestration.scheduler_repair import repair_for_installation
+
+        repaired = repair_for_installation(registry, checkout=checkout)
+        print(
+            f"Rebuilt scheduler schema {stored_schema} as {SCHEMA_VERSION}; "
+            f"backup: {repaired['backup']}",
+            flush=True,
+        )
     summary = maintenance(
         control,
         bids_root,

@@ -78,6 +78,116 @@ def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
     ]
 
 
+def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(
+    tmp_path, monkeypatch, capsys
+):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    operations = _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 0, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(registry, "stored_schema_version", lambda: 17)
+    monkeypatch.setattr(
+        registry,
+        "worker_pool_activity",
+        lambda **_options: {"workers": [], "submissions": []},
+    )
+    repaired = []
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_repair.repair_for_installation",
+        lambda selected, *, checkout: (
+            repaired.append((selected, checkout)) or {"backup": tmp_path / "backup"}
+        ),
+    )
+
+    result = shared_installation.prepare_pool(
+        registry,
+        checkout=tmp_path / "main",
+        confirm=lambda _activity: "stop",
+        rebuild_schema=True,
+    )
+
+    assert result["done"]
+    assert repaired == [(registry, (tmp_path / "main").resolve())]
+    assert [operation for operation, _ in operations] == [
+        "installation_activity",
+        "installation_prepare",
+    ]
+    assert "Rebuilt scheduler schema 17" in capsys.readouterr().out
+
+
+def test_schema_rebuild_stops_the_live_scheduler_before_direct_registry_access(
+    tmp_path, monkeypatch
+):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 0, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(registry, "stored_schema_version", lambda: 17)
+    scheduler_stopped = False
+    active_records = [{"token": "old"}]
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_bus.read_active",
+        lambda _control: active_records.pop() if active_records else None,
+    )
+
+    def stop_scheduler(*_args, **_kwargs):
+        nonlocal scheduler_stopped
+        scheduler_stopped = True
+        return {"stopping": True}
+
+    monkeypatch.setattr("nro.orchestration.scheduler_client.shutdown_service", stop_scheduler)
+
+    def activity(**_options):
+        assert scheduler_stopped
+        return {"workers": [], "submissions": []}
+
+    monkeypatch.setattr(registry, "worker_pool_activity", activity)
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_repair.repair_for_installation",
+        lambda *_args, **_kwargs: {"backup": tmp_path / "backup"},
+    )
+
+    result = shared_installation.prepare_pool(
+        registry,
+        checkout=tmp_path / "main",
+        confirm=lambda _activity: "stop",
+        rebuild_schema=True,
+    )
+
+    assert result["done"]
+    assert scheduler_stopped
+
+
 def test_pool_stop_interrupts_workers_without_waiting_for_attempts(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     _mock_service(

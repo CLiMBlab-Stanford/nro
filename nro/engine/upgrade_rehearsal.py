@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from nro.engine.site_setup import save_settings
 from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.scheduler_client import maintenance
+from nro.orchestration.registry import SCHEMA_VERSION
 from nro.orchestration.scheduler_implementation import implementation_path
 from nro.orchestration.source_snapshots import SourceStore
 
@@ -95,6 +96,41 @@ def _initialize_control(
     )
 
 
+def _prepare_pool(checkout: Path, site: Path, control: Path, bids: Path, python: Path) -> None:
+    """Run candidate installation maintenance from its synthetic shared checkout."""
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from nro.engine.shared_installation import prepare_pool\n"
+        "from nro.orchestration.registry import Registry\n"
+        "control, bids, checkout = map(Path, sys.argv[1:])\n"
+        "registry = Registry.for_project('', bids_root=bids, registry_path=control, "
+        "installation_maintenance=True)\n"
+        "result = prepare_pool(registry, checkout=checkout, confirm=lambda _: 'stop', "
+        "poll_interval=0.01, report_interval=60.0, rebuild_schema=True)\n"
+        "assert result['done']\n"
+    )
+    environment = {
+        **os.environ,
+        "NRO_SITE_CONFIG": str(site),
+        "PYTHONPATH": str(checkout),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for key in (
+        "NRO_EXECUTION_SOURCE_DIGEST",
+        "NRO_EXECUTION_SOURCE_ROOT",
+        "NRO_PROCESS_ROLE",
+        "NRO_SCHEDULER_MAINTENANCE",
+    ):
+        environment.pop(key, None)
+    subprocess.run(
+        [str(python), "-B", "-c", code, str(control), str(bids), str(checkout)],
+        cwd=checkout,
+        env=environment,
+        check=True,
+    )
+
+
 def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
     """Exercise an old-to-new maintenance transition without using shared site state.
 
@@ -111,7 +147,10 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
     _git(checkout, "rev-parse", "--verify", f"{baseline}^{{commit}}")
     managed_python = checkout / ".venv/bin/python"
     python = managed_python if managed_python.is_file() else Path(sys.executable)
-    with tempfile.TemporaryDirectory(prefix="nro-upgrade-rehearsal-") as temporary_name:
+    # The rehearsal is local and process-scoped. Keep it on the node-local
+    # filesystem so delayed directory metadata on shared storage cannot race
+    # cleanup after the one-shot scheduler exits.
+    with tempfile.TemporaryDirectory(prefix="nro-upgrade-rehearsal-", dir="/tmp") as temporary_name:
         temporary = Path(temporary_name)
         synthetic = temporary / "shared"
         subprocess.run(
@@ -169,33 +208,17 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         binding_path.parent.mkdir(parents=True, exist_ok=True)
         binding_path.write_text(json.dumps(binding, indent=2) + "\n")
 
-        _copy_candidate(checkout, synthetic)
         _initialize_control(synthetic, site, control, bids, python)
-        activity = maintenance(
-            control,
-            bids,
-            checkout=synthetic,
-            operation="installation_activity",
-        )
-        if any(activity.values()):
-            raise RuntimeError(f"Fresh rehearsal registry reported active work: {activity}")
-        prepared = maintenance(
-            control,
-            bids,
-            checkout=synthetic,
-            operation="installation_prepare",
-            action="stop",
-        )
-        if not prepared.get("done"):
-            raise RuntimeError(f"Rehearsal maintenance did not quiesce: {prepared}")
-        resumed = maintenance(
-            control,
-            bids,
-            checkout=synthetic,
-            operation="installation_progress",
-        )
-        if not resumed.get("done"):
-            raise RuntimeError(f"Rehearsal maintenance did not resume: {resumed}")
+        database_path = ControlPaths(control).database
+        with sqlite3.connect(database_path) as database:
+            database.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+
+        _copy_candidate(checkout, synthetic)
+        _prepare_pool(synthetic, site, control, bids, python)
+        with sqlite3.connect(database_path) as database:
+            rebuilt_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
+        if rebuilt_schema != SCHEMA_VERSION:
+            raise RuntimeError("Rehearsal did not rebuild the obsolete scheduler schema")
         if json.loads(implementation_path(control).read_text()) != binding:
             raise RuntimeError("Maintenance changed the active implementation before publication")
         return {

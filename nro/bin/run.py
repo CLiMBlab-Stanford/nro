@@ -203,9 +203,9 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
         "--repair",
         action="store_true",
         help=(
-            "Repair scientific records without new demand; after central activation "
-            "this is branch-scoped, otherwise it rebuilds the standalone registry. "
-            "Asks before stopping active work"
+            "Repair records without new demand; development branches repair their "
+            "scientific records, while main repairs the lab-wide scheduler. Asks "
+            "before stopping active work"
         ),
     )
     parser.add_argument(
@@ -258,10 +258,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         from nro.orchestration.scheduler_implementation import implementation_path
 
         values = site.settings()[0]
-        if (
-            record.get("mode") == "branch"
-            or implementation_path(Path(values["registry"])).is_file()
-        ):
+        if record.get("mode") == "branch":
             from nro.orchestration.branch_repair import repair_checkout
 
             def confirm(activity):
@@ -288,6 +285,35 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             else:
                 print(
                     f"Repaired {result['registry']}; restored {result['instances']} scientific record(s), without demand."
+                )
+            return
+        if implementation_path(Path(values["registry"])).is_file():
+            from nro.orchestration.scheduler_repair import repair
+
+            registry = Registry.for_project(
+                "",
+                bids_root=bids_root,
+                registry_path=values["registry"],
+                installation_maintenance=True,
+            )
+            try:
+                result = repair(
+                    registry,
+                    checkout=site.CHECKOUT,
+                    confirm=lambda activity: (
+                        not (activity["workers"] or activity["submissions"])
+                        or _confirm_repair_with_workers(activity)
+                    ),
+                    allow_release_transition=True,
+                )
+            except (ValueError, RuntimeError, OSError) as error:
+                raise SystemExit(str(error)) from error
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"Repaired {result['registry']}; restored "
+                    f"{result['instances']} scientific record(s), without demand."
                 )
             return
         registry = Registry.for_project("", bids_root=bids_root)

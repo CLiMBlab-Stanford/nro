@@ -1047,6 +1047,11 @@ class Registry(WorkflowRegistry):
         with self.connection():
             pass
 
+    def stored_schema_version(self) -> int:
+        """Read the scheduler schema without requiring it to match this source."""
+        with self._repair_connection() as connection:
+            return int(connection.execute("PRAGMA user_version").fetchone()[0])
+
     def reinitialize(
         self, *, preserve_branch_runtime: bool = False, retain_backup: bool = False
     ) -> Path | None:
