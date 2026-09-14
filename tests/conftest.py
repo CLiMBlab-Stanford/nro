@@ -63,6 +63,7 @@ def isolated_installation(tmp_path, tmp_path_factory, monkeypatch, definitions_f
     monkeypatch.setenv("NRO_SITE_CONFIG", str(config))
     for variable in site.ENVIRONMENT_KEYS:
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(site, "LAB", root)
     monkeypatch.setattr(site, "CHECKOUT", root)
     monkeypatch.setattr(site, "installation_record", lambda: {})
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})
