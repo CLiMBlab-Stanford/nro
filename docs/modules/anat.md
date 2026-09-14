@@ -1,10 +1,10 @@
 # Anatomical preprocessing
 
 `anat` prepares a subject's anatomical references, masks, surfaces, and spatial
-transforms. It belongs to the `preprocessing` derivative class and supplies
-geometry to functional processing and subsequent analyses.
+transforms. It supplies geometry to functional processing and subsequent
+analyses.
 
-## Inputs and branch selection
+## Inputs and processing choices
 
 Discovery collects T1w and T2w acquisitions across sessions. Missing anatomy
 makes the subject unavailable to planning rather than preventing registry use.
@@ -56,7 +56,7 @@ published scenes copy them only when requested.
 
 ## Public artifacts
 
-Outputs live under `derivatives/preprocessing/LINEAGE/sub-ID/`, with session
+Outputs live under `derivatives/nro/anat/ANAT_ID/sub-ID/`, with session
 acquisitions under `ses-ID/anat` where applicable. Subject `anat` contains
 preprocessed anatomical references, brain and gray-matter masks, cortical
 ribbon and subcortical masks, surfaces, metrics, and transforms. The publication

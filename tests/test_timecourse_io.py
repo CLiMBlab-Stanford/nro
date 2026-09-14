@@ -15,7 +15,7 @@ from nro.configuration.runtime import ConfigNode, configure
 configure(
     {
         "common": {"qunex_container": "/tmp/qunex.sif"},
-        "get_confounds": {
+        "func_confounds": {
             "aseg_in_epi": None,
             "n_acompcor": 10,
             "acompcor_max_voxels": 20000,
@@ -121,7 +121,7 @@ def test_confounds_loads_epi_once(
         "SETTINGS",
         ConfigNode(
             {
-                "get_confounds": {
+                "func_confounds": {
                     "aseg_in_epi": None,
                     "n_acompcor": 10,
                     "acompcor_max_voxels": 20000,

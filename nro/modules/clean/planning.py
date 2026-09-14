@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.bids import BidsRun, run_arguments
-from nro.engine.paths import clean_manifest_path
+from nro.engine.paths import clean_manifest_path, module_subject_dir
 from nro.engine.targets import smoothing_entity_value
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
@@ -16,12 +16,16 @@ if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
 
 
-def clean_direct_inputs(run: BidsRun, clean_config: Mapping[str, object]) -> tuple[Path, ...]:
+def clean_direct_inputs(
+    run: BidsRun, clean_config: Mapping[str, object], *, markup=None
+) -> tuple[Path, ...]:
     """Return task-event inputs that participate in a cleaning contract."""
     if not clean_config.get("regress_out_task"):
         return ()
     events = run.path.parent / f"{run.stem}_events.tsv"
-    return (events,) if events.is_file() else ()
+    return (
+        (events,) if events.is_file() and (markup is None or not markup.is_excluded(events)) else ()
+    )
 
 
 def plan_instances(
@@ -35,7 +39,13 @@ def plan_instances(
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     runtime_config = context.runtime_config(descriptor.configuration_class)
-    output_root = context.project_root / "derivatives" / "clean" / directory_label / context.sub_id
+    output_root = module_subject_dir(
+        context.sub_id,
+        module="clean",
+        module_id=directory_label,
+        project=context.project,
+        bids_root=context.bids_root,
+    )
     clean_values = context.workflow.configuration("clean").values
     result: list[InstanceSpec] = []
     for run in context.runs:
@@ -77,7 +87,9 @@ def plan_instances(
                         *run_arguments(run),
                     ),
                     dependencies=(func_by_prefix[run.stem].key, anat.key),
-                    input_paths=clean_direct_inputs(run, clean_values),
+                    input_paths=clean_direct_inputs(
+                        run, clean_values, markup=context.source_markup
+                    ),
                     output_root=output_root,
                     output_prefix=prefix,
                     output_format=descriptor.output_format,
@@ -96,7 +108,7 @@ def plan_instances(
                             ses_id=f"ses-{run.session}" if run.session else None,
                         ),
                     ),
-                    processing=descriptor.processing_contract(),
+                    processing=context.processing_contract(descriptor),
                 )
             )
     return tuple(result)

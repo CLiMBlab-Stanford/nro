@@ -17,6 +17,7 @@ from nro.configuration.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
+from nro.engine.paths import module_artifact_root
 from nro.engine.targets import is_surface_space
 from nro.engine.templates import find_fsaverage_surface
 from nro.orchestration.execution_context import ExecutionContext
@@ -39,7 +40,7 @@ LOG = logging.getLogger(__name__)
 
 def functional_paths(
     project_root: Path,
-    preprocessing_id: str,
+    func_id: str,
     run: BidsRun,
     space: str,
     *,
@@ -47,7 +48,7 @@ def functional_paths(
 ) -> tuple[Path, ...]:
     """Select non-AROMA func outputs from the upstream workflow's denoising choice."""
     relative = run.path.parent.relative_to(project_root)
-    directory = project_root / "derivatives" / "preprocessing" / preprocessing_id / relative
+    directory = module_artifact_root(project_root, "func", func_id) / relative
     description = "preprocNoAROMA" if aroma_enabled else "preproc"
     if is_surface_space(space):
         return tuple(
@@ -375,7 +376,7 @@ def build_module(
     runs: tuple[BidsRun, ...],
     participant: str,
     project_root: Path,
-    preprocessing_id: str,
+    func_id: str,
     config_id: str,
     model_id: str,
     model: dict,
@@ -383,7 +384,7 @@ def build_module(
     space: str,
     smoothing: int,
     work_root: Path,
-    anatomical_preprocessing_id: str | None = None,
+    anat_id: str,
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> tuple[Runner, Path]:
@@ -437,10 +438,10 @@ def build_module(
     for run in runs:
         original = functional_paths(
             project_root,
-            preprocessing_id,
+            func_id,
             run,
             space,
-            aroma_enabled=config.get("preprocessing_aroma", False),
+            aroma_enabled=config.get("func_ica_aroma", False),
         )
         if execution_context is not None:
             original = tuple(execution_context.input_path(path) for path in original)
@@ -452,10 +453,7 @@ def build_module(
                 if source.name.endswith(".gii"):
                     if space == "fsnative":
                         anatomy = (
-                            project_root
-                            / "derivatives"
-                            / "preprocessing"
-                            / (anatomical_preprocessing_id or preprocessing_id)
+                            module_artifact_root(project_root, "anat", anat_id)
                             / f"sub-{participant}"
                             / "anat"
                         )
@@ -569,7 +567,7 @@ def run_module(
     runs: tuple[BidsRun, ...],
     participant: str,
     project_root: Path,
-    preprocessing_id: str,
+    func_id: str,
     config_id: str,
     model_id: str,
     model: dict,
@@ -577,7 +575,7 @@ def run_module(
     space: str,
     smoothing: int,
     work_root: Path,
-    anatomical_preprocessing_id: str | None = None,
+    anat_id: str,
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> Path:
@@ -590,8 +588,8 @@ def run_module(
         runs=runs,
         participant=participant,
         project_root=project_root,
-        preprocessing_id=preprocessing_id,
-        anatomical_preprocessing_id=anatomical_preprocessing_id,
+        func_id=func_id,
+        anat_id=anat_id,
         config_id=config_id,
         model_id=model_id,
         model=model,

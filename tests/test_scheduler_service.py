@@ -95,9 +95,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
     paths = BranchPaths(
         "feature", Path(values["bids"]), Path(values["work"]), Path(values["development"])
     )
-    output = (
-        paths.source_project("demo") / "derivatives/preprocessing/main/sub-01/sub-01_result.txt"
-    )
+    output = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
     spec = InstanceSpec.create(
         key="extension",
         module="probe_extension",
@@ -105,7 +103,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         config_fingerprint="science",
         directory_label="main",
         runtime_config=science.runtime_config_path(registered, "anat"),
@@ -156,7 +154,13 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         paths.bids,
         checkout=feature,
         request_ids=result["request_ids"],
-        options={"local": True, "memory": 32, "drain_minutes": 0, "worker_poll_interval": 0.01},
+        options={
+            "local": True,
+            "memory": 32,
+            "cpus": 2,
+            "drain_minutes": 0,
+            "worker_poll_interval": 0.01,
+        },
     )
     report = scheduler_client.status(
         registry.paths.control, paths.bids, checkout=feature, mode="verify"
@@ -256,7 +260,13 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         paths.bids,
         checkout=feature,
         request_ids=[],
-        options={"local": True, "memory": 32, "drain_minutes": 0, "worker_poll_interval": 0.01},
+        options={
+            "local": True,
+            "memory": 32,
+            "cpus": 2,
+            "drain_minutes": 0,
+            "worker_poll_interval": 0.01,
+        },
     )
     completed = debug.get(record["id"])
     assert completed["state"] == "awaiting_approval"

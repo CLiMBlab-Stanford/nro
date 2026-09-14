@@ -10,7 +10,7 @@ Outside users should start with the [new-installation quickstart](quickstart.md)
 CLIMBLAB members should use the
 [internal installation quickstart](climblab-quickstart.md). The
 [design guide](design.md) explains how work and outputs are organized. The
-module guides describe processing, branch selection, output files, and
+module guides describe processing choices, output files, and
 configuration. The command reference covers the user interface; the API guide
 covers Python extension.
 

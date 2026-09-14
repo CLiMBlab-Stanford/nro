@@ -33,7 +33,7 @@ def prepare_pool(
         activity = registry.worker_pool_activity()
         if activity["workers"] or activity["submissions"]:
             raise RuntimeError(
-                "A legacy worker pool is still active; stop it before the first scheduler activation"
+                "An unmanaged worker pool is still active; stop it before scheduler activation"
             )
         with registry.connection(write=True) as db:
             db.executemany(

@@ -5,9 +5,11 @@ import json
 import logging
 from pathlib import Path
 
+from nro.configuration.markup import load_source_markup
 from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs
+from nro.engine.paths import module_work_root
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runtime import select_runtime_config
@@ -40,7 +42,7 @@ def main(
     runtime = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="firstlevels",
+        configuration_class="firstlevels",
         execution_context=execution_context,
     )
     config_id, config = load_runtime_configuration(runtime, "firstlevels")
@@ -53,6 +55,7 @@ def main(
         Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
         / args.project
     )
+    load_source_markup(config.get("markup"), args.project, project_root / f"sub-{participant}")
     runs = selected_runs(
         discover_raw_runs(project_root / f"sub-{participant}"),
         args.model,
@@ -63,19 +66,22 @@ def main(
         runs=runs,
         participant=participant,
         project_root=project_root,
-        preprocessing_id=config["functional_directory"],
-        anatomical_preprocessing_id=config["anatomical_directory"],
+        func_id=config["func_directory"],
+        anat_id=config["anat_directory"],
         config_id=config_id,
         model_id=args.model,
         model=model,
         config=config,
         space=args.space,
         smoothing=args.smoothing,
-        work_root=Path(WORK_PATH if execution_context is None else execution_context.paths.work)
-        / args.project
-        / "derivatives"
-        / "firstlevels"
-        / config_id,
+        work_root=module_work_root(
+            "firstlevels",
+            config_id,
+            project=args.project,
+            work_root=Path(
+                WORK_PATH if execution_context is None else execution_context.paths.work
+            ),
+        ),
         execution_context=execution_context,
     )
 

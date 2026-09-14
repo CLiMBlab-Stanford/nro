@@ -1,3 +1,4 @@
+markup: main
 fsaverage_template: fsaverage6
 container:
   image: site:qunex

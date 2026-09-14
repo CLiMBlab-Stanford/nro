@@ -30,8 +30,8 @@ def cleaning_case(tmp_path, request):
     raw.mkdir(parents=True)
     events = raw / f"{stem}_events.tsv"
     events.write_text("onset\tduration\ttrial_type\n10\t2\ta\n40\t2\ta\n")
-    logical = paths.source_project("demo") / "derivatives/preprocessing/main"
-    anat = logical / "sub-1/anat"
+    logical_anat = paths.source_project("demo") / "derivatives/nro/anat/main"
+    anat = logical_anat / "sub-1/anat"
     anat.mkdir(parents=True)
     mask = anat / "sub-1_mask.nii.gz"
     nib.save(nib.Nifti1Image(np.ones((3, 3, 3), dtype=np.float32), np.eye(4)), mask)
@@ -47,7 +47,8 @@ def cleaning_case(tmp_path, request):
             }
         )
     )
-    func = ancestor.output_project("demo") / "derivatives/preprocessing/main" / relative / "func"
+    logical_func = paths.source_project("demo") / "derivatives/nro/func/main"
+    func = ancestor.output_project("demo") / "derivatives/nro/func/main" / relative / "func"
     func.mkdir(parents=True)
     rng = np.random.default_rng(9)
     metrics = []
@@ -90,7 +91,7 @@ def cleaning_case(tmp_path, request):
         "demo",
         "clean:test",
         (
-            InputBinding("dev", "func:test", 1, logical / relative / "func", func, stem),
+            InputBinding("dev", "func:test", 1, logical_func / relative / "func", func, stem),
             InputBinding("main", "anat:test", 1, anat, anat, "sub-1"),
         ),
     )
@@ -110,7 +111,8 @@ def cleaning_case(tmp_path, request):
             "clean": cfg,
             "common": {
                 "project": "demo",
-                "preprocessing_id": "main",
+                "func_id": "main",
+                "anat_id": "main",
                 "clean_id": "main",
                 "qunex_home_dirname": "_qunex_home",
                 "wb_command": "wb_command",

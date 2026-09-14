@@ -45,7 +45,8 @@ the effective random seed.
 ## Public artifacts
 
 Outputs from every space and smoothing target share
-`derivatives/dynconn/LINEAGE/sub-ID/`. Their filenames include both entities.
+`derivatives/nro/dynconn/DYNCONN_ID/sub-ID/`. Their filenames include both
+entities.
 
 Surface targets contain one `_desc-dynamicConnectivity_bold.dtseries.nii`
 file. Its brain-model axis joins the complete left and right surface meshes;
@@ -66,7 +67,8 @@ nro scene -m dynconn -p PARTICIPANT -P PROJECT -s SPACE -S MM --open
 
 ## Configuration
 
-`output_dir`, `prefix`, and `overwrite` control direct execution and publication.
+nro fixes output placement from the project, module ID, participant, space, and
+smoothing request. `overwrite` requests rebuilding module outputs.
 The `inclusion` mapping contains the sidecar-based run and aggregate thresholds.
 `weighting` selects equal or effective-DOF covariance pooling.
 `low_rank` enables compression. When enabled, `low_rank_options.dimensions`

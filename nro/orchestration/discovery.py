@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from nro.configuration.store import DERIVATIVE_CLASSES, ConfigStore
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
+from nro.engine.paths import module_artifact_root
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.ownership import (
@@ -44,7 +45,7 @@ def _workflow_ids(store: ConfigStore) -> tuple[str, ...]:
 
 @dataclass(frozen=True, order=True)
 class _RecoveryTarget:
-    derivative_class: str
+    configuration_class: str
     directory: str
     module: str
     participant: str
@@ -59,7 +60,7 @@ def _matches_prefix(path: Path, prefix: str) -> bool:
     )
 
 
-def _recovery_target(path: Path, root: Path, derivative_class: str) -> _RecoveryTarget | None:
+def _recovery_target(path: Path, root: Path, configuration_class: str) -> _RecoveryTarget | None:
     if path.name.startswith(".") and not path.name.endswith("_complete"):
         return None
     parts = path.relative_to(root).parts
@@ -68,16 +69,7 @@ def _recovery_target(path: Path, root: Path, derivative_class: str) -> _Recovery
     if not participant or f"sub-{participant}" not in parts[:-1]:
         return None
     selected: dict[str, str] = {}
-    module = derivative_class
-    if derivative_class == "preprocessing":
-        if len(parts) > 2 and parts[1] == "anat":
-            module = "anat"
-        elif (len(parts) > 2 and parts[1] == "func") or (
-            len(parts) > 3 and parts[1].startswith("ses-") and parts[2] == "func"
-        ):
-            module = "func"
-        else:
-            return None
+    module = configuration_class
     if module in {"func", "clean"}:
         selected = {key: entities[key] for key in ENTITY_ORDER if key in entities}
         if "task" not in selected:
@@ -96,7 +88,7 @@ def _recovery_target(path: Path, root: Path, derivative_class: str) -> _Recovery
             return None
         selected.update(model=entities["model"], task=entities["task"])
     return _RecoveryTarget(
-        derivative_class, root.name, module, participant, tuple(sorted(selected.items()))
+        configuration_class, root.name, module, participant, tuple(sorted(selected.items()))
     )
 
 
@@ -111,15 +103,12 @@ def _unrecorded_targets(
         prefixes.setdefault(spec.output_root, set()).add(str(spec.output_prefix or ""))
     complete_roots = {spec.output_root for spec in owned if spec.module == "anat"}
     targets: dict[_RecoveryTarget, list[Path]] = {}
-    for derivative_class in DERIVATIVE_CLASSES:
-        for directory in sorted(directories[derivative_class]):
-            root = project_root / "derivatives" / derivative_class / directory
+    for configuration_class in CONFIGURATION_CLASSES:
+        for directory in sorted(directories[configuration_class]):
+            root = module_artifact_root(project_root, configuration_class, directory)
             if not root.is_dir():
                 continue
-            if derivative_class in {"preprocessing", "clean"}:
-                subjects = root.glob("sub-*")
-            else:
-                subjects = root.glob("sub-*")
+            subjects = root.glob("sub-*")
             for subject in subjects:
                 for parent, children, filenames in os.walk(subject):
                     parent = Path(parent)
@@ -139,7 +128,7 @@ def _unrecorded_targets(
                             continue
                         if not path.is_file():
                             continue
-                        target = _recovery_target(path, root, derivative_class)
+                        target = _recovery_target(path, root, configuration_class)
                         if target is not None:
                             targets.setdefault(target, []).append(path)
     return targets
@@ -223,7 +212,7 @@ def register_existing_artifacts(
     unavailable: list[str] = [*ownership_errors, *materialization_errors]
     directories = {
         name: {item.directories[name] for item in registered.values()}
-        for name in DERIVATIVE_CLASSES
+        for name in CONFIGURATION_CLASSES
     }
 
     for project in sorted(inventory):
@@ -238,9 +227,9 @@ def register_existing_artifacts(
             lineages_seen: set[str] = set()
             for workflow_id, workflow in workflows.items():
                 registration = registered[workflow_id]
-                if registration.directories[target.derivative_class] != target.directory:
+                if registration.directories[target.configuration_class] != target.directory:
                     continue
-                lineage = registration.lineage_fingerprints[target.derivative_class]
+                lineage = registration.lineage_fingerprints[target.configuration_class]
                 if lineage in lineages_seen:
                     continue
                 lineages_seen.add(lineage)

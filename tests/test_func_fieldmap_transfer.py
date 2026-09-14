@@ -151,7 +151,7 @@ def test_derivative_copy_failure_is_attributed_to_its_numbered_step(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     runner = Runner(
-        module_name="Functional Preprocessing Module",
+        module_name="Functional Module",
         container=None,
         binds=(),
         logger=logging.getLogger("test.func.derivative-copy"),

@@ -19,6 +19,7 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import replace_bids_entity_token
 from nro.engine.images import (
@@ -32,12 +33,10 @@ from nro.engine.paths import (
     clean_session_work_dir,
     clean_subject_dir,
     clean_subject_work_dir,
+    functional_manifest_path,
     is_bids_session_id,
     project_data_root,
     resolve_cwd_path,
-)
-from nro.engine.paths import (
-    functional_manifest_path as preprocessing_functional_manifest_path,
 )
 from nro.engine.targets import add_smoothing_entity
 from nro.modules.clean.contract import (
@@ -83,11 +82,8 @@ def build_module(
     cfg = SETTINGS.clean
     ap = argparse.ArgumentParser(prog="clean.py", description=__doc__)
     ap.add_argument("--project", default=SETTINGS.common.project)
-    ap.add_argument("--preprocessing-id", default=SETTINGS.common.preprocessing_id)
-    ap.add_argument(
-        "--anatomical-preprocessing-id",
-        default=SETTINGS.common.anatomical_preprocessing_id,
-    )
+    ap.add_argument("--func-id", default=SETTINGS.common.func_id)
+    ap.add_argument("--anat-id", default=SETTINGS.common.anat_id)
     ap.add_argument("--clean-id", default=SETTINGS.common.clean_id)
     ap.add_argument("--sub-id", required=True)
     ap.add_argument("--ses-id", default=None)
@@ -202,11 +198,11 @@ def build_module(
             / f"space-{args.space}_smoothing-{smoothing_mm}mm"
         )
 
-    functional_manifest = preprocessing_functional_manifest_path(
+    functional_manifest = functional_manifest_path(
         args.sub_id,
         args.run_stem,
         project=args.project,
-        preprocessing_id=args.preprocessing_id,
+        func_id=args.func_id,
         ses_id=ses_id,
         bids_root=bids_root,
     )
@@ -245,7 +241,7 @@ def build_module(
     if any(path not in recorded_paths for path in selected_paths):
         raise SystemExit(
             "Functional publication manifest does not match the immutable "
-            f"preprocessing-config output contract: {functional_manifest}"
+            f"func output contract: {functional_manifest}"
         )
     missing = [
         str(path)
@@ -281,7 +277,7 @@ def build_module(
     anatomical_path = anatomical_manifest_path(
         args.sub_id,
         project=args.project,
-        preprocessing_id=args.anatomical_preprocessing_id,
+        anat_id=args.anat_id,
         bids_root=bids_root,
     )
     if execution_context is not None:
@@ -314,6 +310,10 @@ def build_module(
     if ses_id is not None:
         source_root /= ses_id
     events_path = source_root / "func" / f"{args.run_stem}_events.tsv"
+    source_markup = active_source_markup()
+    events_available = events_path.exists() and (
+        source_markup is None or not source_markup.is_excluded(events_path)
+    )
 
     publication_manifest = clean_manifest_path(
         args.sub_id,
@@ -339,7 +339,7 @@ def build_module(
         confounds_json,
         anatomical_path,
     ]
-    if events_path.exists():
+    if events_available:
         source_inputs.append(events_path)
     functional_paths: list[Path] = []
     for variant in variants:
@@ -384,8 +384,8 @@ def build_module(
 
     configuration = {
         "clean_id": str(args.clean_id),
-        "preprocessing_id": str(args.preprocessing_id),
-        "anatomical_preprocessing_id": str(args.anatomical_preprocessing_id),
+        "func_id": str(args.func_id),
+        "anat_id": str(args.anat_id),
         "min_trs": int(args.min_trs),
         "gray_matter_mask_threshold": float(args.gm_mask_threshold),
         "space": str(args.space),
@@ -397,7 +397,7 @@ def build_module(
         "temporal_mask_regex": str(args.temporal_mask_regex),
         "standardize": bool(args.standardize),
         "detrend": bool(args.detrend),
-        "regress_out_task": bool(args.regress_out_task and events_path.exists()),
+        "regress_out_task": bool(args.regress_out_task and events_available),
         "low_pass_hz": args.low_pass,
         "high_pass_hz": args.high_pass,
         "configuration_fingerprint": selected_configuration_fingerprint(),
@@ -487,7 +487,7 @@ def build_module(
             n_scans=sample_count,
             tr=tr,
             start_time=start_time,
-            regress_out_task=bool(args.regress_out_task),
+            regress_out_task=bool(args.regress_out_task and events_available),
         )
         selected.to_csv(selected_confounds_path, sep="\t", index=False)
         task.to_csv(task_regressors_path, sep="\t", index=False)
@@ -513,7 +513,7 @@ def build_module(
                     confounds_tsv,
                     confounds_json,
                     initialized,
-                    *((events_path,) if events_path.exists() else ()),
+                    *((events_path,) if events_available else ()),
                 ),
                 force=bool(args.force),
                 action=prepare_confounds,
@@ -586,11 +586,12 @@ def build_module(
             )
         )
         sidecar["Sources"] = [str(source), str(confounds_tsv)] + (
-            [str(events_path)] if args.regress_out_task and events_path.exists() else []
+            [str(events_path)] if args.regress_out_task and events_available else []
         )
         sidecar["Cleaning"] = {
             "CleanID": str(args.clean_id),
-            "PreprocessingID": str(args.preprocessing_id),
+            "FuncID": str(args.func_id),
+            "AnatID": str(args.anat_id),
             "Space": str(args.space),
             "InputDescription": input_desc,
             "MinTRs": int(args.min_trs),
@@ -608,7 +609,7 @@ def build_module(
             **projection_metadata,
             "Standardize": bool(args.standardize),
             "Detrend": bool(args.detrend),
-            "RegressOutTask": bool(args.regress_out_task and events_path.exists()),
+            "RegressOutTask": bool(args.regress_out_task and events_available),
             "LowPassHz": args.low_pass,
             "HighPassHz": args.high_pass,
             "ConfigurationFingerprint": selected_configuration_fingerprint(),
@@ -739,7 +740,7 @@ def build_module(
                             sidecar_json_path(volume),
                             confounds_tsv,
                             *projection_inputs,
-                            *((events_path,) if events_path.exists() else ()),
+                            *((events_path,) if events_available else ()),
                         ),
                         force=bool(args.force),
                         action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask, quality=quality_path: (
@@ -851,7 +852,7 @@ def build_module(
                                 sidecar_json_path(surface),
                                 confounds_tsv,
                                 *projection_inputs,
-                                *((events_path,) if events_path.exists() else ()),
+                                *((events_path,) if events_available else ()),
                             ),
                             force=bool(args.force),
                             action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc, quality=quality_path: (

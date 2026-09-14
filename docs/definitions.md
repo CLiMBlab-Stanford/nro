@@ -13,16 +13,64 @@ DEFINITIONS/
 ├── configs/CLASS/ID_CLASS.yml
 ├── workflows/ID_workflow.yml
 ├── models/TASK/VARIANT.yml
+├── markup/ID_markup.yml
 ├── events/TASK/index.yml
 ├── events/TASK/*.tsv
 └── bidsify/PROFILE.yml
 ```
 
 Configurations and workflows control processing; [task models](task-models.md)
-define predictors and contrasts. [Event tables](event-files.md) supply stimulus
+define predictors and contrasts. Source markup selects manual anatomical inputs
+and excludes known-bad BIDS paths. [Event tables](event-files.md) supply stimulus
 timing during bidsification. [Ingestion profiles](commands/bidsify.md) describe
 Flywheel servers, acquisition rules, and conversion resources. Credentials,
 registry databases, imaging data, and generated outputs belong elsewhere.
+
+## Source markup
+
+A markup document records exceptions to ordinary BIDS discovery. Its top level
+is the BIDS project because participant labels need not be unique across
+projects. Project and participant entries are optional, as are all fields in a
+participant entry.
+
+```yaml
+nptl:
+  sub-t20:
+    T1w: ses-anat/anat/sub-t20_ses-anat_T1w.nii.gz
+    T2w:
+      - ses-anat/anat/sub-t20_ses-anat_run-1_T2w.nii.gz
+      - ses-anat/anat/sub-t20_ses-anat_run-2_T2w.nii.gz
+    exclude:
+      - ses-bad/func/sub-t20_ses-bad_task-rest_bold.nii.gz
+```
+
+Paths are relative to the participant directory. `T1w` and `T2w` accept one
+path or a list. A marked modality replaces automatic selection for that
+modality. If the field is absent, nro discovers that modality normally.
+`exclude` must be a list; each entry hides that path and everything below it
+from nro source discovery and metadata inheritance. A selected anatomical path
+cannot also be excluded.
+
+Every module configuration has a `markup` field. Its default is `main`, which
+selects `markup/main_markup.yml`; set it to `null` to ignore markup. The packaged
+`main` document is empty, so an existing definitions store without a `markup`
+directory retains ordinary discovery. All module configurations selected by
+one workflow must select the same markup ID. This guarantees that the workflow
+DAG represents one consistent view of source BIDS.
+
+Use the ordinary authoring commands to manage markup:
+
+```bash
+nro create markup main
+nro edit markup main
+nro delete markup alternative
+```
+
+Planning captures the resolved participant entry in the artifact contract.
+Workers therefore use the planned view even if the central document changes
+during an attempt. Later assessment compares the source inputs selected by the
+current document. An edit that changes no selected source content does not by
+itself make an artifact stale.
 
 ## Create and select a store
 
@@ -31,10 +79,11 @@ nro definitions create /data/lab/nro-definitions
 nro paths set definitions=/data/lab/nro-definitions
 ```
 
-Creation copies packaged workflows and named configuration examples, creates
-empty model and event catalogs, and adds an ingestion profile with no configured
-servers. Packaged `main` configurations remain in the nro installation and are
-inherited rather than copied. Creation validates the staged files before
+Creation copies packaged workflows, named configuration examples, and an empty
+`main` markup document. It creates empty model and event catalogs and adds an
+ingestion profile with no configured servers. Packaged `main` configurations
+remain in the nro installation and are inherited rather than copied. Creation
+validates the staged files before
 publication and refuses an existing destination, even an empty directory. It
 does not change site settings or initialize Git. Both commands accept the
 installation's usual Python-module invocation through `python -m nro.bin.COMMAND`.
@@ -64,8 +113,9 @@ nro definitions validate /data/lab/nro-definitions --json
 
 Omitting the path checks the selected store. Validation reads all definitions,
 including unused variants, and reports malformed filenames, missing packaged
-defaults, invalid configuration keys, broken workflow references, invalid task models,
-bad event tables, unindexed TSVs, and invalid ingestion profiles. It rejects
+defaults, invalid configuration keys, broken workflow references, invalid task
+models, invalid source markup, bad event tables, unindexed TSVs, and invalid
+ingestion profiles. It rejects
 symlinks in definition directories and cross-task event references. Empty model
 and event catalogs and empty Flywheel server mappings are valid starting points.
 
@@ -76,7 +126,8 @@ for dependency checks. Both store commands support `--json` and exit nonzero on
 failure.
 
 Use [create, edit, and delete](commands/authoring.md) for configurations,
-workflows, and task models. These commands target the external store. Their
+workflows, task models, and source markup. These commands target the external
+store. Their
 existing staged validation, writer locks, and concurrent-edit checks still
 apply. Edit event catalogs and ingestion profiles directly, then validate the
 store. Keep unrelated notes outside the structured definition directories.

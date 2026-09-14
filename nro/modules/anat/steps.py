@@ -16,8 +16,9 @@ from nro.engine.images import sidecar_json_path
 from nro.engine.io import invalid_gzip_files
 from nro.engine.manifests import create_json_step
 from nro.engine.paths import (
-    preprocessing_session_anat_dir,
-    preprocessing_session_work_dir,
+    anat_session_dir,
+    anat_session_work_dir,
+    module_artifact_root,
 )
 from nro.modules.anat.inputs import AnatImage, sort_anat_images
 from nro.orchestration.execution_context import ExecutionContext
@@ -98,7 +99,7 @@ def _plan_session_anatomicals(
     images: Sequence[AnatImage],
     *,
     project: str,
-    preprocessing_id: str,
+    anat_id: str,
     sub_id: str,
     execution_context: ExecutionContext | None = None,
 ) -> tuple[_SessionAnatomicalPlan, ...]:
@@ -109,22 +110,20 @@ def _plan_session_anatomicals(
     plans: list[_SessionAnatomicalPlan] = []
     for session_id, session_images in by_session.items():
         if execution_context is None:
-            output_dir = preprocessing_session_anat_dir(
-                sub_id, session_id, project=project, preprocessing_id=preprocessing_id
-            )
+            output_dir = anat_session_dir(sub_id, session_id, project=project, anat_id=anat_id)
             work_dir = (
-                preprocessing_session_work_dir(
-                    sub_id, session_id, project=project, preprocessing_id=preprocessing_id
-                )
-                / "anat"
+                anat_session_work_dir(sub_id, session_id, project=project, anat_id=anat_id)
                 / "session_level"
             )
         else:
-            relative = Path("derivatives/preprocessing") / preprocessing_id / sub_id / session_id
-            output_dir = execution_context.paths.output_project(project) / relative / "anat"
-            work_dir = (
-                execution_context.paths.private_project(project) / relative / "anat/session_level"
+            output_root = module_artifact_root(
+                execution_context.paths.output_project(project), "anat", anat_id
             )
+            work_root = module_artifact_root(
+                execution_context.paths.private_project(project), "anat", anat_id
+            )
+            output_dir = output_root / sub_id / session_id / "anat"
+            work_dir = work_root / sub_id / session_id / "anat" / "session_level"
             execution_context.require_output(output_dir)
             execution_context.require_output(work_dir)
         staged = {

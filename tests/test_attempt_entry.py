@@ -115,7 +115,7 @@ def test_branch_runtime_does_not_open_production_registry(tmp_path, monkeypatch)
         runtime.select_runtime_config(
             project="demo",
             workflow_id="main",
-            derivative_class="example",
+            configuration_class="example",
             execution_context=context,
         )
         == config
@@ -125,7 +125,7 @@ def test_branch_runtime_does_not_open_production_registry(tmp_path, monkeypatch)
         runtime.select_runtime_config(
             project="demo",
             workflow_id="main",
-            derivative_class="example",
+            configuration_class="example",
             execution_context=context,
         )
 

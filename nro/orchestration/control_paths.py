@@ -48,6 +48,11 @@ class ControlPaths:
         return self.service / "responses"
 
     @property
+    def service_progress(self) -> Path:
+        """Return transient progress records for long scheduler operations."""
+        return self.service / "progress"
+
+    @property
     def service_active(self) -> Path:
         """Return the active controller record."""
         return self.service / "active.json"
@@ -130,6 +135,7 @@ class ControlPaths:
             self.service,
             self.service_inbox,
             self.service_responses,
+            self.service_progress,
             self.catalog,
             self.cache,
             self.implementations,

@@ -41,6 +41,7 @@ def prepare(control: Path) -> ControlPaths:
         paths.service,
         paths.service_inbox,
         paths.service_responses,
+        paths.service_progress,
     ):
         ensure_shared_directory(path)
         try:
@@ -64,6 +65,12 @@ def response_path(control: Path, message_id: str) -> Path:
     """Return the response path for one validated message ID."""
     message_id = _identifier(message_id, "message ID")
     return ControlPaths(control).service_responses / f"{message_id}.json"
+
+
+def progress_path(control: Path, message_id: str) -> Path:
+    """Return the transient progress path for one validated message ID."""
+    message_id = _identifier(message_id, "message ID")
+    return ControlPaths(control).service_progress / f"{message_id}.json"
 
 
 def create_message(payload: dict[str, Any], *, kind: str = "command") -> dict[str, Any]:
@@ -103,6 +110,57 @@ def read_response(control: Path, message_id: str) -> dict[str, Any] | None:
         return read_json(path)
     except FileNotFoundError:
         return None
+
+
+def publish_progress(
+    control: Path,
+    message_id: str,
+    *,
+    phase: str,
+    completed: int,
+    total: int,
+) -> None:
+    """Publish the latest bounded progress record for a long operation."""
+    if not phase or len(phase) > 160:
+        raise ValueError("Scheduler progress phase must contain at most 160 characters")
+    if completed < 0 or total < 0 or completed > total:
+        raise ValueError("Invalid scheduler progress count")
+    path = progress_path(control, message_id)
+    atomic_write_json(
+        path,
+        {
+            "protocol": PROTOCOL,
+            "id": message_id,
+            "phase": phase,
+            "completed": int(completed),
+            "total": int(total),
+            "updated_at": time.time(),
+        },
+        sort_keys=True,
+        mode=0o664,
+    )
+
+
+def read_progress(control: Path, message_id: str) -> dict[str, Any] | None:
+    """Read the latest complete progress record for one message."""
+    try:
+        record = read_json(progress_path(control, message_id))
+    except FileNotFoundError:
+        return None
+    required = {"protocol", "id", "phase", "completed", "total", "updated_at"}
+    if (
+        not isinstance(record, dict)
+        or set(record) != required
+        or record["protocol"] != PROTOCOL
+        or record["id"] != message_id
+    ):
+        return None
+    return record
+
+
+def clear_progress(control: Path, message_id: str) -> None:
+    """Remove a terminal operation's transient progress record."""
+    progress_path(control, message_id).unlink(missing_ok=True)
 
 
 def pending_messages(
@@ -514,11 +572,12 @@ def clear_shutdown(control: Path) -> None:
 
 
 def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) -> None:
-    """Remove old acknowledged responses and obsolete controller scripts."""
+    """Remove old responses, progress records, and controller files."""
     paths = ControlPaths(control)
     cutoff = time.time() - age_seconds
     for path in (
         *paths.service_responses.glob("*.json"),
+        *paths.service_progress.glob("*.json"),
         *paths.service.glob("controller-*.sbatch"),
         *paths.service.glob("controller-local-*.log"),
         *paths.service.glob("startup-error-*.json"),

@@ -63,7 +63,7 @@ the default set restriction; an explicit `--model-set` still intersects it.
 
 Registration creates no demand. Bare `nro run` requests `dynconn`, `networks`,
 and `firstlevels`, using model set `main` for matching tasks. Use `-m firstlevels`
-to request only the modeling branch and its upstream dependencies. Existing
+to request only the modeling module and its upstream dependencies. Existing
 registered work remains independent of later changes to model-set membership.
 
 Model sets are execution metadata. Membership changes do not alter instance

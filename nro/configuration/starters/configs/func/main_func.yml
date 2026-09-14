@@ -1,4 +1,4 @@
-fsaverage_template: fsaverage6
+markup: main
 container:
   image: site:qunex
   engine: site:runtime
@@ -47,11 +47,6 @@ marss_min_multiband_factor: 6
 sdc_from_sbref_pair: false
 debug_first_nvols: 0
 io_chunk_vols: 64
-output_spaces:
-  - T1w
-  - fsnative
-  - MNI152NLin2009cAsym
-  - fsaverage6
 force: false
 verbose: false
 confounds:

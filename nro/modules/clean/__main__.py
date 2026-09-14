@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from nro.configuration.markup import load_source_markup
 from nro.configuration.paths import BIDS_PATH
 from nro.configuration.runtime import configure_clean, load_runtime_configuration
 from nro.engine.bids import (
@@ -13,7 +14,7 @@ from nro.engine.bids import (
     resolve_run,
     strip_bids_prefix,
 )
-from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
+from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.runtime import load_runtime_workflow_snapshot, select_runtime_config
 
 
@@ -48,16 +49,15 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="clean",
+        configuration_class="clean",
         execution_context=execution_context,
     )
     workflow_snapshot = load_runtime_workflow_snapshot(runtime_config)
-    preprocessing_func = workflow_snapshot["configurations"]["func"]["resolved"]
-    if args.space not in preprocessing_func["output_spaces"]:
-        available = ", ".join(str(value) for value in preprocessing_func["output_spaces"])
-        raise SystemExit(
-            f"space-{args.space} is not published by preprocessing; choose from {available}"
-        )
+    anat_config = workflow_snapshot["configurations"]["anat"]["resolved"]
+    available_spaces = supported_output_spaces(str(anat_config["fsaverage_template"]))
+    if args.space not in available_spaces:
+        available = ", ".join(available_spaces)
+        raise SystemExit(f"space-{args.space} is not published by func; choose from {available}")
     clean_id, cfg = load_runtime_configuration(runtime_config, "clean")
     configure_clean(args.project, clean_id, cfg)
     source_subject = (
@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         / args.project
         / sub_id
     )
+    load_source_markup(cfg.get("markup"), args.project, source_subject)
     try:
         selectors = parse_selectors(args.run)
         selected = resolve_run(
@@ -81,10 +82,10 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     module_argv = [
         "--project",
         args.project,
-        "--preprocessing-id",
-        cfg["functional_directory"],
-        "--anatomical-preprocessing-id",
-        cfg["anatomical_directory"],
+        "--func-id",
+        cfg["func_directory"],
+        "--anat-id",
+        cfg["anat_directory"],
         "--clean-id",
         clean_id,
         "--sub-id",
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         "--smoothing",
         str(args.smoothing),
     ]
-    if preprocessing_func["clean_ica_aroma"]:
+    if workflow_snapshot["configurations"]["func"]["resolved"]["clean_ica_aroma"]:
         module_argv.append("--functional-ica-aroma")
     if ses_id:
         module_argv.extend(("--ses-id", ses_id))

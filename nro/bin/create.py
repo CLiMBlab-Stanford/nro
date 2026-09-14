@@ -1,4 +1,4 @@
-"""Create a model, config, or workflow; interactively edit existing definitions."""
+"""Create or edit a model, config, workflow, or markup definition."""
 
 from nro.configuration.authoring import main as author
 

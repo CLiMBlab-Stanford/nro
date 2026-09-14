@@ -22,8 +22,12 @@ from nro.engine.images import (
     sidecar_json_path,
     surface_timeseries_shape,
 )
-from nro.engine.io import atomic_output_path, atomic_write_text, json_path_default
-from nro.engine.publication import write_json_atomic
+from nro.engine.io import (
+    atomic_output_path,
+    atomic_write_json,
+    atomic_write_text,
+    json_path_default,
+)
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
@@ -225,7 +229,7 @@ def build_module(
             record["start_frame"] = start
             record["stop_frame"] = stop
             start = stop
-        write_json_atomic(
+        atomic_write_json(
             eligibility_path,
             {
                 "included": included,
@@ -346,7 +350,7 @@ def build_module(
                     nib.save(nib.Nifti1Image(matrix, first.affine, header=header), str(staged))
             del matrix
             matrix_path.unlink(missing_ok=True)
-            write_json_atomic(
+            atomic_write_json(
                 low_rank_summary,
                 {
                     "method": "randomized spectral approximation of weighted run correlations",

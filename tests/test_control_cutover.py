@@ -23,7 +23,7 @@ def flat_store(tmp_path):
     runtime = root / "snapshots/main_preprocess.yml"
     runtime.parent.mkdir()
     runtime.write_text("setting: scientific\n")
-    output = tmp_path / "BIDS/demo/derivatives/preprocessing/main/sub-01/result.nii"
+    output = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/result.nii"
     output.parent.mkdir(parents=True)
     output.write_bytes(b"original scientific data")
     manifest_path = root / "manifests/instance.json"
@@ -69,7 +69,7 @@ def flat_store(tmp_path):
             [("schema_version", str(SCHEMA_VERSION)), ("registry_uuid", "original-id")],
         )
         db.execute(
-            "INSERT INTO configuration_lineages VALUES (1,'preprocessing','main','config','lineage','{}','main','now')"
+            "INSERT INTO configuration_lineages VALUES (1,'anat','main','config','lineage','{}','main','now')"
         )
         row = dict(
             spec.as_record(),

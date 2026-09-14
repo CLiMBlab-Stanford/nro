@@ -21,12 +21,14 @@ pytestmark = pytest.mark.integration
 def case(tmp_path, monkeypatch):
     paths = BranchPaths("feature/micro", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV")
     dev = BranchPaths("dev", paths.bids, paths.work, paths.development)
-    logical = paths.source_project("demo") / "derivatives/clean/main/sub-1"
+    logical = paths.source_project("demo") / "derivatives/nro/clean/main/sub-1"
     bindings, roots = [], []
     for index in (1, 2):
         # The first producer is main; raw data always remain in the shared tree.
         root = (
-            logical if index == 1 else dev.output_project("demo") / "derivatives/clean/main/sub-1"
+            logical
+            if index == 1
+            else dev.output_project("demo") / "derivatives/nro/clean/main/sub-1"
         )
         root.mkdir(parents=True, exist_ok=True)
         roots.append(root)
@@ -62,8 +64,8 @@ def case(tmp_path, monkeypatch):
             (root / f"{prefix}_desc-confounds_timeseries.tsv").write_text(
                 "motion_outlier00\n0\n0\n0\n0\n"
             )
-    logical_anat = paths.source_project("demo") / "derivatives/preprocessing/main/sub-1/anat"
-    anatomy = dev.output_project("demo") / "derivatives/preprocessing/main/sub-1/anat"
+    logical_anat = paths.source_project("demo") / "derivatives/nro/anat/main/sub-1/anat"
+    anatomy = dev.output_project("demo") / "derivatives/nro/anat/main/sub-1/anat"
     anatomy.mkdir(parents=True)
     mask = anatomy / "sub-1_mask.nii.gz"
     nib.save(nib.Nifti1Image(np.ones((3, 3, 3), dtype=np.float32), np.eye(4)), mask)
@@ -97,7 +99,7 @@ def case(tmp_path, monkeypatch):
             / "configuration/starters/configs/microparcellation/main_microparcellation.yml"
         ).read_text()
     )
-    cfg["anatomical_directory"] = "main"
+    cfg["anat_directory"] = "main"
     monkeypatch.setattr(entry, "select_runtime_config", lambda **kwargs: tmp_path / "runtime.yml")
     monkeypatch.setattr(entry, "load_runtime_configuration", lambda *args: ("main", cfg))
     monkeypatch.setattr(
@@ -105,7 +107,7 @@ def case(tmp_path, monkeypatch):
         "load_runtime_workflow_snapshot",
         lambda *args: {
             "configurations": {
-                "func": {"resolved": {"output_spaces": ["T1w", "fsnative"]}},
+                "anat": {"resolved": {"fsaverage_template": "fsaverage6"}},
                 "clean": {"directory": "main"},
             }
         },
@@ -136,7 +138,7 @@ def test_entry_routes_mixed_run_owners_and_outputs(case, monkeypatch, space):
     for root in roots[:2]:
         assert any(p.parent == root and f"_space-{space}_" in p.name for p in inputs)
     assert any(p.parent == roots[2] for p in inputs)
-    target = context.paths.output_project("demo") / "derivatives/microparcellation/main/sub-1"
+    target = context.paths.output_project("demo") / "derivatives/nro/microparcellation/main/sub-1"
     assert target.is_dir()
     assert any(
         p.parent == target and "Index_manifest.json" in p.name
@@ -154,10 +156,3 @@ def test_entry_rejects_missing_run_binding(case):
     with pytest.raises(ValueError, match="not selected"):
         entry.main(["-P", "demo", "-p", "1"], execution_context=context)
     assert not context.paths.output_project("demo").exists()
-
-
-def test_entry_rejects_foreign_output_override(case):
-    context, _, cfg = case
-    cfg["output_dir"] = str(context.paths.source_project("demo") / "sub-1")
-    with pytest.raises(ValueError, match="outside"):
-        entry.main(["-P", "demo", "-p", "1"], execution_context=context)

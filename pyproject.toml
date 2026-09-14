@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.4.0"
+version = "0.5.0"
 description = "Climblab fMRI derivative orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,7 +28,7 @@ nro = "nro.cli:main"
 include = ["nro*"]
 
 [tool.setuptools.package-data]
-"nro.configuration" = ["starters/configs/*/*.yml", "starters/workflows/*.yml", "starters/bidsify/*.yml", "starters/README.md", "starters/gitignore", "template_resources.json"]
+"nro.configuration" = ["starters/configs/*/*.yml", "starters/workflows/*.yml", "starters/markup/*.yml", "starters/bidsify/*.yml", "starters/README.md", "starters/gitignore", "template_resources.json"]
 "nro.modules.func.resources.ica_aroma" = ["*.nii.gz"]
 "nro.modules.func.resources.synbold_disco" = ["epi_reg"]
 "nro.engine" = ["*.scene.in", "*.b85"]

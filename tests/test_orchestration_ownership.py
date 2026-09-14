@@ -71,7 +71,7 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     assert receipt.is_file()
     marker_document = json.loads(marker.read_text())
     assert marker_document["configuration"]["id"] == "retired"
-    assert marker_document["upstream"][0]["derivative_class"] == "preprocessing"
+    assert marker_document["upstream"][0]["configuration_class"] == "func"
 
     (store.root / "workflows" / "retired_workflow.yml").unlink()
     (store.root / "configs" / "clean" / "retired_clean.yml").unlink()
@@ -126,7 +126,7 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
     with second.connection(write=True) as db:
         db.execute(
             """INSERT INTO configuration_lineages(
-                   derivative_class, config_id, config_fingerprint,
+                   configuration_class, config_id, config_fingerprint,
                    lineage_fingerprint, resolved_yaml, directory_label, created_at
                ) VALUES ('clean', 'other', 'other', 'other', '{}', 'other', 'now')"""
         )
@@ -141,5 +141,5 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
         bids_root=bids,
     )[0]
 
-    assert first_registered.lineages["preprocessing"] != second_registered.lineages["preprocessing"]
+    assert first_registered.lineages["anat"] != second_registered.lineages["anat"]
     assert first_instance.key == second_instance.key

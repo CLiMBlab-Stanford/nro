@@ -1,3 +1,4 @@
+markup: main
 input_filter: {}
 confounds_regex: '^(csf|white_matter|trans_[xyz]|rot_[xyz])(?:_derivative1)?(?:_power2)?$'
 temporal_mask_regex: '.*outlier.*'

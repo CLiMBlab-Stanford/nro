@@ -15,6 +15,7 @@ from nibabel.processing import resample_from_to
 
 from nro.configuration.paths import BIDS_PATH
 from nro.configuration.runtime import load_runtime_configuration
+from nro.engine.paths import anat_subject_dir, module_derivatives_root
 from nro.orchestration.runtime import resolve_workflow_runtime
 
 _SCENE_TEMPLATE = Path(__file__).with_name("registration_audit.scene.in")
@@ -341,7 +342,7 @@ def build_parser(*, prog: str = "python -m nro.qc registration") -> argparse.Arg
         "-w",
         "--workflow",
         default="main",
-        help="Workflow ID whose preprocessing lineage should be audited",
+        help="Workflow ID whose anatomical and functional outputs should be audited",
     )
     parser.add_argument(
         "--output-dir",
@@ -390,6 +391,7 @@ def main(
             and args.workflow in row.get("workflow_ids", "").split(",")
         ]
         anatomicals = [row for row in selected if row["module"] == "anat"]
+        functionals = [row for row in selected if row["module"] == "func"]
         if len(anatomicals) != 1:
             raise SystemExit(
                 "Registration QC requires one registered anatomical instance for the selected workflow"
@@ -397,10 +399,16 @@ def main(
         paths = BranchPaths(name, *(Path(values[key]) for key in ("bids", "work", "development")))
         anatomical = anatomicals[0]
         subject_dir = Path(anatomical["output_root"]).parent
+        if not functionals:
+            raise SystemExit(
+                "Registration QC requires registered functional instances for the selected workflow"
+            )
         derivative_root = (
             paths.output_project(args.project)
-            / "derivatives/preprocessing"
-            / anatomical["directory_label"]
+            / "derivatives"
+            / "nro"
+            / "func"
+            / functionals[0]["directory_label"]
         )
         output_dir = (
             args.output_dir.resolve()
@@ -413,7 +421,7 @@ def main(
                 path
                 for row in selected
                 if row["module"] == "func"
-                for path in Path(row["output_root"]).glob(
+                for path in Path(row["output_root"]).rglob(
                     f"{row['output_prefix']}_space-T1w_desc-preproc_bold.nii*"
                 )
                 if path.is_file()
@@ -432,20 +440,33 @@ def main(
             f"Registration audit includes {len(bold)} functional runs.\nScene: {outputs['scene']}\nRun index: {outputs['index']}"
         )
         return
-    preprocessing_id, _ = load_runtime_configuration(
+    anat_id, _ = load_runtime_configuration(
         resolve_workflow_runtime(
             project=args.project,
             workflow_id=args.workflow,
-            derivative_class="preprocessing",
+            configuration_class="anat",
         ),
-        "preprocessing",
+        "anat",
     )
-    derivative_root = (
-        Path(BIDS_PATH) / args.project / "derivatives" / "preprocessing" / preprocessing_id
+    func_id, _ = load_runtime_configuration(
+        resolve_workflow_runtime(
+            project=args.project,
+            workflow_id=args.workflow,
+            configuration_class="func",
+        ),
+        "func",
+    )
+    derivative_root = module_derivatives_root(
+        "func", func_id, project=args.project, bids_root=Path(BIDS_PATH)
     ).resolve()
-    subject_dir = derivative_root / subject
+    subject_dir = anat_subject_dir(
+        subject, project=args.project, anat_id=anat_id, bids_root=Path(BIDS_PATH)
+    ).resolve()
+    functional_subject = derivative_root / subject
     if not subject_dir.is_dir():
-        raise SystemExit(f"Missing preprocessing subject directory: {subject_dir}")
+        raise SystemExit(f"Missing anatomical subject directory: {subject_dir}")
+    if not functional_subject.is_dir():
+        raise SystemExit(f"Missing functional subject directory: {functional_subject}")
     output_dir = (
         args.output_dir.resolve()
         if args.output_dir
@@ -458,11 +479,14 @@ def main(
             subject=subject,
             sagittal_coordinate=args.sagittal_coordinate,
             slab_thickness=args.slab_thickness,
+            bold_files=find_registered_bold(functional_subject),
         )
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
-    print(f"Registration audit includes {len(find_registered_bold(subject_dir))} functional runs.")
+    print(
+        f"Registration audit includes {len(find_registered_bold(functional_subject))} functional runs."
+    )
     print(f"Scene: {outputs['scene']}")
     print(f"Run index: {outputs['index']}")
     print(f"Open with: wb_view {outputs['scene']}")

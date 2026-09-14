@@ -20,7 +20,7 @@ from nro.configuration.site import (
 from nro.engine.io import atomic_write_text
 
 DESCRIPTIONS = {
-    "definitions": "Configurations, workflows, models, events, and ingestion profiles",
+    "definitions": "Configurations, workflows, models, source markup, events, and ingestion profiles",
     "bids": "Directory containing BIDS projects",
     "work": "Intermediate files",
     "development": "Branch-owned derivatives, intermediate files, and debug BIDS",

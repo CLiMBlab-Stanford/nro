@@ -54,9 +54,9 @@ variance-retention denominators, quantization, and split allocation.
 ## Public artifacts
 
 Outputs from every space and smoothing target share
-`derivatives/microparcellation/LINEAGE/sub-ID/`. `PREFIX` includes subject,
-space, and smoothing, which keeps targets distinct within that directory. The
-fixed scientific outputs are:
+`derivatives/nro/microparcellation/MICROPARCELLATION_ID/sub-ID/`. `PREFIX`
+includes subject, space, and smoothing, which keeps targets distinct within
+that directory. The fixed scientific outputs are:
 
 | Suffix after `PREFIX` | Meaning |
 | --- | --- |
@@ -73,9 +73,9 @@ form reuses the source geometry and scientific outputs without copying them.
 ## Configuration
 
 `input_filter` restricts selected cleaned inputs; `surface`, `mask`,
-`mask_threshold`, and `volume_connectivity` define spatial support. `output_dir`
-and `prefix` override direct invocation destinations; orchestrated execution
-constructs owned paths. `overwrite` requests rebuilding module outputs.
+`mask_threshold`, and `volume_connectivity` define spatial support. nro fixes
+the output root and filename prefix from the project, module ID, participant,
+space, and smoothing request. `overwrite` requests rebuilding module outputs.
 
 `coarsening.iterations` controls refinement; `exponential_temperature` scales
 similarities; `eigenvectors`, `max_levels`, and `eigensolver_tolerance` govern

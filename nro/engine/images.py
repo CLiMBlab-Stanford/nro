@@ -34,11 +34,11 @@ def sidecar_json_path(path: Path) -> Path:
     return path.with_suffix(".json")
 
 
-def image_source_paths(path: Path) -> tuple[Path, ...]:
+def image_source_paths(path: Path, *, markup=None) -> tuple[Path, ...]:
     """Return an image and every applicable BIDS metadata source."""
     path = Path(path)
     try:
-        metadata_sources = resolve_bids_metadata(path).sources
+        metadata_sources = resolve_bids_metadata(path, markup=markup).sources
     except FileNotFoundError:
         metadata_sources = ()
     return (path, *metadata_sources)

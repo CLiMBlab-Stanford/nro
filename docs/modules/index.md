@@ -1,6 +1,6 @@
 # Processing modules
 
-Each guide describes the default method, configuration-controlled branches,
+Each guide describes the default method, configuration-controlled paths,
 public artifacts, and dependencies. Default values are included from the
 packaged starter YAML files. A site's active [definitions store](../definitions.md)
 may override those values.
@@ -31,8 +31,8 @@ per run and summarizes effects within each participant. Its instances
 distinguish model, space, and smoothing, with separate run/session/subject
 output directories.
 
-The ordinary output root is `BIDS/PROJECT/derivatives/CLASS/LINEAGE/`.
-`LINEAGE` is the registry-assigned directory label, often `main`, not a promise
-that every workflow name gets its own directory. WORK mirrors the derivative
+The ordinary output root is `BIDS/PROJECT/derivatives/nro/MODULE/MODULE_ID/`.
+`MODULE_ID` is the registry-assigned lineage label, usually the selected
+configuration ID. It is not the workflow ID. WORK mirrors the derivative
 organization for private files. See [configuration](../configuration.md) and
 [the API](../api.md) before adding or changing a module.

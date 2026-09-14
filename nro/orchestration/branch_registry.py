@@ -21,7 +21,7 @@ from nro.orchestration.registry import RegistryLock, ensure_shared_directory
 from nro.orchestration.workflow_registry import WORKFLOW_SCHEMA, WorkflowRegistry
 
 APPLICATION_ID = 0x4E524F42  # NROB: branch state, distinct from the scheduler database.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA = (
     """
 CREATE TABLE identity (key TEXT PRIMARY KEY, value TEXT NOT NULL);

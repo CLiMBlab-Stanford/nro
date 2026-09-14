@@ -5,7 +5,7 @@ Its direct inputs are functional derivatives and the anatomy needed for masks
 or surface smoothing. It retains the full frame count and records which frames
 downstream analyses must exclude.
 
-## Processing sequence and branches
+## Processing sequence and conditions
 
 1. Resolve matching functional derivatives and confounds for the run. The
    default regex selects the 36 expanded motion and tissue/global-signal
@@ -43,11 +43,11 @@ projection and distinguish undefined models from input-validation errors.
 
 ## Public artifacts and quality metadata
 
-Outputs are under `derivatives/clean/LINEAGE/sub-ID/[ses-ID/]/` and retain run,
-space, hemisphere where applicable, and `smoothing-Nmm` in their filenames.
+Outputs are under `derivatives/nro/clean/CLEAN_ID/sub-ID/[ses-ID/]/` and retain
+run, space, hemisphere where applicable, and `smoothing-Nmm` in their filenames.
 The output set includes NIfTI or paired GIFTI cleaned time courses, JSON
 sidecars, and a run/space/smoothing-specific manifest. Different combinations
-share the derivative lineage directory but not file identities.
+share the configuration-lineage directory but not file identities.
 
 Sidecars report the temporal mask, retained-frame statistics, passband and
 exact-design ranks, nuisance selection, final algebraic rank, participation
@@ -63,8 +63,9 @@ controls censoring. `nuisance_variance_explained` is a fraction, not a percentag
 `minimum_temporal_rank` and `minimum_temporal_rank_fraction` constrain nuisance
 PCA; they are not connectivity admission thresholds. `min_trs` rejects inputs
 with too few original frames before graph construction. `gm_mask_threshold`
-selects gray-matter support. `regress_out_task`, `detrend`, `standardize`, and passband bounds alter
-the model. Smoothing is an instance selector, not a clean configuration key.
+selects gray-matter support. `regress_out_task`, `detrend`, `standardize`, and
+passband bounds alter the model. Smoothing is an instance selector, not a clean
+configuration key.
 
 Container settings select Workbench and other external execution resources;
 `force` and `verbose` control execution and reporting. `wb_command` is the tool

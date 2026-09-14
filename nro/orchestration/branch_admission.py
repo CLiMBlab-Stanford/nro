@@ -42,10 +42,10 @@ def _workflow(
         signature = fingerprint({"owner": owner, "lineage": row["lineage_fingerprint"]})
         db.execute(
             """INSERT OR IGNORE INTO configuration_lineages
-            (derivative_class,config_id,config_fingerprint,lineage_fingerprint,resolved_yaml,directory_label,created_at)
+            (configuration_class,config_id,config_fingerprint,lineage_fingerprint,resolved_yaml,directory_label,created_at)
             VALUES (?,?,?,?,?,?,?)""",
             (
-                row["derivative_class"],
+                row["configuration_class"],
                 row["config_id"],
                 row["config_fingerprint"],
                 signature,
@@ -56,8 +56,8 @@ def _workflow(
         )
         mapping[row["id"]] = db.execute(
             """SELECT id FROM configuration_lineages
-            WHERE derivative_class=? AND lineage_fingerprint=?""",
-            (row["derivative_class"], signature),
+            WHERE configuration_class=? AND lineage_fingerprint=?""",
+            (row["configuration_class"], signature),
         ).fetchone()[0]
     for row in dependencies:
         if row["configuration_lineage_id"] in needed:
@@ -89,7 +89,7 @@ def _workflow(
     for row in bindings:
         db.execute(
             "INSERT OR IGNORE INTO workflow_bindings VALUES (?,?,?)",
-            (revision_id, row["derivative_class"], mapping[row["configuration_lineage_id"]]),
+            (revision_id, row["configuration_class"], mapping[row["configuration_lineage_id"]]),
         )
     return revision_id, mapping
 

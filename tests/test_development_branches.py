@@ -110,7 +110,7 @@ def test_development_paths_separate_raw_and_derivatives(tmp_path, branch):
     assert paths.source_project("demo") == tmp_path / "BIDS/demo"
     assert paths.output_project("demo") == base / "BIDS/demo"
     assert paths.private_project("demo") == base / "WORK/demo"
-    artifact = base / "BIDS/demo/derivatives/clean/main/sub-01/result.nii.gz"
+    artifact = base / "BIDS/demo/derivatives/nro/clean/main/sub-01/result.nii.gz"
     assert paths.require_output(artifact, "demo") == artifact
     with pytest.raises(ValueError, match="outside"):
         paths.require_output(tmp_path / "BIDS/demo/derivatives/result", "demo")

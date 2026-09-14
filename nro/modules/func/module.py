@@ -70,17 +70,18 @@ from nro.engine.neuroimaging import (
 )
 from nro.engine.paths import (
     anatomical_manifest_path,
+    func_session_dir,
+    func_session_work_dir,
+    func_subject_dir,
+    func_subject_work_dir,
     functional_manifest_path,
     is_bids_session_id,
-    preprocess_session_func_dir,
-    preprocess_session_func_work_dir,
-    preprocess_subject_func_dir,
-    preprocess_subject_func_work_dir,
-    preprocessing_derivatives_root,
+    module_derivatives_root,
     resolve_cwd_path,
     resolve_project_path,
     resolve_project_work_path,
 )
+from nro.engine.targets import supported_output_spaces
 from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.func.contract import (
     MARSS_DIAGNOSTIC_METHOD,
@@ -169,7 +170,7 @@ from .steps import (
     next_step,
 )
 
-LOG = logging.getLogger("preprocess")
+LOG = logging.getLogger("func")
 
 DEFAULT_QUNEX_CONTAINER = Path(SETTINGS.common.qunex_container)
 
@@ -204,7 +205,7 @@ class Options:
     out_dir: Path
     work_dir: Path
     project: str
-    preprocessing_id: str
+    func_id: str
     sub_id: str
     ses_id: Optional[str]
     force: bool
@@ -245,7 +246,7 @@ class Options:
     sbref_max_rigid_rotation_degrees: float
     sbref_min_support_overlap: float
     sbref_min_intensity_correlation: float
-    anatomical_preprocessing_id: Optional[str] = None
+    anat_id: str
 
 
 def _functional_config_payload(opts: Options) -> dict[str, object]:
@@ -368,7 +369,7 @@ def build_module(
     anat_manifest = anatomical_manifest_path(
         opts.sub_id,
         project=opts.project,
-        preprocessing_id=opts.anatomical_preprocessing_id or opts.preprocessing_id,
+        anat_id=opts.anat_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -462,7 +463,7 @@ def build_module(
         ]
     )
     runner = Runner(
-        module_name="Functional Preprocessing Module",
+        module_name="Functional Module",
         container=opts.container,
         binds=binds,
         logger=LOG,
@@ -470,9 +471,10 @@ def build_module(
         execution_context=execution_context,
     )
     initialized = opts.work_dir / "initialized.complete"
-    derivative_root = preprocessing_derivatives_root(
+    derivative_root = module_derivatives_root(
+        "func",
+        opts.func_id,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
     if execution_context is not None:
@@ -503,9 +505,7 @@ def build_module(
         except (OSError, ValueError, TypeError):
             return False, "Functional configuration snapshot is missing or unreadable."
         if isinstance(current.get("configuration"), dict):
-            current["configuration"] = scientific_values(
-                "preprocessing", {"func": current["configuration"]}
-            )["func"]
+            current["configuration"] = scientific_values("func", current["configuration"])
         if current != configuration:
             return False, "Functional configuration changed."
         return True, "Functional configuration is unchanged."
@@ -708,7 +708,7 @@ def build_module(
         raise SystemExit(
             "Functional output spaces request "
             + ", ".join(requested_fsaverage)
-            + f", but preprocessing selects {opts.fsaverage_template}."
+            + f", but anatomy selects {opts.fsaverage_template}."
         )
     fsaverage_space = opts.fsaverage_template
     want_fsaverage = fsaverage_space in requested_spaces
@@ -856,7 +856,7 @@ def build_module(
         opts.sub_id,
         run_base,
         project=opts.project,
-        preprocessing_id=opts.preprocessing_id,
+        func_id=opts.func_id,
         ses_id=opts.ses_id,
         bids_root=None if execution_context is None else execution_context.paths.bids,
     )
@@ -2989,7 +2989,7 @@ def run(
 
 
 def _build_argparser() -> argparse.ArgumentParser:
-    cfg = SETTINGS.preprocess
+    cfg = SETTINGS.func
     p = argparse.ArgumentParser(
         prog="nro.modules.func.module",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -3135,14 +3135,14 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="BIDS project name under the configured top-level data directory.",
     )
     p.add_argument(
-        "--preprocessing-id",
-        default=SETTINGS.common.preprocessing_id,
-        help="Preprocessing collection name under derivatives/preprocessing/.",
+        "--func-id",
+        default=SETTINGS.common.func_id,
+        help="Functional module configuration ID.",
     )
     p.add_argument(
-        "--anatomical-preprocessing-id",
-        default=SETTINGS.common.anatomical_preprocessing_id,
-        help="Preprocessing collection containing the shared anatomical derivative.",
+        "--anat-id",
+        default=SETTINGS.common.anat_id,
+        help="Anatomical module configuration ID.",
     )
     p.add_argument("--fsaverage-template", default=cfg.fsaverage_template)
     p.add_argument("--sub-id", required=True, help="Subject identifier, e.g. sub-c001")
@@ -3165,8 +3165,8 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--output-spaces",
         nargs="+",
-        default=list(cfg.output_spaces),
-        help="Subset of output spaces to generate, including the configured fsaverage template.",
+        default=list(supported_output_spaces(str(cfg.fsaverage_template))),
+        help="Supported output spaces to generate.",
     )
     p.add_argument("--verbose", action="store_true", default=cfg.verbose)
 
@@ -3264,18 +3264,16 @@ def main(
             raise SystemExit("--sbref and --sbref-json must be provided together.")
 
     if ses_id is None:
-        out_dir = preprocess_subject_func_dir(
-            str(args.sub_id), project=project, preprocessing_id=str(args.preprocessing_id)
-        )
-        work_session_dir = preprocess_subject_func_work_dir(
-            str(args.sub_id), project=project, preprocessing_id=str(args.preprocessing_id)
+        out_dir = func_subject_dir(str(args.sub_id), project=project, func_id=str(args.func_id))
+        work_session_dir = func_subject_work_dir(
+            str(args.sub_id), project=project, func_id=str(args.func_id)
         )
     else:
-        out_dir = preprocess_session_func_dir(
-            str(args.sub_id), ses_id, project=project, preprocessing_id=str(args.preprocessing_id)
+        out_dir = func_session_dir(
+            str(args.sub_id), ses_id, project=project, func_id=str(args.func_id)
         )
-        work_session_dir = preprocess_session_func_work_dir(
-            str(args.sub_id), ses_id, project=project, preprocessing_id=str(args.preprocessing_id)
+        work_session_dir = func_session_work_dir(
+            str(args.sub_id), ses_id, project=project, func_id=str(args.func_id)
         )
     work_dir: Path = resolve_project_work_path(
         args.work_dir or (work_session_dir / nifti_stem(Path(args.epi))),
@@ -3347,8 +3345,8 @@ def main(
         out_dir=out_dir,
         work_dir=work_dir,
         project=project,
-        preprocessing_id=str(args.preprocessing_id),
-        anatomical_preprocessing_id=str(args.anatomical_preprocessing_id),
+        func_id=str(args.func_id),
+        anat_id=str(args.anat_id),
         sub_id=str(args.sub_id),
         ses_id=ses_id,
         force=bool(args.force),

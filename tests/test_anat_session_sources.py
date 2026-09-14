@@ -75,25 +75,25 @@ def test_session_source_brain_extraction_consumes_preprocessed_image(
     work_dir = tmp_path / "work" / "sub-1" / "ses-1"
     monkeypatch.setattr(
         anat_steps,
-        "preprocessing_session_anat_dir",
+        "anat_session_dir",
         lambda *_args, **_kwargs: session_dir,
     )
     monkeypatch.setattr(
         anat_steps,
-        "preprocessing_session_work_dir",
+        "anat_session_work_dir",
         lambda *_args, **_kwargs: work_dir,
     )
     plans = anat_steps._plan_session_anatomicals(
         images=(image,),
         project="project",
-        preprocessing_id="preprocessing",
+        anat_id="main",
         sub_id="sub-1",
     )
 
     assert len(plans) == 1
     plan = plans[0]
     assert plan.staged_preprocessed == (
-        work_dir / "anat" / "session_level" / "sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz"
+        work_dir / "session_level" / "sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz"
     )
     assert plan.final_source == plan.staged_preprocessed
     assert plan.output == session_dir / raw.name
@@ -126,19 +126,19 @@ def test_session_plans_keep_repeated_anatomicals_distinct(
     work_dir = tmp_path / "work" / "sub-1" / "ses-1"
     monkeypatch.setattr(
         anat_steps,
-        "preprocessing_session_anat_dir",
+        "anat_session_dir",
         lambda *_args, **_kwargs: session_dir,
     )
     monkeypatch.setattr(
         anat_steps,
-        "preprocessing_session_work_dir",
+        "anat_session_work_dir",
         lambda *_args, **_kwargs: work_dir,
     )
 
     plans = anat_steps._plan_session_anatomicals(
         images=(t1w_run_1, t1w_run_2, t2w_run_1, t2w_run_2),
         project="project",
-        preprocessing_id="preprocessing",
+        anat_id="main",
         sub_id="sub-1",
     )
 

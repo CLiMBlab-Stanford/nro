@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping
 
+from nro.modules import MODULE_NAMES
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.planning import plan_instances as plan_anat_instances
 from nro.modules.clean.contract import clean_output_contract
@@ -74,7 +75,6 @@ class ModuleDescriptor:
     """Planner-facing properties of one built-in scientific module."""
 
     name: str
-    configuration_class: str
     scope: str
     output_format: str
     resource_class: str
@@ -90,9 +90,9 @@ class ModuleDescriptor:
     canonical_processing: Callable | None = None
 
     @property
-    def derivative_class(self) -> str:
-        """Return the public derivative collection that stores this module's artifacts."""
-        return "preprocessing" if self.name in {"anat", "func"} else self.configuration_class
+    def configuration_class(self) -> str:
+        """Return the module's configuration namespace."""
+        return self.name
 
     def processing_for(self, entities: dict) -> dict:
         """Combine module policy with any instance-specific scientific definition."""
@@ -105,9 +105,8 @@ class ModuleDescriptor:
 BUILTIN_MODULES = (
     ModuleDescriptor(
         name="anat",
-        configuration_class="anat",
         scope="subject",
-        output_format="BIDS anatomical images, surfaces, transforms, and module manifest",
+        output_format="BIDS-like anatomical images, surfaces, transforms, and module manifest",
         resource_class="large",
         upstream_modules=(),
         plan=plan_anat_instances,
@@ -115,9 +114,8 @@ BUILTIN_MODULES = (
     ),
     ModuleDescriptor(
         name="func",
-        configuration_class="func",
         scope="run",
-        output_format="BIDS functional images, confounds, transforms, and module manifest",
+        output_format="BIDS-like functional images, confounds, transforms, and module manifest",
         resource_class="large",
         upstream_modules=("anat",),
         plan=plan_func_instances,
@@ -125,7 +123,6 @@ BUILTIN_MODULES = (
     ),
     ModuleDescriptor(
         name="clean",
-        configuration_class="clean",
         scope="run",
         output_format="BIDS cleaned functional images and module manifest",
         resource_class="medium",
@@ -134,18 +131,7 @@ BUILTIN_MODULES = (
         processing_contract=_clean_processing_contract,
     ),
     ModuleDescriptor(
-        name="microparcellation",
-        configuration_class="microparcellation",
-        scope="subject",
-        output_format="Subject-level BIDS CIFTI microparcellation products",
-        resource_class="large",
-        upstream_modules=("clean",),
-        plan=plan_microparcellation_instances,
-        processing_contract=_microparcellation_processing_contract,
-    ),
-    ModuleDescriptor(
         name="dynconn",
-        configuration_class="dynconn",
         scope="subject",
         output_format="Full or low-rank dynamic-connectivity time series and metadata",
         resource_class="large",
@@ -154,10 +140,18 @@ BUILTIN_MODULES = (
         processing_contract=_dynconn_processing_contract,
     ),
     ModuleDescriptor(
-        name="networks",
-        configuration_class="networks",
+        name="microparcellation",
         scope="subject",
-        output_format="Subject-level BIDS CIFTI network maps, labels, and metadata",
+        output_format="Subject-level BIDS-like CIFTI microparcellation products",
+        resource_class="large",
+        upstream_modules=("clean",),
+        plan=plan_microparcellation_instances,
+        processing_contract=_microparcellation_processing_contract,
+    ),
+    ModuleDescriptor(
+        name="networks",
+        scope="subject",
+        output_format="Subject-level BIDS-like CIFTI network maps, labels, and metadata",
         resource_class="medium",
         upstream_modules=("microparcellation", "anat"),
         plan=plan_networks_instances,
@@ -168,7 +162,6 @@ BUILTIN_MODULES = (
 BUILTIN_MODULES += (
     ModuleDescriptor(
         name="firstlevels",
-        configuration_class="firstlevels",
         scope="subject",
         output_format="Task/model run, session and subject GLM maps and compact covariance",
         resource_class="medium",
@@ -186,7 +179,9 @@ BUILTIN_MODULES += (
 )
 
 MODULE_CATALOG = {descriptor.name: descriptor for descriptor in BUILTIN_MODULES}
-MODULES = tuple(MODULE_CATALOG)
+if tuple(MODULE_CATALOG) != MODULE_NAMES:
+    raise RuntimeError("The orchestration catalog does not match nro.modules.MODULE_NAMES")
+MODULES = MODULE_NAMES
 
 
 def canonical_contract(contract: dict, configuration: dict | None = None) -> dict:

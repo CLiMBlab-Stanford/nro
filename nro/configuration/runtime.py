@@ -95,19 +95,18 @@ def _container_arguments(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def configure_anat(project: str, anatomy_id: str, values: dict[str, Any]) -> None:
+def configure_anat(project: str, anat_id: str, values: dict[str, Any]) -> None:
     """Adapt a resolved anatomical configuration to module settings."""
     container_args = _container_arguments(values)
     configure(
         {
             "common": {
                 "project": project,
-                "preprocessing_id": anatomy_id,
-                "anatomical_preprocessing_id": anatomy_id,
+                "anat_id": anat_id,
                 "qunex_container": values["container"]["image"],
                 "multi_session_label": "ses-multi",
             },
-            "preprocess_anat": {
+            "anat": {
                 **{
                     key: value
                     for key, value in values.items()
@@ -122,35 +121,33 @@ def configure_anat(project: str, anatomy_id: str, values: dict[str, Any]) -> Non
     )
 
 
-def configure_func(project: str, preprocessing_id: str, values: dict[str, Any]) -> None:
+def configure_func(project: str, func_id: str, values: dict[str, Any]) -> None:
     """Adapt a resolved functional configuration to module settings."""
     container_args = _container_arguments(values)
     configure(
         {
             "common": {
                 "project": project,
-                "preprocessing_id": preprocessing_id,
-                "anatomical_preprocessing_id": values["anatomical_directory"],
+                "func_id": func_id,
+                "anat_id": values["anat_directory"],
                 "qunex_container": values["container"]["image"],
                 "multi_session_label": "ses-multi",
             },
-            "preprocess": {
+            "func": {
                 **{
                     key: value
                     for key, value in values.items()
                     if key
                     not in {
-                        "anatomical_directory",
+                        "anat_directory",
                         "confounds",
                         "container",
-                        "fsaverage_template",
                     }
                 },
-                "fsaverage_template": values["fsaverage_template"],
                 **container_args,
                 "work_dir": None,
             },
-            "get_confounds": values["confounds"],
+            "func_confounds": values["confounds"],
         }
     )
 
@@ -161,8 +158,8 @@ def configure_clean(project: str, clean_id: str, values: dict[str, Any]) -> None
         {
             "common": {
                 "project": project,
-                "preprocessing_id": values["functional_directory"],
-                "anatomical_preprocessing_id": values["anatomical_directory"],
+                "func_id": values["func_directory"],
+                "anat_id": values["anat_directory"],
                 "clean_id": clean_id,
                 "qunex_container": values["container"],
                 "default_container_engine": values["container_engine"],

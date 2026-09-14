@@ -29,6 +29,18 @@ NON_RUN_ENTITIES = {
 }
 
 
+def _source_markup():
+    """Return a captured worker markup without coupling BIDS primitives to configuration."""
+    from nro.configuration.markup import active_source_markup
+
+    return active_source_markup()
+
+
+def _is_excluded(path: Path, markup=None) -> bool:
+    selected = markup if markup is not None else _source_markup()
+    return selected is not None and selected.is_excluded(path)
+
+
 def acquisition_time_seconds(raw: str) -> float:
     """Parse a BIDS acquisition time into seconds after midnight."""
     item = str(raw).strip()
@@ -134,6 +146,7 @@ def resolve_bids_metadata(
     path: Path,
     *,
     dataset_root: Path | None = None,
+    markup=None,
 ) -> BidsMetadata:
     """Resolve JSON metadata using the BIDS inheritance principle.
 
@@ -143,6 +156,8 @@ def resolve_bids_metadata(
     sidecars at the same location and specificity are rejected as ambiguous.
     """
     path = Path(path).expanduser().absolute()
+    if _is_excluded(path, markup):
+        raise FileNotFoundError(f"BIDS image is excluded by source markup: {path}")
     root = (
         Path(dataset_root).expanduser().absolute()
         if dataset_root is not None
@@ -166,6 +181,8 @@ def resolve_bids_metadata(
     for directory in directories:
         applicable: list[tuple[int, Path, dict[str, Any]]] = []
         for candidate in sorted(directory.glob("*.json")):
+            if _is_excluded(candidate, markup):
+                continue
             if bids_suffix(candidate) != target_suffix:
                 continue
             entities = parse_bids_entities(candidate.name)
@@ -203,7 +220,7 @@ def bids_entity(path: Path, name: str, *, default: str | None = None) -> str | N
     return parse_bids_entities(Path(path).name).get(name, default)
 
 
-def resolve_bids_table(path: Path, *, suffix: str) -> Path:
+def resolve_bids_table(path: Path, *, suffix: str, markup=None) -> Path:
     """Find the most specific inherited TSV for an image, without merging rows.
 
     Search from the image directory toward the dataset root. At a given level,
@@ -211,11 +228,15 @@ def resolve_bids_table(path: Path, *, suffix: str) -> Path:
     ValueError. Raise FileNotFoundError when no applicable table exists.
     """
     path = Path(path).expanduser().absolute()
+    if _is_excluded(path, markup):
+        raise FileNotFoundError(f"BIDS image is excluded by source markup: {path}")
     root = bids_dataset_root(path)
     target = parse_bids_entities(path.name)
     for directory in path.parents:
         matches = []
         for candidate in directory.glob(f"*{suffix}.tsv"):
+            if _is_excluded(candidate, markup):
+                continue
             entities = parse_bids_entities(candidate.name)
             if bids_suffix(candidate) == suffix and all(
                 target.get(k) == v for k, v in entities.items()
@@ -338,7 +359,7 @@ def _record(path: Path) -> BidsRun:
     return BidsRun(participant, session, stem, run_entities, path)
 
 
-def discover_raw_runs(subject_dir: Path) -> tuple[BidsRun, ...]:
+def discover_raw_runs(subject_dir: Path, *, markup=None) -> tuple[BidsRun, ...]:
     """Discover source BOLD runs at the BIDS subject or session level."""
     # Source BIDS permits functional data directly below the subject or one
     # session level below it. Avoid a recursive glob here: derivative trees or
@@ -347,7 +368,7 @@ def discover_raw_runs(subject_dir: Path) -> tuple[BidsRun, ...]:
         *subject_dir.glob("func/*_bold.nii*"),
         *subject_dir.glob("ses-*/func/*_bold.nii*"),
     ]
-    records = [_record(path) for path in sorted(paths)]
+    records = [_record(path) for path in sorted(paths) if not _is_excluded(path, markup)]
     by_stem: dict[str, BidsRun] = {}
     for record in records:
         if record.stem in by_stem:

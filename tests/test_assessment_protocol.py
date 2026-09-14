@@ -42,7 +42,7 @@ def graph(tmp_path):
                 participant="01",
                 entities={},
                 scope="subject",
-                configuration_lineage_id=registered.anatomy_lineage,
+                configuration_lineage_id=registered.lineages["anat"],
                 directory_label="main",
                 config_fingerprint=workflow.configuration("anat").scientific_fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -125,7 +125,7 @@ def test_assessment_restores_a_missing_ownership_receipt(graph):
     row = next(row for row in registry.instance_rows() if row["id"] == ids["root"])
     receipt = instance_record_path(
         registry.paths.bids_root / "demo",
-        "preprocessing",
+        "anat",
         "main",
         "anat",
         row["instance_key"],

@@ -72,7 +72,7 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.anatomy_lineage,
+            configuration_lineage_id=registered.lineages["anat"],
             config_fingerprint="test",
             directory_label="main",
             runtime_config=runtime,

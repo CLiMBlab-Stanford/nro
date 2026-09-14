@@ -15,9 +15,9 @@ edge fraction is not necessarily exactly 10%.
 The sparse adjacency stores one triangle; algorithms symmetrize where needed.
 Reported edge counts must be interpreted according to that representation.
 
-The same input/output and labeling stages surround all `parcellation_strategy`
-branches. `main` selects `ica`; `clustering` and `oslom` workflows select the
-corresponding configuration overrides.
+The same input, output, and labeling stages surround all
+`parcellation_strategy` choices. `main` selects `ica`; `clustering` and `oslom`
+workflows select the corresponding configuration overrides.
 
 ## ICA
 
@@ -85,7 +85,8 @@ numeric identifiers. These are spatial heuristics, not functional localizer
 results or ground-truth labels. Correlations and ranks are retained.
 
 Outputs from every space and smoothing target share
-`derivatives/networks/LINEAGE/sub-ID/`. Their filenames include both entities.
+`derivatives/nro/networks/NETWORKS_ID/sub-ID/`. Their filenames include both
+entities.
 Public outputs include a multi-map `desc-networks_stat.dscalar.nii`, stability,
 homelessness, and overlap CIFTIs; label TSV/JSON; YAML publication manifest; and
 JSON index. Human-readable map names permit stepping through networks in
@@ -101,8 +102,8 @@ does not copy the upstream microparcel connectivity matrix. See the
 
 ## Shipped configuration
 
-`output_dir`, `prefix`, and `overwrite` control direct output placement and
-rebuilding. The planner supplies instance-specific paths during orchestration.
+nro fixes output placement from the project, module ID, participant, space, and
+smoothing request. `overwrite` requests rebuilding module outputs.
 
 ```{literalinclude} ../../nro/configuration/starters/configs/networks/main_networks.yml
 :language: yaml

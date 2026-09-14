@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import acquisition_order_key, parse_bids_entities
 from nro.engine.images import sidecar_json_path
@@ -42,7 +43,8 @@ def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatIm
     js = sidecar_json_path(img)
     meta: dict[str, Any] = {}
     json_path: Optional[Path] = None
-    if js.exists():
+    markup = active_source_markup()
+    if js.exists() and (markup is None or not markup.is_excluded(js)):
         meta = read_json(js)
         json_path = js
     ents = parse_bids_entities(img.name)

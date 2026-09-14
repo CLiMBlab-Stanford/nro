@@ -36,16 +36,19 @@ runtime values without a second merge or another configuration source.
 
 Configuration lineages form a DAG independent of participant instances.
 Equivalent lineages reuse a derivative directory. A changed definition creates
-a workflow revision, while the all-`main` lineage reserves directory `main`.
-The `anat` and `func` configuration classes combine into the public
-`preprocessing` lineage. Anatomy is identified separately within that lineage,
-which prevents a functional-only variant from duplicating anatomical work.
+a workflow revision. Each module writes below
+`derivatives/nro/MODULE/MODULE_ID/`. A lineage first receives its selected
+configuration ID as the directory label. If that label already belongs to an
+incompatible upstream lineage, nro appends a numeric suffix. Separate `anat`
+and `func` lineages let functional variants reuse identical anatomy without
+mixing their files.
 
 ## Instance specifications and contracts
 
 Instance identity contains project, module, configuration-lineage ID,
 participant, and applicable BIDS entities. Starting at `clean`, those entities
-include one space and one smoothing value. Revision fingerprints contain the
+include one space and one smoothing value. Space and smoothing are request
+entities, not configuration or directory identities. Revision fingerprints contain the
 module, configuration fingerprint, entities, and the explicit contract
 version. Source-code hashes are not identity or freshness inputs.
 
@@ -147,7 +150,7 @@ Each module creates one `Runner`, which creates and owns that module's
 `RunnerGraph`. Step factories remain outside `Runner`: they receive the inputs
 needed for one operation and return an immutable `Step`. The module's
 `build_module()` function is the construction site that passes those steps to
-`Runner.add_step()`, making the full sequence and its conditional branches
+`Runner.add_step()`, making the full sequence and its conditional paths
 visible in one place. A factory never adds its own step, and a helper never
 hides a sequence of steps behind a side effect. A factory may return named
 references to its step's outputs when later steps need those paths, but it
@@ -194,9 +197,9 @@ changes that dependency set and requires replanning.
 Space and smoothing are demand-driven. The planner does not enumerate every
 possible pair. A request creates only its requested cross-product (default:
 `fsnative` and `2mm`); a later request can add another pair without changing or
-rerunning unrelated pairs. `func` remains shared because it publishes all
-configured spaces, while each `clean`, `dynconn`, `microparcellation`, and `networks`
-instance represents exactly one pair.
+rerunning unrelated pairs. `func` remains shared because one run instance
+publishes every supported space. Each `clean`, `dynconn`, `microparcellation`,
+and `networks` instance represents exactly one pair.
 
 ## Workers and Slurm
 

@@ -33,9 +33,9 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         )
     ]
     candidates = {int(row["instance_id"]) for row in mappings}
-    legacy: set[int] = set()
+    unowned_main: set[int] = set()
     if branch == "main":
-        legacy.update(
+        unowned_main.update(
             int(row["id"])
             for row in db.execute(
                 """SELECT i.id FROM instances i
@@ -43,7 +43,7 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
                    WHERE e.instance_id IS NULL"""
             )
         )
-        candidates.update(legacy)
+        candidates.update(unowned_main)
     if not candidates:
         return []
     placeholders = ",".join("?" for _ in candidates)
@@ -104,7 +104,11 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         for project in projects:
             for item in candidates_locked(db, project, fresh_only=False):
                 instance_id = int(item.evidence["instance_id"])
-                if item.branch == "main" and instance_id in retained and instance_id in legacy:
+                if (
+                    item.branch == "main"
+                    and instance_id in retained
+                    and instance_id in unowned_main
+                ):
                     contract = dict(item.contract)
                     records.setdefault(item.key, dict(key=item.key, revision=1, contract=contract))
                     db.execute(

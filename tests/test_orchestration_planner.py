@@ -278,7 +278,7 @@ def test_runner_graph_signature_tracks_bids_state_but_not_command_spelling(
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -319,7 +319,7 @@ def test_existing_instance_adopts_execution_recipe_and_output_contract(
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -374,7 +374,7 @@ def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -415,7 +415,7 @@ def test_existing_instance_adopts_changed_dependency_topology(tmp_path: Path) ->
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.anatomy_lineage,
+        configuration_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -508,12 +508,22 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     assert len(by_module["clean"]) == 1
     assert len(by_module["microparcellation"]) == 1
     assert len(by_module["networks"]) == 1
+    source_markup = {
+        "id": "main",
+        "project": "demo",
+        "subject_dir": str(subject),
+        "T1w": [],
+        "T2w": [],
+        "exclude": [],
+    }
     assert by_module["anat"][0].instance_contract["processing"] == {
-        "output_metadata": anatomical_output_contract()
+        "output_metadata": anatomical_output_contract(),
+        "source_markup": source_markup,
     }
     assert by_module["func"][0].instance_contract["processing"] == {
         "final_resampling": final_resampling_contract(),
         "output_metadata": functional_output_contract(),
+        "source_markup": source_markup,
     }
     assert by_module["func"][0].entities == {"task": "rest", "dir": "LR", "run": "1"}
     assert by_module["clean"][0].entities == {
@@ -524,7 +534,8 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "smoothing": "2",
     }
     assert by_module["clean"][0].instance_contract["processing"] == {
-        "output_metadata": clean_output_contract()
+        "output_metadata": clean_output_contract(),
+        "source_markup": source_markup,
     }
     assert by_module["clean"][0].dependencies == (
         by_module["func"][0].key,
@@ -540,7 +551,8 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         for path in by_module["microparcellation"][0].input_paths
     )
     assert by_module["microparcellation"][0].instance_contract["processing"] == {
-        "output_metadata": microparcellation_output_contract()
+        "output_metadata": microparcellation_output_contract(),
+        "source_markup": source_markup,
     }
     micro_outputs = by_module["microparcellation"][0].expected_outputs
     assert micro_outputs[0].name.endswith("_desc-microparcellation_manifest.yaml")
@@ -551,11 +563,13 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         by_module["anat"][0].key,
     )
     assert by_module["networks"][0].instance_contract["processing"] == {
-        "output_metadata": networks_output_contract()
+        "output_metadata": networks_output_contract(),
+        "source_markup": source_markup,
     }
-    assert registered.directories["preprocessing"] == "main"
+    assert registered.directories["anat"] == "main"
+    assert registered.directories["func"] == "main"
     assert registered.directories["microparcellation"] == "rest"
-    assert registered.directories["networks"] == "rest"
+    assert registered.directories["networks"] == "main"
     assert inventory_calls == 1
 
 
@@ -566,7 +580,7 @@ def test_run_discovery_uses_source_bids_not_derivatives(tmp_path: Path) -> None:
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
 
-    derivative = bids / "demo" / "derivatives" / "preprocessing" / "main" / "sub-01" / "func"
+    derivative = bids / "demo" / "derivatives" / "nro" / "func" / "main" / "sub-01" / "func"
     _write(derivative / "sub-01_task-rest_run-2_desc-preproc_bold.nii.gz")
     _write(derivative / "sub-01_task-rest_run-2_desc-preproc_bold.json", "{}")
     nested_derivative = subject / "derivatives" / "copied" / "func"

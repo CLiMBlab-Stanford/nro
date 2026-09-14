@@ -9,6 +9,13 @@ DEFAULT_SMOOTHING_MM = 2
 FSAVERAGE_SPACES = frozenset({"fsaverage", "fsaverage6"})
 
 
+def supported_output_spaces(fsaverage_template: str) -> tuple[str, ...]:
+    """Return spaces produced by func for the selected anatomical template."""
+    if fsaverage_template not in FSAVERAGE_SPACES:
+        raise ValueError(f"Unsupported fsaverage template: {fsaverage_template}")
+    return ("T1w", "fsnative", "MNI152NLin2009cAsym", fsaverage_template)
+
+
 def is_fsaverage_space(space: str) -> bool:
     """Return whether a space names a supported FreeSurfer average template."""
     return str(space) in FSAVERAGE_SPACES

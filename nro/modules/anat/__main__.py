@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from nro.configuration.markup import SubjectMarkup, load_source_markup
 from nro.configuration.paths import BIDS_PATH
 from nro.configuration.runtime import configure_anat, load_runtime_configuration
 from nro.orchestration.runtime import select_runtime_config
@@ -15,11 +16,16 @@ def _bids_id(value: str, prefix: str) -> str:
 
 
 def _anatomicals(
-    project: str, sub_id: str, *, bids_root: Path | None = None
+    project: str,
+    sub_id: str,
+    *,
+    bids_root: Path | None = None,
+    markup: SubjectMarkup | None = None,
 ) -> tuple[list[Path], list[Path]]:
     subject_dir = Path(BIDS_PATH if bids_root is None else bids_root) / project / sub_id
-    files = sorted(subject_dir.glob("anat/*.nii*"))
-    files.extend(sorted(subject_dir.glob("ses-*/anat/*.nii*")))
+    from nro.modules.anat.planning import raw_anatomical_images
+
+    files = raw_anatomical_images(subject_dir, markup)
     t1w = [path for path in files if path.name.endswith(("_T1w.nii", "_T1w.nii.gz"))]
     t2w = [path for path in files if path.name.endswith(("_T2w.nii", "_T2w.nii.gz"))]
     if not t1w and not t2w:
@@ -45,13 +51,22 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     runtime_config = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        derivative_class="anat",
+        configuration_class="anat",
         execution_context=execution_context,
     )
-    preprocessing_id, cfg = load_runtime_configuration(runtime_config, "anat")
-    configure_anat(args.project, preprocessing_id, cfg)
+    anat_id, cfg = load_runtime_configuration(runtime_config, "anat")
+    configure_anat(args.project, anat_id, cfg)
+    subject_dir = (
+        Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
+        / args.project
+        / sub_id
+    )
+    markup = load_source_markup(cfg.get("markup"), args.project, subject_dir)
     t1w, t2w = _anatomicals(
-        args.project, sub_id, bids_root=execution_context.paths.bids if execution_context else None
+        args.project,
+        sub_id,
+        bids_root=execution_context.paths.bids if execution_context else None,
+        markup=markup,
     )
 
     from nro.modules.anat.module import main as run_anat
@@ -59,8 +74,8 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
     module_argv = [
         "--project",
         args.project,
-        "--preprocessing-id",
-        preprocessing_id,
+        "--anat-id",
+        anat_id,
         "--sub-id",
         sub_id,
     ]

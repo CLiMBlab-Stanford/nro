@@ -6,7 +6,6 @@ from pathlib import Path
 
 from nro.configuration.site import settings
 
-LAB_PATH = Path("/juice6/u/nlp/climblab")
 _SITE, _ = settings()
 BIDS_PATH = Path(_SITE["bids"])
 WORK_PATH = Path(_SITE["work"])

@@ -1,10 +1,9 @@
+markup: main
 input_filter: {}
 surface: pial
 mask: null
 mask_threshold: 0.5
 volume_connectivity: 6
-output_dir: null
-prefix: null
 overwrite: false
 coarsening:
   target_vertices: 40000

@@ -20,7 +20,15 @@ from nro.modules.firstlevels.task_models import load_task_model, scientific_mode
 def test_create_has_only_generic_starters(tmp_path):
     root = create_store(tmp_path / "store")
     counts = validate_store(root)
-    assert counts == dict(configs=2, workflows=3, models=0, event_ids=0, event_tsvs=0, bidsify=1)
+    assert counts == dict(
+        configs=2,
+        workflows=3,
+        models=0,
+        event_ids=0,
+        event_tsvs=0,
+        markup=1,
+        bidsify=1,
+    )
     for kind in CONFIGURATION_CLASSES:
         assert not (root / "configs" / kind / f"main_{kind}.yml").exists()
     for kind in set(CONFIGURATION_CLASSES) - {"networks"}:

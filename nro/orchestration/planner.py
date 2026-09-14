@@ -6,10 +6,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from nro.configuration.markup import MarkupStore
 from nro.configuration.store import ResolvedWorkflow
 from nro.engine.bids import discover_raw_runs, matches_filter, matches_selectors
 from nro.engine.images import image_source_paths
-from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
+from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.catalog import module_descriptor, modules_through, normalize_module
 from nro.orchestration.contracts import InstanceSpec
 from nro.orchestration.planning_context import (
@@ -312,7 +313,9 @@ class Planner:
         sub_id = f"sub-{participant}"
         project_root = self.bids_root / project
         subject_dir = project_root / sub_id
-        runs = () if target == "anat" else discover_raw_runs(subject_dir)
+        markup_id = workflow.configuration(target).values.get("markup")
+        source_markup = MarkupStore().subject(markup_id, project, subject_dir)
+        runs = () if target == "anat" else discover_raw_runs(subject_dir, markup=source_markup)
         target_descriptor = module_descriptor(target)
         task_models = None
         if target_descriptor.select_models is not None:
@@ -344,15 +347,15 @@ class Planner:
                 raise ValueError("At least one space must be requested")
             if not requested_smoothing or any(value < 0 for value in requested_smoothing):
                 raise ValueError("Smoothing levels must be nonnegative integers")
-            published_spaces = tuple(
-                str(value) for value in workflow.configuration("func").values["output_spaces"]
+            published_spaces = supported_output_spaces(
+                str(workflow.configuration("anat").values["fsaverage_template"])
             )
             unavailable = tuple(
                 space for space in requested_spaces if space not in published_spaces
             )
             if unavailable:
                 raise ValueError(
-                    "Requested space(s) are not published by preprocessing: "
+                    "Requested space(s) are not published by the func module: "
                     + ", ".join(f"space-{space}" for space in unavailable)
                 )
             target_pairs = tuple(
@@ -373,12 +376,17 @@ class Planner:
             registry=self.registry,
             runs=runs,
             aggregate_source_inputs=tuple(
-                dict.fromkeys(path for run in runs for path in image_source_paths(run.path))
+                dict.fromkeys(
+                    path
+                    for run in runs
+                    for path in image_source_paths(run.path, markup=source_markup)
+                )
             ),
             target_pairs=target_pairs,
             memory_gb=memory_gb,
             max_memory_gb=max_memory_gb,
             task_models=task_models,
+            source_markup=source_markup,
         )
         descriptors = modules_through(target)
         planned: dict[str, tuple[InstanceSpec, ...]] = {}

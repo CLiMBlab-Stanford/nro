@@ -151,7 +151,7 @@ def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path)
 
 
 def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, monkeypatch) -> None:
-    subject = tmp_path / "project" / "derivatives" / "microparcellation" / "main" / "sub-01"
+    subject = tmp_path / "project" / "derivatives" / "nro" / "microparcellation" / "main" / "sub-01"
     manifest = _manifest(subject, "fsnative", "surface")
     monkeypatch.setattr(networks_main, "BIDS_PATH", str(tmp_path))
     config = ConfigStore().load_configuration("networks", "main").values
@@ -162,7 +162,7 @@ def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, mon
     )
 
     assert (target.space, target.smoothing_mm) == ("fsnative", 2)
-    assert cfg.output.directory == tmp_path / "project/derivatives/networks/main/sub-01"
+    assert cfg.output.directory == tmp_path / "project/derivatives/nro/networks/main/sub-01"
     assert cfg.output.work_directory.parts[-3:] == (
         "main",
         "space-fsnative_smoothing-2mm",
@@ -191,10 +191,10 @@ def test_network_config_routes_branch_outputs(tmp_path):
     context.require_output(cfg.output.work_directory)
     assert cfg.inputs.microparcellation_manifest == manifest
     config["output_dir"] = str(paths.bids / "demo/sub-01")
-    with pytest.raises(ValueError, match="outside"):
-        networks_main.make_target_config(
-            "demo", "01", "main", config, micro_manifest=manifest, execution_context=context
-        )
+    _, repeated = networks_main.make_target_config(
+        "demo", "01", "main", config, micro_manifest=manifest, execution_context=context
+    )
+    assert repeated.output.directory == cfg.output.directory
 
 
 def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
@@ -209,7 +209,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         "feature/networks", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV"
     )
     dev = BranchPaths("dev", paths.bids, paths.work, paths.development)
-    relative = Path("derivatives/microparcellation/main/sub-01")
+    relative = Path("derivatives/nro/microparcellation/main/sub-01")
     upstream = dev.output_project("demo") / relative
     manifest = _manifest(upstream, "T1w", "volume")
     prefix = "sub-01_space-T1w_smoothing-2mm"
@@ -217,7 +217,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
     index.write_text(
         json.dumps({"space": "T1w", "smoothing_fwhm_mm": 2, "target_manifest": str(manifest)})
     )
-    anatomy = paths.source_project("demo") / "derivatives/preprocessing/main/sub-01/anat"
+    anatomy = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/anat"
     anatomy.mkdir(parents=True)
     image = anatomy / "sub-01_T1w.nii.gz"
     image.touch()
@@ -247,11 +247,11 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         "load_runtime_workflow_snapshot",
         lambda *a: {
             "configurations": {
-                "anat": {"directory": "main", "resolved": {}},
-                "func": {
+                "anat": {
                     "directory": "main",
-                    "resolved": {"output_spaces": ["T1w"]},
+                    "resolved": {"fsaverage_template": "fsaverage6"},
                 },
+                "func": {"directory": "main", "resolved": {}},
                 "microparcellation": {"resolved": {}},
             }
         },
@@ -272,7 +272,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         networks_main.main(["-P", "demo", "-p", "01", "-s", "T1w"], execution_context=context)
     assert len(graphs) == 1
     assert any(manifest in step.inputs for step in graphs[0].steps)
-    assert not (paths.source_project("demo") / "derivatives/networks").exists()
+    assert not (paths.source_project("demo") / "derivatives/nro/networks").exists()
 
 
 def test_oslom_workflow_selects_oslom_network_configuration() -> None:

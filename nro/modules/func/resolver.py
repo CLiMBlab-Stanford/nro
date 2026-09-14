@@ -18,6 +18,14 @@ from nro.engine.images import nifti_stem
 from nro.engine.paths import project_data_root
 
 
+def _available(paths):
+    """Filter paths through the worker's captured source markup."""
+    from nro.configuration.markup import active_source_markup
+
+    markup = active_source_markup()
+    return tuple(paths) if markup is None else markup.filter(paths)
+
+
 def pe_axis_and_sign(ped: str) -> tuple[str, int]:
     """Split a BIDS phase-encoding direction into axis and sign."""
     ped = ped.strip()
@@ -38,7 +46,7 @@ def infer_total_readout_time(meta: dict[str, Any]) -> Optional[float]:
     if trt is not None:
         try:
             return float(trt)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     ees = meta.get("EffectiveEchoSpacing", None)
@@ -46,7 +54,7 @@ def infer_total_readout_time(meta: dict[str, Any]) -> Optional[float]:
         return None
     try:
         ees_f = float(ees)
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
     rmp = meta.get("ReconMatrixPE", None)
@@ -56,7 +64,7 @@ def infer_total_readout_time(meta: dict[str, Any]) -> Optional[float]:
         return None
     try:
         rmp_i = int(rmp)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if rmp_i <= 1:
         return None
@@ -70,7 +78,7 @@ def read_nifti_shape_and_zooms(
     """Read spatial shape and voxel sizes, with a header-only fallback."""
     try:
         import nibabel as nib
-    except Exception:
+    except ImportError:
         nib = None
 
     if nib is not None:
@@ -175,6 +183,27 @@ class FmapPair:
 
 
 @dataclass(frozen=True)
+class ReferenceInventory:
+    """Usable session references and nonfatal metadata-loading failures."""
+
+    sbrefs: tuple[ImageRec, ...]
+    sidecarless_sbrefs: tuple[Path, ...]
+    unusable_sbrefs: tuple[str, ...]
+    fmaps: tuple[ImageRec, ...]
+    unusable_fmaps: tuple[str, ...]
+
+    @property
+    def fieldmap_warning(self) -> Optional[str]:
+        """Describe ignored fieldmap candidates, if any."""
+        if not self.unusable_fmaps:
+            return None
+        return (
+            f"Ignored {len(self.unusable_fmaps)} fieldmap candidate(s) with unreadable "
+            f"metadata. {self.unusable_fmaps[0]}"
+        )
+
+
+@dataclass(frozen=True)
 class ResolvedFuncReferences:
     """Selected reference images and any nonfatal selection warning."""
 
@@ -198,9 +227,9 @@ class ResolvedFuncRun:
     resolved_run_stem: str
 
 
-def load_rec(img: Path) -> ImageRec:
+def load_rec(img: Path, *, markup=None) -> ImageRec:
     """Load an image record with effective inherited BIDS metadata."""
-    resolved_metadata = resolve_bids_metadata(img)
+    resolved_metadata = resolve_bids_metadata(img, markup=markup)
     meta = dict(resolved_metadata.values)
     ents = parse_bids_entities(img.name)
     ped = meta.get("PhaseEncodingDirection", None)
@@ -224,6 +253,49 @@ def load_rec(img: Path) -> ImageRec:
         tkind=tkind,
         tval=float(tval),
         metadata=meta,
+    )
+
+
+def load_reference_inventory(
+    func_dir: Path,
+    fmap_dir: Path,
+    prefix: str,
+    *,
+    markup=None,
+) -> ReferenceInventory:
+    """Load usable SBRef and fieldmap candidates without dropping valid peers.
+
+    Missing SBRef metadata remains eligible for BIDS inheritance from an exact
+    BOLD match. Other candidate failures are retained as warnings so one bad
+    optional file cannot hide a valid reference pair.
+    """
+    sbrefs: list[ImageRec] = []
+    sidecarless_sbrefs: list[Path] = []
+    unusable_sbrefs: list[str] = []
+    available = markup.filter if markup is not None else _available
+    for path in available(sorted(Path(func_dir).glob(f"{prefix}_*_sbref.nii*"))):
+        try:
+            sbrefs.append(load_rec(path, markup=markup))
+        except FileNotFoundError as error:
+            sidecarless_sbrefs.append(path)
+            unusable_sbrefs.append(str(error))
+        except (OSError, TypeError, ValueError) as error:
+            unusable_sbrefs.append(f"{path}: {error}")
+
+    fmaps: list[ImageRec] = []
+    unusable_fmaps: list[str] = []
+    if Path(fmap_dir).is_dir():
+        for path in available(sorted(Path(fmap_dir).glob(f"{prefix}_*_epi.nii*"))):
+            try:
+                fmaps.append(load_rec(path, markup=markup))
+            except (FileNotFoundError, OSError, TypeError, ValueError) as error:
+                unusable_fmaps.append(f"{path}: {error}")
+    return ReferenceInventory(
+        sbrefs=tuple(sbrefs),
+        sidecarless_sbrefs=tuple(sidecarless_sbrefs),
+        unusable_sbrefs=tuple(unusable_sbrefs),
+        fmaps=tuple(fmaps),
+        unusable_fmaps=tuple(unusable_fmaps),
     )
 
 
@@ -561,7 +633,7 @@ def _run_prefix(sub_id: str, ses_id: Optional[str]) -> str:
 
 
 def _list_bold_imgs(func_dir: Path, sub_id: str, ses_id: Optional[str]) -> list[Path]:
-    return sorted(func_dir.glob(f"{_run_prefix(sub_id, ses_id)}_*_bold.nii*"))
+    return list(_available(sorted(func_dir.glob(f"{_run_prefix(sub_id, ses_id)}_*_bold.nii*"))))
 
 
 def _match_entities(
@@ -586,7 +658,7 @@ def resolve_bold_from_run_stem(
     if stem.endswith("_bold"):
         stem = stem[: -len("_bold")]
 
-    exact = sorted(func_dir.glob(f"{stem}_bold.nii*"))
+    exact = list(_available(sorted(func_dir.glob(f"{stem}_bold.nii*"))))
     if len(exact) == 1:
         return exact[0], None
     if len(exact) > 1:
@@ -652,36 +724,24 @@ def resolve_func_run_request(
     bold = load_rec(bold_path)
     prefix = _run_prefix(sub_id, ses_id)
 
-    sbref_imgs = sorted(func_dir.glob(f"{prefix}_*_sbref.nii*"))
-    sbrefs: list[ImageRec] = []
-    unusable_sbrefs: list[str] = []
-    sidecarless_sbrefs: list[Path] = []
-    for p in sbref_imgs:
-        try:
-            sbrefs.append(load_rec(p))
-        except FileNotFoundError as error:
-            unusable_sbrefs.append(str(error))
-            sidecarless_sbrefs.append(p)
-
+    inventory = load_reference_inventory(func_dir, fmap_dir, prefix)
     explicit_references = bold.metadata.get("NROReferencePolicy") == "explicit"
-    fmaps: list[ImageRec] = []
+    use_fmaps = explicit_references or not sdc_from_sbref_pair
     fmap_warning = stem_warning
-    if explicit_references or not sdc_from_sbref_pair:
-        try:
-            fmap_imgs = sorted(fmap_dir.glob(f"{prefix}_*_epi.nii*")) if fmap_dir.exists() else []
-            fmaps = [load_rec(p) for p in fmap_imgs]
-        except Exception as error:
-            if explicit_references:
-                raise
-            fmap_warning = str(error) if stem_warning is None else f"{stem_warning} {error}"
+    if use_fmaps and inventory.fieldmap_warning:
+        fmap_warning = (
+            inventory.fieldmap_warning
+            if fmap_warning is None
+            else f"{fmap_warning} {inventory.fieldmap_warning}"
+        )
     references = resolve_func_references(
         bold=bold,
-        sbrefs=sbrefs,
-        sidecarless_sbrefs=sidecarless_sbrefs,
-        fmaps=fmaps,
+        sbrefs=inventory.sbrefs,
+        sidecarless_sbrefs=inventory.sidecarless_sbrefs,
+        fmaps=inventory.fmaps if use_fmaps else (),
         sdc_from_sbref_pair=sdc_from_sbref_pair,
         selection_warning=fmap_warning,
-        unusable_sbrefs=unusable_sbrefs,
+        unusable_sbrefs=inventory.unusable_sbrefs,
     )
 
     registration_method = "topup_bbregister" if references.pair is not None else "ants_syn"

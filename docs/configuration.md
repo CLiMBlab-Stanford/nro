@@ -13,7 +13,9 @@ Use `nro create config CLASS/ID`, `nro create workflow ID`, or the corresponding
 safeguards.
 
 The same definitions store contains a [standard event-file catalog](event-files.md)
-used for task-name suggestions during bidsification.
+used for task-name suggestions during bidsification. It may also contain
+[source markup](definitions.md#source-markup) for manual anatomical selection
+and known-bad source exclusion.
 
 ```{literalinclude} ../nro/configuration/starters/workflows/main_workflow.yml
 :language: yaml
@@ -48,9 +50,11 @@ unsupported strategies, out-of-range values, and conflicting settings such as
 values, including groups not used by the selected strategy. Requirements tied
 to a selected strategy are checked when that strategy is selected.
 
-Workflow validation also checks cross-module interfaces. When func requests an
-fsaverage-family output, its `fsaverage_template`, its requested space, and the
-template selected by anat must match.
+Workflow validation also checks cross-module interfaces. The selected `anat`
+configuration defines the available fsaverage target. `space` and `smoothing`
+remain request selectors; they are not module configuration fields or module
+directory identities. Every selected module configuration must use the same
+`markup` ID so that the workflow has one consistent view of source BIDS.
 
 Equivalent numeric forms normalize to the field's declared type: `50` and
 `50.0` are equivalent for an integer count, while `50.5`, `"50"`, and `true`
@@ -129,10 +133,10 @@ orchestration settings, separate from scientific contracts.
 
 ## Configuration classes
 
-| Configuration class | Module | Public derivative class | Parameter reference |
+| Configuration class | Module | Derivative directory | Parameter reference |
 | --- | --- | --- | --- |
-| `anat` | anat | `preprocessing` | [Anat](modules/anat.md) |
-| `func` | func | `preprocessing` | [Func](modules/func.md) |
+| `anat` | anat | `anat` | [Anat](modules/anat.md) |
+| `func` | func | `func` | [Func](modules/func.md) |
 | `clean` | clean | `clean` | [Clean](modules/clean.md) |
 | `dynconn` | dynconn | `dynconn` | [Dynamic connectivity](modules/dynconn.md) |
 | `microparcellation` | microparcellation | `microparcellation` | [Microparcellation](modules/microparcellation.md) |

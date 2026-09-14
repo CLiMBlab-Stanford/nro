@@ -11,7 +11,6 @@ import yaml
 from nro.configuration.runtime import load_runtime_configuration
 from nro.configuration.store import (
     CONFIGURATION_CLASSES,
-    DERIVATIVE_CLASSES,
     ConfigStore,
     WorkflowError,
 )
@@ -144,7 +143,7 @@ def test_private_runtime_environment_rejects_external_paths(
         select_runtime_config(
             project="demo",
             workflow_id="main",
-            derivative_class="func",
+            configuration_class="func",
             bids_root=tmp_path / "bids",
         )
 
@@ -174,20 +173,20 @@ def test_workflow_defaults_omitted_classes_and_rejects_upstream_keys(tmp_path: P
 
     assert resolved.selections["func"] == "experiment"
     assert all(
-        resolved.selections[derivative_class] == "main"
-        for derivative_class in set(CONFIGURATION_CLASSES) - {"func"}
+        resolved.selections[configuration_class] == "main"
+        for configuration_class in set(CONFIGURATION_CLASSES) - {"func"}
     )
 
     _write_yaml(tmp_path / "workflows" / "bad_workflow.yml", {"clean": "bad"})
     _write_yaml(
         tmp_path / "configs" / "clean" / "bad_clean.yml",
-        {"functional_directory": "not-allowed"},
+        {"func_directory": "not-allowed"},
     )
-    with pytest.raises(WorkflowError, match="belong in a workflow"):
+    with pytest.raises(WorkflowError, match="managed by orchestration"):
         store.resolve("bad")
 
 
-def test_workflow_rejects_mismatched_anat_and_func_surface_spaces(tmp_path: Path) -> None:
+def test_func_space_selection_is_not_configuration(tmp_path: Path) -> None:
     _write_yaml(
         tmp_path / "workflows" / "mismatch_workflow.yml",
         {"func": "mismatch"},
@@ -197,7 +196,7 @@ def test_workflow_rejects_mismatched_anat_and_func_surface_spaces(tmp_path: Path
         {"fsaverage_template": "fsaverage", "output_spaces": ["fsaverage"]},
     )
 
-    with pytest.raises(WorkflowError, match="anat.fsaverage_template"):
+    with pytest.raises(WorkflowError, match="fsaverage_template"):
         _test_store(tmp_path).resolve("mismatch")
 
 
@@ -226,13 +225,13 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     second = registry.register_workflow(store.resolve("experiment_nogsr"))
 
     assert first.revision == 1
-    assert first.directories == {
-        derivative_class: "experiment" for derivative_class in DERIVATIVE_CLASSES
-    }
-    assert second.lineages["preprocessing"] == first.lineages["preprocessing"]
-    assert second.directories["preprocessing"] == "experiment"
-    assert second.directories["clean"] == "experiment_nogsr"
-    assert second.directories["networks"] == "experiment_nogsr"
+    assert first.directories["anat"] == "main"
+    assert first.directories["func"] == "experiment"
+    assert first.directories["clean"] == "main"
+    assert second.lineages["anat"] == first.lineages["anat"]
+    assert second.lineages["func"] == first.lineages["func"]
+    assert second.directories["clean"] == "nogsr"
+    assert second.directories["networks"] == "main-2"
 
 
 def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
@@ -258,11 +257,11 @@ def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
     main = registry.register_workflow(main_workflow)
     variant = registry.register_workflow(variant_workflow)
 
-    assert main.lineages["preprocessing"] != variant.lineages["preprocessing"]
-    assert main.directories["preprocessing"] == "main"
-    assert variant.directories["preprocessing"] == "variant"
-    assert variant.anatomy_lineage == main.anatomy_lineage
-    assert variant.anatomy_directory == main.anatomy_directory == "main"
+    assert main.lineages["func"] != variant.lineages["func"]
+    assert main.directories["func"] == "main"
+    assert variant.directories["func"] == "variant"
+    assert variant.lineages["anat"] == main.lineages["anat"]
+    assert variant.directories["anat"] == main.directories["anat"] == "main"
 
     planner = Planner(registry, bids_root=bids)
     main_specs = planner.plan_subject(
@@ -287,8 +286,8 @@ def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
     central = Registry.for_project("demo", bids_root=tmp_path / "central" / "bids")
     exported = export_workflow(registry, variant)
     assert any(
-        binding["derivative_class"] == "anat"
-        and binding["configuration_lineage_id"] == variant.anatomy_lineage
+        binding["configuration_class"] == "anat"
+        and binding["configuration_lineage_id"] == variant.lineages["anat"]
         for binding in exported["bindings"]
     )
     with central.connection(write=True) as db:
@@ -297,7 +296,7 @@ def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
             exported,
             "dev-owner",
         )
-    assert variant.anatomy_lineage in lineage_mapping
+    assert variant.lineages["anat"] in lineage_mapping
 
 
 def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
@@ -322,9 +321,9 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     repeated = registry.register_workflow(store.resolve("experiment"))
 
     assert second.revision == 2
-    assert second.directories["preprocessing"] == "experiment"
-    assert second.directories["clean"] == "experiment-2"
-    assert second.directories["networks"] == "experiment-2"
+    assert second.directories["func"] == "experiment"
+    assert second.directories["clean"] == "nogsr"
+    assert second.directories["networks"] == "main-2"
     assert repeated.revision_id == second.revision_id
     assert not repeated.created
     assert len(registry.workflow_history("experiment")) == 2
@@ -337,7 +336,7 @@ def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
     registered = registry.register_workflow(ConfigStore().resolve("main"))
 
     assert registered.directories == {
-        derivative_class: "main" for derivative_class in DERIVATIVE_CLASSES
+        configuration_class: "main" for configuration_class in CONFIGURATION_CLASSES
     }
 
     anat_id, _ = load_runtime_configuration(
@@ -357,9 +356,9 @@ def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
         registry.runtime_config_path(registered, "networks"), "networks"
     )
     assert (anat_id, func_id, clean_id, micro_id, networks_id) == ("main",) * 5
-    assert func["anatomical_directory"] == "main"
-    assert clean["functional_directory"] == "main"
-    assert clean["anatomical_directory"] == "main"
+    assert func["anat_directory"] == "main"
+    assert clean["func_directory"] == "main"
+    assert clean["anat_directory"] == "main"
     assert micro["clean_directory"] == "main"
     assert networks["microparcellation_directory"] == "main"
 
@@ -377,7 +376,7 @@ def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -
 
     assert second.revision == 2
     assert second.directories == {
-        derivative_class: "main" for derivative_class in DERIVATIVE_CLASSES
+        configuration_class: "main" for configuration_class in CONFIGURATION_CLASSES
     }
     assert second.lineages == first.lineages
 
@@ -398,12 +397,8 @@ def test_changed_named_config_gets_new_lineage_reused_by_contents(tmp_path: Path
     changed = registry.register_workflow(store.resolve("experiment"))
     matching = registry.register_workflow(store.resolve("same_content"))
 
-    assert first.directories == {
-        derivative_class: "experiment" for derivative_class in DERIVATIVE_CLASSES
-    }
-    assert changed.directories == {
-        derivative_class: "experiment" for derivative_class in DERIVATIVE_CLASSES
-    }
+    assert first.directories["func"] == "alternate"
+    assert changed.directories == first.directories
     assert matching.directories == changed.directories
     assert matching.lineages == changed.lineages
 
@@ -418,7 +413,7 @@ def test_registry_bootstrap_and_registration_are_process_safe(tmp_path: Path) ->
     assert len(registry.workflow_history("main")) == 1
 
 
-def test_numeric_directory_names_skip_existing_workflow_name(tmp_path: Path) -> None:
+def test_module_directories_use_independent_configuration_namespaces(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     configs.mkdir()
     bids = tmp_path / "bids"
@@ -439,7 +434,7 @@ def test_numeric_directory_names_skip_existing_workflow_name(tmp_path: Path) -> 
     _write_yaml(workflow_path, {"func": "second"})
     second = registry.register_workflow(store.resolve("experiment"))
 
-    assert occupied.directories["preprocessing"] == "experiment-2"
-    assert first.directories["preprocessing"] == "experiment"
+    assert occupied.directories["func"] == "alternate"
+    assert first.directories["func"] == "first"
     assert second.revision == 2
-    assert second.directories["preprocessing"] == "experiment-3"
+    assert second.directories["func"] == "second"
