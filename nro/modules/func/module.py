@@ -976,7 +976,6 @@ def build_module(
             )
             synbold_image = ensure_image(
                 image=opts.synbold_disco_image,
-                engine=opts.synbold_disco_engine,
             )
             synbold_rigid_step = _create_synbold_rigid_registration_step(
                 run_child=runner.run_child,

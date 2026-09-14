@@ -593,7 +593,7 @@ def test_real_dcm2bids_organizes_sanitized_nifti(ingestion, monkeypatch, pending
         assert convert(row, registry)["state"] == "needs_input"
         row["state"] = "needs_input"
         row = save_decision(store, row)
-        answers = iter(["t20", "none", "none"])
+        answers = iter(["t20", "", "none", "none"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         with store.review_session(row["id"]) as token:
             row = wizard(store, row, review_token=token)

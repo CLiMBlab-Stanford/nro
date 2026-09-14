@@ -14,9 +14,8 @@ from nro.orchestration.runner_graph import Step
 def ensure_image(
     *,
     image: Path,
-    engine: str,
 ) -> Path:
-    """Require an existing container image and container engine."""
+    """Require the configured container image before constructing its step."""
     image = image.expanduser()
     if not image.is_file() or image.stat().st_size == 0:
         raise SystemExit(
@@ -24,8 +23,6 @@ def ensure_image(
             "Provide it before starting preprocessing or configure "
             "synbold_disco_image."
         )
-    if shutil.which(engine) is None:
-        raise SystemExit(f"Container engine not found on PATH: {engine!r}")
     return image
 
 

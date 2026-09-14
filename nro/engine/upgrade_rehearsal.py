@@ -54,7 +54,13 @@ def _copy_candidate(candidate: Path, target: Path) -> None:
             destination.unlink(missing_ok=True)
 
 
-def _initialize_control(checkout: Path, site: Path, control: Path, bids: Path) -> None:
+def _initialize_control(
+    checkout: Path,
+    site: Path,
+    control: Path,
+    bids: Path,
+    python: Path,
+) -> None:
     """Initialize isolated control state from the candidate checkout."""
     code = (
         "import sys\n"
@@ -82,7 +88,7 @@ def _initialize_control(checkout: Path, site: Path, control: Path, bids: Path) -
     ):
         environment.pop(key, None)
     subprocess.run(
-        [sys.executable, "-B", "-c", code, str(control), str(bids), str(checkout)],
+        [str(python), "-B", "-c", code, str(control), str(bids), str(checkout)],
         cwd=checkout,
         env=environment,
         check=True,
@@ -103,6 +109,8 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         raise ValueError("Upgrade rehearsal requires an nro Git checkout")
     baseline = baseline or _default_baseline(checkout)
     _git(checkout, "rev-parse", "--verify", f"{baseline}^{{commit}}")
+    managed_python = checkout / ".venv/bin/python"
+    python = managed_python if managed_python.is_file() else Path(sys.executable)
     with tempfile.TemporaryDirectory(prefix="nro-upgrade-rehearsal-") as temporary_name:
         temporary = Path(temporary_name)
         synthetic = temporary / "shared"
@@ -131,10 +139,7 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
                 "binds": [],
             },
         )
-        environment = temporary / "environment"
-        (environment / "bin").mkdir(parents=True)
-        python = environment / "bin/python"
-        python.symlink_to(Path(sys.executable).resolve())
+        environment = python.parent.parent
         release = {
             "version": "0.0.0",
             "commit": _git(synthetic, "rev-parse", "HEAD"),
@@ -165,7 +170,7 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         binding_path.write_text(json.dumps(binding, indent=2) + "\n")
 
         _copy_candidate(checkout, synthetic)
-        _initialize_control(synthetic, site, control, bids)
+        _initialize_control(synthetic, site, control, bids, python)
         activity = maintenance(
             control,
             bids,

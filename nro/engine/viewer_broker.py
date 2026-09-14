@@ -148,13 +148,13 @@ def _launch(
     partition: str,
     account: str | None,
 ) -> tuple[subprocess.Popen, str, Path]:
-    launcher = shutil.which("srun")
-    if launcher is None:
-        raise ValueError("Cannot open the scene through Slurm because srun is unavailable")
     if not os.environ.get("DISPLAY"):
         raise ValueError(
             "X11 forwarding is unavailable because DISPLAY is not set; reconnect with SSH X forwarding"
         )
+    launcher = shutil.which("srun")
+    if launcher is None:
+        raise ValueError("Cannot open the scene through Slurm because srun is unavailable")
     token = uuid.uuid4().hex
     log = root / f"broker-{token}.log"
     command = [
