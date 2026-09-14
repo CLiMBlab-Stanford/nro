@@ -10,7 +10,7 @@ import pytest
 
 from nro.configuration.store import ConfigStore
 from nro.orchestration import branches
-from nro.orchestration.branch_registry import BranchRegistry
+from nro.orchestration.branch_registry import SCHEMA_VERSION, BranchRegistry
 from nro.orchestration.branch_repair import _repair_records_locked
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.contracts import InstanceSpec
@@ -250,6 +250,55 @@ def test_scientific_schema_change_is_local_to_its_branch(tmp_path):
     assert store.registry("main").instances() == ()
     store.register("new", "dev", revision=snapshot.revision)
     assert store.registry("new").instances() == ()
+
+
+def test_scientific_schema_rebuild_preserves_contracts_and_revisions(tmp_path):
+    store = BranchStore(tmp_path)
+    store.initialize()
+    registry = store.registry("main")
+    original = registry.record_instance("example", {"module": "anat"}, expected_revision=None)
+    registry.record_observation("example", {"artifact_state": "fresh"}, expected_revision=1)
+    snapshot = registry.paths.workflows / "legacy/1_workflow.yml"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(
+        "workflow_id: legacy\n"
+        "revision: 1\n"
+        "definition_fingerprint: legacy-fingerprint\n"
+        "selections: {preprocessing: main}\n"
+        "configurations:\n"
+        "  preprocessing:\n"
+        "    resolved: {anat: {}, func: {}}\n"
+    )
+    with sqlite3.connect(registry.database) as db:
+        db.execute(
+            "ALTER TABLE configuration_lineages "
+            "RENAME COLUMN configuration_class TO derivative_class"
+        )
+        db.execute(
+            "ALTER TABLE workflow_bindings RENAME COLUMN configuration_class TO derivative_class"
+        )
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+
+    backup = registry.rebuild_schema()
+
+    assert backup == registry.root / "registry-before-repair.sqlite3"
+    assert backup.is_file()
+    rebuilt = registry.instances()
+    assert len(rebuilt) == 1
+    assert rebuilt[0].key == original.key
+    assert rebuilt[0].revision == original.revision
+    assert rebuilt[0].contract == original.contract
+    assert rebuilt[0].observation is None
+    assert registry.stored_schema_version() == SCHEMA_VERSION
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT definition_fingerprint FROM workflow_revisions WHERE workflow_id='legacy'"
+            ).fetchone()[0]
+            == "legacy-fingerprint"
+        )
+    with sqlite3.connect(backup) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION - 1
 
 
 @pytest.mark.parametrize("name", ["registrations.json", "registration-pending.json", "registries"])

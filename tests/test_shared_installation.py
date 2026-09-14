@@ -1,12 +1,15 @@
 """Shared installation drains execution and publishes tagged main source."""
 
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
 
 from nro.engine import shared_installation
 from nro.orchestration import scheduler_service, worker_control
+from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
+from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
 
 
@@ -76,6 +79,50 @@ def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
         "installation_activity",
         "installation_prepare",
     ]
+
+
+def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    branches = BranchStore(registry.paths.control)
+    branches.initialize()
+    scientific = branches.registry("main")
+    scientific.record_instance("example", {"module": "anat"}, expected_revision=None)
+    with sqlite3.connect(scientific.database) as db:
+        db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
+
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 0, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
+    )
+
+    result = shared_installation.prepare_pool(
+        registry, checkout=tmp_path / "main", confirm=lambda _activity: "stop"
+    )
+
+    assert result["scientific"] == [
+        {
+            "branch": "main",
+            "stored_schema": SCIENTIFIC_SCHEMA_VERSION - 1,
+            "schema": SCIENTIFIC_SCHEMA_VERSION,
+            "backup": str(scientific.root / "registry-before-repair.sqlite3"),
+        }
+    ]
+    assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
+    assert [(item.key, item.revision) for item in scientific.instances()] == [("example", 1)]
 
 
 def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(

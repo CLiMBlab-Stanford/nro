@@ -121,8 +121,10 @@ activates that release automatically. Runtime checks compare the installation's
 commit, tree, package version, environment, site, and source fingerprint with the
 active release record. If the release changes the private scheduler schema, the
 installer rebuilds that state before starting the candidate coordinator. It reports
-the rebuild and retains a backup. Public derivatives and branch runtime state remain
-in place; requests and attempt history do not.
+the rebuild and retains a backup. After the pool is quiet, it also rebuilds any
+incompatible branch scientific registries from their stored contracts and workflow
+snapshots. Public derivatives, scientific contracts, and revision numbers remain in
+place. Requests, attempt history, and cached artifact observations do not.
 
 Before publishing an update, rehearse the transition from the newest release tag:
 

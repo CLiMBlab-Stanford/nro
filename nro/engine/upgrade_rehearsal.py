@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from nro.engine.site_setup import save_settings
+from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import SCHEMA_VERSION
 from nro.orchestration.scheduler_implementation import implementation_path
@@ -212,6 +213,9 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         database_path = ControlPaths(control).database
         with sqlite3.connect(database_path) as database:
             database.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+        scientific_path = ControlPaths(control).branch("main") / "registry.sqlite3"
+        with sqlite3.connect(scientific_path) as database:
+            database.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
 
         _copy_candidate(checkout, synthetic)
         _prepare_pool(synthetic, site, control, bids, python)
@@ -219,6 +223,10 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
             rebuilt_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
         if rebuilt_schema != SCHEMA_VERSION:
             raise RuntimeError("Rehearsal did not rebuild the obsolete scheduler schema")
+        with sqlite3.connect(scientific_path) as database:
+            scientific_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
+        if scientific_schema != SCIENTIFIC_SCHEMA_VERSION:
+            raise RuntimeError("Rehearsal did not rebuild the obsolete scientific schema")
         if json.loads(implementation_path(control).read_text()) != binding:
             raise RuntimeError("Maintenance changed the active implementation before publication")
         return {

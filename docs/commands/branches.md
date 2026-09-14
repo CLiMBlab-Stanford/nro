@@ -177,10 +177,11 @@ also check the revision that the caller read, so competing checkouts cannot
 silently replace one another's edits. Verified observations carry that revision
 through central assessment and cannot be attached to a replacement contract.
 
-Production registry repair preserves the branch catalog and databases. A
-branch's scientific schema is checked when reading its scientific records, not
-when inspecting its identity or registering another branch. A schema change in
-one branch therefore does not require repairing every branch.
+Production registry repair preserves the branch catalog and compatible databases. A
+branch's scientific schema is checked when reading its scientific records, not when
+inspecting its identity or registering another branch. Shared installation rebuilds
+incompatible branch databases after it quiesces the worker pool. Each replacement
+retains stable contracts and revisions from that branch alone.
 
 These checks protect trusted developers against mistakes. They are not an
 access-control boundary against someone who can directly modify shared files.
