@@ -121,6 +121,43 @@ class BranchRegistry(WorkflowRegistry):
         with self._lock():
             self._connect(check_schema=False).close()
 
+    def stored_schema_version(self) -> int:
+        """Read this branch's schema marker without requiring the current version."""
+        with self._lock():
+            db = self._connect(check_schema=False)
+            try:
+                return int(db.execute("PRAGMA user_version").fetchone()[0])
+            finally:
+                db.close()
+
+    def rebuild_schema(self) -> Path | None:
+        """Rebuild incompatible scientific storage from its stable contract records.
+
+        Workflow snapshots on disk repopulate workflow history. Observations are
+        discarded because they can be reassessed from public artifacts. The instance
+        contracts and revisions remain unchanged.
+        """
+        with self._lock():
+            db = self._connect(check_schema=False)
+            try:
+                stored = int(db.execute("PRAGMA user_version").fetchone()[0])
+                if stored == SCHEMA_VERSION:
+                    return None
+                instances = [
+                    {
+                        "key": str(row["instance_key"]),
+                        "revision": int(row["revision"]),
+                        "contract": json.loads(row["contract_json"]),
+                    }
+                    for row in db.execute(
+                        "SELECT instance_key,revision,contract_json FROM instances"
+                    )
+                ]
+            finally:
+                db.close()
+        self.rebuild([], instances)
+        return self.root / "registry-before-repair.sqlite3"
+
     def initialize(self) -> None:
         """Create an empty scientific registry atomically, or validate an existing binding.
 

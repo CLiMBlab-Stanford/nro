@@ -94,6 +94,11 @@ Branch scientific databases, runtime configurations, ingestion records, and
 public derivatives remain in place. Private completion certificates are archived
 because their registry IDs belong to the old database.
 
+Repair also rebuilds any branch scientific database whose schema is incompatible with
+the installed release. It retains the previous database as
+`registry-before-repair.sqlite3`. Stable scientific contracts and their revisions are
+copied into the replacement; cached observations are discarded for reassessment.
+
 Main artifacts are rediscovered from disk without creating demand. Other branches
 register their outputs against current compiled contracts when work is next
 requested. The operation rebuilds instead of migrating an obsolete schema. It requires

@@ -5,10 +5,33 @@ from pathlib import Path
 
 from nro.configuration.site import CHECKOUT
 from nro.orchestration import scheduler_implementation
+from nro.orchestration.branch_registry import BranchRegistry
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import SCHEMA_VERSION, RegistryLock
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
+
+
+def repair_scientific_schemas(control: Path) -> list[dict]:
+    """Rebuild incompatible branch registries after site-wide work is quiescent."""
+    branches = BranchStore(control)
+    if not branches.path.is_file():
+        return []
+    repaired = []
+    for record in branches.read().topology.records.values():
+        scientific = BranchRegistry(control, record)
+        stored = scientific.stored_schema_version()
+        backup = scientific.rebuild_schema()
+        if backup is not None:
+            repaired.append(
+                {
+                    "branch": record.name,
+                    "stored_schema": stored,
+                    "schema": scientific.stored_schema_version(),
+                    "backup": str(backup),
+                }
+            )
+    return repaired
 
 
 def _rebuild(registry) -> dict:
@@ -22,6 +45,7 @@ def _rebuild(registry) -> dict:
     found = register_existing_artifacts(
         registry, bids_root=registry.paths.bids_root, inventory=inventory
     )
+    scientific = repair_scientific_schemas(registry.paths.control)
     return dict(
         repaired=True,
         registry=str(registry.paths.database),
@@ -29,6 +53,7 @@ def _rebuild(registry) -> dict:
         instances=found.instances,
         unavailable=list(found.unavailable),
         schema=SCHEMA_VERSION,
+        scientific=scientific,
     )
 
 
@@ -65,12 +90,11 @@ def repair_for_installation(registry, *, checkout: Path) -> dict:
 
 
 def repair(registry, *, checkout: Path, confirm, allow_release_transition: bool = False) -> dict:
-    """Stop the whole pool and rebuild shared state, preserving branch databases.
+    """Stop the whole pool and rebuild shared and incompatible scientific state.
 
-    This is a release-maintenance operation, distinct from branch scientific
-    repair. Requests and attempt history are removed from active state. A backup
-    retains the old database and private certificates. Public artifacts and
-    scientific runtime configurations remain in place.
+    Requests and attempt history are removed from active state. Backups retain
+    replaced databases and private certificates. Public artifacts, instance
+    contracts, and contract revisions remain in place.
     """
     checkout = checkout.resolve()
     if checkout != CHECKOUT:

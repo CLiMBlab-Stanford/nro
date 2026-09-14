@@ -267,6 +267,7 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     import sqlite3
 
     from nro.orchestration import scheduler_repair
+    from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
     from nro.orchestration.registry import SCHEMA_VERSION, Registry
 
     root, store = release
@@ -276,6 +277,7 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     )
     registry.initialize()
     scientific = store.branches.registry("dev")
+    scientific.record_instance("example", {"module": "anat"}, expected_revision=None)
     runtime = scientific.root / "workflows" / "example.yml"
     runtime.parent.mkdir(parents=True, exist_ok=True)
     runtime.write_text("retained runtime")
@@ -284,10 +286,14 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     certificate.write_text("{}")
     with sqlite3.connect(registry.paths.database) as db:
         db.execute("PRAGMA user_version=999")
+    with sqlite3.connect(scientific.database) as db:
+        db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
     monkeypatch.setattr(scheduler_repair, "CHECKOUT", root)
     result = scheduler_repair.repair(registry, checkout=root, confirm=lambda activity: True)
     assert runtime.read_text() == "retained runtime"
     assert scientific.database.is_file()
+    assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
+    assert [(item.key, item.revision) for item in scientific.instances()] == [("example", 1)]
     assert not certificate.exists()
     from pathlib import Path
 

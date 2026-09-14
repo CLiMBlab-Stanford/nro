@@ -14,6 +14,20 @@ from nro.orchestration.scheduler_implementation import activate
 MaintenanceAction = Literal["drain", "stop"]
 
 
+def _repair_scientific_schemas(control: Path) -> list[dict]:
+    """Rebuild incompatible branch storage and report each replacement."""
+    from nro.orchestration.scheduler_repair import repair_scientific_schemas
+
+    repaired = repair_scientific_schemas(control)
+    for item in repaired:
+        print(
+            f"Rebuilt scientific schema {item['stored_schema']} as {item['schema']} "
+            f"for branch {item['branch']}; backup: {item['backup']}",
+            flush=True,
+        )
+    return repaired
+
+
 def prepare_pool(
     registry: Registry,
     *,
@@ -46,6 +60,7 @@ def prepare_pool(
                     ("installation_action", "drain"),
                 ),
             )
+        scientific = _repair_scientific_schemas(registry.paths.control)
         return {
             "workers": 0,
             "submissions": 0,
@@ -55,6 +70,7 @@ def prepare_pool(
             "done": True,
             "stopped_jobs": [],
             "failures": [],
+            "scientific": scientific,
         }
     from nro.orchestration.scheduler_bus import read_active
     from nro.orchestration.scheduler_client import maintenance, shutdown_service
@@ -160,7 +176,8 @@ def prepare_pool(
         if time.monotonic() >= deadline:
             raise RuntimeError("Scheduler did not release installation maintenance")
         time.sleep(0.1)
-    return {**summary, **progress}
+    scientific = _repair_scientific_schemas(control)
+    return {**summary, **progress, "scientific": scientific}
 
 
 def publish(checkout: Path, registry: Registry) -> dict:
