@@ -10,6 +10,7 @@ from nro.bin.purge import build_parser as purge_parser
 from nro.bin.run import build_parser as run_parser
 from nro.bin.status import build_parser as status_parser
 from nro.bin.stop import build_parser as stop_parser
+from nro.configuration import site
 from nro.configuration.paths import REGISTRY_PATH
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.paths import module_artifact_root
@@ -143,7 +144,7 @@ def test_default_registry_is_lab_wide(monkeypatch) -> None:
     monkeypatch.setattr(ControlPaths, "require_current_layout", lambda self: None)
     registry = Registry.for_project("nptl")
     assert registry.paths.control == REGISTRY_PATH
-    assert registry.paths.control == Path("/juice6/u/nlp/climblab/.nro")
+    assert Path(site.DEFAULTS["registry"]) == Path("/juice6/u/nlp/climblab/.nro")
     assert registry.paths.database == REGISTRY_PATH / "shared/scheduler/registry.sqlite3"
 
 

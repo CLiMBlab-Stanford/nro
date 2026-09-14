@@ -158,6 +158,7 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
         source,
         tmp_path / "site.toml",
         Path("/usr/bin/python3"),
+        maintenance=True,
     )
     calls = {}
     monkeypatch.setattr(scheduler_bus, "claim_launch", lambda _control: claim)
@@ -185,6 +186,63 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
     assert scheduler_client._run_once(endpoint)
     assert calls["job"] == "local-123"
     assert "--once" in calls["command"]
+    assert calls["kwargs"]["env"]["NRO_PROCESS_ROLE"] == "scheduler"
+    assert calls["kwargs"]["env"]["NRO_SCHEDULER_MAINTENANCE"] == "1"
+
+
+def test_maintenance_command_marks_its_scheduler_endpoint(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_client, scheduler_implementation
+
+    control = tmp_path / "control"
+    checkout = tmp_path / "checkout"
+    scheduler_implementation.implementation_path(control).parent.mkdir(parents=True)
+    scheduler_implementation.implementation_path(control).write_text("{}")
+    captured = (object(), tmp_path / "site.toml", Path("/usr/bin/python3"))
+    monkeypatch.setattr(
+        scheduler_implementation,
+        "capture_maintenance_implementation",
+        lambda *_args: captured,
+    )
+
+    endpoint = scheduler_client.command(
+        control,
+        tmp_path / "BIDS",
+        maintenance_checkout=checkout,
+    )
+
+    assert endpoint.maintenance
+
+
+def test_regular_one_shot_coordinator_clears_maintenance_identity(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    scheduler_bus.prepare(tmp_path)
+    claim = SimpleNamespace(token="launch", owner_path=tmp_path / "owner.json")
+    source = SimpleNamespace(command=lambda command, *, site: list(command))
+    endpoint = scheduler_client.SchedulerEndpoint(
+        tmp_path,
+        tmp_path / "BIDS",
+        source,
+        tmp_path / "site.toml",
+        Path("/usr/bin/python3"),
+    )
+    calls = {}
+    monkeypatch.setenv("NRO_SCHEDULER_MAINTENANCE", "1")
+    monkeypatch.setattr(scheduler_bus, "claim_launch", lambda _control: claim)
+    monkeypatch.setattr(scheduler_bus, "update_launch_job", lambda *_args: None)
+    process = SimpleNamespace(
+        pid=123,
+        returncode=0,
+        communicate=lambda timeout=None: ("", ""),
+    )
+    monkeypatch.setattr(
+        scheduler_client.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.update(command=command, kwargs=kwargs) or process,
+    )
+
+    assert scheduler_client._run_once(endpoint)
+    assert "NRO_SCHEDULER_MAINTENANCE" not in calls["kwargs"]["env"]
 
 
 def test_direct_exchange_uses_live_endpoint_without_launch(monkeypatch, tmp_path) -> None:

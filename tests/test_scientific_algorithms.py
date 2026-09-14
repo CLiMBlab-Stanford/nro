@@ -90,11 +90,8 @@ class ScientificAlgorithmTests(unittest.TestCase):
     def test_synbold_image_resolution_requires_existing_image(self):
         with tempfile.TemporaryDirectory() as d:
             image = Path(d) / "synbold-disco_v1.4.sif"
-            with patch(
-                "nro.modules.func.synbold_disco.shutil.which", return_value="/usr/bin/singularity"
-            ):
-                with self.assertRaisesRegex(SystemExit, "Provide it before starting"):
-                    ensure_image(image=image, engine="singularity")
+            with self.assertRaisesRegex(SystemExit, "Provide it before starting"):
+                ensure_image(image=image)
                 image.write_bytes(b"image")
                 self.assertEqual(ensure_image(image=image, engine="singularity"), image)
 

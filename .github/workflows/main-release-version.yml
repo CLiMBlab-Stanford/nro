@@ -12,6 +12,7 @@ jobs:
   version-advance:
     name: Version advances
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Check out the proposed release
         uses: actions/checkout@v4
@@ -22,3 +23,28 @@ jobs:
           BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
           PYTHONPATH: ${{ github.workspace }}
         run: python .github/workflows/check_main_version.py "$BASE_COMMIT"
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.22"
+          enable-cache: true
+      - name: Install nro and test dependencies
+        run: uv sync --frozen --all-extras --group dev
+      - name: Install documentation dependencies
+        run: uv pip install --python .venv/bin/python -r docs/requirements.txt
+      - name: Check formatting
+        run: .venv/bin/ruff format --check nro tests docs/conf.py
+      - name: Check Python style
+        run: .venv/bin/ruff check nro tests docs/conf.py
+      - name: Run complete test suite
+        run: .venv/bin/python -m pytest -q -m "integration or not integration"
+      - name: Rehearse the release upgrade
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: ./install --rehearse-upgrade "$BASE_COMMIT"
+      - name: Build documentation
+        run: .venv/bin/sphinx-build -W --keep-going -b html docs docs/_build/html

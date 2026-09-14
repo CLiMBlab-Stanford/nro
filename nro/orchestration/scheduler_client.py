@@ -39,6 +39,7 @@ class SchedulerEndpoint:
     source: object
     site: Path
     python: Path
+    maintenance: bool = False
 
 
 def command(
@@ -65,7 +66,14 @@ def command(
         source, site, python = capture_worker_implementation(
             control, bids_root, check_checkout=not allow_changed_checkout
         )
-    return SchedulerEndpoint(control, bids_root, source, site, python)
+    return SchedulerEndpoint(
+        control,
+        bids_root,
+        source,
+        site,
+        python,
+        maintenance=maintenance_checkout is not None,
+    )
 
 
 def _wait_notice(frame: int, message: str) -> bool:
@@ -187,6 +195,10 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
         site=endpoint.site,
     )
     environment = {**os.environ, "NRO_PROCESS_ROLE": "scheduler"}
+    if endpoint.maintenance:
+        environment["NRO_SCHEDULER_MAINTENANCE"] = "1"
+    else:
+        environment.pop("NRO_SCHEDULER_MAINTENANCE", None)
     environment.pop("SLURM_JOB_ID", None)
     try:
         process = subprocess.Popen(

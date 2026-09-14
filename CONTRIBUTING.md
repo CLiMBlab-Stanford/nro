@@ -76,13 +76,19 @@ rather than inserting it into ordinary technical documentation.
 them into `main` through a reviewed pull request. Every pull request to `main` must
 change the version in `pyproject.toml` to a later `MAJOR.MINOR.PATCH` value. The
 smallest permitted increment is one patch version. A repository check rejects a pull
-request that does not advance the version.
+request that does not advance the version. Required quality checks must also pass the
+complete test suite, formatting and lint checks, the documentation build, and an
+isolated upgrade rehearsal.
 
 Use patch releases for compatible fixes. During the 0.x series, use minor releases
 for new features and intentional interface changes. Compatibility support is welcome
 when it helps current users without materially increasing complexity, runtime,
 maintenance cost, or ambiguity. Document intentional incompatibilities and migration
 steps in the pull request.
+
+Before merging a release, run `./install --rehearse-upgrade`. This checks maintenance
+from the newest reachable release tag to the working tree using temporary installation
+and registry state. It does not alter the active shared installation.
 
 After merge, tag the release as `vMAJOR.MINOR.PATCH` and push the tag without moving
 or replacing an existing release. The tag workflow checks

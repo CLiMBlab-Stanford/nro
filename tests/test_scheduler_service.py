@@ -61,9 +61,8 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         "development": str(tmp_path / "DEV"),
     }
     site = capture_site(tmp_path / "site", values)
-    environment = tmp_path / "env"
-    (environment / "bin").mkdir(parents=True)
-    (environment / "bin/python").symlink_to(sys.executable)
+    python = Path(sys.executable)
+    environment = python.parent.parent
     (root / ".nro-installation.json").write_text(
         json.dumps(
             dict(

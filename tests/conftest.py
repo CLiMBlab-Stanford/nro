@@ -1,5 +1,6 @@
 """Keep unit tests independent of the checkout's live installation settings."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -51,6 +52,7 @@ def definitions_fixture(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def isolated_installation(tmp_path, tmp_path_factory, monkeypatch, definitions_fixture):
+    os.environ.pop("NRO_SOURCE_MARKUP", None)
     root = tmp_path_factory.mktemp("installation-settings")
     config = root / "site.toml"
     config.write_text(
@@ -61,6 +63,7 @@ def isolated_installation(tmp_path, tmp_path_factory, monkeypatch, definitions_f
     monkeypatch.setenv("NRO_SITE_CONFIG", str(config))
     for variable in site.ENVIRONMENT_KEYS:
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(site, "LAB", root)
     monkeypatch.setattr(site, "CHECKOUT", root)
     monkeypatch.setattr(site, "installation_record", lambda: {})
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})
@@ -71,3 +74,5 @@ def isolated_installation(tmp_path, tmp_path_factory, monkeypatch, definitions_f
         lambda selected=None: {} if selected is None else installed_record(selected),
     )
     monkeypatch.setitem(site.DEFAULTS, "definitions", str(definitions_fixture))
+    yield
+    os.environ.pop("NRO_SOURCE_MARKUP", None)
