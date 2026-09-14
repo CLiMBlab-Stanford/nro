@@ -2,12 +2,18 @@
 """Set up this checkout or connect a user to its shared installation."""
 
 import os
-from pathlib import Path
 import runpy
 import sys
+from pathlib import Path
 
 if sys.version_info < (3, 11):
     sys.exit("The installer needs Python 3.11 or newer; it installs Python 3.12 for nro.")
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.dont_write_bytecode = True
-runpy.run_path(str(Path(__file__).resolve().parent / "nro/engine/bootstrap.py"), run_name="__main__")
+root = Path(__file__).resolve().parent
+managed_python = root / ".venv/bin/python"
+if "--rehearse-upgrade" in sys.argv and sys.prefix == sys.base_prefix and managed_python.is_file():
+    os.execv(
+        str(managed_python), [str(managed_python), str(Path(__file__).resolve()), *sys.argv[1:]]
+    )
+runpy.run_path(str(root / "nro/engine/bootstrap.py"), run_name="__main__")
