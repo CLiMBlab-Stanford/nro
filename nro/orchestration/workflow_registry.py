@@ -136,10 +136,6 @@ class WorkflowRegistry:
             elif configuration_class in {"clean", "firstlevels"}:
                 values["func_directory"] = directories["func"]
                 values["anat_directory"] = directories["anat"]
-                if configuration_class == "firstlevels":
-                    values["func_ica_aroma"] = workflow.configuration("func").values[
-                        "clean_ica_aroma"
-                    ]
             elif configuration_class in {"dynconn", "microparcellation"}:
                 values["anat_directory"] = directories["anat"]
                 values["clean_directory"] = directories["clean"]

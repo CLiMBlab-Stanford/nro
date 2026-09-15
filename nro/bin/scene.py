@@ -242,14 +242,10 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
-    """Build all scenes selected by argv and optionally open them."""
-
-    args = build_parser(prog=prog).parse_args(argv)
-    try:
-        selection = core_selection(args)
-    except ValueError as error:
-        raise SystemExit(str(error)) from error
+def generate_scenes(
+    selection, *, wb_command: str | Path, publish: bool = False
+) -> tuple[list[Path], dict]:
+    """Build scenes for a resolved selection and return their paths and site settings."""
     from nro.configuration.site import CHECKOUT, bids_root, settings
     from nro.orchestration.branch_views import registered_rows
 
@@ -263,7 +259,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
     support_data, surface_sources = _collect(support_rows)
     if not data:
         raise SystemExit("No completed derivatives match the requested selectors")
-    wb_command = resolve_workbench_command(args.wb_command)
+    wb_command = resolve_workbench_command(wb_command)
     values = settings()[0]
     branches = BranchStore(Path(values["registry"]))
     branch = branches.read().topology.require_checkout(CHECKOUT)
@@ -426,11 +422,28 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
                                 "group_entities": group,
                             },
                             wb_command=wb_command,
-                            publish=args.publish,
+                            publish=publish,
                         )
                     )
     if not scenes:
         raise SystemExit("No completed derivatives match the requested target groups")
+    return scenes, values
+
+
+def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
+    """Build all scenes selected by argv and optionally open them."""
+
+    args = build_parser(prog=prog).parse_args(argv)
+    try:
+        selection = core_selection(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    scenes, values = generate_scenes(
+        selection,
+        wb_command=args.wb_command,
+        publish=args.publish,
+    )
+    wb_command = resolve_workbench_command(args.wb_command)
     for scene in scenes:
         print(scene)
     if args.open:

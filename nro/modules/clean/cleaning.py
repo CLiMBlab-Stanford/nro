@@ -23,14 +23,6 @@ from nro.engine.templates import find_fsaverage_surface
 next_step = new_step_counter()
 
 
-def _smoothed_desc_label(input_desc: str) -> str:
-    return (
-        "desc-smoothedPreCleanNoAROMA"
-        if input_desc == "desc-preprocNoAROMA"
-        else "desc-smoothedPreClean"
-    )
-
-
 def _space_name(path: Path) -> str:
     return bids_entity(path, "space", default="unknown") or "unknown"
 
@@ -754,7 +746,6 @@ def _expected_input_groups(
     func_dir: Path,
     run_stem: str,
     output_space: str,
-    clean_ica_aroma: bool,
 ) -> list[dict[str, object]]:
     """Construct the immutable cleaning inputs from source identity and config.
 
@@ -762,17 +753,9 @@ def _expected_input_groups(
     must never be allowed to add, remove, or rename nodes in cleaning's DAG.
     """
     space = str(output_space)
-    variants = [
+    variants: list[dict[str, object]] = [
         {"input_desc": "desc-preproc", "output_desc": "desc-clean", "label": "preproc"},
     ]
-    if clean_ica_aroma:
-        variants.append(
-            {
-                "input_desc": "desc-preprocNoAROMA",
-                "output_desc": "desc-cleanNoAROMA",
-                "label": "preprocNoAROMA",
-            }
-        )
     for variant in variants:
         desc = str(variant["input_desc"])
         is_surface = is_surface_space(space)

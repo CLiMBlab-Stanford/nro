@@ -41,12 +41,58 @@ Regenerating a scene replaces only a directory carrying an nro scene manifest;
 the command refuses to replace an unmanaged directory.
 
 Surface scenes provide white, pial, midthickness, and inflated geometry.
-Midthickness is the default view. Dynamic-connectivity scenes expose Workbench's
-on-demand correlation layer over concatenated retained frames. Network CIFTIs contain named maps so users
-can step through networks. Volume scenes use volume data without carrying
-surface files. `--module` can restrict the derivative layers while nro still
-adds the geometry needed to display them. See each
+Midthickness is the default view. The cerebral montage places the left lateral,
+left medial, right medial, and right lateral views in one row.
+Dynamic-connectivity scenes expose Workbench's on-demand correlation layer over
+concatenated retained frames. Network CIFTIs contain named maps so users can step
+through networks. Volume scenes use volume data without carrying surface files.
+`--module` can restrict the derivative layers while nro still adds the geometry
+needed to display them. See each
 [module's output guide](../modules/index.md).
+
+## `nro render`
+
+`render` creates static images from the same combined views as `scene`:
+
+```bash
+nro render -P nptl -p t20 -m networks firstlevels
+nro render -P nptl -p t20 -m dynconn microparcellation --seeds seeds.yml
+```
+
+The command renders every named map in the selected finite-map files. For
+example, it creates one image for each network and for each first-level
+contrast and statistic. It does not render every frame of a time series.
+Outputs normally go into a managed `renders/` directory beside the generated
+scene. `--output-dir PATH` chooses another location. When one request creates
+several scenes, each scene receives a separate directory beneath that path.
+
+Dynamic connectivity and parcel connectivity need a seed. Without `--seeds`,
+the command skips `dynconn` time series and microparcellation connectivity
+matrices. A seed file assigns T1w world coordinates, in millimeters, to
+subjects:
+
+```yaml
+projects:
+  nptl:
+    t20:
+      - xyz_mm: [-24, -4, -18]
+      - xyz_mm: [42, -56, 20]
+```
+
+For `fsnative` data, nro finds the nearest eligible cortical vertex or volume
+voxel. For `T1w` data, it finds the nearest eligible voxel. The render manifest
+records both coordinates, their distance, and the resolved vertex, voxel, or
+parcel. A distance above 10 mm produces a warning; change that threshold with
+`--warn-seed-distance`. Seed rendering is currently limited to `fsnative` and
+`T1w`, where coordinates and imaging data share the subject's T1w coordinate
+system.
+
+Rendering uses Workbench's headless OSMesa renderer. It does not start the X11
+viewer broker or consume an nro worker slot. `--width` sets the image width;
+`--format` accepts `png`, `jpg`, or `tiff`. Each managed render directory
+contains `render_manifest.yaml`, which links every image to its source map and
+map metadata. Regenerating renders replaces only a directory with a matching
+nro render manifest.
 
 ## `nro qc registration`
 

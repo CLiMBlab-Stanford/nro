@@ -14,7 +14,7 @@ preprocessing. After publication, use `nro run` to request derivatives.
 Install the Python dependencies with `./install --with-bidsify`. For an existing
 shared installation, its maintainer runs `./install --maintain --with-bidsify`
 and confirms an interactive drain if work is active. The extra includes the
-Flywheel SDK, dcm2bids, and pydicom. Existing processing installations without
+Flywheel SDK, dcm2bids, pydicom, and the Google Drive client. Existing processing installations without
 the extra can still report ingestion state with `nro status`.
 
 The default conversion commands use the installation's QuNex image for
@@ -40,12 +40,17 @@ gain it automatically. Stop those workers and submit from the authenticated
 environment if needed. Tokens are never written into request records or worker
 scripts. Use the cluster's approved credential-management procedure.
 
+A site may also connect a local or Google Drive scan-plan directory and a
+site-owned parser. See [configure scan plans](scanplans.md) for the parser API,
+fixed fallback table, authentication, and reconciliation rules.
+
 ## Select, review, and publish
 
 ```bash
 nro bidsify -f mysite -F group/study -P example
 nro status -P example
 nro bidsify --request REQUEST_ID
+nro bidsify --cancel REQUEST_ID
 ```
 
 `-P` names one destination BIDS project. `--flywheel-project GROUP/PROJECT`
@@ -84,7 +89,11 @@ data already stored in another project are also omitted by default.
    node-local temporary storage. dcm2niix supplies the initial type. Anatomy is
    stripped before reaching shared staging. These stages require no terminal
    interaction.
-3. The next invocation shows the converted metadata and proposed type for each
+3. When a scan-plan source is configured, choose one unassigned plan while
+   image preparation runs. nro parses it and later compares its acquisition
+   sequence with the prepared images. Correct any difference in the source
+   plan. An unimplemented parser triggers the documented TSV fallback.
+4. The next invocation shows the converted metadata and proposed type for each
    acquisition. Supported non-derived guesses are accepted automatically.
    Confirm proposed ignores or replace them with a supported type, then supply
    BIDS entities. For task BOLD, select a suggested `TASK/VARIANT` from the
@@ -95,14 +104,14 @@ data already stored in another project are also omitted by default.
    time. Explicit `none` is allowed. Missing identity does not prevent image
    preparation. Type `skip` to leave the session for later, or `q` to exit;
    completed decisions remain saved.
-4. A worker organizes the sanitized images through dcm2bids, writes the reviewed
+5. A worker organizes the sanitized images through dcm2bids, writes the reviewed
    reference associations, and runs the validator. Failure prevents approval.
-5. The next invocation lists the validated files and their SHA-256 hashes.
+6. The next invocation lists the validated files and their SHA-256 hashes.
    Approve those exact files, edit the decisions, or leave them staged. A worker
    publishes only after approval and after rechecking both staged and existing
    file hashes.
 
-Participant and session labels must both be resolved before step 4. Until then,
+Participant and session labels must both be resolved before step 5. Until then,
 images remain under request-specific staging paths outside BIDS; no placeholder
 subject is published. `nro status` displays unresolved labels as `(pending)`.
 Use an unfiltered invocation or `--request` to resume a request whose participant
@@ -164,6 +173,7 @@ Preprocessing does not replace these choices with temporal matching.
 | `-p`, `--participant LABEL ...` | Filter saved requests; a single label also supplies the default for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
 | `--session ID ...` | Filter by remote session IDs, not BIDS session labels. |
 | `--request ID` | Resume one saved request without listing remote sessions. |
+| `--cancel ID` | Cancel one saved request. An executing stage stops after its worker acknowledges the request. |
 | `--config PATH` | Complete ingestion profile YAML for new requests. |
 | `--rebidsify` | Include sessions already in BIDS, regardless of which tool produced them, and permit a replacement proposal. Approval is still required. |
 | `--no-submit` | Do not supply new workers. Existing workers may still claim queued stages. |
@@ -196,9 +206,10 @@ filters apply. Derivative-only selectors suppress the section. Status never
 contacts Flywheel or starts a review.
 
 Failed and interrupted requests offer retry, decision review, cancellation, or
-leave-as-is. To interrupt executing work, use the existing worker controls
-described under [stop](work.md). Requests whose workers are confirmed dead are
-marked interrupted; a stale heartbeat alone is not proof that work stopped.
+leave-as-is. `nro bidsify --cancel REQUEST_ID` also cancels queued or partially
+reviewed work and asks the worker to stop an executing stage. Requests whose
+workers are confirmed dead are marked interrupted; a stale heartbeat alone is
+not proof that work stopped.
 
 ## Configuration
 
@@ -207,14 +218,16 @@ The default profile is `DEFINITIONS/bidsify/main.yml` in the selected
 profile. New stores have no configured servers; add your Flywheel hosts,
 credential environment-variable names, and project lists before ingestion.
 Copy the complete main document when creating another profile.
-Unknown keys and missing required keys are rejected. `project_sources` is
-optional and defaults to an empty mapping. Each request saves its resolved profile,
-so later profile edits apply to new requests, not an in-progress conversion.
+Unknown keys and missing required keys are rejected. `project_sources` and
+`scanplans` are optional. Each request saves its resolved profile, so most
+later profile edits apply to new requests. Changes to a selected scan-plan file
+are detected and reparsed when the request resumes.
 
 | Key | Purpose |
 | --- | --- |
 | `servers` | Named `host`, `credential_env`, and `projects` lists. No credential values. |
 | `project_sources` | Optional BIDS project names mapped to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list; duplicate pairs are rejected. |
+| `scanplans` | Optional `location`, `parser`, and `credential_env` settings described in [configure scan plans](scanplans.md). A null location disables scan-plan integration. |
 | `staging` | Absolute shared directory outside BIDS. `null` uses `WORK/bidsify`. |
 | `dcm2niix` | Command argument list; `null` resolves the configured QuNex container command. |
 | `synthstrip` | Command argument list; `null` resolves the configured SynthStrip container command. |
@@ -359,14 +372,17 @@ for review and recovery. Cancellation does not delete this shared evidence.
 This version accepts individual Flywheel acquisition files of type `dicom`,
 with one converted NIfTI per selected file. Supported outputs are T1w, T2w,
 BOLD, SBRef, and opposite-encoding EPI fieldmaps. Other source formats,
-multi-output archives, multiecho conversion, and behavioral-log/scanplan parsers
-need explicit adapters. A failure in those cases does not publish a partial
+multi-output archives, multiecho conversion, and behavioral-log parsers need
+explicit adapters. Scan-plan input uses the documented site-parser contract. A
+failure in those cases does not publish a partial
 session. An SBRef currently belongs to one BOLD acquisition; a fieldmap pair
 may serve several runs. Unassigned SBRefs are not published.
 
 The wizard suggests catalog entries from complete task-name matches, ignoring
-case and separators. It does not infer stimulus set/run from BIDS run numbering
-or parse a digital scanplan. Multiple variants require an explicit choice.
+case and separators. It does not infer stimulus set/run from BIDS run numbering.
+After exact sequence alignment, a scan plan supplies the task ID. The wizard
+then finds event-file candidates by task. Multiple variants require an explicit
+choice.
 The wizard validates supplied event files but does not infer their scientific
 meaning or invent missing event times. Skull stripping is performed locally;
 this version does not consume Flywheel gear output as an alternative source.

@@ -14,6 +14,7 @@ from nro.engine.events import validate_events
 
 from .config import ALLOWED_TYPES, bids_label
 from .identity import identity_issues
+from .scanplans import apply_scanplan
 
 
 class SkipSession(Exception):
@@ -55,6 +56,8 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
     used_sbrefs = set()
     fieldmap_groups = {}
     for item in acquisitions.values():
+        if item.get("scanplan_include") is False:
+            continue
         name = item["id"]
         kind = item["datatype"], item["suffix"]
         if not item.get("confirmed") or kind not in ALLOWED_TYPES:
@@ -83,7 +86,12 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
                     unresolved.append(f"{name}: confirm SBRef or explicitly select none")
                 elif item["sbref"] is not None:
                     ref = acquisitions.get(item["sbref"])
-                    if ref is None or ref["suffix"] != "sbref" or not compatible(item, ref):
+                    if (
+                        ref is None
+                        or ref.get("scanplan_include") is False
+                        or ref["suffix"] != "sbref"
+                        or not compatible(item, ref)
+                    ):
                         unresolved.append(f"{name}: incompatible SBRef")
                     if item["sbref"] in used_sbrefs:
                         unresolved.append(
@@ -96,7 +104,12 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
                     refs = [acquisitions.get(key) for key in item["fieldmaps"]]
                     if (
                         len(refs) != 2
-                        or any(r is None or r["datatype"] != "fmap" for r in refs)
+                        or any(
+                            r is None
+                            or r.get("scanplan_include") is False
+                            or r["datatype"] != "fmap"
+                            for r in refs
+                        )
                         or not compatible(refs[0], refs[1], opposite=True)
                         or not any(compatible(item, r) for r in refs)
                     ):
@@ -114,7 +127,10 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
             if target in names:
                 unresolved.append(f"{name}: duplicate output name; set distinct run/acq entities")
             names.add(target)
-    if not any(a["datatype"] != "ignore" for a in acquisitions.values()):
+    if not any(
+        a.get("scanplan_include") is not False and a["datatype"] != "ignore"
+        for a in acquisitions.values()
+    ):
         unresolved.append("No imaging acquisitions selected")
     return unresolved
 
@@ -157,6 +173,13 @@ def _events(record: dict, item: dict) -> str | None:
     config = record["config"]
     catalog = EventStore(Path(config["event_store"]))
     task = item["entities"].get("task", "")
+    metadata = item.get("metadata", {})
+    shape = metadata.get("_shape", [])
+    duration = (
+        shape[3] * metadata["RepetitionTime"]
+        if len(shape) == 4 and "RepetitionTime" in metadata
+        else None
+    )
     entries, paths = event_candidates(config, task)
     choices = {entry.identifier: entry for entry in entries}
     for name in choices:
@@ -182,13 +205,6 @@ def _events(record: dict, item: dict) -> str | None:
             else:
                 event_path = Path(answer).expanduser().resolve()
                 text = event_path.read_text()
-            metadata = item.get("metadata", {})
-            shape = metadata.get("_shape", [])
-            duration = (
-                shape[3] * metadata["RepetitionTime"]
-                if len(shape) == 4 and "RepetitionTime" in metadata
-                else None
-            )
             validate_events(StringIO(text), duration=duration)
         except (ValueError, OSError) as error:
             print(str(error))
@@ -242,6 +258,34 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
     prepared = record["stage"] == "convert"
     if not prepared:
         raise ValueError("Acquisition review starts after metadata preparation")
+    if record["config"].get("scanplans", {}).get("location") is not None:
+        if not record.get("scanplan"):
+            record["issues"] = ["Select a scan plan before reviewing prepared acquisitions"]
+            print("\nStill unresolved:\n" + "\n".join(record["issues"]))
+            return store.update(
+                record, expected_revision=record["revision"], review_token=review_token
+            )
+        record = apply_scanplan(deepcopy(record))
+        alignment = record["scanplan"]["alignment"]
+        record["issues"] = (
+            []
+            if alignment["complete"]
+            else ["The scan plan does not match the prepared acquisition sequence"]
+        )
+        record = store.update(
+            record, expected_revision=record["revision"], review_token=review_token
+        )
+        if not alignment["complete"]:
+            print("\nScan-plan differences:")
+            for row in alignment["rows"]:
+                if row["status"] != "match":
+                    print(
+                        f"  plan={row['plan_ordinal'] or '-'} {row['plan_type'] or '-'}; "
+                        f"image={row['acquisition_id'] or '-'} {row['prepared_type'] or '-'}; "
+                        f"{row['status']}"
+                    )
+            print("Edit the source scan plan, then rerun nro bidsify. No correction was saved.")
+            return record
     if prepared:
         for field in ("participant", "session"):
             if record[field] is not None:
@@ -264,6 +308,10 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
     for index in range(len(record["acquisitions"])):
         event_files = {}
         item = deepcopy(record["acquisitions"][index])
+        if item.get("scanplan_include") is False:
+            item["confirmed"] = True
+            record["acquisitions"][index] = item
+            continue
         print(f"\nAcquisition {index + 1}: {item['id']}")
         if prepared:
             print(json.dumps(item.get("metadata", {}), indent=2))
@@ -317,6 +365,11 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
                     try:
                         if entities != "s":
                             parsed = _entities(entities)
+                            planned_task = item.get("scanplan_task")
+                            if planned_task is not None and parsed.get("task") != planned_task:
+                                raise ValueError(
+                                    "The task must match the selected source scan plan"
+                                )
                         break
                     except ValueError as error:
                         print(str(error))
@@ -342,7 +395,11 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
                 )
                 continue
             refs = [
-                a for a in record["acquisitions"] if a["suffix"] == "sbref" and compatible(item, a)
+                a
+                for a in record["acquisitions"]
+                if a.get("scanplan_include") is not False
+                and a["suffix"] == "sbref"
+                and compatible(item, a)
             ]
             answer = _references("SBRef number", refs, [item.get("sbref")], count=1)
             if answer is not None:
@@ -350,7 +407,8 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
             refs = [
                 a
                 for a in record["acquisitions"]
-                if a["datatype"] == "fmap"
+                if a.get("scanplan_include") is not False
+                and a["datatype"] == "fmap"
                 and (compatible(item, a) or compatible(item, a, opposite=True))
             ]
             answer = _references(

@@ -50,49 +50,16 @@ def _robust_template_command(
 
 next_step = new_step_counter()
 
-_ANATOMICAL_PAIR_ENTITIES = (
-    "acq",
-    "ce",
-    "rec",
-    "run",
-    "echo",
-    "flip",
-    "inv",
-    "mt",
-    "part",
-)
-
 
 @dataclass(frozen=True)
 class _SessionAnatomicalPlan:
     source: AnatImage
     staged_raw: Path
     staged_preprocessed: Path
-    registration_reference: Optional[Path]
-    registration_matrix: Optional[Path]
-    final_source: Path
     output: Path
     mask: Path
     metadata_output: Path
     metadata: dict[str, object]
-
-
-def _paired_t1w(t2w: AnatImage, candidates: Sequence[AnatImage]) -> AnatImage:
-    """Choose the T1w acquisition that best matches one session T2w."""
-
-    def rank(candidate: AnatImage) -> tuple[int, int, int, float, str]:
-        shared = [
-            entity
-            for entity in _ANATOMICAL_PAIR_ENTITIES
-            if entity in t2w.entities and entity in candidate.entities
-        ]
-        conflicts = sum(t2w.entities[entity] != candidate.entities[entity] for entity in shared)
-        matches = sum(t2w.entities[entity] == candidate.entities[entity] for entity in shared)
-        comparable_time = t2w.time_kind == candidate.time_kind
-        distance = abs(t2w.time_value - candidate.time_value) if comparable_time else float("inf")
-        return conflicts, -matches, not comparable_time, distance, candidate.image.name
-
-    return min(candidates, key=rank)
 
 
 def _plan_session_anatomicals(
@@ -131,29 +98,13 @@ def _plan_session_anatomicals(
             / f"{image.image.name.removesuffix('.nii.gz').removesuffix('.nii')}_desc-preproc_{image.modality}.nii.gz"
             for image in session_images
         }
-        t1w_images = [image for image in session_images if image.modality == "T1w"]
         for image in session_images:
             payload: dict[str, object] = {}
             if image.json is not None and image.json.exists():
                 payload = json.loads(image.json.read_text(encoding="utf-8"))
             payload["Sources"] = [str(image.image)]
             payload["BiasCorrection"] = "N4BiasFieldCorrection"
-            registration_reference: Optional[Path] = None
-            registration_matrix: Optional[Path] = None
             staged_preprocessed = staged[image.image]
-            final_source = staged_preprocessed
-            if image.modality == "T2w" and t1w_images:
-                registration_reference = staged[_paired_t1w(image, t1w_images).image]
-                source_prefix = image.image.name.removesuffix(".nii.gz").removesuffix(".nii")
-                source_prefix = source_prefix.removesuffix(f"_{image.modality}")
-                final_source = work_dir / (
-                    f"{image.image.name.removesuffix('.nii.gz').removesuffix('.nii')}_space-T1w.nii.gz"
-                )
-                registration_matrix = work_dir / (
-                    f"{source_prefix}_from-T2w_to-T1w_mode-image_xfm.mat"
-                )
-                payload["SpatialReference"] = "T1w"
-                payload["TransformToT1w"] = str(registration_matrix)
             output = output_dir / image.image.name
             stem = output.name.removesuffix(".nii.gz").removesuffix(".nii")
             mask = output_dir / f"{stem}_desc-brain_mask.nii.gz"
@@ -167,9 +118,6 @@ def _plan_session_anatomicals(
                     source=image,
                     staged_raw=work_dir / image.image.name,
                     staged_preprocessed=staged_preprocessed,
-                    registration_reference=registration_reference,
-                    registration_matrix=registration_matrix,
-                    final_source=final_source,
                     output=output,
                     mask=mask,
                     metadata_output=output_dir / json_name,
@@ -347,6 +295,7 @@ def _create_copy_or_average_step(
             env=env,
             prepare=lambda: (
                 tmp_dir.mkdir(parents=True, exist_ok=True),
+                out_img.parent.mkdir(parents=True, exist_ok=True),
                 out_img.unlink(missing_ok=True),
             ),
             validate=validate,

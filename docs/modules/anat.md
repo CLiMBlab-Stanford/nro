@@ -8,25 +8,28 @@ analyses.
 
 Discovery collects T1w and T2w acquisitions across sessions. Missing anatomy
 makes the subject unavailable to planning rather than preventing registry use.
+Markup can select either modality independently. Otherwise,
 `selection_strategy: first` selects the earliest ordered image for each modality;
 the averaging strategy uses FreeSurfer `mri_robust_template` when several images
-are available. Single images are copied. Acquisition metadata and filename
-ordering resolve selection reproducibly.
+are available. A missing modality is skipped. Single images are copied.
+Acquisition metadata and filename ordering resolve selection reproducibly.
 
-T1w and T2w availability determines the graph. T2w images can be registered to
-T1w. When a session contains repeated acquisitions, shared acquisition entities
-identify the corresponding T1w; acquisition order resolves remaining ties. A
-T1w/T2w myelin proxy exists only when both modalities are available.
+T1w and T2w availability determines the graph. Session outputs retain their
+native geometry. The module builds participant T1w and T2w references
+independently, even when their sources come from different sessions. When both
+exist, it registers the selected participant T2w reference to the selected T1w
+reference. A T1w/T2w myelin proxy exists only when both modalities are available.
 This ratio is not a quantitative myelin measurement. Review the manifest's
 selected sources before comparing subjects with different acquisition schemes.
 
 ## Processing sequence
 
 1. Stage acquisitions and apply ANTs N4 bias correction. Produce brain-extracted
-   session copies and masks using SynthStrip. When appropriate, align T2w to
-   the corresponding T1w using FSL FLIRT.
-2. Select or combine the processed acquisitions into subject references. Save
-   source lists, selection metadata, and the optional T1w/T2w ratio.
+   session copies and masks using SynthStrip without changing their native grids.
+2. Select or combine T1w and T2w acquisitions independently into participant
+   references. If both exist, align the participant T2w reference to the T1w
+   reference with six-degree-of-freedom FSL FLIRT. Save source lists, selection
+   metadata, the transform, and the optional T1w/T2w ratio.
 3. Run FreeSurfer `recon-all` with a validated directory completion boundary.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric

@@ -47,6 +47,39 @@ def save_decision(store, row):
         return store.update(row, expected_revision=row["revision"], review_token=token)
 
 
+def test_cancellation_finishes_pending_work_immediately(ingestion):
+    _, store, row = ingestion
+    row.update(state="needs_input", stage="prepare")
+    with store._lock():
+        store.write_locked(row)
+
+    cancelled = store.request_cancellation(row["id"])
+
+    assert cancelled["state"] == "cancelled"
+    assert cancelled["worker"] is None
+
+
+def test_running_cancellation_waits_for_worker_acknowledgement(ingestion):
+    registry, store, row = ingestion
+    worker(registry)
+    assert store.claim("worker", 32)["id"] == row["id"]
+
+    requested = store.request_cancellation(row["id"])
+
+    assert requested["state"] == "cancel_requested"
+    assert requested["worker"] == "worker"
+    store.finish(row["id"], "worker", state="interrupted")
+    assert store.get(row["id"])["state"] == "cancelled"
+
+
+def test_bidsify_parser_exposes_request_cancellation() -> None:
+    from nro.bin.bidsify import build_parser
+
+    args = build_parser().parse_args(["--cancel", "request123"])
+    assert args.cancel == "request123"
+    assert args.request is None
+
+
 def prepared_session(registry, store, row, *, replace=False):
     root = Path(row["config"]["staging"]) / row["id"] / "bids/sub-01/ses-01/anat"
     root.mkdir(parents=True)

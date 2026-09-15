@@ -28,6 +28,7 @@ def test_create_has_only_generic_starters(tmp_path):
         event_tsvs=0,
         markup=1,
         bidsify=1,
+        scanplan_parsers=1,
     )
     for kind in CONFIGURATION_CLASSES:
         assert not (root / "configs" / kind / f"main_{kind}.yml").exists()
@@ -36,6 +37,8 @@ def test_create_has_only_generic_starters(tmp_path):
     assert not (root / ".git").exists()
     assert (root / ".gitignore").is_file()
     assert yaml.safe_load((root / "bidsify/main.yml").read_text())["servers"] == {}
+    assert (root / "scanplans/parser.py").is_file()
+    assert not (root / "scanplans/__pycache__").exists()
     assert select_models(root=root / "models") == {}
 
 
@@ -71,7 +74,7 @@ def test_ensure_reuses_without_changing_bytes(tmp_path):
         ("workflows/bad_workflow.yml", "clean: absent\n", "absent"),
         ("models/task/bad.yml", "confounds: [motion]\n", "Unsupported"),
         ("events/task/unindexed.tsv", "onset\tduration\n0\t1\n", "Unindexed"),
-        ("bidsify/bad.yml", "{}\n", "requires exactly"),
+        ("bidsify/bad.yml", "{}\n", "requires:"),
     ],
 )
 def test_validation_checks_all_variants(tmp_path, relative, text, match):

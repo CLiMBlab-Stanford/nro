@@ -286,23 +286,11 @@ def build_module(
             )
         )
     for plan in session_plans:
-        if plan.registration_reference is not None:
-            assert plan.registration_matrix is not None
-            runner.add_step(
-                _register_t2_to_t1(
-                    env=env,
-                    t2_src=plan.staged_preprocessed,
-                    t1_ref=plan.registration_reference,
-                    out_t2=plan.final_source,
-                    out_mat=plan.registration_matrix,
-                    force=opts.force,
-                )
-            )
         runner.add_step(
             _brain_extract_anat_copy(
                 opts.synthstrip_image,
                 env=env,
-                source=plan.final_source,
+                source=plan.staged_preprocessed,
                 dst=plan.output,
                 mask=plan.mask,
                 force=opts.force,
@@ -313,7 +301,7 @@ def build_module(
                 step_name="Write Session Anatomical Metadata",
                 path=plan.metadata_output,
                 payload=plan.metadata,
-                inputs=(plan.final_source, plan.output, plan.mask),
+                inputs=(plan.staged_preprocessed, plan.output, plan.mask),
                 force=opts.force,
             )
         )
@@ -363,23 +351,47 @@ def build_module(
             force=opts.force,
         )
         runner.add_step(t1_step)
-    subj_t2 = subj_t2_final
+    # Select each modality independently. If both references exist, retain the
+    # selected T2w privately until it has been resampled once onto the final
+    # participant T1w grid.
+    subj_t2_selected = subj_t2_final
+    if subj_t1_final is not None and subj_t2_final is not None:
+        subj_t2_selected = (
+            opts.work_dir / "subject_reference" / f"{inputs.sub_id}_desc-selected_T2w.nii.gz"
+        )
     t2_meta: dict[str, object] = {
         "modality": "T2w",
         "sources": [],
         "strategy": opts.selection_strategy,
     }
-    if subj_t2 is not None:
+    if subj_t2_selected is not None:
         t2_step, t2_meta = _create_copy_or_average_step(
             env=env,
             images=copied_t2,
             modality="T2w",
             strategy=opts.selection_strategy,
-            out_img=subj_t2,
+            out_img=subj_t2_selected,
             work_dir=opts.work_dir,
             force=opts.force,
         )
         runner.add_step(t2_step)
+    subj_t2 = subj_t2_final
+    t2w_to_t1w_xfms: dict[str, str] = {}
+    t2w_to_t1w: Optional[Path] = None
+    if subj_t1 is not None and subj_t2 is not None:
+        assert subj_t2_selected is not None
+        t2w_to_t1w = opts.out_dir / f"{inputs.sub_id}_from-T2w_to-T1w_mode-image_xfm.mat"
+        runner.add_step(
+            _register_t2_to_t1(
+                env=env,
+                t2_src=subj_t2_selected,
+                t1_ref=subj_t1,
+                out_t2=subj_t2,
+                out_mat=t2w_to_t1w,
+                force=opts.force,
+            )
+        )
+        t2w_to_t1w_xfms["t2w_to_t1w"] = str(t2w_to_t1w)
     if subj_t1 is not None:
         runner.add_step(
             create_json_step(
@@ -403,9 +415,10 @@ def build_module(
                     "Sources": t2_meta["sources"],
                     "SelectionStrategy": opts.selection_strategy,
                     "BiasCorrection": "N4BiasFieldCorrection",
-                    "SpatialReference": "T1w" if copied_t1 else None,
+                    "SpatialReference": "T1w" if subj_t1 is not None else None,
+                    "TransformToT1w": str(t2w_to_t1w) if t2w_to_t1w is not None else None,
                 },
-                inputs=(subj_t2,),
+                inputs=tuple(path for path in (subj_t2, t2w_to_t1w) if path is not None),
                 force=opts.force,
             )
         )
@@ -1056,7 +1069,13 @@ def build_module(
             "subcortical_masks": subcortical_masks,
             "surfaces": exported_surfaces,
             "mni_qc_images": mni_qc_images,
-            "xfms": {**fsnative_xfms, **fsaverage_xfms, **t1_fsaverage_xfms, **mni_xfms},
+            "xfms": {
+                **t2w_to_t1w_xfms,
+                **fsnative_xfms,
+                **fsaverage_xfms,
+                **t1_fsaverage_xfms,
+                **mni_xfms,
+            },
         },
         "freesurfer_subjects_dir": str(opts.freesurfer_subjects_dir),
         "mni_template": str(opts.mni_template),

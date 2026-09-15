@@ -15,6 +15,7 @@ exclude_patterns = ["_build", "requirements.txt"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
 myst_heading_anchors = 3
 autoapi_dirs = [str(Path(__file__).resolve().parents[1] / "nro")]
+autoapi_ignore = ["*/configuration/starters/*"]
 autoapi_type = "python"
 autoapi_options = ["members", "undoc-members", "show-inheritance", "show-module-summary"]
 autoapi_python_class_content = "both"

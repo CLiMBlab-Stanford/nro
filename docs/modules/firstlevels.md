@@ -7,11 +7,10 @@ volume or surface space. It never combines participants or fits
 population-level models.
 
 The module depends on `func`; it does not use `clean`. Its nuisance model
-excludes global signal. Where preprocessing applies ICA-AROMA, firstlevels uses
-the corresponding `desc-preprocNoAROMA` outputs. Otherwise it uses `desc-preproc`.
-This choice comes from the preprocessing workflow, not from whichever files
-happen to exist. AROMA's fitted temporal operator is not propagated by this GLM,
-so AROMA-denoised inputs are not supported.
+excludes global signal. It uses the canonical `desc-preproc` output from the
+selected functional workflow, whether or not that workflow applies ICA-AROMA.
+Compare denoising choices through separate workflows rather than parallel files
+inside one functional artifact.
 
 ## Requesting fits
 
@@ -93,6 +92,10 @@ have NaN t/DOF values and must be excluded from inference.
 
 See [estimation and inference](../methods/firstlevels.md) for equations,
 assumptions, weighting, and the limitations of conditional AR inference.
+
+`nro render -m firstlevels` creates a separate static image for each named
+contrast in each selected statistic file. See the
+[viewing guide](../commands/viewing.md#nro-render).
 
 ## Artifacts
 

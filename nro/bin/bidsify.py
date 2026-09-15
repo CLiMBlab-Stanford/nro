@@ -12,6 +12,13 @@ from nro.bidsify.flywheel import FlywheelSource
 from nro.bidsify.identity import destination_label
 from nro.bidsify.publication import approval_snapshot
 from nro.bidsify.review import SkipSession, ask, choose_indices, wizard
+from nro.bidsify.scanplans import (
+    choose_scanplan,
+    manual_selection,
+    parse_selection,
+    parser_identity,
+    scanplan_files,
+)
 from nro.bidsify.store import IngestionStore, ReviewBusyError
 from nro.configuration.site import bids_root as configured_bids_root
 from nro.configuration.site import settings
@@ -32,7 +39,9 @@ def build_parser(*, prog="nro bidsify"):
     parser.add_argument("-F", "--flywheel-project", help="Source GROUP/PROJECT for new sessions")
     parser.add_argument("-p", "--participant", nargs="+", default=[])
     parser.add_argument("--session", nargs="+", default=[], help="Remote session IDs to include")
-    parser.add_argument("--request", help="Resume one request without listing Flywheel sessions")
+    request = parser.add_mutually_exclusive_group()
+    request.add_argument("--request", help="Resume one request without listing Flywheel sessions")
+    request.add_argument("--cancel", metavar="REQUEST_ID", help="Cancel one saved request")
     parser.add_argument("--config", type=Path, help="Complete ingestion profile YAML")
     parser.add_argument(
         "--rebidsify",
@@ -87,7 +96,7 @@ def select_source(
 def advance(store: IngestionStore, record: dict) -> dict:
     """Lease only the session being opened; skip occupied sessions without locking the selection."""
     record = store.admit_pending(record["id"])
-    if record["state"] in {"running", "published", "cancelled"} or (
+    if record["state"] in {"running", "published", "cancelled", "cancel_requested"} or (
         record["state"] == "queued" and record["executor_uid"] == os.getuid()
     ):
         print(f"{record['id']}: {record['state']}")
@@ -106,7 +115,7 @@ def advance(store: IngestionStore, record: dict) -> dict:
 def _advance(store: IngestionStore, record: dict, *, review_token: str) -> dict:
     print(f"\n{record['id']} {destination_label(record)}: {record['state']}")
     print("Type skip to leave this session for later, or q to exit.")
-    if record["state"] in {"running", "published"}:
+    if record["state"] in {"running", "published", "cancel_requested"}:
         return record
     if record["state"] == "queued":
         if (
@@ -169,6 +178,87 @@ def _advance(store: IngestionStore, record: dict, *, review_token: str) -> dict:
     return record
 
 
+def _select_scanplan(store: IngestionStore, record: dict) -> dict:
+    """Select or refresh one source plan without holding an interactive review lease."""
+    config = record["config"]
+    scanplans = config.get("scanplans", {})
+    if scanplans.get("location") is None or record["state"] in {
+        "published",
+        "cancelled",
+    }:
+        return record
+    files = scanplan_files(config)
+    selected = record.get("scanplan")
+    candidate = None
+    if selected:
+        candidate = next((item for item in files if item.id == selected["source"]["id"]), None)
+        if candidate is None:
+            raise ValueError(
+                f"{record['id']}: its selected scan plan is no longer available; "
+                "restore the source before continuing"
+            )
+        if (selected.get("parser") or {}).get("path") == "machine-readable-tsv":
+            alignment = selected.get("alignment")
+            if alignment is None or alignment.get("complete"):
+                return record
+            parsed = manual_selection(
+                Path(ask("Revised machine-readable scan-plan TSV path, or skip")),
+                candidate=candidate,
+            )
+            return store.set_scanplan(
+                record["id"],
+                parsed,
+                expected_revision=record["revision"],
+                expected_scanplan=selected,
+            )
+        parser_value = scanplans.get("parser")
+        current_parser = parser_identity(Path(parser_value) if parser_value else None)
+        if candidate.revision == selected["source"]["revision"] and current_parser == selected.get(
+            "parser"
+        ):
+            return record
+        print(f"{record['id']}: reparsing the changed scan plan or parser")
+    else:
+        used = {
+            row["scanplan"]["source"]["id"]
+            for row in store.rows()
+            if row["id"] != record["id"]
+            and row["config"].get("scanplans", {}).get("location") == scanplans["location"]
+            and row.get("scanplan")
+        }
+        available = [item for item in files if item.id not in used]
+        if not available:
+            print(f"{record['id']}: no unassigned scan-plan files are available")
+            return record
+        print(f"\nScan plans available for {destination_label(record)}:")
+        for number, item in enumerate(available, 1):
+            print(f"{number}: {item.name}")
+        answer = ask("Scan-plan number, or skip")
+        candidate = choose_scanplan(available, answer)
+    try:
+        parsed = parse_selection(config, candidate)
+    except NotImplementedError as error:
+        print(str(error))
+        print(
+            "The site parser is not implemented. Write the selected plan in nro's "
+            "machine-readable TSV format before continuing."
+        )
+        parsed = manual_selection(
+            Path(ask("Machine-readable scan-plan TSV path, or skip")),
+            candidate=candidate,
+        )
+    except (OSError, TypeError, ValueError) as error:
+        print(f"Scan-plan parser failed: {error}")
+        print("Edit the source scan plan and rerun nro bidsify.")
+        return record
+    return store.set_scanplan(
+        record["id"],
+        parsed,
+        expected_revision=record["revision"],
+        expected_scanplan=selected,
+    )
+
+
 def main(argv=None, *, prog="nro bidsify"):
     """Select new or unfinished sessions, collect decisions, and supply central workers."""
     parser = build_parser(prog=prog)
@@ -204,7 +294,7 @@ def main(argv=None, *, prog="nro bidsify"):
         else:
             registry = Registry.for_project("", bids_root=bids_root)
         config = load_config(args.config)
-        if not args.request and not config["servers"]:
+        if not (args.request or args.cancel) and not config["servers"]:
             raise ValueError(
                 "Configure Flywheel servers in the definitions store: bidsify/main.yml"
             )
@@ -212,6 +302,15 @@ def main(argv=None, *, prog="nro bidsify"):
             registry.initialize()
             registry.recover_orphaned_attempts()
         store = IngestionStore(registry, branch_paths=branch_paths, execution=pin)
+        if args.cancel:
+            record = store.request_cancellation(args.cancel)
+            if record["state"] == "cancel_requested":
+                print(f"Cancellation requested for {record['id']}; waiting for its worker to stop.")
+            elif record["state"] == "cancelled":
+                print(f"Cancelled bidsification request {record['id']}.")
+            else:
+                print(f"Bidsification request {record['id']} is already {record['state']}.")
+            return
         records = []
         if args.request:
             records = [store.get(args.request)]
@@ -341,7 +440,10 @@ def main(argv=None, *, prog="nro bidsify"):
                         )
                     )
         for record in records:
-            advance(store, record)
+            current = store.get(record["id"])
+            if current["stage"] == "convert":
+                _select_scanplan(store, current)
+            advance(store, store.get(record["id"]))
         queued = [store.get(r["id"]) for r in records if store.get(r["id"])["state"] == "queued"]
         if queued and not args.no_submit:
             memory = max(r["config"]["memory_gb"] for r in queued)
@@ -382,6 +484,13 @@ def main(argv=None, *, prog="nro bidsify"):
                 )
                 jobs = _submit_workers(registry, None, script, memory)
             print("Submitted workers: " + (", ".join(jobs) or "existing pool has capacity"))
+        for record in records:
+            current = store.get(record["id"])
+            if current["stage"] in {"inspect", "prepare"}:
+                try:
+                    _select_scanplan(store, current)
+                except SkipSession:
+                    pass
         for record in records:
             print(f"Resume: nro bidsify --request {record['id']}")
     except (EOFError, KeyboardInterrupt, SkipSession):

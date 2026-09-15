@@ -86,6 +86,7 @@ def final_resampling_metadata() -> dict[str, object]:
 def functional_output_contract() -> dict[str, object]:
     """Return the freshness-relevant functional metadata schemas."""
     return {
+        "preprocessed_bold_variants": ["desc-preproc"],
         "publication_manifest_fields": dict(FUNCTIONAL_MANIFEST_FIELDS),
         "image_sidecar_fields": dict(FUNCTIONAL_IMAGE_SIDECAR_FIELDS),
         "marss": {

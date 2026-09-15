@@ -46,6 +46,7 @@ __pycache__/
 # Local data, working directories, and scheduler output
 /BIDS/
 /WORK/
+/ScanPlan_*
 /slurm-*.out
 /slurm-*.err
 /*.log

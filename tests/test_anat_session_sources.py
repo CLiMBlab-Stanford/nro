@@ -95,11 +95,10 @@ def test_session_source_brain_extraction_consumes_preprocessed_image(
     assert plan.staged_preprocessed == (
         work_dir / "session_level" / "sub-1_ses-1_T1w_desc-preproc_T1w.nii.gz"
     )
-    assert plan.final_source == plan.staged_preprocessed
     assert plan.output == session_dir / raw.name
 
 
-def test_session_plans_keep_repeated_anatomicals_distinct(
+def test_session_plans_keep_modalities_independent_and_repeated_acquisitions_distinct(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     raw_dir = tmp_path / "raw"
@@ -143,15 +142,10 @@ def test_session_plans_keep_repeated_anatomicals_distinct(
     )
 
     assert len({plan.staged_preprocessed for plan in plans}) == 4
-    assert len({plan.registration_matrix for plan in plans if plan.registration_matrix}) == 2
-    for run, t1w, t2w in (
-        ("1", t1w_run_1, t2w_run_1),
-        ("2", t1w_run_2, t2w_run_2),
-    ):
-        t2w_plan = next(plan for plan in plans if plan.source is t2w)
-        t1w_plan = next(plan for plan in plans if plan.source is t1w)
-        assert t2w_plan.registration_reference == t1w_plan.staged_preprocessed
-        assert f"run-{run}" in t2w_plan.registration_matrix.name
+    for plan in plans:
+        assert plan.output.name == plan.source.image.name
+        assert "SpatialReference" not in plan.metadata
+        assert "TransformToT1w" not in plan.metadata
 
 
 def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> None:

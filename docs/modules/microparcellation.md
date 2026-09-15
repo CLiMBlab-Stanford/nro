@@ -69,6 +69,9 @@ that directory. The fixed scientific outputs are:
 
 Use `nro scene -m microparcellation` to create a Workbench view. The linked
 form reuses the source geometry and scientific outputs without copying them.
+Use `nro render -m microparcellation --seeds FILE` to create static parcel
+connectivity maps from T1w coordinates; see the
+[viewing guide](../commands/viewing.md#nro-render).
 
 ## Configuration
 
