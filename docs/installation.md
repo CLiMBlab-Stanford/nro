@@ -10,7 +10,8 @@ editable Python 3.12 environment in `.nro-env`. Python distributions downloaded
 by uv stay in `.nro-python`, so a shared environment does not depend on the
 maintainer's home directory. Existing Conda environments are not modified.
 Pass `--dev` to include test dependencies.
-Pass `--with-bidsify` for Flywheel ingestion dependencies. The
+Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
+dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
 The installer includes the pinned official MARSS package. Pass `--without-marss`

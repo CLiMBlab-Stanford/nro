@@ -100,6 +100,9 @@ One map can therefore resolve from several labels such as `network005`,
 does not copy the upstream microparcel connectivity matrix. See the
 [path contract](../autoapi/nro/modules/networks/paths/index.rst).
 
+`nro render -m networks` writes one static image for each named map; see the
+[viewing guide](../commands/viewing.md#nro-render).
+
 ## Shipped configuration
 
 nro fixes output placement from the project, module ID, participant, space, and

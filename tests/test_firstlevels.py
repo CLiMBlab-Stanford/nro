@@ -350,7 +350,10 @@ def _synthetic_project(tmp_path, domain):
                 path,
             )
             sidecar = path.with_name(path.name.removesuffix(".nii.gz") + ".json")
-            sidecar.write_text('{"RepetitionTime": 1}')
+            sidecar.write_text(
+                '{"RepetitionTime": 1, "Denoising": {"applied": true, '
+                '"method": "ICA-AROMA", "mode": "nonaggr"}}'
+            )
         else:
             for hemi in ("L", "R"):
                 path = functional / f"{stem}_space-fsnative_hemi-{hemi}_desc-preproc_bold.func.gii"
@@ -363,7 +366,10 @@ def _synthetic_project(tmp_path, domain):
                     ),
                     path,
                 )
-                path.with_suffix(".json").write_text('{"RepetitionTime": 1}')
+                path.with_suffix(".json").write_text(
+                    '{"RepetitionTime": 1, "Denoising": {"applied": true, '
+                    '"method": "ICA-AROMA", "mode": "nonaggr"}}'
+                )
     return root
 
 
@@ -517,19 +523,12 @@ def test_run_groupby_and_inherited_events(tmp_path):
     assert resolve_bids_table(runs[0].path, suffix="events") == shared
 
 
-def test_functional_inputs_select_non_aroma_from_workflow(tmp_path):
+def test_functional_inputs_use_canonical_preprocessed_output(tmp_path):
     from nro.modules.firstlevels.module import functional_paths
 
     root = _synthetic_project(tmp_path, "volume")
     run = discover_raw_runs(root / "sub-01")[0]
-    assert (
-        "desc-preprocNoAROMA"
-        in functional_paths(root, "main", run, "T1w", aroma_enabled=True)[0].name
-    )
-    assert (
-        "desc-preproc_bold"
-        in functional_paths(root, "main", run, "T1w", aroma_enabled=False)[0].name
-    )
+    assert "desc-preproc_bold" in functional_paths(root, "main", run, "T1w")[0].name
 
 
 def test_absent_named_dummy_contrast_is_recorded():
@@ -586,7 +585,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     }
     target = targets[0]
     runtime = yaml.safe_load(target.runtime_config.read_text())
-    assert runtime["func_ica_aroma"] is True
+    assert "func_ica_aroma" not in runtime
     ids = registry.register_instances(specs)
     row = next(row for row in registry.instance_rows() if row["id"] == ids[target.key])
     output = target.expected_outputs[0]

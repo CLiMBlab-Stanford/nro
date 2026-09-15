@@ -44,7 +44,7 @@ class FlywheelSource:
         except ImportError:
             raise BidsificationError(
                 "Could not import the Flywheel SDK. Install bidsification's optional "
-                "Python dependencies (Flywheel, dcm2bids, and pydicom).\n"
+                "Python dependencies (Flywheel, dcm2bids, pydicom, and Google Drive).\n"
                 "From the nro repository, run: ./install --with-bidsify\n"
                 "For a shared installation, ask its maintainer to run instead: "
                 "./install --maintain --with-bidsify\n"

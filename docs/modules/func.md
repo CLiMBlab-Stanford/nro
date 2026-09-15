@@ -90,8 +90,10 @@ Run outputs are under
 run's BIDS entities and add space, hemisphere, and processing descriptions.
 Products include preprocessed BOLD images, their JSON sidecars, brain masks,
 registration transforms/QC images, and `desc-confounds_timeseries.tsv` with
-column metadata. AROMA-enabled runs also retain corresponding no-AROMA products
-and classification records. Fieldmap-derived products exist only when used.
+column metadata. Each workflow publishes one canonical `desc-preproc` series;
+its sidecar records whether ICA-AROMA was applied. Use a separate workflow when
+both denoising choices are needed. ICA-AROMA classification records are retained
+when the method runs. Fieldmap-derived products exist only when used.
 MARSS-enabled runs also contain native artifact loadings, artifact
 timecourses, a mean-absolute artifact map, slice-correlation tables and heatmap,
 and decision metadata. Pass-through runs use zero-valued artifact placeholders

@@ -97,8 +97,6 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         "--smoothing",
         str(args.smoothing),
     ]
-    if workflow_snapshot["configurations"]["func"]["resolved"]["clean_ica_aroma"]:
-        module_argv.append("--functional-ica-aroma")
     if ses_id:
         module_argv.extend(("--ses-id", ses_id))
     return_code = run_clean(

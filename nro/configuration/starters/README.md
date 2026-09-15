@@ -12,6 +12,7 @@ databases, logs, and generated derivatives outside this repository.
   grouped first by BIDS project and then by participant.
 * `events/TASK/`: standard event tables and an `index.yml` listing their IDs.
 * `bidsify/PROFILE.yml`: Flywheel servers, protocol rules, and ingestion settings.
+* `scanplans/parser.py`: optional site parser for arbitrary scan-plan files.
 
 Run `nro definitions validate PATH` before adopting edits. Select this directory
 with `nro paths set definitions=PATH`; shared installations require `--maintain`.

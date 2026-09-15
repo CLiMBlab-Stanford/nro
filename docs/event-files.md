@@ -34,7 +34,8 @@ a scientifically different task.
 Choose a displayed `TASK/VARIANT` ID or supply a TSV path. A sole candidate is
 offered as a default, still requiring confirmation. Several candidates leave
 the choice open. The BIDS `run` entity is not assumed to identify the stimulus
-run or set. Digital scanplan parsing remains a separate future integration.
+run or set. A [site scan-plan parser](commands/scanplans.md) can supply the task
+ID, but event-file selection remains a downstream bidsification step.
 
 The selected TSV is validated and copied into the session's immutable review
 snapshots under its review lease. The request records the catalog ID and

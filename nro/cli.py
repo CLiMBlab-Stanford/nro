@@ -33,6 +33,7 @@ COMMAND_HELP = {
     "status": "Report derivative status.",
     "stop": "Cancel derivative demand or stop workers.",
     "scene": "Create combined Workbench scenes from completed derivatives.",
+    "render": "Render selected Workbench maps as image files.",
 }
 
 CENTRAL_ONLY_COMMANDS = frozenset({"cutover", "release"})

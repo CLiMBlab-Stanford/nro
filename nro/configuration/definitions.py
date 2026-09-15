@@ -14,7 +14,7 @@ from nro.configuration.site import definitions_root
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 
 STARTERS = Path(__file__).parent / "starters"
-CATEGORIES = ("configs", "workflows", "models", "events", "markup", "bidsify")
+CATEGORIES = ("configs", "workflows", "models", "events", "markup", "bidsify", "scanplans")
 
 
 def validate_store(root: Path | None = None) -> dict[str, int]:
@@ -39,6 +39,7 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         event_tsvs=0,
         markup=0,
         bidsify=0,
+        scanplan_parsers=0,
     )
 
     def check(path, operation):
@@ -51,10 +52,9 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
     files = {}
     for category in CATEGORIES:
         directory = root / category
-        # Markup was added after external stores were introduced. Packaged
-        # ``main`` markup is empty, so an older store without this optional
-        # directory has the same compiled behavior as a newly created store.
-        if not directory.is_dir() and category != "markup":
+        # Markup and scan-plan parsing are optional site capabilities. Missing
+        # directories preserve the default behavior for either capability.
+        if not directory.is_dir() and category not in {"markup", "scanplans"}:
             errors.append(f"Missing directory: {directory}")
         paths = []
         if directory.is_symlink():
@@ -156,6 +156,14 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         check(path, lambda: validate_config_id(path.stem, kind="ingestion profile"))
         check(path, lambda: load_config(path, root=root))
         counts["bidsify"] += 1
+    from nro.bidsify.scanplans import load_parser
+
+    for path in files["scanplans"]:
+        if path.parent != root / "scanplans" or path.name != "parser.py":
+            errors.append(f"Expected scanplans/parser.py: {path}")
+            continue
+        check(path, lambda path=path: load_parser(path))
+        counts["scanplan_parsers"] += 1
     if errors:
         raise ValueError("Definitions store is invalid:\n" + "\n".join(errors))
     return counts

@@ -50,7 +50,7 @@ def firstlevels_output_contract() -> dict:
         "map_index_metadata": INDEXED_CIFTI_SCHEMA,
         "covariance": "original-run-grouped-gls",
         "degrees_of_freedom": "run-conditional-satterthwaite",
-        "input_denoising": "without-aroma",
+        "input_denoising": "upstream-func-output",
         "missing_conditions": "omit-maps-record-reason",
         "required_manifest_fields": [
             "complete",
@@ -58,6 +58,7 @@ def firstlevels_output_contract() -> dict:
             "node",
             "configuration",
             "definition_fingerprint",
+            "input_denoising",
             "public_outputs",
             "omissions",
             "records",

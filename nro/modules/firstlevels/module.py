@@ -43,19 +43,16 @@ def functional_paths(
     func_id: str,
     run: BidsRun,
     space: str,
-    *,
-    aroma_enabled: bool = False,
 ) -> tuple[Path, ...]:
-    """Select non-AROMA func outputs from the upstream workflow's denoising choice."""
+    """Select the canonical functional outputs from the upstream workflow."""
     relative = run.path.parent.relative_to(project_root)
     directory = module_artifact_root(project_root, "func", func_id) / relative
-    description = "preprocNoAROMA" if aroma_enabled else "preproc"
     if is_surface_space(space):
         return tuple(
-            directory / f"{run.stem}_space-{space}_hemi-{h}_desc-{description}_bold.func.gii"
+            directory / f"{run.stem}_space-{space}_hemi-{h}_desc-preproc_bold.func.gii"
             for h in ("L", "R")
         )
-    return (directory / f"{run.stem}_space-{space}_desc-{description}_bold.nii.gz",)
+    return (directory / f"{run.stem}_space-{space}_desc-preproc_bold.nii.gz",)
 
 
 def _write_manifest(
@@ -135,7 +132,7 @@ def _publish_records(
             "AggregationWeighting": base["aggregation_weighting"],
             "ResponseScaling": "none",
             "InvalidLocations": "NaN t/DOF where variance is zero",
-            "InputDenoising": "without ICA-AROMA",
+            "InputDenoising": base["input_denoising"],
             "InferenceLimitations": "Conditional on estimated AR groups and, if selected, precision weights; approximate t reference",
         }
         outputs.extend(write_statmaps(destination, evaluated, geometry, metadata))
@@ -161,12 +158,7 @@ def create_fit_step(
         confounds = pd.read_csv(confounds_path, sep="\t")
         events = pd.read_csv(events_path, sep="\t")
         metadata = json.loads(sidecar_json_path(original_images[0]).read_text())
-        if "_desc-preproc_bold" in original_images[0].name and metadata.get("Denoising", {}).get(
-            "applied"
-        ):
-            raise ValueError(
-                "Firstlevels requires non-AROMA input; check the upstream workflow selection"
-            )
+        fit_base = {**base, "input_denoising": metadata["Denoising"]}
         tr = float(metadata["RepetitionTime"])
         events["onset"] -= float(metadata.get("StartTime", 0))
         compiled_path = prefix.with_name(prefix.name + "_statsmodel.json")
@@ -180,7 +172,7 @@ def create_fit_step(
             LOG.warning("Omitting %s: %s", run.stem, error)
             _write_manifest(
                 manifest,
-                base,
+                fit_base,
                 outputs=[compiled_path],
                 records=[],
                 sources={},
@@ -208,7 +200,7 @@ def create_fit_step(
         if not records:
             _write_manifest(
                 manifest,
-                {**base, "design_metadata": design.metadata},
+                {**fit_base, "design_metadata": design.metadata},
                 outputs=design_outputs,
                 records=[],
                 omissions=omissions,
@@ -246,14 +238,14 @@ def create_fit_step(
         fit_record, outputs = save_fit(prefix, fit)
         outputs.extend(design_outputs)
         sources = {key: fit_record}
-        outputs.extend(_publish_records(records, sources, prefix, geometry, base, config))
+        outputs.extend(_publish_records(records, sources, prefix, geometry, fit_base, config))
         spatial = {key: value for key, value in geometry.items() if key != "reference"}
         if geometry["domain"] == "volume":
             spatial["affine"] = geometry["reference"].affine.tolist()
             spatial["reference_path"] = str(original_images[0])
         _write_manifest(
             manifest,
-            {**base, "design_metadata": design.metadata, "geometry": spatial},
+            {**fit_base, "design_metadata": design.metadata, "geometry": spatial},
             outputs=outputs,
             records=records,
             omissions=omissions,
@@ -281,6 +273,10 @@ def create_meta_step(
 
     def action() -> None:
         parents = [json.loads(path.read_text()) for path in inputs]
+        input_denoising = [parent["input_denoising"] for parent in parents]
+        if any(value != input_denoising[0] for value in input_denoising[1:]):
+            raise ValueError("Run-level functional denoising metadata differ within one target")
+        meta_base = {**base, "input_denoising": input_denoising[0]}
         records, omissions = meta_records(
             node,
             [r for p in parents for r in p["records"]],
@@ -302,11 +298,13 @@ def create_meta_step(
         if geometry and geometry["domain"] == "volume":
             geometry = {**geometry, "reference": nib.load(geometry["reference_path"])}
         outputs = (
-            _publish_records(records, sources, prefix, geometry, base, config) if records else []
+            _publish_records(records, sources, prefix, geometry, meta_base, config)
+            if records
+            else []
         )
         _write_manifest(
             manifest,
-            {**base, "geometry": spatial[0] if spatial else None},
+            {**meta_base, "geometry": spatial[0] if spatial else None},
             outputs=outputs,
             records=records,
             omissions=omissions,
@@ -441,7 +439,6 @@ def build_module(
             func_id,
             run,
             space,
-            aroma_enabled=config.get("func_ica_aroma", False),
         )
         if execution_context is not None:
             original = tuple(execution_context.input_path(path) for path in original)
@@ -530,6 +527,9 @@ def build_module(
 
     def finalize() -> None:
         documents = [json.loads(path.read_text()) for path in inputs]
+        input_denoising = [document["input_denoising"] for document in documents]
+        if any(value != input_denoising[0] for value in input_denoising[1:]):
+            raise ValueError("Firstlevels node denoising metadata differ within one module")
         outputs = list(inputs) + [
             Path(p) for document in documents for p in document["public_outputs"]
         ]
@@ -542,7 +542,7 @@ def build_module(
         outputs.extend((source_path, config_path, compiled_path))
         _write_manifest(
             completion,
-            {**base, "node": "module"},
+            {**base, "node": "module", "input_denoising": input_denoising[0]},
             outputs=outputs,
             records=[r for d in documents for r in d["records"]],
             omissions=[o for d in documents for o in d["omissions"]],

@@ -8,6 +8,10 @@ memory_gb: 32
 cpus: 2
 hours: 12
 concurrency: 50
+scanplans:
+  location: null
+  parser: scanplans/parser.py
+  credential_env: null
 # These rules refine supported BidsGuess types using dcm2niix sidecar metadata.
 protocols:
   - {pattern: '(?i)(t1.*mprage|bravo|t1w)', datatype: anat, suffix: T1w}

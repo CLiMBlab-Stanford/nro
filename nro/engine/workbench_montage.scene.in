@@ -4942,7 +4942,7 @@
                                         <ObjectMap Type="class" Name="m_cerebralConfiguration">
                                             <Value Key="0">
                                                 <Object Type="class" Class="SurfaceMontageConfigurationAbstract" Name="m_cerebralConfiguration[0]" Version="1">
-                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">LANDSCAPE_LAYOUT_ORIENTATION</Object>
+                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">ROW_LAYOUT_ORIENTATION</Object>
                                                     <Object Type="boolean" Name="m_compactLayoutFlag">false</Object>
                                                     <Object Type="class" Class="OverlaySet" Name="m_overlaySet" Version="1">
                                                         <Object Type="integer" Name="m_numberOfDisplayedOverlays">3</Object>
@@ -5346,7 +5346,7 @@
                                             </Value>
                                             <Value Key="1">
                                                 <Object Type="class" Class="SurfaceMontageConfigurationAbstract" Name="m_cerebralConfiguration[1]" Version="1">
-                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">LANDSCAPE_LAYOUT_ORIENTATION</Object>
+                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">ROW_LAYOUT_ORIENTATION</Object>
                                                     <Object Type="boolean" Name="m_compactLayoutFlag">false</Object>
                                                     <Object Type="class" Class="OverlaySet" Name="m_overlaySet" Version="1">
                                                         <Object Type="integer" Name="m_numberOfDisplayedOverlays">3</Object>
@@ -5750,7 +5750,7 @@
                                             </Value>
                                             <Value Key="2">
                                                 <Object Type="class" Class="SurfaceMontageConfigurationAbstract" Name="m_cerebralConfiguration[2]" Version="1">
-                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">LANDSCAPE_LAYOUT_ORIENTATION</Object>
+                                                    <Object Type="enumeratedType" Name="m_layoutOrientation">ROW_LAYOUT_ORIENTATION</Object>
                                                     <Object Type="boolean" Name="m_compactLayoutFlag">false</Object>
                                                     <Object Type="class" Class="OverlaySet" Name="m_overlaySet" Version="1">
                                                         <Object Type="integer" Name="m_numberOfDisplayedOverlays">3</Object>

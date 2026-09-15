@@ -115,6 +115,11 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     images = []
     for session in ("ses-1", "ses-2"):
         for modality in modalities:
+            if modalities == ("T1w", "T2w") and (
+                (session == "ses-1" and modality == "T2w")
+                or (session == "ses-2" and modality == "T1w")
+            ):
+                continue
             source = (
                 context.paths.source_project("demo")
                 / "sub-1"
@@ -190,6 +195,18 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     assert (owner / "code/freesurfer").is_dir()
     manifest = next(s for s in graph.steps if s.completion_boundary)
     assert manifest.outputs == (owner / "sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",)
+    registrations = [step for step in graph.steps if step.name == "Register T2w to T1w"]
+    if modalities == ("T1w", "T2w"):
+        assert len(registrations) == 1
+        registration = registrations[0]
+        assert registration.inputs[0].is_relative_to(context.paths.development / "dev" / "WORK")
+        assert registration.inputs[1] == owner / "sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+        assert registration.outputs == (
+            owner / "sub-1/anat/sub-1_desc-preproc_T2w.nii.gz",
+            owner / "sub-1/anat/sub-1_from-T2w_to-T1w_mode-image_xfm.mat",
+        )
+    else:
+        assert not registrations
     for session in ("ses-1", "ses-2"):
         assert any(
             p.is_relative_to(owner / "sub-1" / session / "anat")

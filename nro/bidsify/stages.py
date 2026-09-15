@@ -47,6 +47,8 @@ def convert(record: dict, registry) -> dict:
     acquisitions = {a["id"]: a for a in record["acquisitions"]}
     sbref_owners = {}
     for item in acquisitions.values():
+        if item.get("scanplan_include") is False:
+            continue
         if item.get("sbref"):
             if item["sbref"] in sbref_owners:
                 raise BidsificationError(
@@ -56,7 +58,8 @@ def convert(record: dict, registry) -> dict:
     destinations = {}
     for item in acquisitions.values():
         if (
-            item["datatype"] == "ignore"
+            item.get("scanplan_include") is False
+            or item["datatype"] == "ignore"
             or item["suffix"] == "sbref"
             and item["id"] not in sbref_owners
         ):
@@ -118,7 +121,11 @@ def convert(record: dict, registry) -> dict:
         destinations[item["id"]] = (expected, sidecar)
     pairs = {}
     for item in acquisitions.values():
-        if item["suffix"] == "bold" and item.get("fieldmaps"):
+        if (
+            item.get("scanplan_include") is not False
+            and item["suffix"] == "bold"
+            and item.get("fieldmaps")
+        ):
             group = tuple(sorted(item["fieldmaps"]))
             pairs.setdefault(group, []).append(item["id"])
     used = set()

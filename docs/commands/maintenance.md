@@ -22,7 +22,7 @@ the caller's launcher unless `--maintain` is given. See the
 | `--non-interactive` | Use supplied settings without prompts. |
 | `--offline` | Forbid new resource downloads; require cached/installed dependencies. |
 | `--without-oslom` | Omit OSLOM and its Python dependencies for this invocation. |
-| `--with-bidsify` | Include Flywheel, dcm2bids, and DICOM dependencies. |
+| `--with-bidsify` | Include Flywheel, dcm2bids, DICOM, and Google Drive dependencies. |
 | `--without-marss` | Omit the official MARSS package and its Python dependencies. |
 | `--dev` | Include locked test dependencies. |
 | `--accept-qunex-license` | Acknowledge terms for unattended image acquisition. |

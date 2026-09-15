@@ -46,12 +46,17 @@ def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
         "event_rules",
         "session_rules",
     }
-    if not expected <= set(value) or set(value) - expected - {"project_sources"}:
+    optional = {"project_sources", "scanplans"}
+    if not expected <= set(value) or set(value) - expected - optional:
         raise ValueError(
-            f"Bidsification configuration requires exactly: {sorted(expected)}; optional: project_sources"
+            f"Bidsification configuration requires: {sorted(expected)}; optional: {sorted(optional)}"
         )
     value = deepcopy(value)
     value.setdefault("project_sources", {})
+    value.setdefault(
+        "scanplans",
+        {"location": None, "parser": None, "credential_env": None},
+    )
     value["event_store"] = str(root / "events")
     value["staging"] = str(WORK_PATH / "bidsify") if value["staging"] is None else value["staging"]
     if not Path(value["staging"]).is_absolute():
@@ -59,6 +64,39 @@ def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
     for key in ("memory_gb", "cpus", "hours", "concurrency"):
         if type(value[key]) is not int or value[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
+    scanplans = value["scanplans"]
+    if not isinstance(scanplans, dict) or set(scanplans) != {
+        "location",
+        "parser",
+        "credential_env",
+    }:
+        raise ValueError("scanplans requires location, parser, and credential_env")
+    location = scanplans["location"]
+    if location is not None and (not isinstance(location, str) or not location.strip()):
+        raise ValueError("scanplans.location must be a directory path, Google Drive URL, or null")
+    if isinstance(location, str) and "://" not in location:
+        path = Path(location).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        scanplans["location"] = str(path.resolve())
+    elif isinstance(location, str) and not re.match(
+        r"^https://drive\.google\.com/drive/(?:u/\d+/)?folders/[A-Za-z0-9_-]+",
+        location,
+    ):
+        raise ValueError("scanplans supports local directories and Google Drive folder URLs")
+    parser = scanplans["parser"]
+    if parser is not None:
+        if not isinstance(parser, str) or not parser.strip():
+            raise ValueError("scanplans.parser must be a Python file path or null")
+        path = Path(parser).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        scanplans["parser"] = str(path.resolve())
+    credential_env = scanplans["credential_env"]
+    if credential_env is not None and (
+        not isinstance(credential_env, str) or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", credential_env)
+    ):
+        raise ValueError("scanplans.credential_env must name an environment variable or be null")
     for key in ("dcm2niix", "synthstrip", "validator"):
         if key != "validator" and value[key] is None:
             from nro.configuration.site import settings

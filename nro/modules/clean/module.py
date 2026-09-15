@@ -63,7 +63,6 @@ from .cleaning import (
     _main_sidecar_path,
     _resolve_surface_for_metric,
     _select_outlier_columns,
-    _smoothed_desc_label,
     _space_name,
     _volume_gm_mask_path,
     _write_volume_gm_mask,
@@ -90,7 +89,6 @@ def build_module(
     ap.add_argument("--run-stem", required=True)
     ap.add_argument("--space", required=True)
     ap.add_argument("--smoothing", required=True, type=int, metavar="MM")
-    ap.add_argument("--functional-ica-aroma", action="store_true")
     ap.add_argument("--min-trs", type=int, default=int(cfg.min_trs))
     ap.add_argument(
         "--gm-mask-threshold",
@@ -224,7 +222,6 @@ def build_module(
         func_dir=func_dir,
         run_stem=args.run_stem,
         output_space=args.space,
-        clean_ica_aroma=bool(args.functional_ica_aroma),
     )
     recorded_clean_inputs = (functional_contract.get("public_outputs") or {}).get(
         "clean_inputs"
@@ -676,7 +673,7 @@ def build_module(
                     / replace_bids_entity_token(
                         volume,
                         input_desc,
-                        _smoothed_desc_label(input_desc),
+                        "desc-smoothedPreClean",
                     ).name
                 )
                 runner.add_step(
@@ -784,7 +781,7 @@ def build_module(
                         / replace_bids_entity_token(
                             surface,
                             input_desc,
-                            _smoothed_desc_label(input_desc),
+                            "desc-smoothedPreClean",
                         ).name
                     )
                     runner.add_step(

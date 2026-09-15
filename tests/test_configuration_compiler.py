@@ -272,7 +272,6 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
     values.update(
         anat_directory="main",
         func_directory="main",
-        func_ica_aroma=True,
     )
     runtime.write_text(yaml.safe_dump(values))
     assert load_runtime_configuration(runtime, "firstlevels")[1] == values

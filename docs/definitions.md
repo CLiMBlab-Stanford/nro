@@ -16,14 +16,17 @@ DEFINITIONS/
 ├── markup/ID_markup.yml
 ├── events/TASK/index.yml
 ├── events/TASK/*.tsv
-└── bidsify/PROFILE.yml
+├── bidsify/PROFILE.yml
+└── scanplans/parser.py
 ```
 
 Configurations and workflows control processing; [task models](task-models.md)
 define predictors and contrasts. Source markup selects manual anatomical inputs
 and excludes known-bad BIDS paths. [Event tables](event-files.md) supply stimulus
 timing during bidsification. [Ingestion profiles](commands/bidsify.md) describe
-Flywheel servers, acquisition rules, and conversion resources. Credentials,
+Flywheel servers, acquisition rules, and conversion resources. A
+[site scan-plan parser](commands/scanplans.md) may connect those profiles to a
+local or Google Drive source. Credentials,
 registry databases, imaging data, and generated outputs belong elsewhere.
 
 ## Source markup
@@ -45,8 +48,10 @@ nptl:
 ```
 
 Paths are relative to the participant directory. `T1w` and `T2w` accept one
-path or a list. A marked modality replaces automatic selection for that
-modality. If the field is absent, nro discovers that modality normally.
+path or a list. A marked modality supplies the candidates for that modality;
+otherwise, nro uses all discovered, non-excluded candidates. The anatomical
+module applies its configured selection strategy independently to the T1w and
+T2w candidate sets. Their selected sources may come from different sessions.
 `exclude` must be a list; each entry hides that path and everything below it
 from nro source discovery and metadata inheritance. A selected anatomical path
 cannot also be excluded.
@@ -114,8 +119,8 @@ nro definitions validate /data/lab/nro-definitions --json
 Omitting the path checks the selected store. Validation reads all definitions,
 including unused variants, and reports malformed filenames, missing packaged
 defaults, invalid configuration keys, broken workflow references, invalid task
-models, invalid source markup, bad event tables, unindexed TSVs, and invalid
-ingestion profiles. It rejects
+models, invalid source markup, bad event tables, unindexed TSVs, invalid
+ingestion profiles, and an invalid scan-plan parser interface. It rejects
 symlinks in definition directories and cross-task event references. Empty model
 and event catalogs and empty Flywheel server mappings are valid starting points.
 

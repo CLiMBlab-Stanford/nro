@@ -756,12 +756,8 @@ def build_module(
 
     preproc_t1_name = _with_suffix(run_prefix, "_desc-preproc_bold.nii.gz")
     preproc_t1 = func_dir / preproc_t1_name
-    preproc_t1_noaroma = func_dir / _with_suffix(run_prefix, "_desc-preprocNoAROMA_bold.nii.gz")
     preproc_mni = func_dir / _with_suffix(
         f"{run_base}_space-MNI152NLin2009cAsym", "_desc-preproc_bold.nii.gz"
-    )
-    preproc_mni_noaroma = func_dir / _with_suffix(
-        f"{run_base}_space-MNI152NLin2009cAsym", "_desc-preprocNoAROMA_bold.nii.gz"
     )
     preproc_fsnative = {
         "L": func_dir
@@ -769,27 +765,11 @@ def build_module(
         "R": func_dir
         / _with_suffix(f"{run_base}_space-fsnative_hemi-R", "_desc-preproc_bold.func.gii"),
     }
-    preproc_fsnative_noaroma = {
-        "L": func_dir
-        / _with_suffix(f"{run_base}_space-fsnative_hemi-L", "_desc-preprocNoAROMA_bold.func.gii"),
-        "R": func_dir
-        / _with_suffix(f"{run_base}_space-fsnative_hemi-R", "_desc-preprocNoAROMA_bold.func.gii"),
-    }
     preproc_fsaverage = {
         "L": func_dir
         / _with_suffix(f"{run_base}_space-{fsaverage_space}_hemi-L", "_desc-preproc_bold.func.gii"),
         "R": func_dir
         / _with_suffix(f"{run_base}_space-{fsaverage_space}_hemi-R", "_desc-preproc_bold.func.gii"),
-    }
-    preproc_fsaverage_noaroma = {
-        "L": func_dir
-        / _with_suffix(
-            f"{run_base}_space-{fsaverage_space}_hemi-L", "_desc-preprocNoAROMA_bold.func.gii"
-        ),
-        "R": func_dir
-        / _with_suffix(
-            f"{run_base}_space-{fsaverage_space}_hemi-R", "_desc-preprocNoAROMA_bold.func.gii"
-        ),
     }
     epi_t1 = uncompressed_nifti_path(
         reg_dir / _with_suffix(run_prefix, "_desc-preproc_bold.nii.gz")
@@ -2246,7 +2226,6 @@ def build_module(
             raw_4d, mean_3d, mask_3d = epi_t1, epi_mean_t1, anat_brain_mask_in_t1
             ref_img, warp_img = t1_ref, warp_sbref2t1_refined
             aroma_out_4d, aroma_out_mean, aroma_work = aroma_clean, aroma_clean_mean, aroma_t1_dir
-            registered_derivative_dst = preproc_t1_noaroma if opts.clean_ica_aroma else None
             final_dst = preproc_t1
             resampling_work = opts.work_dir / "resampling_t1w"
         else:
@@ -2257,7 +2236,6 @@ def build_module(
                 aroma_clean_mean_mni,
                 aroma_mni_dir,
             )
-            registered_derivative_dst = preproc_mni_noaroma if opts.clean_ica_aroma else None
             final_dst = preproc_mni
             resampling_work = opts.work_dir / "resampling_mni"
 
@@ -2319,15 +2297,6 @@ def build_module(
                 force=opts.force,
             )
         )
-
-        if registered_derivative_dst is not None:
-            runner.add_step(
-                create_copy_nifti_step(
-                    src=raw_4d,
-                    dst=registered_derivative_dst,
-                    force=opts.force,
-                )
-            )
 
         final_4d = raw_4d
         final_mean = mean_3d
@@ -2659,9 +2628,6 @@ def build_module(
 
     final_preproc_source = final_sources_4d.get("T1w", confounds_source_4d)
     final_t1_surface_source_4d = final_sources_4d.get("T1w", final_preproc_source)
-    noaroma_t1_surface_source_4d = (
-        preproc_t1_noaroma if opts.clean_ica_aroma else final_t1_surface_source_4d
-    )
     fsnative_metric_outputs = (
         preproc_fsnative
         if want_fsnative
@@ -2674,18 +2640,6 @@ def build_module(
     )
     if need_surface_outputs:
         for hemi in ("L", "R"):
-            if opts.clean_ica_aroma:
-                runner.add_step(
-                    _create_wb_volume_to_surface_mapping_step(
-                        volume=noaroma_t1_surface_source_4d,
-                        midthickness=fsnative_surfaces[f"{hemi}.midthickness"],
-                        white=fsnative_surfaces[f"{hemi}.white"],
-                        pial=fsnative_surfaces[f"{hemi}.pial"],
-                        out_metric=preproc_fsnative_noaroma[hemi],
-                        env=env,
-                        force=opts.force,
-                    )
-                )
             runner.add_step(
                 _create_wb_volume_to_surface_mapping_step(
                     volume=final_t1_surface_source_4d,
@@ -2698,17 +2652,6 @@ def build_module(
                 )
             )
             if want_fsaverage:
-                if opts.clean_ica_aroma:
-                    runner.add_step(
-                        _create_wb_metric_resample_step(
-                            in_metric=preproc_fsnative_noaroma[hemi],
-                            current_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.current"],
-                            new_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.new"],
-                            out_metric=preproc_fsaverage_noaroma[hemi],
-                            env=env,
-                            force=opts.force,
-                        )
-                    )
                 runner.add_step(
                     _create_wb_metric_resample_step(
                         in_metric=fsnative_metric_outputs[hemi],
@@ -2737,51 +2680,11 @@ def build_module(
             },
         }
     }
-    if opts.clean_ica_aroma:
-        clean_inputs["desc-preprocNoAROMA"] = {
-            "volumes": [
-                str(preproc_t1_noaroma),
-                *([str(preproc_mni_noaroma)] if want_mni else []),
-            ],
-            "surfaces": {
-                **(
-                    {
-                        "fsnative": {
-                            hemi: str(path) for hemi, path in preproc_fsnative_noaroma.items()
-                        }
-                    }
-                    if want_fsnative
-                    else {}
-                ),
-                **(
-                    {
-                        fsaverage_space: {
-                            hemi: str(path) for hemi, path in preproc_fsaverage_noaroma.items()
-                        }
-                    }
-                    if want_fsaverage
-                    else {}
-                ),
-            },
-        }
-
     public_images = [
         preproc_t1,
-        *([preproc_t1_noaroma] if opts.clean_ica_aroma else []),
         *([preproc_mni] if want_mni else []),
-        *([preproc_mni_noaroma] if want_mni and opts.clean_ica_aroma else []),
         *(list(preproc_fsnative.values()) if want_fsnative else []),
-        *(
-            list(preproc_fsnative_noaroma.values())
-            if want_fsnative and opts.clean_ica_aroma
-            else []
-        ),
         *(list(preproc_fsaverage.values()) if want_fsaverage else []),
-        *(
-            list(preproc_fsaverage_noaroma.values())
-            if want_fsaverage and opts.clean_ica_aroma
-            else []
-        ),
         boldref_t1_out,
         reg_prenonlinear_qc_out,
         reg_base_qc_out,

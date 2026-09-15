@@ -23,7 +23,7 @@ from nro.orchestration.branches import BranchPaths
 from .config import bids_label, identifier
 from .identity import identity_issues
 
-ACTIVE = {"queued", "running"}
+ACTIVE = {"queued", "running", "cancel_requested"}
 REVIEW_LEASE_SECONDS = 120.0
 
 
@@ -209,6 +209,7 @@ class IngestionStore:
                 worker=None,
                 issues=[],
                 acquisitions=[],
+                scanplan=None,
                 replace=replace,
                 approval=None,
                 created=time.time(),
@@ -216,6 +217,72 @@ class IngestionStore:
             if self.execution is not None:
                 record["execution"] = deepcopy(self.execution)
             self._validate_destination_locked(record)
+            self.write_locked(record)
+            return record
+
+    def set_scanplan(
+        self,
+        request_id: str,
+        scanplan: dict,
+        *,
+        expected_revision: int,
+        expected_scanplan: dict | None = None,
+    ) -> dict:
+        """Attach a parsed plan while preparation runs, rejecting duplicate assignments.
+
+        Worker stage updates may advance the record revision while the user is
+        choosing a plan. Merge across that change only when the plan field is
+        unchanged. A source plan may describe only one registered source
+        session.
+        """
+        with self._lock():
+            record = self.get(request_id)
+            if (
+                record["revision"] != expected_revision
+                and record.get("scanplan") != expected_scanplan
+            ):
+                raise ValueError(
+                    "Request changed concurrently; reopen it before selecting a scan plan"
+                )
+            if record["state"] in {"published", "cancelled", "cancel_requested"}:
+                raise ValueError("Cannot replace the scan plan for a finished request")
+            identity = scanplan.get("source", {}).get("id")
+            if not isinstance(identity, str):
+                raise ValueError("Parsed scan plan has no source identity")
+            location = record["config"].get("scanplans", {}).get("location")
+            for other in self.rows():
+                if other["id"] == request_id:
+                    continue
+                selected = other.get("scanplan") or {}
+                if (
+                    other["config"].get("scanplans", {}).get("location") == location
+                    and selected.get("source", {}).get("id") == identity
+                ):
+                    raise ValueError("This scan plan is already assigned to another session")
+            if record["state"] == "awaiting_approval":
+                record.update(state="needs_input", stage="convert")
+            record.update(
+                scanplan=deepcopy(scanplan), approval=None, revision=record["revision"] + 1
+            )
+            self.write_locked(record)
+            return record
+
+    def request_cancellation(self, request_id: str) -> dict:
+        """Cancel pending work or ask its worker to stop the active stage.
+
+        A running stage retains its worker until that worker acknowledges the
+        request. Other unfinished states become terminal immediately.
+        """
+        with self._lock():
+            record = self.get(request_id)
+            if record["executor_uid"] != os.getuid():
+                raise ValueError("Only the request owner can cancel this bidsification request")
+            if record["state"] in {"published", "cancelled", "cancel_requested"}:
+                return record
+            record["state"] = "cancel_requested" if record["state"] == "running" else "cancelled"
+            if record["state"] == "cancelled":
+                record["worker"] = None
+            record["revision"] += 1
             self.write_locked(record)
             return record
 
@@ -272,7 +339,7 @@ class IngestionStore:
                 raise ReviewBusyError(
                     f"Session is being reviewed by {lease['user']} on {lease['hostname']} (PID {lease['pid']}); skipped"
                 )
-            if record["state"] in {"running", "published", "cancelled"}:
+            if record["state"] in {"running", "published", "cancelled", "cancel_requested"}:
                 raise ReviewBusyError(f"Session is {record['state']}; review skipped")
             token = uuid.uuid4().hex
             self._write_review(
@@ -356,7 +423,12 @@ class IngestionStore:
             self._require_review(record["id"], review_token)
             if current["revision"] != expected_revision:
                 raise ValueError("Request changed concurrently; reopen it before editing")
-            if current["state"] in {"running", "published", "cancelled"}:
+            if current["state"] in {
+                "running",
+                "published",
+                "cancelled",
+                "cancel_requested",
+            }:
                 raise ValueError("Cannot edit an executing or finished ingestion request")
             record = deepcopy(record)
             for key in ("id", "server", "remote_session", "project", "config", "branch"):
@@ -416,7 +488,7 @@ class IngestionStore:
     def summary(self, memory_gb: int | None = None) -> tuple[int, int, int]:
         """Return active count, runnable count, and requested concurrency under the caller's lock."""
         rows = self.rows()
-        active = sum(r["state"] == "running" for r in rows)
+        active = sum(r["state"] in {"running", "cancel_requested"} for r in rows)
         if self.branch != "main":
             from nro.orchestration.branch_store import BranchStore
 
@@ -537,8 +609,11 @@ class IngestionStore:
         """Finish only the stage still owned by this worker."""
         with self.registry.connection(write=True) as db, self._lock():
             row = self.get(request_id)
-            if row["state"] != "running" or row["worker"] != worker:
+            if row["state"] not in {"running", "cancel_requested"} or row["worker"] != worker:
                 raise ValueError("Ingestion worker no longer owns this request")
+            if row["state"] == "cancel_requested":
+                state = "cancelled"
+                changes = None
             row.update(changes or {})
             row.update(state=state, worker=None, revision=row["revision"] + 1)
             self.write_locked(row)
@@ -551,8 +626,9 @@ class IngestionStore:
         """Release attempts owned by workers already established to be dead."""
         count = 0
         for row in self.rows():
-            if row["state"] == "running" and row["worker"] in dead_workers:
-                row.update(state="interrupted", worker=None, revision=row["revision"] + 1)
+            if row["state"] in {"running", "cancel_requested"} and row["worker"] in dead_workers:
+                state = "cancelled" if row["state"] == "cancel_requested" else "interrupted"
+                row.update(state=state, worker=None, revision=row["revision"] + 1)
                 self.write_locked(row)
                 count += 1
         return count

@@ -365,7 +365,6 @@ RUNTIME_FIELDS = {
     "firstlevels": {
         "func_directory": TEXT,
         "anat_directory": TEXT,
-        "func_ica_aroma": BOOL,
     },
     "microparcellation": {"anat_directory": TEXT, "clean_directory": TEXT},
     "dynconn": {"anat_directory": TEXT, "clean_directory": TEXT},

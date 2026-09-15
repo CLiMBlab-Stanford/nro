@@ -227,7 +227,8 @@ it can cancel an attempt whose registered contract has become obsolete. `run`
 and worker events also assess artifacts and grow the worker pool. `set`, `stop`,
 `purge`, and `publish` are explicit mutation commands with distinct
 responsibilities. `scene` discovers files directly and does not require a live
-controller.
+controller. `render` uses that same discovery path before running Workbench's
+headless image renderer.
 
 ## Publication
 

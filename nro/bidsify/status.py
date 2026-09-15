@@ -53,7 +53,11 @@ def render(records: list[dict], *, color: bool = False) -> str:
         f"{'PROJECT':14} {'PARTICIPANT':14} {'SESSION':20} {'STATE':20} NEXT ACTION",
     ]
     for r in records:
-        command = "—" if r["state"] in {"queued", "running"} else f"nro bidsify --request {r['id']}"
+        command = (
+            "—"
+            if r["state"] in {"queued", "running", "cancel_requested"}
+            else f"nro bidsify --request {r['id']}"
+        )
         state = f"{r['state'].replace('_', ' '):20}"
         if color:
             tone = (

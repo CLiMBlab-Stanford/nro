@@ -65,6 +65,10 @@ Build and open a combined scene with:
 nro scene -m dynconn -p PARTICIPANT -P PROJECT -s SPACE -S MM --open
 ```
 
+Use `nro render --seeds FILE` to make static seed-correlation images. Seed
+coordinates are defined in the subject's T1w world coordinate system; see the
+[viewing guide](../commands/viewing.md#nro-render).
+
 ## Configuration
 
 nro fixes output placement from the project, module ID, participant, space, and

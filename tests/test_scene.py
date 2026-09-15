@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 import yaml
@@ -180,6 +181,24 @@ def test_surface_base_scene_references_existing_geometry(tmp_path: Path) -> None
     text = base_scene(scene_id="test", surfaces=surfaces)
     assert str(tmp_path / "sub-01_hemi-L_midthickness.surf.gii") in text
     assert "{{" not in text
+
+
+def test_surface_base_scene_uses_one_row_for_cerebral_views(tmp_path: Path) -> None:
+    root = ElementTree.fromstring(base_scene(scene_id="test", surfaces=_surfaces(tmp_path)))
+    configurations = [
+        node
+        for node in root.iter("Object")
+        if node.get("Name", "").startswith("m_cerebralConfiguration[")
+    ]
+
+    assert len(configurations) == 3
+    for configuration in configurations:
+        orientations = [
+            node.text
+            for node in configuration.iter("Object")
+            if node.get("Name") == "m_layoutOrientation"
+        ]
+        assert orientations == ["ROW_LAYOUT_ORIENTATION"]
 
 
 def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> None:

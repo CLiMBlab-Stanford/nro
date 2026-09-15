@@ -826,8 +826,12 @@ class Worker:
                     runtime_config=root / f"{record['id']}.json",
                 )
 
+            cancellation_store = store or IngestionStore(self.registry, branch=branch)
+
             def cancelled():
                 if self.stop_requested or self.registry.worker_shutdown_requested(self.worker_id):
+                    return True
+                if cancellation_store.get(record["id"])["state"] == "cancel_requested":
                     return True
                 if branch != "main":
                     from nro.orchestration.branch_store import BranchStore

@@ -149,6 +149,16 @@ inputs into a portable scene directory. `--open` runs `wb_view` through an X11
 Slurm allocation on the site's viewing partition; it does not consume an nro
 worker slot.
 
+Render all named maps in a selection as static images:
+
+```bash
+nro render -p 01 -P example -m networks firstlevels
+```
+
+Seed-driven connectivity is skipped unless `--seeds` supplies subject-specific
+T1w coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
+file format and rendering controls.
+
 Common controls are:
 
 ```bash

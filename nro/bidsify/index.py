@@ -41,7 +41,7 @@ class IngestionIndex:
         return [
             row
             for row in self.rows()
-            if row["state"] == "running"
+            if row["state"] in {"running", "cancel_requested"}
             or row["state"] == "queued"
             and (
                 row["branch"] == "main"
@@ -63,7 +63,11 @@ class IngestionIndex:
     def claim(self, worker: str, memory_gb: int) -> dict | None:
         """Claim from one namespace after the controller applies capacity checks."""
         active = next(
-            (row for row in self.rows() if row["state"] == "running" and row["worker"] == worker),
+            (
+                row
+                for row in self.rows()
+                if row["state"] in {"running", "cancel_requested"} and row["worker"] == worker
+            ),
             None,
         )
         if active is not None:
@@ -101,7 +105,7 @@ class IngestionIndex:
         active = {
             row["id"]
             for row in self.rows()
-            if row["state"] == "running" and row["stage"] == "publish"
+            if row["state"] in {"running", "cancel_requested"} and row["stage"] == "publish"
         }
         rows = db.execute(
             "SELECT key,value FROM metadata WHERE key LIKE 'bids_publication:%'"

@@ -138,6 +138,7 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     graph = job._graph.freeze()
     assert any(image in step.inputs for step in graph.steps)
     assert any("space-fsaverage6" in path.name for step in graph.steps for path in step.outputs)
+    assert not any("NoAROMA" in path.name for step in graph.steps for path in step.outputs)
     if aroma:
         aroma_step = next(
             step

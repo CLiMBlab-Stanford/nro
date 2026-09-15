@@ -14,6 +14,7 @@ viewing
 models
 authoring
 bidsify
+scanplans
 branches
 releases
 promotion
@@ -27,8 +28,8 @@ validation scope, and version-control policy.
 
 ## Shared selectors
 
-`run`, `status`, `stop`, `log`, `purge`, `promote`, and `scene` use the common selector
-engine. Their remaining options are command-specific.
+`run`, `status`, `stop`, `log`, `purge`, `promote`, `scene`, and `render` use the
+common selector engine. Their remaining options are command-specific.
 
 | Option | Meaning |
 | --- | --- |
