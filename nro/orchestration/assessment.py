@@ -179,8 +179,14 @@ class AssessmentReport:
 def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> AssessmentSnapshot:
     work_items = [
         dict(row)
-        for row in db.execute("""SELECT i.*, e.branch AS execution_branch
-        FROM work_items i LEFT JOIN work_item_execution e ON e.work_item_id=i.id ORDER BY i.id""")
+        for row in db.execute(
+            """SELECT i.*, e.branch AS execution_branch,
+                      EXISTS(SELECT 1 FROM branch_work_items b
+                             WHERE b.work_item_id=i.id) AS branch_owned
+               FROM work_items i
+               LEFT JOIN work_item_execution e ON e.work_item_id=i.id
+               ORDER BY i.id"""
+        )
     ]
     edges = [
         dict(row)

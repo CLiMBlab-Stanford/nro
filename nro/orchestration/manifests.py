@@ -509,8 +509,13 @@ def evaluate_assessment(
     contract_updates: dict[int, tuple[str, str]] = {}
     changed_contracts: set[int] = set()
     command_updates: dict[int, str] = {}
+
+    def uses_registered_contract(row: dict) -> bool:
+        recovered = bool(row.get("branch_owned")) and row.get("execution_branch") is None
+        return compiled or recovered or row.get("execution_branch") not in (None, "main")
+
     for work_item_id, row in by_id.items():
-        if compiled or row.get("execution_branch") not in (None, "main"):
+        if uses_registered_contract(row):
             continue
         contract, current_fingerprint, changed = _current_contract(row)
         if changed:
@@ -550,7 +555,7 @@ def evaluate_assessment(
             if any(parent in remaining for parent in parents):
                 continue
             row = by_id[work_item_id]
-            registered_only = compiled or row.get("execution_branch") not in (None, "main")
+            registered_only = uses_registered_contract(row)
             project = str(row["project"])
             participant = str(row["participant"])
             subject_dir = registry.paths.bids_root / project / f"sub-{participant}"

@@ -638,6 +638,10 @@ def test_central_status_and_stop_are_branch_scoped(setup):
     assert [row["id"] for row in second["rows"]] == second["visible_ids"]
     assert first["rows"][0]["resume_workflow_ids"] == "main"
     assert second["rows"][0]["resume_workflow_ids"] == "main"
+    with registry.connection(write=True) as db:
+        db.execute("DELETE FROM request_artifacts WHERE request_id=?", (one[-1],))
+    repaired_view = status(registry, checkout=one[0], mode="cached")
+    assert repaired_view["rows"][0]["workflow_ids"] == "main"
     result = stop(registry, checkout=one[0], selection={"force": True})
     assert result["requests"] == 1
     with registry.connection() as db:

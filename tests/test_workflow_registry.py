@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from concurrent.futures import ProcessPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -329,6 +330,41 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     assert len(registry.workflow_history("experiment")) == 2
     snapshot = registry.paths.workflows / "experiment" / "2_workflow.yml"
     assert snapshot.is_file()
+
+
+def test_central_import_reconciles_rebuilt_branch_revision_and_configuration(
+    tmp_path: Path,
+) -> None:
+    scientific = Registry.for_project("science", bids_root=tmp_path / "science-bids")
+    registered = scientific.register_workflow(ConfigStore().resolve("main"))
+    original = export_workflow(scientific, registered)
+    rebuilt = deepcopy(original)
+    rebuilt["revision"]["definition_fingerprint"] = "rebuilt-definition"
+    rebuilt["revision"]["resolved_yaml"] = "rebuilt: true\n"
+    rebuilt["revision"]["revision"] = 1
+    rebuilt["lineages"][0]["config_fingerprint"] = "rebuilt-configuration"
+    rebuilt["lineages"][0]["resolved_yaml"] = "rebuilt: true\n"
+
+    central = Registry.for_project("demo", bids_root=tmp_path / "central-bids")
+    with central.connection(write=True) as db:
+        first_revision, first_mapping = import_workflow(db, original, "owner")
+        second_revision, second_mapping = import_workflow(db, rebuilt, "owner")
+        revisions = db.execute(
+            "SELECT revision,definition_fingerprint FROM workflow_revisions "
+            "WHERE workflow_id='owner:main' ORDER BY revision"
+        ).fetchall()
+        lineage = db.execute(
+            "SELECT config_fingerprint,resolved_yaml FROM module_lineages WHERE id=?",
+            (second_mapping[rebuilt["lineages"][0]["id"]],),
+        ).fetchone()
+
+    assert first_revision != second_revision
+    assert [tuple(row) for row in revisions] == [
+        (1, original["revision"]["definition_fingerprint"]),
+        (2, "rebuilt-definition"),
+    ]
+    assert first_mapping == second_mapping
+    assert tuple(lineage) == ("rebuilt-configuration", "rebuilt: true\n")
 
 
 def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
