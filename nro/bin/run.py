@@ -13,12 +13,13 @@ from nro.engine.cli import (
     CoreSelection,
     add_core_selection_arguments,
     core_selection,
-    matches_instance_selectors,
+    matches_module_lineage,
+    matches_work_item_selectors,
 )
 from nro.orchestration.catalog import MODULES, normalize_module, terminal_modules
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.manifests import assess_registry
-from nro.orchestration.planner import Planner, PlanningResult
+from nro.orchestration.planner import Planner, PlanningResult, RegisteredTarget
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import discover_bids_inventory
 from nro.orchestration.submission import _submit_workers, _write_worker_script
@@ -96,8 +97,12 @@ def _resumable_rows(
         row_workflows = set(filter(None, str(row.get("workflow_ids") or "").split(",")))
         if workflows and not workflows.intersection(row_workflows):
             continue
-        if not matches_instance_selectors(
-            json.loads(row["entities_json"]), selection.instance_entities
+        if not matches_module_lineage(
+            row["module"], row.get("directory_label", ""), selection.lineages
+        ):
+            continue
+        if not matches_work_item_selectors(
+            json.loads(row["entities_json"]), selection.work_item_entities
         ):
             continue
         selected.append(row)
@@ -105,15 +110,14 @@ def _resumable_rows(
 
 
 def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSelection:
-    """Derive the smallest planner selection that can reproduce exact instance keys."""
+    """Derive the smallest planner selection that can reproduce exact work item keys."""
     entities = [json.loads(row["entities_json"]) for row in rows]
     requested_workflows = set(selection.workflows)
     workflows = tuple(
         dict.fromkeys(
             workflow
             for row in rows
-            for workflow in str(row.get("workflow_ids") or "").split(",")
-            if workflow and (not requested_workflows or workflow in requested_workflows)
+            for workflow in _resume_workflows(row, requested=requested_workflows)
         )
     )
     if not workflows:
@@ -144,6 +148,37 @@ def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSe
         ),
         models=models,
         model_sets=None,
+    )
+
+
+def _resume_workflows(row: dict, *, requested: set[str] | None = None) -> tuple[str, ...]:
+    """Return the exact active or latest workflow association for one row."""
+    if requested:
+        available = set(filter(None, str(row.get("workflow_ids") or "").split(",")))
+        return tuple(sorted(requested & available))
+    value = (
+        row.get("resume_workflow_ids", "")
+        if "resume_workflow_ids" in row
+        else row.get("workflow_ids", "")
+    )
+    return tuple(filter(None, str(value).split(",")))
+
+
+def _resume_targets(
+    rows: list[dict], *, requested_workflows: set[str] | None = None
+) -> tuple[RegisteredTarget, ...]:
+    """Convert status rows into exact planner targets."""
+    return tuple(
+        RegisteredTarget(
+            project=str(row["project"]),
+            participant=str(row["participant"]),
+            module=str(row["module"]),
+            workflow_id=workflow,
+            work_item_key=str(row.get("logical_key") or row["work_item_key"]),
+            entities=json.loads(row["entities_json"]),
+        )
+        for row in rows
+        for workflow in _resume_workflows(row, requested=requested_workflows)
     )
 
 
@@ -242,6 +277,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             "--project": args.project,
             "--module": args.module,
             "--workflow": args.workflow,
+            "--lineage": args.lineage,
             "--run": args.run,
             "--space": args.space,
             "--smoothing": args.smoothing,
@@ -284,7 +320,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 print(json.dumps(result, indent=2, sort_keys=True))
             else:
                 print(
-                    f"Repaired {result['registry']}; restored {result['instances']} scientific record(s), without demand."
+                    f"Repaired {result['registry']}; restored {result['work_items']} scientific record(s), without demand."
                 )
             return
         if implementation_path(Path(values["registry"])).is_file():
@@ -313,7 +349,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             else:
                 print(
                     f"Repaired {result['registry']}; restored "
-                    f"{result['instances']} scientific record(s), without demand."
+                    f"{result['work_items']} scientific record(s), without demand."
                 )
             return
         registry = Registry.for_project("", bids_root=bids_root)
@@ -353,7 +389,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             "projects": list(inventory),
             "participants": sum(len(values) for values in inventory.values()),
             "artifacts": discovery.artifacts,
-            "instances": discovery.instances,
+            "work_items": discovery.work_items,
             "unavailable_artifacts": list(discovery.unavailable),
             "requests": [],
             "submitted_workers": [],
@@ -365,7 +401,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 f"Repaired {registry.paths.database}; discovered {len(inventory)} "
                 f"project(s), {result['participants']} participant(s), and "
                 f"{discovery.artifacts} existing artifact(s); registered "
-                f"{discovery.instances} instance(s) including dependencies."
+                f"{discovery.work_items} work item(s) including dependencies."
             )
             if discovery.unavailable:
                 print(
@@ -435,7 +471,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             max_memory_gb=args.max_memory,
         )
     resumed_rows: list[dict] = []
+    requested_resume_workflows: set[str] = set()
     if args.resume:
+        requested_resume_workflows = set(selection.workflows)
         if branch_execution:
             from nro.orchestration.scheduler_client import status as scheduler_status
 
@@ -446,7 +484,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 report["rows"], selection, visible_ids=set(report["visible_ids"])
             )
         else:
-            resumed_rows = _resumable_rows(registry.instance_status_snapshot(), selection)
+            resumed_rows = _resumable_rows(registry.work_item_status_snapshot(), selection)
         if not resumed_rows:
             raise SystemExit("No registered work matching the selectors is resumable")
         try:
@@ -464,27 +502,35 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     planner = Planner(registry, bids_root=bids_root)
     scientific_revisions = (
-        {row.key: row.revision for row in registry.instances()} if branch_execution else {}
+        {row.key: row.revision for row in registry.work_items()} if branch_execution else {}
     )
-    plan = planner.plan(
-        projects=projects,
-        requested_participants=selection.participants,
-        modules=modules,
-        workflows=workflows,
-        registered_workflows=registered_workflows,
-        selectors=selection.runs,
-        spaces=selection.spaces,
-        smoothing_levels=selection.smoothing,
-        memory_gb=args.memory,
-        max_memory_gb=args.max_memory,
-        models=selection.models,
-        model_sets=selection.model_sets,
-        target_instance_keys=(
-            frozenset(str(row.get("logical_key") or row["instance_key"]) for row in resumed_rows)
-            if args.resume
-            else None
-        ),
-    )
+    if args.resume:
+        plan = planner.plan_registered_targets(
+            _resume_targets(
+                resumed_rows,
+                requested_workflows=requested_resume_workflows,
+            ),
+            workflows=workflows,
+            registered_workflows=registered_workflows,
+            memory_gb=args.memory,
+            max_memory_gb=args.max_memory,
+        )
+    else:
+        plan = planner.plan(
+            projects=projects,
+            requested_participants=selection.participants,
+            modules=modules,
+            workflows=workflows,
+            registered_workflows=registered_workflows,
+            selectors=selection.runs,
+            spaces=selection.spaces,
+            smoothing_levels=selection.smoothing,
+            memory_gb=args.memory,
+            max_memory_gb=args.max_memory,
+            models=selection.models,
+            model_sets=selection.model_sets,
+            lineage_ids=selection.lineages,
+        )
     if selection.participants:
         absent = sorted(set(selection.participants) - plan.present_participants)
         if absent:
@@ -505,7 +551,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     participant_count = plan.participant_count
     planned_projects = plan.projects
-    all_instances = plan.instances
+    all_work_items = plan.work_items
     matched_participants = {
         project: list(participants) for project, participants in plan.matched_participants.items()
     }
@@ -555,7 +601,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             requests=request_ids,
             projects=list(planned_projects),
             participants=matched_participants,
-            instances=len(all_instances),
+            work_items=len(all_work_items),
             unavailable=_unavailable_records(plan),
             resumed=len(resumed_rows),
         )
@@ -585,13 +631,15 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             partition=args.partition,
         )
     )
-    registered_instances = registry.instance_ids(tuple(all_instances))
+    registered_work_items = registry.work_item_ids(tuple(all_work_items))
     # Reassess the complete active graph before allocating more workers.  A
     # request can make an old upstream derivative stale while a downstream
     # attempt from an earlier request is still executing.  Such an attempt
     # must be stopped before any new allocation proceeds.
     all_states = assess_registry(registry, projects=planned_projects)
-    states = {instance_id: all_states[instance_id] for instance_id in registered_instances.values()}
+    states = {
+        work_item_id: all_states[work_item_id] for work_item_id in registered_work_items.values()
+    }
     prematurely_running = registry.cancel_attempts_with_stale_upstreams()
     registry.reconcile_requests()
     fresh = sum(state == "fresh" for state, _reason in states.values())
@@ -635,7 +683,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         "spaces": list(selection.spaces),
         "smoothing": list(selection.smoothing),
         "concurrency": args.concurrency,
-        "instances": len(all_instances),
+        "work_items": len(all_work_items),
         "fresh": fresh,
         "cancel_requested": len(prematurely_running),
         "submitted_workers": submitted,
@@ -648,7 +696,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         action = "Resumed" if args.resume else "Created"
         print(
             f"{action} {len(request_ids)} request(s) for {participant_count} "
-            f"project/participant match(es): {len(all_instances)} instance(s), "
+            f"project/participant match(es): {len(all_work_items)} work item(s), "
             f"{fresh} already fresh."
         )
         if submitted:
@@ -660,7 +708,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         if prematurely_running:
             print(
                 f"Requested cancellation of {len(prematurely_running)} prematurely downstream "
-                "instance attempt(s); their workers will stop only those instance processes."
+                "work-item attempt(s); their workers will stop only those processes."
             )
         _report_unavailable(plan)
 

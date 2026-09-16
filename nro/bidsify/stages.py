@@ -3,7 +3,6 @@
 import json
 import logging
 import shutil
-from itertools import count
 from pathlib import Path
 
 from nro.engine.io import atomic_write_text
@@ -178,7 +177,6 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
             container=None,
             binds=(),
             logger=logging.getLogger("bidsify"),
-            next_step=count(1).__next__,
         )
         for item in record["acquisitions"]:
             if (

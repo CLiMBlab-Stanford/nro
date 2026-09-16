@@ -20,8 +20,25 @@ def main(argv=None, *, prog="nro definitions"):
     try:
         root = args.path.expanduser().absolute() if args.path is not None else definitions_root()
         if args.action == "create":
-            create_store(root)
-        counts = validate_store(root)
+            from nro.configuration.site import installation_record, settings
+
+            record = installation_record()
+            if record.get("mode") == "branch":
+                shared = Path(settings()[0]["definitions"])
+                create_store(root, include_site=False, inherited_site=shared)
+            else:
+                create_store(root)
+        from nro.configuration.site import installation_record, settings
+
+        record = installation_record()
+        shared = Path(settings()[0]["definitions"])
+        private = record.get("mode") == "branch" and root.resolve() != shared.resolve()
+        inherited_site = shared if private and not (root / "site/site.yml").is_file() else None
+        counts = validate_store(
+            root,
+            require_site=not private,
+            inherited_site=inherited_site,
+        )
         if args.json:
             print(json.dumps({"path": str(root), **counts}, indent=2))
         else:

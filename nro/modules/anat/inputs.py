@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
-from nro.engine.bids import acquisition_order_key, parse_bids_entities
+from nro.engine.bids import acquisition_order_key, parse_bids_entities, resolve_bids_metadata
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import read_json
 
@@ -33,6 +33,8 @@ class AnatImage:
     entities: dict[str, str]
     time_kind: str
     time_value: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata_sources: tuple[Path, ...] = ()
 
 
 def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatImage:
@@ -44,9 +46,19 @@ def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatIm
     meta: dict[str, Any] = {}
     json_path: Optional[Path] = None
     markup = active_source_markup()
-    if js.exists() and (markup is None or not markup.is_excluded(js)):
-        meta = read_json(js)
-        json_path = js
+    metadata_sources: tuple[Path, ...] = ()
+    try:
+        resolved = resolve_bids_metadata(img, markup=markup)
+        meta = dict(resolved.values)
+        metadata_sources = resolved.sources
+        json_path = (
+            js if js in resolved.sources else (resolved.sources[-1] if resolved.sources else None)
+        )
+    except FileNotFoundError:
+        if js.exists() and (markup is None or not markup.is_excluded(js)):
+            meta = read_json(js)
+            json_path = js
+            metadata_sources = (js,)
     ents = parse_bids_entities(img.name)
     suffix = ents.get("suffix")
     if suffix is None:
@@ -67,6 +79,8 @@ def load_anat_image(path: Path, *, default_session: str | None = None) -> AnatIm
         entities=ents,
         time_kind=time_kind,
         time_value=float(time_value),
+        metadata=meta,
+        metadata_sources=metadata_sources,
     )
 
 

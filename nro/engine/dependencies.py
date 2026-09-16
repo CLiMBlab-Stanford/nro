@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
+from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
 
@@ -27,7 +28,18 @@ IMAGES = {
     "qunex": "docker://qunex/qunex_suite@sha256:a06befbb64f93ab289bbef94d1d00bf957c7cdff920f35e107f90b186ff9f09d",
     "synthstrip": "docker://freesurfer/synthstrip@sha256:801924ea011be040346c0e68f9c25d175ab5b869afbd156560b01fb74059f1b1",
     "synbold": "docker://ytzero/synbold-disco@sha256:18814dd2f419dfe8375632cf9239a0fb31a1300a2bfe66d234e599450af66555",
+    "gradient_unwarp": GRADIENT_UNWARP_IMAGE,
 }
+
+
+def required_images() -> dict[str, str]:
+    """Return images needed by the site's configured scientific features."""
+    images = dict(IMAGES)
+    if not gradient_unwarping_configured():
+        images.pop("gradient_unwarp")
+    return images
+
+
 LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html and set license=/path/to/license.txt"
 QUNEX_TERMS = "https://qunex.yale.edu/access/"
 WORKBENCH_BASE = "https://www.humanconnectome.org/storage/app/media/workbench/"
@@ -306,7 +318,8 @@ def check_installation(
 
         check(name, import_check)
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
-    for key in IMAGES:
+    images = required_images()
+    for key in images:
         check(key, lambda key=key: file(key))
     check("FreeSurfer license", lambda: file("license"))
     check("Workbench", lambda: run_probe([executable(values["workbench"]), "-version"]))
@@ -361,7 +374,7 @@ def check_installation(
                     Path(values["templates"]) / relative, md5
                 ),
             )
-        for key in IMAGES:
+        for key in images:
             path = Path(values[key])
             receipt = path.with_name(path.name + ".receipt.json")
             if receipt.is_file():
@@ -408,7 +421,10 @@ def check_installation(
                 ],
             ),
         )
-        for key in ("synthstrip", "synbold"):
+        probe_images = ["synthstrip", "synbold"]
+        if "gradient_unwarp" in images:
+            probe_images.append("gradient_unwarp")
+        for key in probe_images:
             check(
                 f"{key} execution",
                 lambda key=key: run_container_probe(
@@ -431,7 +447,7 @@ def install_images(*, offline=False) -> None:
     Existing nonempty images are reused. Offline mode rejects missing images.
     """
     values, _ = settings()
-    for key, source in IMAGES.items():
+    for key, source in required_images().items():
         path = Path(values[key])
         if path.is_file() and path.stat().st_size:
             print(f"Reuse {key}: {path}")

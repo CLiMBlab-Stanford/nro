@@ -13,7 +13,7 @@ from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_planning import BranchPlan, resolve_branch_plan
 from nro.orchestration.branch_registry import BranchRegistry
 from nro.orchestration.branches import BranchPaths, BranchRecord, BranchTopology
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
 
@@ -243,7 +243,7 @@ class BranchStore:
         self,
         checkout: Path,
         paths: BranchPaths,
-        instances: Sequence[InstanceSpec],
+        work_items: Sequence[WorkItemSpec],
         terminals: Sequence[str],
         candidates: Sequence[ArtifactCandidate],
         *,
@@ -265,17 +265,17 @@ class BranchStore:
             registry = BranchRegistry(
                 self.control, snapshot.topology.records[name], lock_timeout=self.lock_timeout
             )
-            revisions = {item.key: item.revision for item in registry.instances()}
+            revisions = {item.key: item.revision for item in registry.work_items()}
         plan = resolve_branch_plan(
             snapshot.topology,
             paths,
-            instances,
+            work_items,
             terminals,
             candidates,
             validate=validate,
             inherit=inherit,
         )
-        by_key = {item.key: item for item in instances}
+        by_key = {item.key: item for item in work_items}
         required: set[str] = set()
         pending = list(plan.terminals)
         while pending:
@@ -290,7 +290,7 @@ class BranchStore:
                 or current.topology.require_checkout(checkout) != name
             ):
                 raise ValueError("Branch registration changed during planning; resolve again")
-            registry.record_graph(
+            registry.record_work_item_graph(
                 tuple(by_key[key] for key in sorted(required)),
                 expected_revisions={key: revisions.get(key) for key in required},
             )

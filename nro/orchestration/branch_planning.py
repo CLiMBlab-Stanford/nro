@@ -11,13 +11,13 @@ from nro.orchestration.artifact_resolution import (
     select_artifact,
 )
 from nro.orchestration.branches import BranchPaths, BranchTopology
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.execution_context import ExecutionContext, InputBinding
 
 
 @dataclass(frozen=True)
-class ResolvedInstance:
-    """One requested logical instance and its selected owner.
+class ResolvedWorkItem:
+    """One requested logical work item and its selected owner.
 
     A reused artifact carries its validated generation and receives no demand.
     Otherwise the consumer owns the computation. Its context includes direct
@@ -25,7 +25,7 @@ class ResolvedInstance:
     parents before launching it.
     """
 
-    spec: InstanceSpec
+    spec: WorkItemSpec
     contract: dict
     artifact: ArtifactCandidate | None
     context: ExecutionContext
@@ -41,20 +41,20 @@ class BranchPlan:
 
     branch: str
     terminals: tuple[str, ...]
-    instances: tuple[ResolvedInstance, ...]
-    specifications: tuple[InstanceSpec, ...] = ()
+    work_items: tuple[ResolvedWorkItem, ...]
+    specifications: tuple[WorkItemSpec, ...] = ()
     inherit: bool = True
 
     @property
-    def work(self) -> tuple[ResolvedInstance, ...]:
+    def work(self) -> tuple[ResolvedWorkItem, ...]:
         """Return only computations owned by the requesting branch."""
-        return tuple(item for item in self.instances if item.artifact is None)
+        return tuple(item for item in self.work_items if item.artifact is None)
 
 
 def resolve_branch_plan(
     topology: BranchTopology,
     paths: BranchPaths,
-    instances: Sequence[InstanceSpec],
+    work_items: Sequence[WorkItemSpec],
     terminals: Sequence[str],
     candidates: Sequence[ArtifactCandidate],
     *,
@@ -72,9 +72,9 @@ def resolve_branch_plan(
     record = topology.records.get(paths.branch)
     if record is None or record.retired:
         raise ValueError("Cannot plan work for an unregistered or retired branch")
-    by_key = {item.key: item for item in instances}
-    if len(by_key) != len(instances):
-        raise ValueError("Instance graph contains duplicate keys")
+    by_key = {item.key: item for item in work_items}
+    if len(by_key) != len(work_items):
+        raise ValueError("Work-item graph contains duplicate keys")
     terminals = tuple(dict.fromkeys(terminals))
     if not terminals or any(key not in by_key for key in terminals):
         raise ValueError("Expected registered graph endpoints")
@@ -127,7 +127,7 @@ def resolve_branch_plan(
         if selected[key] is None:
             pending.extend(spec.dependencies)
 
-    resolved: dict[str, ResolvedInstance] = {}
+    resolved: dict[str, ResolvedWorkItem] = {}
     pending_keys = set(required)
     while pending_keys:
         ready = sorted(
@@ -168,7 +168,7 @@ def resolve_branch_plan(
             if selected[key] is None:
                 for path in spec.input_paths:
                     context.input_path(path)
-            resolved[key] = ResolvedInstance(spec, contracts[key], selected[key], context)
+            resolved[key] = ResolvedWorkItem(spec, contracts[key], selected[key], context)
             pending_keys.remove(key)
     return BranchPlan(
         paths.branch,

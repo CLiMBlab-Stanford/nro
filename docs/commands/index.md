@@ -37,6 +37,7 @@ common selector engine. Their remaining options are command-specific.
 | `-P`, `--project PROJECT ...` | Projects beneath the configured BIDS root. |
 | `-m`, `--module MODULE ...` | One or more scientific modules. |
 | `-w`, `--workflow WORKFLOW ...` | Workflow IDs from the definitions store. |
+| `-i`, `--lineage ID ...` | Select module-lineage IDs shown by `nro status`; accepts `MODULE/ID` to disambiguate. |
 | `-r`, `--run KEY=VALUE[,VALUE...] ...` | Joint BIDS run-entity matching. |
 | `-s`, `--space SPACE ...` | Target spaces from clean onward. |
 | `-S`, `--smoothing MM ...` | Nonnegative integer FWHM in mm. |

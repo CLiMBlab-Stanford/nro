@@ -484,9 +484,9 @@ def _set_overlay(scene: Path, output: Path, target: RenderTarget) -> None:
         selected += 1
     if not selected:
         raise ValueError(f"Scene contains no display overlay: {scene}")
-    output.write_text(
+    atomic_write_text(
+        output,
         '<?xml version="1.0" encoding="UTF-8"?>\n' + ElementTree.tostring(root, encoding="unicode"),
-        encoding="utf-8",
     )
 
 

@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from nro.configuration.store import fingerprint
 
-INSTANCE_CONTRACT_VERSION = 3
+WORK_ITEM_CONTRACT_VERSION = 4
 
 
 def _normalized_path(path: str | Path) -> str:
@@ -17,22 +17,22 @@ def _normalized_path(path: str | Path) -> str:
 
 
 @dataclass(frozen=True)
-class InstanceIdentity:
-    """The fields that identify one schedulable module instance."""
+class WorkItemIdentity:
+    """Identify one schedulable application of a module lineage."""
 
     key: str
     module: str
     project: str
     participant: str
     entities: Mapping[str, str]
-    configuration_lineage_id: int
+    module_lineage_id: int
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize semantic identity with sorted entities, excluding the internal key."""
         return {
             "project": self.project,
             "module": self.module,
-            "configuration_lineage_id": self.configuration_lineage_id,
+            "module_lineage_id": self.module_lineage_id,
             "participant": self.participant,
             "entities": dict(sorted(self.entities.items())),
         }
@@ -40,7 +40,7 @@ class InstanceIdentity:
 
 @dataclass(frozen=True)
 class OutputContract:
-    """The public output boundary promised by an instance."""
+    """The products that form one work item's public artifact."""
 
     root: Path
     prefix: str | None
@@ -58,8 +58,8 @@ class OutputContract:
 
 
 @dataclass(frozen=True)
-class InstanceContract:
-    """The freshness-relevant promise made by one instance.
+class WorkItemContract:
+    """The freshness-relevant promise made by one work item.
 
     Identity supplies the module and applicable entities when the contract is
     serialized. Execution commands and resource requests deliberately do not
@@ -72,7 +72,7 @@ class InstanceContract:
     output: OutputContract
     processing: Mapping[str, Any] = field(default_factory=dict)
 
-    def as_dict(self, identity: InstanceIdentity) -> dict[str, Any]:
+    def as_dict(self, identity: WorkItemIdentity) -> dict[str, Any]:
         """Serialize freshness-relevant configuration, topology, inputs, and outputs."""
         result: dict[str, Any] = {
             "module": identity.module,
@@ -89,7 +89,7 @@ class InstanceContract:
 
 @dataclass(frozen=True)
 class ExecutionRecipe:
-    """Non-semantic instructions for executing an instance."""
+    """Non-semantic instructions for executing a work item."""
 
     command: tuple[str, ...]
     runtime_config: Path
@@ -117,11 +117,11 @@ class ResourceRequest:
 
 
 @dataclass(frozen=True)
-class InstanceSpec:
-    """Complete planner specification for one logical instance."""
+class WorkItemSpec:
+    """Complete planner specification for one logical work item."""
 
-    identity: InstanceIdentity
-    contract: InstanceContract
+    identity: WorkItemIdentity
+    contract: WorkItemContract
     execution: ExecutionRecipe
     resources: ResourceRequest
     scope: str
@@ -137,7 +137,7 @@ class InstanceSpec:
         participant: str,
         entities: Mapping[str, str],
         scope: str,
-        configuration_lineage_id: int,
+        module_lineage_id: int,
         config_fingerprint: str,
         directory_label: str,
         runtime_config: Path,
@@ -152,22 +152,22 @@ class InstanceSpec:
         max_memory_gb: int = 256,
         expected_outputs: Sequence[Path] = (),
         processing: Mapping[str, Any] | None = None,
-    ) -> "InstanceSpec":
+    ) -> "WorkItemSpec":
         """Construct the hierarchy from fields convenient for module planners."""
         if output_format is None:
             from nro.orchestration.catalog import module_descriptor
 
             output_format = module_descriptor(module).output_format
         return cls(
-            identity=InstanceIdentity(
+            identity=WorkItemIdentity(
                 key=key,
                 module=module,
                 project=project,
                 participant=participant,
                 entities=dict(entities),
-                configuration_lineage_id=configuration_lineage_id,
+                module_lineage_id=module_lineage_id,
             ),
-            contract=InstanceContract(
+            contract=WorkItemContract(
                 configuration_fingerprint=config_fingerprint,
                 dependencies=tuple(dependencies),
                 inputs=tuple(Path(path) for path in input_paths),
@@ -194,12 +194,12 @@ class InstanceSpec:
 
     @property
     def key(self) -> str:
-        """Stable instance key used by dependency references."""
+        """Stable work-item key used by dependency references."""
         return self.identity.key
 
     @property
     def module(self) -> str:
-        """Scientific module owning this instance."""
+        """Scientific module owning this work item."""
         return self.identity.module
 
     @property
@@ -209,7 +209,7 @@ class InstanceSpec:
 
     @property
     def participant(self) -> str:
-        """Participant identifier for this instance."""
+        """Participant identifier for this work item."""
         return self.identity.participant
 
     @property
@@ -218,9 +218,9 @@ class InstanceSpec:
         return self.identity.entities
 
     @property
-    def configuration_lineage_id(self) -> int:
-        """Registry identifier for the selected configuration lineage."""
-        return self.identity.configuration_lineage_id
+    def module_lineage_id(self) -> int:
+        """Registry identifier for the selected module lineage."""
+        return self.identity.module_lineage_id
 
     @property
     def config_fingerprint(self) -> str:
@@ -229,7 +229,7 @@ class InstanceSpec:
 
     @property
     def dependencies(self) -> tuple[str, ...]:
-        """Upstream instance keys required before execution."""
+        """Upstream work-item keys required before execution."""
         return self.contract.dependencies
 
     @property
@@ -239,7 +239,7 @@ class InstanceSpec:
 
     @property
     def output_root(self) -> Path:
-        """Root of this instance's public artifact boundary."""
+        """Root containing this work item's artifact products."""
         return self.contract.output.root
 
     @property
@@ -264,7 +264,7 @@ class InstanceSpec:
 
     @property
     def resource_class(self) -> str:
-        """Worker resource class eligible to execute this instance."""
+        """Worker resource class eligible to execute this work item."""
         return self.resources.resource_class
 
     @property
@@ -278,7 +278,7 @@ class InstanceSpec:
         return self.resources.max_memory_gb
 
     @property
-    def instance_contract(self) -> dict[str, Any]:
+    def work_item_contract(self) -> dict[str, Any]:
         """Return the normalized semantic contract used for freshness."""
         from nro.orchestration.catalog import canonical_contract
 
@@ -286,15 +286,15 @@ class InstanceSpec:
 
     @property
     def contract_fingerprint(self) -> str:
-        """Return the hash of the substantive instance contract."""
-        return fingerprint(self.instance_contract)
+        """Return the hash of the substantive work-item contract."""
+        return fingerprint(self.work_item_contract)
 
     @property
     def revision_fingerprint(self) -> str:
         """Return the revision hash used to track changes to the registered specification."""
         return fingerprint(
             {
-                "contract_version": INSTANCE_CONTRACT_VERSION,
+                "contract_version": WORK_ITEM_CONTRACT_VERSION,
                 "module": self.module,
                 "config": self.config_fingerprint,
                 "entities": self.entities,
@@ -307,21 +307,21 @@ class InstanceSpec:
         The scheduler may carry a contract from another scientific catalog.
         Supplying it avoids interpreting that catalog in the scheduler process.
         """
-        contract = self.instance_contract if compiled_contract is None else dict(compiled_contract)
+        contract = self.work_item_contract if compiled_contract is None else dict(compiled_contract)
         return {
-            "instance_key": self.key,
+            "work_item_key": self.key,
             "module": self.module,
             "project": self.project,
             "participant": self.participant,
             "entities_json": json.dumps(dict(self.entities), sort_keys=True),
             "scope": self.scope,
-            "configuration_lineage_id": self.configuration_lineage_id,
+            "module_lineage_id": self.module_lineage_id,
             "resource_class": self.resource_class,
             "memory_gb": self.memory_gb,
             "max_memory_gb": self.max_memory_gb,
             "revision_fingerprint": self.revision_fingerprint,
             # Registry storage uses "artifact" for the concrete filesystem
-            # evidence implementing this conceptual instance contract.
+            # evidence implementing this conceptual work-item contract.
             "artifact_contract_json": json.dumps(contract, sort_keys=True, separators=(",", ":")),
             "artifact_fingerprint": fingerprint(contract),
             "command_json": json.dumps(self.command),
@@ -332,7 +332,7 @@ class InstanceSpec:
             "expected_outputs_json": json.dumps(contract["output"]["expected"]),
         }
 
-    def evolve(self, **changes: Any) -> "InstanceSpec":
+    def evolve(self, **changes: Any) -> "WorkItemSpec":
         """Return a changed specification while preserving its hierarchy."""
         identity_fields = {
             "key",
@@ -340,7 +340,7 @@ class InstanceSpec:
             "project",
             "participant",
             "entities",
-            "configuration_lineage_id",
+            "module_lineage_id",
         }
         contract_fields = {
             "config_fingerprint": "configuration_fingerprint",
@@ -374,7 +374,7 @@ class InstanceSpec:
         )
         unknown = set(changes) - recognized
         if unknown:
-            raise TypeError(f"Unknown InstanceSpec field(s): {', '.join(sorted(unknown))}")
+            raise TypeError(f"Unknown WorkItemSpec field(s): {', '.join(sorted(unknown))}")
 
         identity = replace(
             self.identity,
@@ -427,9 +427,9 @@ class InstanceSpec:
 class ExecutionEnvelope:
     """Typed work claimed by a worker for one attempt."""
 
-    instance_id: int
+    work_item_id: int
     attempt_id: int
-    instance_key: str
+    work_item_key: str
     module: str
     project: str
     participant: str
@@ -438,7 +438,7 @@ class ExecutionEnvelope:
     manifest_path: Path
     revision_fingerprint: str
     config_fingerprint: str
-    instance_contract: Mapping[str, Any]
+    work_item_contract: Mapping[str, Any]
     contract_fingerprint: str
     execution: ExecutionRecipe
     input_paths: tuple[Path, ...]
@@ -450,9 +450,9 @@ class ExecutionEnvelope:
     def as_dict(self) -> dict[str, Any]:
         """Encode an assignment for the durable worker transport."""
         return {
-            "instance_id": self.instance_id,
+            "work_item_id": self.work_item_id,
             "attempt_id": self.attempt_id,
-            "instance_key": self.instance_key,
+            "work_item_key": self.work_item_key,
             "module": self.module,
             "project": self.project,
             "participant": self.participant,
@@ -461,7 +461,7 @@ class ExecutionEnvelope:
             "manifest_path": str(self.manifest_path),
             "revision_fingerprint": self.revision_fingerprint,
             "config_fingerprint": self.config_fingerprint,
-            "instance_contract": dict(self.instance_contract),
+            "work_item_contract": dict(self.work_item_contract),
             "contract_fingerprint": self.contract_fingerprint,
             "execution": self.execution.as_dict(),
             "input_paths": [str(path) for path in self.input_paths],
@@ -475,9 +475,9 @@ class ExecutionEnvelope:
     def from_dict(cls, value: Mapping[str, Any]) -> "ExecutionEnvelope":
         """Decode an assignment received through the durable worker transport."""
         return cls(
-            instance_id=int(value["instance_id"]),
+            work_item_id=int(value["work_item_id"]),
             attempt_id=int(value["attempt_id"]),
-            instance_key=str(value["instance_key"]),
+            work_item_key=str(value["work_item_key"]),
             module=str(value["module"]),
             project=str(value["project"]),
             participant=str(value["participant"]),
@@ -486,7 +486,7 @@ class ExecutionEnvelope:
             manifest_path=Path(value["manifest_path"]),
             revision_fingerprint=str(value["revision_fingerprint"]),
             config_fingerprint=str(value["config_fingerprint"]),
-            instance_contract=dict(value["instance_contract"]),
+            work_item_contract=dict(value["work_item_contract"]),
             contract_fingerprint=str(value["contract_fingerprint"]),
             execution=ExecutionRecipe.from_dict(value["execution"]),
             input_paths=tuple(Path(path) for path in value["input_paths"]),
@@ -500,9 +500,9 @@ class ExecutionEnvelope:
     def from_registry_row(cls, row: Mapping[str, Any]) -> "ExecutionEnvelope":
         """Decode the registry's storage representation at its boundary."""
         return cls(
-            instance_id=int(row["id"]),
+            work_item_id=int(row["id"]),
             attempt_id=int(row["attempt_id"]),
-            instance_key=str(row["instance_key"]),
+            work_item_key=str(row["work_item_key"]),
             module=str(row["module"]),
             project=str(row["project"]),
             participant=str(row["participant"]),
@@ -511,7 +511,7 @@ class ExecutionEnvelope:
             manifest_path=Path(row["manifest_path"]),
             revision_fingerprint=str(row["revision_fingerprint"]),
             config_fingerprint=str(row["config_fingerprint"]),
-            instance_contract=json.loads(row["artifact_contract_json"]),
+            work_item_contract=json.loads(row["artifact_contract_json"]),
             contract_fingerprint=str(row["artifact_fingerprint"]),
             execution=ExecutionRecipe(
                 command=tuple(str(value) for value in json.loads(row["command_json"])),

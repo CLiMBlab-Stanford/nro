@@ -49,7 +49,7 @@ def test_register_attach_and_inspect(command, tmp_path):
     assert invoke("show", "dev") == attached
     assert not Path(attached["scheduler"]).exists()
     assert set(row["branch"] for row in invoke("list")) == {"dev", "main"}
-    assert store.registry("dev").instances() == ()
+    assert store.registry("dev").work_items() == ()
 
 
 def test_new_branch_registration_and_retirement(command, tmp_path):
@@ -63,7 +63,7 @@ def test_new_branch_registration_and_retirement(command, tmp_path):
     with pytest.raises(SystemExit) as error:
         invoke("show", "--checkout", root)
     assert error.value.code == 1
-    assert store.registry("feature/example").instances() == ()
+    assert store.registry("feature/example").work_items() == ()
 
 
 def test_duplicate_name_requires_explicit_attach(command, tmp_path):
@@ -120,7 +120,11 @@ def test_select_and_restore_branch_definitions(command, tmp_path, monkeypatch):
     root = tmp_path / "source"
     identities[root] = "dev"
     shared = create_store(tmp_path / "shared-definitions")
-    private = create_store(tmp_path / "private-definitions")
+    private = create_store(
+        tmp_path / "private-definitions",
+        include_site=False,
+        inherited_site=shared,
+    )
     values = {**site.settings()[0], "definitions": str(shared)}
     monkeypatch.setattr(site, "settings", lambda: (values, {}))
     invoke("register", "--checkout", root)

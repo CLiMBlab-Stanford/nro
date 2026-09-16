@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, execution_context=None) -> None:
-    """Resolve one anatomical instance and execute its runner graph."""
+    """Resolve one anatomical work item and execute its runner graph."""
     args = build_parser().parse_args(argv)
     if execution_context is not None and execution_context.project != args.project:
         raise ValueError("Execution context project differs from the requested project")
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         / args.project
         / sub_id
     )
-    markup = load_source_markup(cfg.get("markup"), args.project, subject_dir)
+    markup = load_source_markup(cfg["markup"], args.project, subject_dir)
     t1w, t2w = _anatomicals(
         args.project,
         sub_id,

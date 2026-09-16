@@ -14,7 +14,7 @@ the caller's launcher unless `--maintain` is given. See the
 | `--mode personal/shared/branch` | Declare the first installation's role; branch mode reuses an existing site read-only. |
 | `--maintain` | Permit shared environment/resource maintenance. |
 | `--drain` | Permit noninteractive shared maintenance to drain the worker pool while preserving demand. |
-| `--site PATH` | Choose the site settings file during first setup. |
+| `--site PATH` | Choose the generated definitions-locator file during first setup. |
 | `--bin-dir PATH` | Place the user's launcher in this directory. |
 | `--default` | Make this checkout the user's default outside registered checkouts. |
 | `--replace-launcher` | Back up and replace a recognized older fixed-path launcher. |
@@ -35,8 +35,9 @@ the need for license files and suitable host permissions.
 ## `nro paths`
 
 With no subcommand, show proposed defaults and ask whether to accept all. If
-declined, prompt independently for every setting. `show` prints resolved values
-and their sources. `set key=value ...` validates and atomically saves updates.
+declined, prompt independently for every setting. `show` prints the locator,
+protected definition, resolved values, and their sources. `set key=value ...`
+validates and atomically saves updates in the protected definitions document.
 `--maintain` is required to edit a shared site's settings. This command never
 moves datasets, artifacts, or registries. See the installation guide for all keys.
 
@@ -66,7 +67,7 @@ The normal invocation displays a pageable list of public/private removal paths
 and asks for confirmation. `-f`/`--force` skips confirmation. `--dry-run` reports
 without deleting. `-l`/`--logs` removes matching attempt logs and inactive-worker
 logs only. `--json` supplies a structured result; `--work-root` overrides the
-private-file root. Selected instances must have no active attempts.
+private-file root. Selected work items must have no active attempts.
 
 Deleting an upstream artifact also invalidates its consumers and requests
 cancellation of their active attempts, even when those consumers were not selected

@@ -83,15 +83,18 @@ repository to a separate directory and select it:
 nro branch definitions --definitions /path/to/development-definitions
 ```
 
-The directory must already contain a valid nro definitions store. Alternatively,
-`nro definitions create /path/to/development-definitions` creates a starter store
-without selecting it or copying the lab's definitions. Selection is central:
+The directory must already contain a valid private nro definitions store and
+must not contain `site/site.yml`. It inherits that protected document from the
+shared repository. Alternatively, `nro definitions create
+/path/to/development-definitions` creates a suitable starter store without
+selecting it or copying the lab's definitions. Selection is central:
 every installed checkout of the same branch uses the selected directory. No
 files are copied or Git operations performed by the selection command.
 
 The selected store must not overlap shared definitions, private control state,
-or another branch's selected store. nro also rejects symbolic-link redirection.
-Definition editing is limited to files inside the selected store.
+or another branch's selected store. nro also rejects symbolic-link redirection
+and any private protected-site document. Definition editing is limited to files
+inside the selected store.
 
 To return to shared, read-only definitions:
 
@@ -101,8 +104,10 @@ nro branch definitions --shared
 
 Selection does not change scientific observations. Subsequent planning compares
 compiled definitions by content, using the existing freshness rules. Changing a
-store path alone does not mark artifacts stale. Source and site capture records
-the selected path; it does not snapshot the definitions directory.
+store path alone does not mark artifacts stale. Source capture records the
+selected branch definitions path; the execution-site snapshot always resolves
+from the shared protected document. Neither mechanism copies a definitions
+directory.
 
 ## Storage and safeguards
 

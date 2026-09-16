@@ -32,22 +32,17 @@ from nro.configuration.store import (
     CONFIGURATION_CLASSES,
     fingerprint,
 )
-from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.engine.io import atomic_write_text
 from nro.orchestration import dependency_state
 from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.workflow_registry import (
-    WORKFLOW_SCHEMA,
-    RegisteredWorkflow,
-    WorkflowRegistry,
-)
+from nro.orchestration.registry_schema import APPLICATION_ID, SCHEMA_SQL, SCHEMA_VERSION
+from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 if TYPE_CHECKING:
-    from nro.orchestration.contracts import ExecutionEnvelope, InstanceSpec
+    from nro.orchestration.contracts import ExecutionEnvelope, WorkItemSpec
 
 
-APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
-SCHEMA_VERSION = 18
 _WAIT_NOTICE_SECONDS = 0.75
 _WAIT_FRAMES = ("·", "•", "●", "•")
 _WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
@@ -68,7 +63,7 @@ def discover_registry_projects(bids_root: str | Path) -> list[str]:
     with registry.read_connection() as connection:
         rows = connection.execute(
             """SELECT project FROM bids_projects
-               UNION SELECT project FROM instances
+               UNION SELECT project FROM work_items
                UNION SELECT project FROM requests"""
         ).fetchall()
     return sorted(str(row["project"]) for row in rows if str(row["project"]))
@@ -120,20 +115,23 @@ def _remove_tree(path: Path) -> None:
             time.sleep(0.05 * (attempt + 1))
 
 
-def _instance_relative_directory(instance: dict) -> Path:
-    project = str(instance["project"])
-    participant = str(instance["participant"]).removeprefix("sub-")
+def _work_item_relative_directory(work_item: dict) -> Path:
+    project = str(work_item["project"])
+    participant = str(work_item["participant"]).removeprefix("sub-")
     entities = (
-        json.loads(instance["entities_json"])
-        if isinstance(instance["entities_json"], str)
-        else instance["entities_json"]
+        json.loads(work_item["entities_json"])
+        if isinstance(work_item["entities_json"], str)
+        else work_item["entities_json"]
     )
     preferred = ("ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk")
     ordered = [key for key in preferred if key in entities]
     ordered.extend(sorted(set(entities) - set(ordered)))
     name = "_".join([f"sub-{participant}", *(f"{key}-{entities[key]}" for key in ordered)])
-    digest = str(instance["instance_key"]).split(":", 1)[-1][:16]
-    return Path(project) / str(instance["module"]) / f"sub-{participant}" / name / digest
+    # Development work items prefix the logical key with their branch-registry
+    # identity. The final field is the logical digest in both main and
+    # development registries.
+    digest = str(work_item["work_item_key"]).rsplit(":", 1)[-1][:16]
+    return Path(project) / str(work_item["module"]) / f"sub-{participant}" / name / digest
 
 
 @dataclass(frozen=True)
@@ -586,7 +584,7 @@ class RegistryLock:
         # The rename has already released the actual lock.  On the shared NFS
         # filesystem, immediate recursive removal can occasionally observe a
         # transient non-empty directory after ``owner.json`` was removed.  A
-        # cleanup failure must not turn an otherwise completed instance into an
+        # Cleanup failure must not turn an otherwise completed work item into an
         # error, nor can it affect another lock (the token is unique).
         for attempt in range(3):
             try:
@@ -606,220 +604,8 @@ class RegistryLock:
         self.release()
 
 
-SCHEMA_SQL = (
-    """
-CREATE TABLE metadata (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-
-CREATE TABLE bids_projects (
-    project TEXT PRIMARY KEY,
-    path TEXT NOT NULL,
-    discovered_at TEXT NOT NULL
-);
-
-CREATE TABLE bids_participants (
-    project TEXT NOT NULL REFERENCES bids_projects(project) ON DELETE CASCADE,
-    participant TEXT NOT NULL,
-    path TEXT NOT NULL,
-    discovered_at TEXT NOT NULL,
-    PRIMARY KEY(project, participant)
-);
-
-"""
-    + WORKFLOW_SCHEMA
-    + """
-
-CREATE TABLE requests (
-    id TEXT PRIMARY KEY,
-    user_name TEXT NOT NULL,
-    project TEXT NOT NULL,
-    workflow_revision_id INTEGER NOT NULL REFERENCES workflow_revisions(id),
-    target_module TEXT NOT NULL,
-    selectors_json TEXT NOT NULL,
-    concurrency INTEGER NOT NULL,
-    partition_name TEXT,
-    state TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE instances (
-    id INTEGER PRIMARY KEY,
-    instance_key TEXT NOT NULL UNIQUE,
-    module TEXT NOT NULL,
-    configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
-    project TEXT NOT NULL,
-    participant TEXT NOT NULL,
-    entities_json TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    artifact_state TEXT NOT NULL,
-    artifact_reason TEXT,
-    current_generation INTEGER NOT NULL DEFAULT 0,
-    manifest_path TEXT NOT NULL,
-    resource_class TEXT NOT NULL,
-    memory_gb INTEGER NOT NULL DEFAULT 32,
-    max_memory_gb INTEGER NOT NULL DEFAULT 256,
-    revision_fingerprint TEXT NOT NULL,
-    artifact_contract_json TEXT NOT NULL,
-    artifact_fingerprint TEXT NOT NULL,
-    command_json TEXT NOT NULL,
-    runtime_config_path TEXT NOT NULL,
-    input_paths_json TEXT NOT NULL,
-    output_root TEXT NOT NULL,
-    output_prefix TEXT,
-    expected_outputs_json TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE instance_dependencies (
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    upstream_instance_id INTEGER NOT NULL REFERENCES instances(id),
-    role TEXT NOT NULL,
-    required_generation INTEGER,
-    PRIMARY KEY(instance_id, upstream_instance_id, role)
-);
-
-CREATE TABLE request_instances (
-    request_id TEXT NOT NULL REFERENCES requests(id),
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    role TEXT NOT NULL,
-    demand_state TEXT NOT NULL,
-    PRIMARY KEY(request_id, instance_id)
-);
-
-CREATE TABLE workers (
-    id TEXT PRIMARY KEY,
-    user_name TEXT NOT NULL,
-    hostname TEXT NOT NULL,
-    pid INTEGER NOT NULL,
-    resource_class TEXT NOT NULL,
-    memory_gb INTEGER NOT NULL DEFAULT 32,
-    slurm_job_id TEXT,
-    state TEXT NOT NULL,
-    lease_expires_at REAL,
-    successor_submission_id INTEGER,
-    started_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE attempts (
-    id INTEGER PRIMARY KEY,
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    worker_id TEXT REFERENCES workers(id),
-    state TEXT NOT NULL,
-    revision_fingerprint TEXT NOT NULL,
-    memory_gb INTEGER NOT NULL DEFAULT 32,
-    oom_detected INTEGER NOT NULL DEFAULT 0,
-    process_group_id INTEGER NOT NULL DEFAULT 0,
-    started_at TEXT,
-    completed_at TEXT,
-    error_type TEXT,
-    error_message TEXT,
-    log_path TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX one_active_attempt_per_instance
-ON attempts(instance_id)
-WHERE state IN ('queued', 'running', 'cancel_requested');
-
-CREATE TABLE artifacts (
-    id INTEGER PRIMARY KEY,
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    attempt_id INTEGER REFERENCES attempts(id),
-    direction TEXT NOT NULL,
-    path TEXT NOT NULL,
-    size INTEGER,
-    mtime_ns INTEGER,
-    digest_algorithm TEXT,
-    digest TEXT,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
-);
-
-CREATE TABLE scheduler_submissions (
-    id INTEGER PRIMARY KEY,
-    intent_token TEXT NOT NULL UNIQUE,
-    request_id TEXT REFERENCES requests(id),
-    predecessor_worker_id TEXT REFERENCES workers(id),
-    resource_class TEXT NOT NULL,
-    memory_gb INTEGER NOT NULL DEFAULT 32,
-    state TEXT NOT NULL,
-    slurm_job_id TEXT,
-    submitted_at TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX instance_module_participant ON instances(module, participant);
-CREATE INDEX attempt_state ON attempts(state);
-CREATE INDEX request_state ON requests(state);
-
-CREATE TABLE attempt_dependencies (
-    attempt_id INTEGER NOT NULL REFERENCES attempts(id),
-    upstream_instance_id INTEGER NOT NULL REFERENCES instances(id),
-    generation INTEGER NOT NULL,
-    PRIMARY KEY(attempt_id, upstream_instance_id)
-);
-CREATE INDEX dependency_readers ON attempt_dependencies(upstream_instance_id);
-CREATE TABLE artifact_mutations (
-    instance_id INTEGER PRIMARY KEY REFERENCES instances(id),
-    token TEXT NOT NULL
-);
-
-CREATE TABLE instance_execution (
-    instance_id INTEGER PRIMARY KEY REFERENCES instances(id),
-    branch TEXT NOT NULL,
-    registry_id TEXT NOT NULL,
-    logical_key TEXT NOT NULL,
-    context_json TEXT NOT NULL,
-    binding_sources_json TEXT NOT NULL,
-    provenance_json TEXT NOT NULL,
-    scientific_contract_json TEXT NOT NULL,
-    UNIQUE(registry_id, logical_key)
-);
-CREATE TABLE request_owners (
-    request_id TEXT PRIMARY KEY REFERENCES requests(id),
-    branch TEXT NOT NULL,
-    registry_id TEXT NOT NULL
-);
-CREATE TABLE request_plans (
-    request_id TEXT PRIMARY KEY REFERENCES requests(id),
-    payload_json TEXT NOT NULL
-);
-CREATE TABLE compiled_revisions (
-    registry_id TEXT NOT NULL,
-    logical_key TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    fingerprint TEXT NOT NULL,
-    PRIMARY KEY(registry_id,logical_key)
-);
-CREATE TABLE branch_instances (
-    registry_id TEXT NOT NULL,
-    logical_key TEXT NOT NULL,
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    scientific_contract_json TEXT NOT NULL,
-    PRIMARY KEY(registry_id, logical_key)
-);
-CREATE TABLE request_artifacts (
-    request_id TEXT NOT NULL REFERENCES requests(id),
-    instance_id INTEGER NOT NULL REFERENCES instances(id),
-    PRIMARY KEY(request_id,instance_id)
-);
-CREATE TABLE attempt_execution (
-    attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id),
-    context_json TEXT NOT NULL,
-    provenance_json TEXT NOT NULL,
-    command_json TEXT NOT NULL
-);
-"""
-)
-
-
 class Registry(WorkflowRegistry):
-    """Transactional authority for instances, demand, attempts, and worker state.
+    """Transactional authority for work items, demand, attempts, and workers.
 
     Construction does not initialize storage. Mutating methods acquire the
     registry lock; callers should not alter the database directly.
@@ -1174,29 +960,29 @@ class Registry(WorkflowRegistry):
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def _upsert_instance_graph_locked(
+    def _upsert_work_item_graph_locked(
         self,
         db: sqlite3.Connection,
-        instance_records: Sequence[tuple["InstanceSpec", dict]],
+        work_item_records: Sequence[tuple["WorkItemSpec", dict]],
         *,
         now: str,
         external_ids: Mapping[str, int] | None = None,
         owner_branch: str | None = None,
     ) -> dict[str, int]:
-        """Merge logical instances and dependency edges without creating demand."""
+        """Merge work items and dependency edges without creating demand."""
         from nro.orchestration.manifests import _read_manifest
 
-        instance_ids: dict[str, int] = dict(external_ids or {})
+        work_item_ids: dict[str, int] = dict(external_ids or {})
         replace_dependencies: dict[int, bool] = {}
-        for spec, record in instance_records:
+        for spec, record in work_item_records:
             manifest = (
-                self.paths.manifests / _instance_relative_directory(record) / "completion.json"
+                self.paths.manifests / _work_item_relative_directory(record) / "completion.json"
             )
             if owner_branch is not None:
                 manifest = (
                     ControlPaths(self.paths.control).branch(owner_branch)
                     / "manifests"
-                    / _instance_relative_directory(record)
+                    / _work_item_relative_directory(record)
                     / "completion.json"
                 )
             existing = db.execute(
@@ -1204,14 +990,14 @@ class Registry(WorkflowRegistry):
                           artifact_contract_json, artifact_fingerprint,
                           command_json, runtime_config_path, input_paths_json,
                           output_root, output_prefix, expected_outputs_json
-                   FROM instances WHERE instance_key=?""",
+                   FROM work_items WHERE work_item_key=?""",
                 (spec.key,),
             ).fetchone()
             if existing:
-                instance_id = int(existing["id"])
+                work_item_id = int(existing["id"])
                 certificate = _read_manifest(manifest)
                 # The planner is authoritative for the current execution
-                # recipe. Only a change to the semantic instance contract,
+                # recipe. Only a change to the semantic work-item contract,
                 # rather than command spelling or resource settings, makes an
                 # existing derivative stale.
                 try:
@@ -1228,17 +1014,17 @@ class Registry(WorkflowRegistry):
                     )
                 except (ValueError, TypeError, KeyError):
                     artifact_changed = True
-                replace_dependencies[instance_id] = artifact_changed
+                replace_dependencies[work_item_id] = artifact_changed
                 db.execute(
                     """
-                    UPDATE instances SET scope=?, resource_class=?,
+                    UPDATE work_items SET scope=?, resource_class=?,
                         revision_fingerprint=?, artifact_contract_json=?,
                         artifact_fingerprint=?, command_json=?, runtime_config_path=?,
                         memory_gb=MAX(memory_gb, ?), max_memory_gb=MAX(max_memory_gb, ?),
                         input_paths_json=?, output_root=?, output_prefix=?,
-                        expected_outputs_json=?,
+                        expected_outputs_json=?, manifest_path=?,
                         artifact_state=CASE WHEN ? THEN 'stale' ELSE artifact_state END,
-                        artifact_reason=CASE WHEN ? THEN 'Instance contract changed' ELSE artifact_reason END,
+                        artifact_reason=CASE WHEN ? THEN 'Work-item contract changed' ELSE artifact_reason END,
                         updated_at=?
                     WHERE id=?
                     """,
@@ -1256,31 +1042,32 @@ class Registry(WorkflowRegistry):
                         record["output_root"],
                         record["output_prefix"],
                         record["expected_outputs_json"],
+                        str(manifest),
                         artifact_changed,
                         artifact_changed,
                         now,
-                        instance_id,
+                        work_item_id,
                     ),
                 )
                 if artifact_changed:
                     dependency_state.invalidate(
                         db,
-                        [instance_id],
+                        [work_item_id],
                         now=now,
-                        reason="Resolved upstream instance contract changed",
+                        reason="Resolved upstream work-item contract changed",
                     )
                     db.execute(
                         """UPDATE attempts SET state='cancel_requested',
-                                  error_type='InstanceGraphChanged',
-                                  error_message='Instance contract changed while work was active'
-                           WHERE instance_id=? AND state IN ('queued', 'running')""",
-                        (instance_id,),
+                                  error_type='WorkItemGraphChanged',
+                                  error_message='Work-item contract changed while work was active'
+                           WHERE work_item_id=? AND state IN ('queued', 'running')""",
+                        (work_item_id,),
                     )
             else:
                 cursor = db.execute(
                     """
-                    INSERT INTO instances(
-                        instance_key, module, configuration_lineage_id, project, participant,
+                    INSERT INTO work_items(
+                        work_item_key, module, module_lineage_id, project, participant,
                         entities_json, scope, artifact_state, artifact_reason,
                         manifest_path, resource_class, revision_fingerprint,
                         artifact_contract_json, artifact_fingerprint,
@@ -1292,7 +1079,7 @@ class Registry(WorkflowRegistry):
                     (
                         spec.key,
                         spec.module,
-                        spec.configuration_lineage_id,
+                        spec.module_lineage_id,
                         spec.project,
                         spec.participant,
                         record["entities_json"],
@@ -1314,45 +1101,47 @@ class Registry(WorkflowRegistry):
                         now,
                     ),
                 )
-                instance_id = int(cursor.lastrowid)
-                replace_dependencies[instance_id] = True
-            instance_ids[spec.key] = instance_id
+                work_item_id = int(cursor.lastrowid)
+                replace_dependencies[work_item_id] = True
+            work_item_ids[spec.key] = work_item_id
 
-        for spec, _record in instance_records:
-            instance_id = instance_ids[spec.key]
+        for spec, _record in work_item_records:
+            work_item_id = work_item_ids[spec.key]
             proposed = tuple(spec.dependencies)
-            if not replace_dependencies[instance_id]:
+            if not replace_dependencies[work_item_id]:
                 continue
-            db.execute("DELETE FROM instance_dependencies WHERE instance_id=?", (instance_id,))
+            db.execute("DELETE FROM work_item_dependencies WHERE work_item_id=?", (work_item_id,))
             for dependency in proposed:
                 db.execute(
                     """
-                    INSERT INTO instance_dependencies(instance_id, upstream_instance_id, role, required_generation)
+                    INSERT INTO work_item_dependencies(work_item_id, upstream_work_item_id, role, required_generation)
                     VALUES (?, ?, ?, NULL)
                     """,
                     (
-                        instance_id,
-                        instance_ids[dependency],
+                        work_item_id,
+                        work_item_ids[dependency],
                         "inherited" if dependency in (external_ids or {}) else "input",
                     ),
                 )
         dependency_state.synchronize(db, now=now)
-        return instance_ids
+        return work_item_ids
 
     @staticmethod
     def _normalize_active_request_graph_locked(db: sqlite3.Connection) -> None:
         """Reconcile existing active demand with the current global DAG."""
         parents: dict[int, list[int]] = {}
         for row in db.execute(
-            "SELECT instance_id, upstream_instance_id FROM instance_dependencies WHERE role != 'inherited'"
+            "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies WHERE role != 'inherited'"
         ):
-            parents.setdefault(int(row["instance_id"]), []).append(int(row["upstream_instance_id"]))
+            parents.setdefault(int(row["work_item_id"]), []).append(
+                int(row["upstream_work_item_id"])
+            )
         for active_request in db.execute("SELECT id FROM requests WHERE state='active'").fetchall():
             active_request_id = str(active_request["id"])
             targets = {
-                int(row["instance_id"])
+                int(row["work_item_id"])
                 for row in db.execute(
-                    """SELECT instance_id FROM request_instances
+                    """SELECT work_item_id FROM request_work_items
                        WHERE request_id=? AND role='target' AND demand_state='active'""",
                     (active_request_id,),
                 )
@@ -1360,59 +1149,59 @@ class Registry(WorkflowRegistry):
             required = set(targets)
             pending = list(targets)
             while pending:
-                instance_id = pending.pop()
-                for upstream_id in parents.get(instance_id, ()):
+                work_item_id = pending.pop()
+                for upstream_id in parents.get(work_item_id, ()):
                     if upstream_id not in required:
                         required.add(upstream_id)
                         pending.append(upstream_id)
             existing = {
-                int(row["instance_id"]): str(row["demand_state"])
+                int(row["work_item_id"]): str(row["demand_state"])
                 for row in db.execute(
-                    "SELECT instance_id, demand_state FROM request_instances WHERE request_id=?",
+                    "SELECT work_item_id, demand_state FROM request_work_items WHERE request_id=?",
                     (active_request_id,),
                 )
             }
             for required_id in required - set(existing):
                 db.execute(
-                    """INSERT INTO request_instances(request_id, instance_id, role, demand_state)
+                    """INSERT INTO request_work_items(request_id, work_item_id, role, demand_state)
                        VALUES (?, ?, 'dependency', 'active')""",
                     (active_request_id, required_id),
                 )
             orphaned = {
-                instance_id
-                for instance_id, demand_state in existing.items()
-                if demand_state == "active" and instance_id not in required
+                work_item_id
+                for work_item_id, demand_state in existing.items()
+                if demand_state == "active" and work_item_id not in required
             }
             if orphaned:
                 placeholders = ",".join("?" for _ in orphaned)
                 db.execute(
-                    f"""UPDATE request_instances SET demand_state='cancelled'
-                        WHERE request_id=? AND instance_id IN ({placeholders})
+                    f"""UPDATE request_work_items SET demand_state='cancelled'
+                        WHERE request_id=? AND work_item_id IN ({placeholders})
                           AND demand_state='active'""",
                     (active_request_id, *tuple(orphaned)),
                 )
 
-    def _validate_instance_projects(self, instances: Sequence["InstanceSpec"]) -> None:
+    def _validate_work_item_projects(self, work_items: Sequence["WorkItemSpec"]) -> None:
         foreign_projects = {
-            spec.project for spec in instances if spec.project != self.paths.project
+            spec.project for spec in work_items if spec.project != self.paths.project
         }
         if foreign_projects:
             raise ValueError(
-                "A registry operation may contain instances from only its selected project: "
+                "A registry operation may contain work items from only its selected project: "
                 + ", ".join(sorted(foreign_projects))
             )
 
-    def register_instances(self, instances: Sequence["InstanceSpec"]) -> dict[str, int]:
-        """Discover instance contracts and edges without creating a request."""
-        self._validate_instance_projects(instances)
-        instance_records = tuple((spec, spec.as_record()) for spec in instances)
+    def register_work_items(self, work_items: Sequence["WorkItemSpec"]) -> dict[str, int]:
+        """Discover work-item contracts and edges without creating a request."""
+        self._validate_work_item_projects(work_items)
+        work_item_records = tuple((spec, spec.as_record()) for spec in work_items)
         with self.connection(write=True) as db:
-            instance_ids = self._upsert_instance_graph_locked(db, instance_records, now=utcnow())
+            work_item_ids = self._upsert_work_item_graph_locked(db, work_item_records, now=utcnow())
             self._normalize_active_request_graph_locked(db)
-            return instance_ids
+            return work_item_ids
 
     def register_owned_lineages(self, records: Sequence[Mapping[str, object]]) -> dict[str, int]:
-        """Restore configuration lineages from derivative ownership records."""
+        """Restore module lineages from derivative ownership records."""
         ordered = sorted(
             records,
             key=lambda item: (
@@ -1432,19 +1221,19 @@ class Registry(WorkflowRegistry):
                     raise ValueError("Ownership record configuration must be a mapping")
                 existing = db.execute(
                     """SELECT id, config_id, directory_label
-                       FROM configuration_lineages
+                       FROM module_lineages
                        WHERE configuration_class=? AND lineage_fingerprint=?""",
                     (configuration_class, lineage_fingerprint),
                 ).fetchone()
                 collision = db.execute(
-                    """SELECT lineage_fingerprint FROM configuration_lineages
+                    """SELECT lineage_fingerprint FROM module_lineages
                        WHERE configuration_class=? AND directory_label=?""",
                     (configuration_class, directory_label),
                 ).fetchone()
                 if collision and str(collision["lineage_fingerprint"]) != lineage_fingerprint:
                     raise ValueError(
                         f"Derivative directory {configuration_class}/{directory_label} "
-                        "declares conflicting configuration lineages"
+                        "declares conflicting module lineages"
                     )
                 if existing:
                     if (
@@ -1456,7 +1245,7 @@ class Registry(WorkflowRegistry):
                         )
                     lineage_id = int(existing["id"])
                     db.execute(
-                        """UPDATE configuration_lineages
+                        """UPDATE module_lineages
                            SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
                         (
                             str(configuration["fingerprint"]),
@@ -1467,7 +1256,7 @@ class Registry(WorkflowRegistry):
                 else:
                     cursor = db.execute(
                         """
-                        INSERT INTO configuration_lineages(
+                        INSERT INTO module_lineages(
                             configuration_class, config_id, config_fingerprint,
                             lineage_fingerprint, resolved_yaml, directory_label, created_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1488,8 +1277,7 @@ class Registry(WorkflowRegistry):
             for record in ordered:
                 lineage_id = lineage_ids[str(record["lineage_fingerprint"])]
                 db.execute(
-                    "DELETE FROM configuration_lineage_dependencies "
-                    "WHERE configuration_lineage_id=?",
+                    "DELETE FROM module_lineage_dependencies WHERE module_lineage_id=?",
                     (lineage_id,),
                 )
                 for upstream in record["upstream"]:
@@ -1501,9 +1289,9 @@ class Registry(WorkflowRegistry):
                             f"Ownership record lacks upstream lineage {parent_fingerprint}"
                         ) from error
                     db.execute(
-                        """INSERT INTO configuration_lineage_dependencies(
-                               configuration_lineage_id,
-                               upstream_configuration_lineage_id, role
+                        """INSERT INTO module_lineage_dependencies(
+                               module_lineage_id,
+                               upstream_module_lineage_id, role
                            ) VALUES (?, ?, ?)""",
                         (lineage_id, parent_id, str(upstream["role"])),
                     )
@@ -1536,17 +1324,17 @@ class Registry(WorkflowRegistry):
                     ),
                 )
 
-    def instance_ids(self, instance_keys: Sequence[str]) -> dict[str, int]:
-        """Resolve registered instance keys without changing demand."""
-        if not instance_keys:
+    def work_item_ids(self, work_item_keys: Sequence[str]) -> dict[str, int]:
+        """Resolve registered work-item keys without changing demand."""
+        if not work_item_keys:
             return {}
-        unique = tuple(dict.fromkeys(instance_keys))
+        unique = tuple(dict.fromkeys(work_item_keys))
         placeholders = ",".join("?" for _ in unique)
         with self.connection() as db:
             return {
-                str(row["instance_key"]): int(row["id"])
+                str(row["work_item_key"]): int(row["id"])
                 for row in db.execute(
-                    f"SELECT id, instance_key FROM instances WHERE instance_key IN ({placeholders})",
+                    f"SELECT id, work_item_key FROM work_items WHERE work_item_key IN ({placeholders})",
                     unique,
                 )
             }
@@ -1557,8 +1345,8 @@ class Registry(WorkflowRegistry):
         registered: RegisteredWorkflow,
         target_module: str,
         selectors: dict,
-        instances: Sequence["InstanceSpec"],
-        terminal_instance_keys: Sequence[str],
+        work_items: Sequence["WorkItemSpec"],
+        terminal_work_item_keys: Sequence[str],
         concurrency: int,
         partition: str | None,
         user_name: str | None = None,
@@ -1566,11 +1354,11 @@ class Registry(WorkflowRegistry):
         """Merge a planned graph and create a new active demand request."""
         if concurrency < 1:
             raise ValueError("Concurrency must be at least one")
-        self._validate_instance_projects(instances)
+        self._validate_work_item_projects(work_items)
         request_id = uuid.uuid4().hex
         now = utcnow()
-        terminal = set(terminal_instance_keys)
-        instance_records = tuple((spec, spec.as_record()) for spec in instances)
+        terminal = set(terminal_work_item_keys)
+        work_item_records = tuple((spec, spec.as_record()) for spec in work_items)
         with self.connection(write=True) as db:
             db.execute(
                 """
@@ -1592,17 +1380,17 @@ class Registry(WorkflowRegistry):
                     now,
                 ),
             )
-            instance_ids = self._upsert_instance_graph_locked(db, instance_records, now=now)
-            for spec in instances:
-                instance_id = instance_ids[spec.key]
+            work_item_ids = self._upsert_work_item_graph_locked(db, work_item_records, now=now)
+            for spec in work_items:
+                work_item_id = work_item_ids[spec.key]
                 db.execute(
                     """
-                    INSERT INTO request_instances(request_id, instance_id, role, demand_state)
+                    INSERT INTO request_work_items(request_id, work_item_id, role, demand_state)
                     VALUES (?, ?, ?, 'active')
                     """,
-                    (request_id, instance_id, "target" if spec.key in terminal else "dependency"),
+                    (request_id, work_item_id, "target" if spec.key in terminal else "dependency"),
                 )
-            # A shared multirun instance can gain or lose upstream runs while an
+            # A shared multirun work item can gain or lose upstream runs while an
             # older request is still active. Keep every active request aligned
             # with the current global graph.
             self._normalize_active_request_graph_locked(db)
@@ -1650,73 +1438,115 @@ class Registry(WorkflowRegistry):
 
             return int(cursor.rowcount) + IngestionIndex(self).set_concurrency_locked(concurrency)
 
-    def instance_rows(self, *, read_only: bool = False) -> list[dict]:
-        """Read instance records with their current orchestration and artifact state."""
+    def work_item_rows(self, *, read_only: bool = False) -> list[dict]:
+        """Read work-item records with their current orchestration and artifact state."""
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
             rows = db.execute(
                 """
-                SELECT t.*, ci.directory_label, ci.lineage_fingerprint, ci.configuration_class,
+                SELECT t.*, ci.config_id, ci.directory_label, ci.lineage_fingerprint,
+                       ci.configuration_class,
                        EXISTS(
                          SELECT 1 FROM workflow_bindings binding
-                         WHERE binding.configuration_lineage_id=t.configuration_lineage_id
+                         WHERE binding.module_lineage_id=t.module_lineage_id
                        ) AS recomputable,
-                       EXISTS(SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                              WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
-                       (SELECT a.state FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
-                       (SELECT a.error_type FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_type,
-                       (SELECT a.error_message FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_message,
-                       (SELECT a.log_path FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
-                       (SELECT COUNT(*) FROM attempts a WHERE a.instance_id=t.id AND a.oom_detected=1) AS oom_count,
-                       (SELECT a.memory_gb FROM attempts a WHERE a.instance_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_memory_gb
+                       EXISTS(SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                              WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
+                       (SELECT a.state FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
+                       (SELECT a.error_type FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_type,
+                       (SELECT a.error_message FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_message,
+                       (SELECT a.log_path FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
+                       (SELECT COUNT(*) FROM attempts a WHERE a.work_item_id=t.id AND a.oom_detected=1) AS oom_count,
+                       (SELECT a.memory_gb FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_memory_gb
                        ,EXISTS(
-                         SELECT 1 FROM request_instances retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
-                         WHERE retry_rt.instance_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
+                         SELECT 1 FROM request_work_items retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
+                         WHERE retry_rt.work_item_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
                            AND retry.updated_at > COALESCE(
                              (SELECT CASE WHEN latest.state='cancelled'
                                       THEN latest.started_at ELSE latest.completed_at END
-                              FROM attempts latest WHERE latest.instance_id=t.id
+                              FROM attempts latest WHERE latest.work_item_id=t.id
                               ORDER BY latest.id DESC LIMIT 1),
                              ''
                            )
                        ) AS retry_requested
                        ,(SELECT GROUP_CONCAT(DISTINCT wr.workflow_id)
-                         FROM request_instances rt
+                         FROM request_work_items rt
                          JOIN requests r ON r.id=rt.request_id
                          JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
-                         WHERE rt.instance_id=t.id) AS workflow_ids
-                FROM instances t
-                JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
-                ORDER BY t.participant, t.module, t.instance_key
+                         WHERE rt.work_item_id=t.id) AS workflow_ids
+                FROM work_items t
+                JOIN module_lineages ci ON ci.id=t.module_lineage_id
+                ORDER BY t.participant, t.module, t.work_item_key
                 """
             ).fetchall()
-            return [dict(row) for row in rows]
+            lineages = {
+                int(row["id"]): {
+                    "module": str(row["configuration_class"]),
+                    "config": str(row["config_id"]),
+                }
+                for row in db.execute(
+                    "SELECT id, configuration_class, config_id FROM module_lineages"
+                )
+            }
+            parents: dict[int, list[int]] = {}
+            for edge in db.execute(
+                """SELECT module_lineage_id, upstream_module_lineage_id
+                   FROM module_lineage_dependencies"""
+            ):
+                parents.setdefault(int(edge[0]), []).append(int(edge[1]))
 
-    def instance_dependencies(self, *, read_only: bool = False) -> list[tuple[int, int]]:
-        """Return dependency relationships for the selected instance records."""
+            def route(lineage_id: int) -> list[dict[str, str]]:
+                ordered: list[dict[str, str]] = []
+                visited: set[int] = set()
+
+                def visit(current: int) -> None:
+                    if current in visited:
+                        return
+                    visited.add(current)
+                    for parent in parents.get(current, ()):
+                        visit(parent)
+                    if current in lineages:
+                        ordered.append(lineages[current])
+
+                visit(lineage_id)
+                return ordered
+
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["configuration_route_json"] = json.dumps(
+                    route(int(item["module_lineage_id"])),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                result.append(item)
+            return result
+
+    def work_item_dependencies(self, *, read_only: bool = False) -> list[tuple[int, int]]:
+        """Return dependency relationships for the selected work-item records."""
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
             return [
-                (int(row["instance_id"]), int(row["upstream_instance_id"]))
+                (int(row["work_item_id"]), int(row["upstream_work_item_id"]))
                 for row in db.execute(
-                    "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
+                    "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies"
                 )
             ]
 
-    def instance_status_snapshot(
+    def work_item_status_snapshot(
         self,
         *,
         read_only: bool = False,
         artifact_states: Mapping[int, tuple[str, str]] | None = None,
     ) -> list[dict]:
-        """Return the registry's canonical current state for every instance.
+        """Return the registry's canonical current state for every work item.
 
-        ``instances`` retain artifact freshness and ``attempts`` retain immutable
+        ``work_items`` retain artifact freshness and ``attempts`` retain immutable
         execution history.  This method is the sole projection of those facts
-        into one current instance state for user-facing tools.  A read-only
+        into one current work-item state for user-facing tools. A read-only
         preview may supply temporary artifact states without persisting them.
         """
-        rows = self.instance_rows(read_only=read_only)
+        rows = self.work_item_rows(read_only=read_only)
         if artifact_states:
             for row in rows:
                 projected = artifact_states.get(int(row["id"]))
@@ -1724,20 +1554,20 @@ class Registry(WorkflowRegistry):
                     row["artifact_state"], row["artifact_reason"] = projected
         by_id = {int(row["id"]): row for row in rows}
         parents: dict[int, list[int]] = {}
-        for instance_id, upstream_id in self.instance_dependencies(read_only=read_only):
-            parents.setdefault(instance_id, []).append(upstream_id)
+        for work_item_id, upstream_id in self.work_item_dependencies(read_only=read_only):
+            parents.setdefault(work_item_id, []).append(upstream_id)
         root_cache: dict[int, tuple[int, ...]] = {}
 
-        def failure_roots(instance_id: int) -> tuple[int, ...]:
-            if instance_id in root_cache:
-                return root_cache[instance_id]
-            row = by_id[instance_id]
+        def failure_roots(work_item_id: int) -> tuple[int, ...]:
+            if work_item_id in root_cache:
+                return root_cache[work_item_id]
+            row = by_id[work_item_id]
             roots: set[int] = set()
             # Attempts are immutable execution history, while artifact_state is
             # the authoritative current result.  A derivative can validate as
             # fresh after an older failed attempt (for example through native
             # completion evidence), so that attempt must not remain a current
-            # failure root or block downstream instances.
+            # failure root or block downstream work items.
             if (
                 row["artifact_state"] != "fresh"
                 and row.get("attempt_state") == "error"
@@ -1748,24 +1578,24 @@ class Registry(WorkflowRegistry):
                     and not row.get("demanded")
                 )
             ):
-                roots.add(instance_id)
-            for parent in parents.get(instance_id, ()):
+                roots.add(work_item_id)
+            for parent in parents.get(work_item_id, ()):
                 if parent in by_id:
                     roots.update(failure_roots(parent))
-            root_cache[instance_id] = tuple(sorted(roots))
-            return root_cache[instance_id]
+            root_cache[work_item_id] = tuple(sorted(roots))
+            return root_cache[work_item_id]
 
         snapshot: list[dict] = []
         for row in rows:
             item = dict(row)
-            instance_id = int(item["id"])
-            roots = failure_roots(instance_id)
+            work_item_id = int(item["id"])
+            roots = failure_roots(work_item_id)
             attempt = item.get("attempt_state")
             if item["artifact_state"] == "fresh":
                 state = "Success"
             elif not item.get("recomputable") and not item.get("demanded"):
                 state = "Unavailable"
-            elif attempt == "error" and instance_id in roots:
+            elif attempt == "error" and work_item_id in roots:
                 state = "Error"
             elif roots and item.get("demanded"):
                 state = "Blocked"
@@ -1893,7 +1723,7 @@ class Registry(WorkflowRegistry):
         all_users: bool = False,
         for_repair: bool = False,
     ) -> dict:
-        """Stop worker allocations without withdrawing instance demand."""
+        """Stop worker allocations without withdrawing work-item demand."""
         if all_users and user_name is not None:
             raise ValueError("user_name and all_users are mutually exclusive")
         owner = user_name or getpass.getuser()
@@ -2040,14 +1870,14 @@ class Registry(WorkflowRegistry):
             dependency_state.synchronize(db, now=now)
         return {"workers": workers, "attempts": attempts, "ingestion": ingestion}
 
-    def claim_ready_instance(
+    def claim_ready_work_item(
         self,
         worker_id: str,
         resource_classes: Sequence[str],
         *,
         memory_gb: int = 32,
     ) -> "ExecutionEnvelope | None":
-        """Claim one demanded, nonfresh instance whose upstream instances are fresh."""
+        """Claim one demanded, nonfresh work item whose upstream work items are fresh."""
         if not resource_classes:
             return None
         placeholders = ",".join("?" for _ in resource_classes)
@@ -2091,8 +1921,8 @@ class Registry(WorkflowRegistry):
             row = db.execute(
                 f"""
                 SELECT t.*, ci.config_fingerprint
-                FROM instances t
-                JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
+                FROM work_items t
+                JOIN module_lineages ci ON ci.id=t.module_lineage_id
                 WHERE t.resource_class IN ({placeholders})
                   AND t.memory_gb <= ?
                   AND {dependency_state.WRITE_READY}
@@ -2106,47 +1936,47 @@ class Registry(WorkflowRegistry):
                       AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
                   )
                   AND EXISTS (
-                      SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
+                      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM instance_dependencies td JOIN instances up ON up.id=td.upstream_instance_id
-                      WHERE td.instance_id=t.id AND up.artifact_state != 'fresh'
+                      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
+                      WHERE td.work_item_id=t.id AND up.artifact_state != 'fresh'
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM attempts active WHERE active.instance_id=t.id
+                      SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
                       AND active.state IN ('queued', 'running', 'cancel_requested')
                   )
                   AND (
-                      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.instance_id=t.id)
-                      OR COALESCE((SELECT state FROM attempts old WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
+                      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
+                      OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
                       OR COALESCE((SELECT error_type FROM attempts old
-                                   WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '')
+                                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
                          IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                             'InstanceGraphChanged', 'RegistryUnavailable')
+                             'WorkItemGraphChanged', 'RegistryUnavailable')
                       OR EXISTS (
-                          SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                          WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
+                          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
                           AND r.updated_at > COALESCE(
                               (SELECT CASE WHEN old.state='cancelled'
                                        THEN old.started_at ELSE old.completed_at END
-                               FROM attempts old WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1),
+                               FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
                               '')
                       )
                   )
                 ORDER BY CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
                                       WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
-                         t.participant, t.instance_key
+                         t.participant, t.work_item_key
                 LIMIT 1
                 """,
                 (*resource_classes, memory_gb),
             ).fetchone()
             if row is None:
                 return None
-            instance = dict(row)
-            log_dir = self.paths.events / _instance_relative_directory(instance)
+            work_item = dict(row)
+            log_dir = self.paths.events / _work_item_relative_directory(work_item)
             execution = db.execute(
-                "SELECT * FROM instance_execution WHERE instance_id=?", (instance["id"],)
+                "SELECT * FROM work_item_execution WHERE work_item_id=?", (work_item["id"],)
             ).fetchone()
             if execution is not None:
                 from nro.orchestration.branch_admission import prepare_attempt
@@ -2154,27 +1984,27 @@ class Registry(WorkflowRegistry):
                 log_dir = (
                     ControlPaths(self.paths.control).branch(execution["branch"])
                     / "events"
-                    / _instance_relative_directory(instance)
+                    / _work_item_relative_directory(work_item)
                 )
                 ensure_shared_directory(log_dir)
-                command = prepare_attempt(self, db, instance, dict(execution), log_dir)
+                command = prepare_attempt(self, db, work_item, dict(execution), log_dir)
                 if command is None:
                     return None
-                instance["command_json"] = json.dumps(command)
+                work_item["command_json"] = json.dumps(command)
             ensure_shared_directory(log_dir)
             cursor = db.execute(
                 """
-                INSERT INTO attempts(instance_id, worker_id, state, revision_fingerprint,
+                INSERT INTO attempts(work_item_id, worker_id, state, revision_fingerprint,
                                      memory_gb, started_at, log_path, created_at)
                 VALUES (?, ?, 'running', ?, ?, ?, ?, ?)
                 """,
                 (
-                    instance["id"],
+                    work_item["id"],
                     worker_id,
-                    instance["revision_fingerprint"],
+                    work_item["revision_fingerprint"],
                     memory_gb,
                     now,
-                    str(log_dir / "instance.log"),
+                    str(log_dir / "work-item.log"),
                     now,
                 ),
             )
@@ -2187,22 +2017,22 @@ class Registry(WorkflowRegistry):
                         attempt_id,
                         json.dumps(payload["context"]),
                         execution["provenance_json"],
-                        instance["command_json"],
+                        work_item["command_json"],
                     ),
                 )
-            dependency_state.capture_inputs(db, attempt_id, int(instance["id"]))
-            # An instance has one current log, deliberately replaced by the next
+            dependency_state.capture_inputs(db, attempt_id, int(work_item["id"]))
+            # A work item has one current log, deliberately replaced by the next
             # attempt. Attempt history remains in the registry/events tables.
-            log_path = log_dir / "instance.log"
+            log_path = log_dir / "work-item.log"
             db.execute(
                 "UPDATE workers SET state='running', lease_expires_at=?, updated_at=? WHERE id=?",
                 (time.time() + 120.0, now, worker_id),
             )
-            instance["attempt_id"] = attempt_id
-            instance["log_path"] = str(log_path)
+            work_item["attempt_id"] = attempt_id
+            work_item["log_path"] = str(log_path)
             from nro.orchestration.contracts import ExecutionEnvelope
 
-            return ExecutionEnvelope.from_registry_row(instance)
+            return ExecutionEnvelope.from_registry_row(work_item)
 
     def current_worker_assignment(self, worker_id: str) -> "ExecutionEnvelope | None":
         """Recover the active assignment after an interrupted scheduler response."""
@@ -2210,7 +2040,7 @@ class Registry(WorkflowRegistry):
             row = db.execute(
                 """SELECT i.*,a.id AS attempt_id,a.log_path,
                           COALESCE(e.command_json,i.command_json) AS command_json
-                   FROM attempts a JOIN instances i ON i.id=a.instance_id
+                   FROM attempts a JOIN work_items i ON i.id=a.work_item_id
                    LEFT JOIN attempt_execution e ON e.attempt_id=a.id
                    WHERE a.worker_id=? AND a.state IN ('queued','running','cancel_requested')
                    ORDER BY a.id DESC LIMIT 1""",
@@ -2235,17 +2065,17 @@ class Registry(WorkflowRegistry):
                 "UPDATE attempts SET process_group_id=? WHERE id=?", (process_group_id, attempt_id)
             )
 
-    def demanded_instance_ids(self) -> tuple[int, ...]:
-        """Return instances currently required by at least one active request."""
+    def demanded_work_item_ids(self) -> tuple[int, ...]:
+        """Return work items currently required by at least one active request."""
         with self.connection() as db:
             return tuple(
-                int(row["instance_id"])
+                int(row["work_item_id"])
                 for row in db.execute(
                     """
-                    SELECT DISTINCT rt.instance_id
-                    FROM request_instances rt JOIN requests r ON r.id=rt.request_id
+                    SELECT DISTINCT rt.work_item_id
+                    FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
                     WHERE rt.demand_state='active' AND r.state='active'
-                    ORDER BY rt.instance_id
+                    ORDER BY rt.work_item_id
                     """
                 )
             )
@@ -2285,7 +2115,7 @@ class Registry(WorkflowRegistry):
             return True
 
     def finish_artifact_assessment(self) -> None:
-        """Release the audit lease and record when instance states became authoritative."""
+        """Release the audit lease and record when work-item states became authoritative."""
         now = time.time()
         with self.connection(write=True) as db:
             db.execute(
@@ -2303,7 +2133,7 @@ class Registry(WorkflowRegistry):
     def cancel_attempts_with_stale_upstreams(self) -> list[dict]:
         """Request cancellation of active work that is now downstream of stale work.
 
-        A worker allocation can execute only one instance at a time, so cancellation
+        A worker allocation can execute only one work item at a time, so cancellation
         is deliberately attempt-scoped rather than a Slurm ``scancel`` of the
         entire worker.  The worker observes ``cancel_requested`` promptly and
         terminates just its child process before returning to the shared pool.
@@ -2311,10 +2141,10 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             return dependency_state.synchronize(db, now=utcnow())
 
-    def cancel_attempts_downstream_of_failure(self, instance_id: int) -> list[dict]:
-        """Stop active descendant attempts after ``instance_id`` has fatally failed.
+    def cancel_attempts_downstream_of_failure(self, work_item_id: int) -> list[dict]:
+        """Stop active descendant attempts after ``work_item_id`` has fatally failed.
 
-        This is transitive rather than relying on each intermediate instance having
+        This is transitive rather than relying on each intermediate work item having
         already been reassessed.  It closes the short race in which an external
         change or a concurrent request allowed work from several DAG levels to
         be active when an ancestor fails.
@@ -2322,15 +2152,15 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             return dependency_state.invalidate(
                 db,
-                [instance_id],
+                [work_item_id],
                 now=utcnow(),
-                reason=f"Resolved upstream instance failed: {instance_id}",
+                reason=f"Resolved upstream work item failed: {work_item_id}",
                 error_type="UpstreamFailed",
             )
 
     @contextlib.contextmanager
     def artifact_mutation(
-        self, instance_ids: Iterable[int], *, timeout: float = 30.0
+        self, work_item_ids: Iterable[int], *, timeout: float = 30.0
     ) -> Iterator[None]:
         """Reserve outputs for deletion or replacement after cancelling their consumers.
 
@@ -2339,7 +2169,7 @@ class Registry(WorkflowRegistry):
         invalidation in place, and releases the reservation. After a hard crash,
         a later mutation recovers the filesystem lock before clearing old tokens.
         """
-        ids = tuple(sorted(set(instance_ids)))
+        ids = tuple(sorted(set(work_item_ids)))
         if not ids:
             yield
             return
@@ -2354,7 +2184,7 @@ class Registry(WorkflowRegistry):
         ):
             with self.connection(write=True) as db:
                 if db.execute(
-                    f"SELECT 1 FROM attempts WHERE instance_id IN ({placeholders}) AND state IN {dependency_state.ACTIVE}",
+                    f"SELECT 1 FROM attempts WHERE work_item_id IN ({placeholders}) AND state IN {dependency_state.ACTIVE}",
                     ids,
                 ).fetchone():
                     raise RuntimeError(
@@ -2365,7 +2195,7 @@ class Registry(WorkflowRegistry):
                     "INSERT INTO artifact_mutations VALUES (?,?)", [(item, token) for item in ids]
                 )
                 db.execute(
-                    f"UPDATE instances SET artifact_state='stale', artifact_reason='Outputs reserved for mutation', updated_at=? WHERE id IN ({placeholders})",
+                    f"UPDATE work_items SET artifact_state='stale', artifact_reason='Outputs reserved for mutation', updated_at=? WHERE id IN ({placeholders})",
                     (utcnow(), *ids),
                 )
                 dependency_state.invalidate(
@@ -2381,7 +2211,7 @@ class Registry(WorkflowRegistry):
                         active = db.execute(
                             f"""SELECT 1 FROM attempt_dependencies pinned
                             JOIN attempts reader ON reader.id=pinned.attempt_id
-                            WHERE pinned.upstream_instance_id IN ({placeholders})
+                            WHERE pinned.upstream_work_item_id IN ({placeholders})
                               AND reader.state IN {dependency_state.ACTIVE} LIMIT 1""",
                             ids,
                         ).fetchone()
@@ -2406,7 +2236,7 @@ class Registry(WorkflowRegistry):
         error_type: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Persist attempt completion and update the associated instance state."""
+        """Persist attempt completion and update the associated work-item state."""
         if state not in {"success", "error", "cancelled"}:
             raise ValueError(f"Invalid terminal attempt state: {state}")
         with self.connection(write=True) as db:
@@ -2434,7 +2264,7 @@ class Registry(WorkflowRegistry):
                     """
                     UPDATE requests SET state='satisfied', updated_at=?
                     WHERE state='active' AND NOT EXISTS (
-                        SELECT 1 FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
+                        SELECT 1 FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id
                         WHERE rt.request_id=requests.id AND rt.role='target' AND t.artifact_state!='fresh'
                     )
                     """,
@@ -2450,9 +2280,9 @@ class Registry(WorkflowRegistry):
     ) -> int | None:
         row = db.execute(
             """
-            SELECT a.instance_id, a.worker_id, a.memory_gb AS attempt_memory,a.oom_detected,
+            SELECT a.work_item_id, a.worker_id, a.memory_gb AS attempt_memory,a.oom_detected,
                    t.memory_gb, t.max_memory_gb
-            FROM attempts a JOIN instances t ON t.id=a.instance_id WHERE a.id=?
+            FROM attempts a JOIN work_items t ON t.id=a.work_item_id WHERE a.id=?
             """,
             (attempt_id,),
         ).fetchone()
@@ -2478,29 +2308,29 @@ class Registry(WorkflowRegistry):
         if next_memory is not None:
             db.execute(
                 """
-                UPDATE instances SET memory_gb=?, artifact_state='stale', artifact_reason=?, updated_at=?
+                UPDATE work_items SET memory_gb=?, artifact_state='stale', artifact_reason=?, updated_at=?
                 WHERE id=?
                 """,
                 (
                     next_memory,
                     f"OOM at {current} GB; retrying at {next_memory} GB",
                     utcnow(),
-                    row["instance_id"],
+                    row["work_item_id"],
                 ),
             )
             db.execute(
                 """
                 UPDATE requests SET updated_at=? WHERE state='active' AND id IN (
-                    SELECT request_id FROM request_instances
-                    WHERE instance_id=? AND demand_state='active'
+                    SELECT request_id FROM request_work_items
+                    WHERE work_item_id=? AND demand_state='active'
                 )
                 """,
-                (utcnow(), row["instance_id"]),
+                (utcnow(), row["work_item_id"]),
             )
         else:
             db.execute(
-                "UPDATE instances SET artifact_reason=?, updated_at=? WHERE id=?",
-                (f"OOM at configured ceiling of {limit} GB", utcnow(), row["instance_id"]),
+                "UPDATE work_items SET artifact_reason=?, updated_at=? WHERE id=?",
+                (f"OOM at configured ceiling of {limit} GB", utcnow(), row["work_item_id"]),
             )
         if row["worker_id"]:
             db.execute(
@@ -2520,6 +2350,7 @@ class Registry(WorkflowRegistry):
         participants: Sequence[str] = (),
         modules: Sequence[str] = (),
         workflows: Sequence[str] = (),
+        lineages: Sequence[str] = (),
         selectors: dict[str, Sequence[str] | str | None] | None = None,
         include_dependents: bool = True,
         user_name: str | None = None,
@@ -2531,9 +2362,12 @@ class Registry(WorkflowRegistry):
         Normally only requests owned by ``user_name`` are affected. ``force``
         deliberately removes matching demand from every user's active request.
         """
+        from nro.engine.cli import matches_module_lineage
+
         participant_set = {value.removeprefix("sub-") for value in participants}
         module_set = set(modules)
         workflow_set = set(workflows)
+        lineage_set = set(lineages)
         selectors = selectors or {}
         owner = user_name or getpass.getuser()
         with self.connection(write=True) as db:
@@ -2548,13 +2382,13 @@ class Registry(WorkflowRegistry):
                     )
                 }
             )
-            branch_instances = (
+            branch_work_items = (
                 None
                 if branch_registry_id is None
                 else {
                     row[0]
                     for row in db.execute(
-                        "SELECT instance_id FROM branch_instances WHERE registry_id=?",
+                        "SELECT work_item_id FROM branch_work_items WHERE registry_id=?",
                         (branch_registry_id,),
                     )
                 }
@@ -2578,48 +2412,53 @@ class Registry(WorkflowRegistry):
                 )
             }
             if not eligible_requests:
-                return {"instances": 0, "requests": 0, "attempts": 0}
+                return {"work_items": 0, "requests": 0, "attempts": 0}
             selected = {
                 int(row["id"])
                 for row in db.execute(
-                    "SELECT id, participant, module, entities_json FROM instances WHERE project=?",
+                    """SELECT t.id, t.participant, t.module, t.entities_json,
+                              ci.directory_label
+                       FROM work_items t JOIN module_lineages ci
+                         ON ci.id=t.module_lineage_id
+                       WHERE t.project=?""",
                     (self.paths.project,),
                 )
                 if (not participant_set or row["participant"] in participant_set)
                 and (not module_set or row["module"] in module_set)
+                and matches_module_lineage(row["module"], row["directory_label"], lineage_set)
                 and matches_selectors(json.loads(row["entities_json"]), selectors)
-                and (branch_instances is None or row["id"] in branch_instances)
+                and (branch_work_items is None or row["id"] in branch_work_items)
             }
             if include_dependents:
                 changed = True
                 while changed:
                     before = len(selected)
                     for edge in db.execute(
-                        "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
+                        "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies"
                     ):
-                        if int(edge["upstream_instance_id"]) in selected:
-                            selected.add(int(edge["instance_id"]))
+                        if int(edge["upstream_work_item_id"]) in selected:
+                            selected.add(int(edge["work_item_id"]))
                     changed = len(selected) != before
             if not selected:
-                return {"instances": 0, "requests": 0, "attempts": 0}
-            instance_placeholders = ",".join("?" for _ in selected)
+                return {"work_items": 0, "requests": 0, "attempts": 0}
+            work_item_placeholders = ",".join("?" for _ in selected)
             request_placeholders = ",".join("?" for _ in eligible_requests)
             values = (*tuple(selected), *tuple(eligible_requests))
             affected_requests = {
                 str(row["request_id"])
                 for row in db.execute(
-                    f"""SELECT DISTINCT request_id FROM request_instances
-                        WHERE instance_id IN ({instance_placeholders})
+                    f"""SELECT DISTINCT request_id FROM request_work_items
+                        WHERE work_item_id IN ({work_item_placeholders})
                           AND request_id IN ({request_placeholders})
                           AND demand_state='active'""",
                     values,
                 )
             }
             if not affected_requests:
-                return {"instances": 0, "requests": 0, "attempts": 0}
+                return {"work_items": 0, "requests": 0, "attempts": 0}
             cursor = db.execute(
-                f"""UPDATE request_instances SET demand_state='cancelled'
-                    WHERE instance_id IN ({instance_placeholders})
+                f"""UPDATE request_work_items SET demand_state='cancelled'
+                    WHERE work_item_id IN ({work_item_placeholders})
                       AND request_id IN ({request_placeholders})
                       AND demand_state='active'""",
                 values,
@@ -2627,23 +2466,23 @@ class Registry(WorkflowRegistry):
             demand_count = cursor.rowcount
             cancelled_requests: list[str] = []
             edges = [
-                (int(row["instance_id"]), int(row["upstream_instance_id"]))
+                (int(row["work_item_id"]), int(row["upstream_work_item_id"]))
                 for row in db.execute(
-                    "SELECT instance_id, upstream_instance_id FROM instance_dependencies"
+                    "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies"
                 )
             ]
             for request_id in affected_requests:
                 active_targets = {
-                    int(row["instance_id"])
+                    int(row["work_item_id"])
                     for row in db.execute(
-                        """SELECT instance_id FROM request_instances
+                        """SELECT work_item_id FROM request_work_items
                            WHERE request_id=? AND role='target' AND demand_state='active'""",
                         (request_id,),
                     )
                 }
                 if not active_targets:
                     pruned = db.execute(
-                        "UPDATE request_instances SET demand_state='cancelled' WHERE request_id=? AND demand_state='active'",
+                        "UPDATE request_work_items SET demand_state='cancelled' WHERE request_id=? AND demand_state='active'",
                         (request_id,),
                     ).rowcount
                     demand_count += pruned
@@ -2657,23 +2496,23 @@ class Registry(WorkflowRegistry):
                 changed = True
                 while changed:
                     before = len(required)
-                    for instance_id, upstream_id in edges:
-                        if instance_id in required:
+                    for work_item_id, upstream_id in edges:
+                        if work_item_id in required:
                             required.add(upstream_id)
                     changed = len(required) != before
-                active_instances = {
-                    int(row["instance_id"])
+                active_work_items = {
+                    int(row["work_item_id"])
                     for row in db.execute(
-                        "SELECT instance_id FROM request_instances WHERE request_id=? AND demand_state='active'",
+                        "SELECT work_item_id FROM request_work_items WHERE request_id=? AND demand_state='active'",
                         (request_id,),
                     )
                 }
-                orphaned = active_instances - required
+                orphaned = active_work_items - required
                 if orphaned:
                     orphan_placeholders = ",".join("?" for _ in orphaned)
                     demand_count += db.execute(
-                        f"""UPDATE request_instances SET demand_state='cancelled'
-                            WHERE request_id=? AND instance_id IN ({orphan_placeholders})
+                        f"""UPDATE request_work_items SET demand_state='cancelled'
+                            WHERE request_id=? AND work_item_id IN ({orphan_placeholders})
                               AND demand_state='active'""",
                         (request_id, *tuple(orphaned)),
                     ).rowcount
@@ -2684,25 +2523,25 @@ class Registry(WorkflowRegistry):
                     error_message='Cancellation requested directly by a user'
                 WHERE state IN ('queued', 'running')
                   AND NOT EXISTS (
-                      SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.instance_id=attempts.instance_id AND rt.demand_state='active' AND r.state='active'
+                      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                      WHERE rt.work_item_id=attempts.work_item_id AND rt.demand_state='active' AND r.state='active'
                   )
                 """
             )
             return {
-                "instances": demand_count,
+                "work_items": demand_count,
                 "requests": len(cancelled_requests),
                 "attempts": cursor.rowcount,
             }
 
     def reconcile_requests(self) -> None:
-        """Update request states from their demanded instances' current outcomes."""
+        """Update request states from their demanded work items' current outcomes."""
         with self.connection(write=True) as db:
             db.execute(
                 """
                 UPDATE requests SET state='satisfied', updated_at=?
                 WHERE state='active' AND NOT EXISTS (
-                    SELECT 1 FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
+                    SELECT 1 FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id
                     WHERE rt.request_id=requests.id AND rt.role='target'
                       AND rt.demand_state='active' AND t.artifact_state!='fresh'
                 )
@@ -2711,9 +2550,9 @@ class Registry(WorkflowRegistry):
             )
             # A request may contain many independent branches (for example,
             # one functional run per acquisition).  A failed branch is
-            # represented by its instance/attempt and blocks only its descendants;
+            # represented by its work item and attempt and blocks only its descendants;
             # it must not deactivate demand for unrelated ready branches.
-            # Failed instances remain non-retryable until a later orchestration run
+            # Failed work items remain non-retryable until a later orchestration run
             # refreshes demand, per the claim predicate above.
 
     def reserve_worker_submissions(
@@ -2784,15 +2623,15 @@ class Registry(WorkflowRegistry):
                 "small": ("small",),
             }.get(resource_class, (resource_class,))
             placeholders = ",".join("?" for _ in compatible)
-            active_instances = int(
+            active_work_items = int(
                 db.execute(
                     "SELECT COUNT(*) FROM attempts WHERE state IN ('queued', 'running', 'cancel_requested')"
                 ).fetchone()[0]
             )
-            ready_instances = int(
+            ready_work_items = int(
                 db.execute(
                     f"""
-                    SELECT COUNT(*) FROM instances t
+                    SELECT COUNT(*) FROM work_items t
                     WHERE t.resource_class IN ({placeholders})
                       AND t.memory_gb<=?
                       AND {dependency_state.WRITE_READY}
@@ -2802,31 +2641,31 @@ class Registry(WorkflowRegistry):
                           AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
                       )
                       AND EXISTS (
-                          SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                          WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
+                          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
                       )
                       AND NOT EXISTS (
-                          SELECT 1 FROM instance_dependencies td JOIN instances up ON up.id=td.upstream_instance_id
-                          WHERE td.instance_id=t.id AND up.artifact_state!='fresh'
+                          SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
+                          WHERE td.work_item_id=t.id AND up.artifact_state!='fresh'
                       )
                       AND NOT EXISTS (
-                          SELECT 1 FROM attempts a WHERE a.instance_id=t.id
+                          SELECT 1 FROM attempts a WHERE a.work_item_id=t.id
                           AND a.state IN ('queued', 'running', 'cancel_requested')
                       )
                       AND (
-                          NOT EXISTS (SELECT 1 FROM attempts old WHERE old.instance_id=t.id)
-                          OR COALESCE((SELECT state FROM attempts old WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
+                          NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
+                          OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
                           OR COALESCE((SELECT error_type FROM attempts old
-                                      WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1), '')
+                                      WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
                              IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                                 'InstanceGraphChanged', 'RegistryUnavailable')
+                                 'WorkItemGraphChanged', 'RegistryUnavailable')
                           OR EXISTS (
-                              SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                              WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
+                              SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                              WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
                               AND r.updated_at > COALESCE(
                                   (SELECT CASE WHEN old.state='cancelled'
                                            THEN old.started_at ELSE old.completed_at END
-                                   FROM attempts old WHERE old.instance_id=t.id ORDER BY id DESC LIMIT 1),
+                                   FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
                                   '')
                           )
                       )
@@ -2836,7 +2675,7 @@ class Registry(WorkflowRegistry):
             )
             desired = min(
                 max(desired, ingestion_limit),
-                active_instances + ready_instances + ingestion_active + ingestion_ready,
+                active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
             live_workers = int(
                 db.execute(
@@ -2869,7 +2708,7 @@ class Registry(WorkflowRegistry):
                         max(
                             0,
                             max(desired, ingestion_limit)
-                            - active_instances
+                            - active_work_items
                             - ingestion_active
                             - pending,
                         ),
@@ -2977,23 +2816,23 @@ class Registry(WorkflowRegistry):
             return submission_id, token
 
     def required_memory_above(self, memory_gb: int) -> int | None:
-        """Return the smallest ready instance tier that this worker cannot satisfy."""
+        """Return the smallest ready work-item tier this worker cannot satisfy."""
         with self.connection() as db:
             row = db.execute(
                 f"""
-                SELECT MIN(t.memory_gb) AS memory_gb FROM instances t
+                SELECT MIN(t.memory_gb) AS memory_gb FROM work_items t
                 WHERE t.memory_gb> ? AND t.artifact_state!='fresh'
                   AND {dependency_state.WRITE_READY}
                   AND EXISTS (
-                      SELECT 1 FROM request_instances rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.instance_id=t.id AND rt.demand_state='active' AND r.state='active'
+                      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM instance_dependencies td JOIN instances up ON up.id=td.upstream_instance_id
-                      WHERE td.instance_id=t.id AND up.artifact_state!='fresh'
+                      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
+                      WHERE td.work_item_id=t.id AND up.artifact_state!='fresh'
                   )
                   AND NOT EXISTS (
-                      SELECT 1 FROM attempts a WHERE a.instance_id=t.id
+                      SELECT 1 FROM attempts a WHERE a.work_item_id=t.id
                       AND a.state IN ('queued', 'running', 'cancel_requested')
                   )
                 """,
@@ -3117,7 +2956,7 @@ class Registry(WorkflowRegistry):
                 recovered += IngestionIndex(self).recover_locked({worker_id})
                 IngestionIndex(self).clear_publication_barriers_locked(db)
                 attempts = db.execute(
-                    "SELECT id, instance_id FROM attempts WHERE worker_id=? AND state IN ('queued', 'running', 'cancel_requested')",
+                    "SELECT id, work_item_id FROM attempts WHERE worker_id=? AND state IN ('queued', 'running', 'cancel_requested')",
                     (worker_id,),
                 ).fetchall()
                 for attempt in attempts:
@@ -3146,11 +2985,11 @@ class Registry(WorkflowRegistry):
                     db.execute(
                         """
                         UPDATE requests SET updated_at=? WHERE state='active' AND id IN (
-                            SELECT request_id FROM request_instances
-                            WHERE instance_id=? AND demand_state='active'
+                            SELECT request_id FROM request_work_items
+                            WHERE work_item_id=? AND demand_state='active'
                         )
                         """,
-                        (utcnow(), attempt["instance_id"]),
+                        (utcnow(), attempt["work_item_id"]),
                     )
                     recovered += 1
                 db.execute(
@@ -3195,8 +3034,8 @@ class Registry(WorkflowRegistry):
                 (slurm_job_id,),
             )
 
-    def publication_instances(self, request_id: str) -> tuple[dict, list[dict]]:
-        """Return a request and its terminal instances for publication validation."""
+    def publication_work_items(self, request_id: str) -> tuple[dict, list[dict]]:
+        """Return a request and its terminal work items for publication validation."""
         with self.connection() as db:
             request = db.execute(
                 """
@@ -3208,12 +3047,12 @@ class Registry(WorkflowRegistry):
             ).fetchone()
             if request is None:
                 raise KeyError(f"Unknown nro request: {request_id}")
-            instances = db.execute(
+            work_items = db.execute(
                 """
                 SELECT t.*,ci.configuration_class,ci.directory_label
-                FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
-                JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
-                WHERE rt.request_id=? AND rt.role='target' ORDER BY t.participant, t.instance_key
+                FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id
+                JOIN module_lineages ci ON ci.id=t.module_lineage_id
+                WHERE rt.request_id=? AND rt.role='target' ORDER BY t.participant, t.work_item_key
                 """,
                 (request_id,),
             ).fetchall()
@@ -3222,18 +3061,18 @@ class Registry(WorkflowRegistry):
             ).fetchone()
             if plan is not None:
                 terminals = set(json.loads(plan[0])["terminals"])
-                instances = [
+                work_items = [
                     row
                     for row in db.execute(
                         """SELECT t.*,ci.configuration_class,ci.directory_label,
-                    COALESCE(e.logical_key,t.instance_key) AS logical_key FROM request_artifacts rt
-                    JOIN instances t ON t.id=rt.instance_id JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
-                    LEFT JOIN instance_execution e ON e.instance_id=t.id WHERE rt.request_id=?""",
+                    COALESCE(e.logical_key,t.work_item_key) AS logical_key FROM request_artifacts rt
+                    JOIN work_items t ON t.id=rt.work_item_id JOIN module_lineages ci ON ci.id=t.module_lineage_id
+                    LEFT JOIN work_item_execution e ON e.work_item_id=t.id WHERE rt.request_id=?""",
                         (request_id,),
                     )
                     if row["logical_key"] in terminals
                 ]
-            return dict(request), [dict(row) for row in instances]
+            return dict(request), [dict(row) for row in work_items]
 
     def unused_queued_worker_jobs(self) -> list[tuple[int, str]]:
         """Return queued pool jobs only when the project has no active demand."""

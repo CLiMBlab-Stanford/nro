@@ -1,4 +1,4 @@
-"""Planner-facing construction of run-level functional instances."""
+"""Planner-facing construction of run-level functional work items."""
 
 from __future__ import annotations
 
@@ -6,16 +6,18 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
+from nro.configuration.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.paths import functional_manifest_path, module_subject_dir
+from nro.modules.func.contract import final_resampling_contract
 from nro.modules.func.resolver import (
     ReferenceInventory,
     load_rec,
     load_reference_inventory,
     resolve_func_references,
 )
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
@@ -61,12 +63,12 @@ def resolved_func_inputs(
     return tuple(dict.fromkeys(result))
 
 
-def plan_instances(
+def plan_work_items(
     context: SubjectPlanningContext,
-    upstream: Mapping[str, tuple[InstanceSpec, ...]],
+    upstream: Mapping[str, tuple[WorkItemSpec, ...]],
     descriptor: ModuleDescriptor,
-) -> tuple[InstanceSpec, ...]:
-    """Construct one functional instance per selected raw BOLD run."""
+) -> tuple[WorkItemSpec, ...]:
+    """Construct one functional work item per selected raw BOLD run."""
     anat = upstream["anat"][0]
     lineage = context.registered.lineages[descriptor.name]
     directory_label = context.registered.directories[descriptor.name]
@@ -79,16 +81,31 @@ def plan_instances(
         bids_root=context.bids_root,
     )
     sdc_from_sbref_pair = bool(context.workflow.configuration("func").values["sdc_from_sbref_pair"])
+    gradient_mode = str(context.workflow.configuration("func").values["gradient_unwarping"])
     inventories: dict[Path, ReferenceInventory] = {}
-    result: list[InstanceSpec] = []
+    result: list[WorkItemSpec] = []
     for run in context.runs:
         inventory_key = run.path.parent.parent.resolve()
         if inventory_key not in inventories:
             inventories[inventory_key] = load_session_inventory(run, markup=context.source_markup)
         entities = dict(run.entities)
+        direct_inputs = resolved_func_inputs(
+            run,
+            sdc_from_sbref_pair=sdc_from_sbref_pair,
+            session_inventory=inventories[inventory_key],
+            markup=context.source_markup,
+        )
+        images = [path for path in direct_inputs if path.name.endswith((".nii", ".nii.gz"))]
+        gradient_records, gradient_resolutions = gradient_unwarping_records(
+            images,
+            mode=gradient_mode,
+            markup=context.source_markup,
+        )
+        bold_resolution = gradient_resolutions.get(run.path.expanduser().absolute())
+        bold_gradient_applied = bool(bold_resolution and bold_resolution.applied)
         result.append(
-            InstanceSpec.create(
-                key=instance_key(
+            WorkItemSpec.create(
+                key=work_item_key(
                     context.project,
                     descriptor.name,
                     context.registered.lineage_fingerprints[descriptor.name],
@@ -100,7 +117,7 @@ def plan_instances(
                 participant=context.participant,
                 entities=entities,
                 scope=descriptor.scope,
-                configuration_lineage_id=lineage,
+                module_lineage_id=lineage,
                 config_fingerprint=context.workflow.configuration(
                     descriptor.configuration_class
                 ).scientific_fingerprint,
@@ -109,7 +126,7 @@ def plan_instances(
                 command=(
                     sys.executable,
                     "-m",
-                    "nro.modules.func",
+                    descriptor.execution_module,
                     "--participant",
                     context.participant,
                     "--project",
@@ -117,12 +134,7 @@ def plan_instances(
                     *run_arguments(run),
                 ),
                 dependencies=(anat.key,),
-                input_paths=resolved_func_inputs(
-                    run,
-                    sdc_from_sbref_pair=sdc_from_sbref_pair,
-                    session_inventory=inventories[inventory_key],
-                    markup=context.source_markup,
-                ),
+                input_paths=direct_inputs,
                 output_root=output_root,
                 output_prefix=run.stem,
                 output_format=descriptor.output_format,
@@ -139,7 +151,15 @@ def plan_instances(
                         ses_id=f"ses-{run.session}" if run.session else None,
                     ),
                 ),
-                processing=context.processing_contract(descriptor),
+                processing={
+                    **context.processing_contract(
+                        descriptor,
+                        gradient_unwarping=gradient_records,
+                    ),
+                    "final_resampling": final_resampling_contract(
+                        gradient_unwarping=bold_gradient_applied
+                    ),
+                },
             )
         )
     return tuple(result)

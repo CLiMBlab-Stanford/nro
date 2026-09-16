@@ -77,12 +77,10 @@ def test_opaque_directory_producers_use_shared_directory_lifecycle() -> None:
     """Directory-producing steps must not implement cleanup ad hoc."""
     expected = {
         _MODULES / "anat" / "steps.py": {"_create_recon_all_step"},
-        _MODULES / "func" / "steps.py": {
-            "_create_robust_bold_reference_step",
-            "_create_topup_dfout_step",
-            "_create_ica_aroma_workflow_step",
-            "_create_ants_registration_step",
-        },
+        _MODULES / "func" / "reference_steps.py": {"_create_robust_bold_reference_step"},
+        _MODULES / "func" / "sdc_steps.py": {"_create_topup_dfout_step"},
+        _MODULES / "func" / "denoising_steps.py": {"_create_ica_aroma_workflow_step"},
+        _MODULES / "func" / "registration_steps.py": {"_create_ants_registration_step"},
         _MODULES / "networks" / "module.py": {"build_module"},
     }
     offenders: list[str] = []

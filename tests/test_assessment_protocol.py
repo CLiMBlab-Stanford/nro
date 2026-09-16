@@ -15,7 +15,8 @@ from nro.orchestration.assessment import (
     capture_assessment,
 )
 from nro.orchestration.catalog import module_descriptor
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.completion import record_completion
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
 
 
@@ -35,14 +36,14 @@ def graph(tmp_path):
             )
         )
         specs.append(
-            InstanceSpec.create(
+            WorkItemSpec.create(
                 key=name,
                 module="anat",
                 project="demo",
                 participant="01",
                 entities={},
                 scope="subject",
-                configuration_lineage_id=registered.lineages["anat"],
+                module_lineage_id=registered.lineages["anat"],
                 directory_label="main",
                 config_fingerprint=workflow.configuration("anat").scientific_fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -60,23 +61,23 @@ def graph(tmp_path):
         registered=registered,
         target_module="anat",
         selectors={},
-        instances=specs,
-        terminal_instance_keys=("leaf", "unrelated"),
+        work_items=specs,
+        terminal_work_item_keys=("leaf", "unrelated"),
         concurrency=5,
         partition=None,
     )
-    ids = registry.instance_ids(tuple(spec.key for spec in specs))
+    ids = registry.work_item_ids(tuple(spec.key for spec in specs))
     return registry, specs, ids
 
 
 def test_snapshot_is_consistent_detached_and_includes_ancestors(graph, monkeypatch):
     registry, _, ids = graph
-    snapshot = capture_assessment(registry, instance_ids=[ids["leaf"]])
-    assert {row["id"] for row in snapshot.instances} == {ids["root"], ids["leaf"]}
+    snapshot = capture_assessment(registry, work_item_ids=[ids["leaf"]])
+    assert {row["id"] for row in snapshot.work_items} == {ids["root"], ids["leaf"]}
     decoded = AssessmentSnapshot.from_dict(snapshot.as_dict())
     assert decoded == snapshot
     detached = snapshot.as_dict()
-    detached["instances"][0]["module"] = "changed"
+    detached["work_items"][0]["module"] = "changed"
     assert decoded == snapshot
     before = registry.paths.database.read_bytes()
     monkeypatch.setattr(
@@ -88,47 +89,47 @@ def test_snapshot_is_consistent_detached_and_includes_ancestors(graph, monkeypat
     assert not any(registry.paths.manifests.rglob("completion.json"))
 
 
-def test_global_registry_writes_receipts_inside_the_instance_project(graph):
-    from nro.orchestration.ownership import write_instance_ownership
+def test_global_registry_writes_receipts_inside_the_work_item_project(graph):
+    from nro.orchestration.ownership import write_work_item_ownership
 
     registry, _, ids = graph
     global_registry = Registry.for_project(
         "", bids_root=registry.paths.bids_root, registry_path=registry.paths.control
     )
-    receipt = write_instance_ownership(global_registry, ids["root"])
+    receipt = write_work_item_ownership(global_registry, ids["root"])
     assert receipt.is_relative_to(registry.paths.bids_root / "demo" / "derivatives")
     assert not (registry.paths.bids_root / "derivatives").exists()
 
 
 def test_assessment_does_not_rewrite_ownership_receipts(graph, monkeypatch):
-    from nro.orchestration.ownership import write_instance_ownership
+    from nro.orchestration.ownership import write_work_item_ownership
 
     registry, _, ids = graph
-    write_instance_ownership(registry, ids["root"])
+    write_work_item_ownership(registry, ids["root"])
     monkeypatch.setattr(
         manifests,
-        "write_instance_ownership",
+        "write_work_item_ownership",
         lambda *_args, **_kwargs: pytest.fail("assessment rewrote ownership"),
     )
     assert (
-        manifests.assess_registry(registry, instance_ids=[ids["root"]])[ids["root"]][0] == "fresh"
+        manifests.assess_registry(registry, work_item_ids=[ids["root"]])[ids["root"]][0] == "fresh"
     )
 
 
 def test_assessment_restores_a_missing_ownership_receipt(graph):
-    from nro.orchestration.ownership import instance_record_path
+    from nro.orchestration.ownership import work_item_record_path
 
     registry, _, ids = graph
     assert (
-        manifests.assess_registry(registry, instance_ids=[ids["root"]])[ids["root"]][0] == "fresh"
+        manifests.assess_registry(registry, work_item_ids=[ids["root"]])[ids["root"]][0] == "fresh"
     )
-    row = next(row for row in registry.instance_rows() if row["id"] == ids["root"])
-    receipt = instance_record_path(
+    row = next(row for row in registry.work_item_rows() if row["id"] == ids["root"])
+    receipt = work_item_record_path(
         registry.paths.bids_root / "demo",
         "anat",
         "main",
         "anat",
-        row["instance_key"],
+        row["work_item_key"],
     )
     assert receipt.is_file()
 
@@ -139,48 +140,51 @@ def test_assessment_restores_a_missing_ownership_receipt(graph):
 )
 def test_obsolete_reports_cannot_overwrite_newer_state(graph, mutation):
     registry, specs, ids = graph
-    snapshot = capture_assessment(registry, instance_ids=[ids["leaf"]])
+    snapshot = capture_assessment(registry, work_item_ids=[ids["leaf"]])
     report = manifests.evaluate_assessment(snapshot)
     with registry.connection(write=True) as db:
         if mutation == "generation":
             db.execute(
-                "UPDATE instances SET current_generation=1, artifact_state='fresh' WHERE id=?",
+                "UPDATE work_items SET current_generation=1, artifact_state='fresh' WHERE id=?",
                 (ids["root"],),
             )
         elif mutation == "contract":
-            db.execute("UPDATE instances SET artifact_fingerprint='new' WHERE id=?", (ids["leaf"],))
+            db.execute(
+                "UPDATE work_items SET artifact_fingerprint='new' WHERE id=?", (ids["leaf"],)
+            )
         elif mutation == "inputs":
             db.execute(
-                "UPDATE instances SET input_paths_json='[\"new-input\"]' WHERE id=?", (ids["leaf"],)
+                "UPDATE work_items SET input_paths_json='[\"new-input\"]' WHERE id=?",
+                (ids["leaf"],),
             )
         elif mutation == "graph":
             db.execute(
-                "INSERT INTO instance_dependencies VALUES (?, ?, ?, NULL)",
+                "INSERT INTO work_item_dependencies VALUES (?, ?, ?, NULL)",
                 (ids["leaf"], ids["unrelated"], "input"),
             )
         elif mutation == "configuration":
             db.execute(
-                "UPDATE configuration_lineages SET resolved_yaml='changed: true' WHERE id=?",
-                (specs[0].configuration_lineage_id,),
+                "UPDATE module_lineages SET resolved_yaml='changed: true' WHERE id=?",
+                (specs[0].module_lineage_id,),
             )
         elif mutation == "reservation":
             db.execute("INSERT INTO artifact_mutations VALUES (?, ?)", (ids["root"], "mutation"))
     if mutation == "claim":
         registry.register_worker("test", resource_class="large")
-        assert registry.claim_ready_instance("test", ("large",)) is not None
-    before = registry.instance_rows()
+        assert registry.claim_ready_work_item("test", ("large",)) is not None
+    before = registry.work_item_rows()
     with pytest.raises(AssessmentConflict):
         apply_assessment(registry, snapshot, report)
-    assert registry.instance_rows() == before
+    assert registry.work_item_rows() == before
 
 
 def test_unrelated_work_resources_and_heartbeats_do_not_reject_report(graph):
     registry, _, ids = graph
-    snapshot = capture_assessment(registry, instance_ids=[ids["leaf"]])
+    snapshot = capture_assessment(registry, work_item_ids=[ids["leaf"]])
     report = manifests.evaluate_assessment(snapshot)
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET current_generation=8 WHERE id=?", (ids["unrelated"],))
-        db.execute("UPDATE instances SET memory_gb=128, max_memory_gb=256")
+        db.execute("UPDATE work_items SET current_generation=8 WHERE id=?", (ids["unrelated"],))
+        db.execute("UPDATE work_items SET memory_gb=128, max_memory_gb=256")
     registry.register_worker("idle", resource_class="large")
     registry.heartbeat_worker("idle", state="idle")
     states = apply_assessment(registry, snapshot, report)
@@ -194,7 +198,7 @@ def test_unrelated_work_resources_and_heartbeats_do_not_reject_report(graph):
 )
 def test_reports_cannot_expand_or_change_their_publication_scope(graph, change):
     registry, _, ids = graph
-    snapshot = capture_assessment(registry, instance_ids=[ids["root"]])
+    snapshot = capture_assessment(registry, work_item_ids=[ids["root"]])
     value = manifests.evaluate_assessment(snapshot).as_dict()
     if change == "extra":
         value["updates"].append({**value["updates"][0], "id": ids["unrelated"]})
@@ -208,7 +212,7 @@ def test_reports_cannot_expand_or_change_their_publication_scope(graph, change):
         value["updates"][0]["state"] = "success"
     with pytest.raises(ValueError):
         apply_assessment(registry, snapshot, AssessmentReport.from_dict(value))
-    assert all(row["artifact_state"] == "missing" for row in registry.instance_rows())
+    assert all(row["artifact_state"] == "missing" for row in registry.work_item_rows())
 
 
 def test_normal_assessment_retries_a_concurrent_completion(graph, monkeypatch):
@@ -221,20 +225,20 @@ def test_normal_assessment_retries_a_concurrent_completion(graph, monkeypatch):
         calls.append(snapshot)
         if len(calls) == 1:
             with registry.connection(write=True) as db:
-                db.execute("UPDATE instances SET current_generation=1 WHERE id=?", (ids["root"],))
+                db.execute("UPDATE work_items SET current_generation=1 WHERE id=?", (ids["root"],))
         return report
 
     monkeypatch.setattr(manifests, "evaluate_assessment", concurrent)
-    result = manifests.assess_registry(registry, instance_ids=[ids["leaf"]])
+    result = manifests.assess_registry(registry, work_item_ids=[ids["leaf"]])
     assert result[ids["root"]][0] == "fresh"
     assert len(calls) == 2
 
 
 def test_assessment_cannot_redirect_outputs(graph):
     registry, _, ids = graph
-    snapshot = capture_assessment(registry, instance_ids=[ids["root"]])
+    snapshot = capture_assessment(registry, work_item_ids=[ids["root"]])
     value = manifests.evaluate_assessment(snapshot).as_dict()
-    contract = json.loads(snapshot.instances[0]["artifact_contract_json"])
+    contract = json.loads(snapshot.work_items[0]["artifact_contract_json"])
     contract["output"]["root"] = "/unrelated"
     value["updates"][0]["contract"] = contract
     with pytest.raises(ValueError, match="cannot change"):
@@ -267,17 +271,17 @@ def test_worker_validates_registered_contract_without_scientific_catalog(graph, 
 
     registry, specs, ids = graph
     registry.register_worker("test", resource_class="large")
-    claim = registry.claim_ready_instance("test", ("large",))
-    assert claim.instance_id == ids["root"]
+    claim = registry.claim_ready_work_item("test", ("large",))
+    assert claim.work_item_id == ids["root"]
     with registry.connection(write=True) as db:
         contract = json.loads(
             db.execute(
-                "SELECT artifact_contract_json FROM instances WHERE id=?", (ids["root"],)
+                "SELECT artifact_contract_json FROM work_items WHERE id=?", (ids["root"],)
             ).fetchone()[0]
         )
         contract["module"] = "unknown_extension"
         db.execute(
-            "UPDATE instances SET module=?,artifact_contract_json=?,artifact_fingerprint=? WHERE id=?",
+            "UPDATE work_items SET module=?,artifact_contract_json=?,artifact_fingerprint=? WHERE id=?",
             ("unknown_extension", json.dumps(contract), fingerprint(contract), ids["root"]),
         )
     monkeypatch.setattr(
@@ -288,27 +292,27 @@ def test_worker_validates_registered_contract_without_scientific_catalog(graph, 
     monkeypatch.setattr(
         catalog, "canonical_contract", lambda *_: pytest.fail("Worker recompiled a contract")
     )
-    manifests.record_completion(
+    record_completion(
         registry,
-        instance_id=ids["root"],
+        work_item_id=ids["root"],
         attempt_id=claim.attempt_id,
         outputs=specs[0].expected_outputs,
     )
     assert (
-        manifests.assess_registry(registry, instance_ids=[ids["root"]], compiled=True)[ids["root"]][
-            0
-        ]
+        manifests.assess_registry(registry, work_item_ids=[ids["root"]], compiled=True)[
+            ids["root"]
+        ][0]
         == "fresh"
     )
     with registry.connection(write=True) as db:
         contract["processing"]["new_requirement"] = True
         db.execute(
-            "UPDATE instances SET artifact_contract_json=?,artifact_fingerprint=? WHERE id=?",
+            "UPDATE work_items SET artifact_contract_json=?,artifact_fingerprint=? WHERE id=?",
             (json.dumps(contract), fingerprint(contract), ids["root"]),
         )
     assert (
-        manifests.assess_registry(registry, instance_ids=[ids["root"]], compiled=True)[ids["root"]][
-            0
-        ]
+        manifests.assess_registry(registry, work_item_ids=[ids["root"]], compiled=True)[
+            ids["root"]
+        ][0]
         == "stale"
     )

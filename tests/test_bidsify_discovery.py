@@ -275,20 +275,30 @@ def test_multisite_mapping_filters_and_prompts_by_server(monkeypatch):
 
 
 def test_multisite_configuration_loads(tmp_path):
+    import shutil
+
     import yaml
 
-    from nro.configuration.site import definitions_root
+    from nro.configuration.site import (
+        definitions_root,
+        read_site_definition,
+        write_site_definition,
+    )
 
-    config = yaml.safe_load((definitions_root() / "bidsify/main.yml").read_text())
-    config["project_sources"] = {
+    root = tmp_path / "definitions"
+    shutil.copytree(definitions_root(), root)
+    config = yaml.safe_load((root / "bidsify/main.yml").read_text())
+    site_settings, bidsify = read_site_definition(root)
+    bidsify["project_sources"] = {
         "demo": [
             {"server": "cni", "project": "test/demo"},
             {"server": "lucas", "project": "test/demo"},
         ]
     }
+    write_site_definition(root, site_settings, bidsify=bidsify)
     path = tmp_path / "profile.yml"
     path.write_text(yaml.safe_dump(config))
-    assert load_config(path)["project_sources"] == config["project_sources"]
+    assert load_config(path, root=root)["project_sources"] == bidsify["project_sources"]
 
 
 def test_legacy_intake_does_not_hide_or_conflict_with_multisession(tmp_path):

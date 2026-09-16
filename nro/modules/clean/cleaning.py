@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 
 from nro.engine.bids import bids_entity, replace_bids_entity_token
-from nro.engine.execution import new_step_counter
 from nro.engine.images import (
     gifti_vertex_count,
     load_gifti_timeseries,
@@ -19,8 +18,6 @@ from nro.engine.images import (
 from nro.engine.io import read_json, write_json
 from nro.engine.targets import is_fsaverage_space, is_surface_space
 from nro.engine.templates import find_fsaverage_surface
-
-next_step = new_step_counter()
 
 
 def _space_name(path: Path) -> str:

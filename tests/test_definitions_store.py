@@ -13,6 +13,7 @@ import yaml
 from nro.bin.definitions import main
 from nro.configuration import site
 from nro.configuration.definitions import _publish, create_store, ensure_store, validate_store
+from nro.configuration.site import read_site_definition
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.modules.firstlevels.task_models import load_task_model, scientific_model, select_models
 
@@ -21,12 +22,14 @@ def test_create_has_only_generic_starters(tmp_path):
     root = create_store(tmp_path / "store")
     counts = validate_store(root)
     assert counts == dict(
+        site=1,
         configs=2,
         workflows=3,
         models=0,
         event_ids=0,
         event_tsvs=0,
         markup=1,
+        hardware_profiles=0,
         bidsify=1,
         scanplan_parsers=1,
     )
@@ -36,7 +39,7 @@ def test_create_has_only_generic_starters(tmp_path):
         assert (root / "configs" / kind / ".gitkeep").is_file()
     assert not (root / ".git").exists()
     assert (root / ".gitignore").is_file()
-    assert yaml.safe_load((root / "bidsify/main.yml").read_text())["servers"] == {}
+    assert read_site_definition(root)[1]["servers"] == {}
     assert (root / "scanplans/parser.py").is_file()
     assert not (root / "scanplans/__pycache__").exists()
     assert select_models(root=root / "models") == {}

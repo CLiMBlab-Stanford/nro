@@ -9,13 +9,22 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional, Sequence
 
+from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.runtime import SETTINGS
+from nro.configuration.site import settings as site_settings
+from nro.engine.container import (
+    ContainerSettings,
+    add_container_arguments,
+    bind_container_to_execution,
+    build_container,
+)
 from nro.engine.execution import (
     collect_bind_directories,
     create_copy_file_step,
     ensure_directory,
     neuroimaging_environment,
 )
+from nro.engine.gradient_unwarping import create_gradient_unwarping_step
 from nro.engine.io import read_json, require_nonempty_file, write_json
 from nro.engine.manifests import create_json_step
 from nro.engine.neuroimaging import create_n4_bias_correction_step
@@ -69,11 +78,9 @@ from .steps import (
     _subject_preproc_path,
     _surface_names,
     _write_json_step,
-    next_step,
 )
 
 LOG = logging.getLogger("anat")
-DEFAULT_CONTAINER = Path(SETTINGS.common.qunex_container)
 # Standard aseg identifiers from FreeSurferColorLUT.txt:
 # https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/AnatomicalROI/FreeSurferColorLUT
 
@@ -99,10 +106,13 @@ class Options:
     fs_subject: str
     fsaverage_template: str
     selection_strategy: str
+    gradient_unwarping: str
+    gradient_unwarp_image: Path
+    gradient_unwarp_runtime: str
     mni_template: Path
     container: Optional[ContainerSpec]
     synthstrip_image: Optional[Path]
-    force: bool
+    overwrite: bool
 
 
 def build_module(
@@ -119,18 +129,11 @@ def build_module(
     if execution_context is not None:
         if execution_context.project != opts.project:
             raise ValueError("Anatomical project differs from its execution context")
-        container = opts.container
-        if container is not None and container.home_dir is not None:
-            container = replace(
-                container,
-                home_dir=execution_context.output_path(container.home_dir, private=True),
-            )
         opts = replace(
             opts,
             out_dir=execution_context.output_path(opts.out_dir),
             work_dir=execution_context.output_path(opts.work_dir, private=True),
             freesurfer_subjects_dir=execution_context.output_path(opts.freesurfer_subjects_dir),
-            container=container,
         )
         for image in (*inputs.t1w, *inputs.t2w):
             for path in (image.image, image.json):
@@ -149,8 +152,19 @@ def build_module(
     require_nonempty_file(opts.synthstrip_image, "SynthStrip image")
     require_nonempty_file(opts.mni_template, "MNI template")
 
+    gradient_resolutions = {
+        image.image: resolve_gradient_unwarping(
+            image.metadata,
+            mode=opts.gradient_unwarping,
+        )
+        for image in all_images
+    }
+    if any(resolution.applied for resolution in gradient_resolutions.values()):
+        require_nonempty_file(opts.gradient_unwarp_image, "gradient-unwarping image")
+
     public_inputs = [item.image for item in all_images]
-    public_inputs.extend(item.json for item in all_images if item.json is not None)
+    public_inputs.extend(source for item in all_images for source in item.metadata_sources)
+    public_inputs = list(dict.fromkeys(public_inputs))
     env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
     binds = collect_bind_directories(
         [
@@ -160,15 +174,18 @@ def build_module(
             opts.work_dir,
             opts.freesurfer_subjects_dir,
             opts.mni_template,
+            opts.gradient_unwarp_image
+            if any(resolution.applied for resolution in gradient_resolutions.values())
+            else None,
+            *(resolution.coefficients for resolution in gradient_resolutions.values()),
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
         ]
     )
     runner = Runner(
         module_name="Anatomical Module",
-        container=opts.container,
+        container=bind_container_to_execution(opts.container, execution_context),
         binds=binds,
         logger=LOG,
-        next_step=next_step,
         execution_context=execution_context,
     )
     initialized = opts.work_dir / "initialized.complete"
@@ -198,6 +215,7 @@ def build_module(
 
     configuration = {
         "selection_strategy": opts.selection_strategy,
+        "gradient_unwarping": opts.gradient_unwarping,
         "fs_subject": opts.fs_subject,
         "mni_template": str(opts.mni_template),
         "synthstrip_image": str(opts.synthstrip_image),
@@ -221,7 +239,7 @@ def build_module(
             name="Write Anatomical Configuration",
             outputs=(configuration_snapshot,),
             inputs=(initialized,),
-            force=opts.force,
+            force=opts.overwrite,
             action=lambda: write_json(configuration_snapshot, configuration),
             validate=validate_configuration,
         )
@@ -255,7 +273,7 @@ def build_module(
             name="Check Anatomical Dependencies",
             outputs=(dependency_check,),
             action=check_dependencies,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
 
@@ -271,16 +289,41 @@ def build_module(
             create_copy_file_step(
                 src=plan.source.image,
                 dst=plan.staged_raw,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Stage Session Anatomical Image",
             )
         )
+        gradient_resolution = gradient_resolutions[plan.source.image]
+        n4_input = plan.staged_raw
+        if gradient_resolution.applied:
+            gradient_dir = plan.staged_raw.parent / "gradient_unwarping"
+            n4_input = gradient_dir / plan.staged_raw.name
+            gradient_warp = gradient_dir / (
+                plan.staged_raw.name.removesuffix(".nii.gz").removesuffix(".nii") + "_warp.nii.gz"
+            )
+            gradient_metadata = gradient_dir / (
+                plan.staged_raw.name.removesuffix(".nii.gz").removesuffix(".nii") + ".json"
+            )
+            runner.add_step(
+                create_gradient_unwarping_step(
+                    runner=runner,
+                    source=plan.staged_raw,
+                    corrected=n4_input,
+                    warp=gradient_warp,
+                    metadata=gradient_metadata,
+                    resolution=gradient_resolution,
+                    runtime=opts.gradient_unwarp_runtime,
+                    image=opts.gradient_unwarp_image,
+                    force=opts.overwrite,
+                )
+            )
+        plan.metadata["GradientDistortionCorrection"] = gradient_resolution.scientific_record()
         runner.add_step(
             create_n4_bias_correction_step(
                 env=env,
-                in_img=plan.staged_raw,
+                in_img=n4_input,
                 out_img=plan.staged_preprocessed,
-                force=opts.force,
+                force=opts.overwrite,
                 validate_gzip=True,
                 step_name="N4 Bias Field Correction",
             )
@@ -293,7 +336,7 @@ def build_module(
                 source=plan.staged_preprocessed,
                 dst=plan.output,
                 mask=plan.mask,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -302,7 +345,7 @@ def build_module(
                 path=plan.metadata_output,
                 payload=plan.metadata,
                 inputs=(plan.staged_preprocessed, plan.output, plan.mask),
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     copied_images = [
@@ -348,7 +391,7 @@ def build_module(
             strategy=opts.selection_strategy,
             out_img=subj_t1,
             work_dir=opts.work_dir,
-            force=opts.force,
+            force=opts.overwrite,
         )
         runner.add_step(t1_step)
     # Select each modality independently. If both references exist, retain the
@@ -372,7 +415,7 @@ def build_module(
             strategy=opts.selection_strategy,
             out_img=subj_t2_selected,
             work_dir=opts.work_dir,
-            force=opts.force,
+            force=opts.overwrite,
         )
         runner.add_step(t2_step)
     subj_t2 = subj_t2_final
@@ -388,7 +431,7 @@ def build_module(
                 t1_ref=subj_t1,
                 out_t2=subj_t2,
                 out_mat=t2w_to_t1w,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         t2w_to_t1w_xfms["t2w_to_t1w"] = str(t2w_to_t1w)
@@ -403,7 +446,7 @@ def build_module(
                     "BiasCorrection": "N4BiasFieldCorrection",
                 },
                 inputs=(subj_t1,),
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     if subj_t2 is not None:
@@ -419,7 +462,7 @@ def build_module(
                     "TransformToT1w": str(t2w_to_t1w) if t2w_to_t1w is not None else None,
                 },
                 inputs=tuple(path for path in (subj_t2, t2w_to_t1w) if path is not None),
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     myelin_map: Optional[Path] = None
@@ -432,7 +475,7 @@ def build_module(
                 name="Prepare Nonzero T2w for Myelin Map",
                 outputs=(t2_nonzero,),
                 inputs=(subj_t2,),
-                force=opts.force,
+                force=opts.overwrite,
                 env=env,
                 prepare=lambda: t2_nonzero.parent.mkdir(parents=True, exist_ok=True),
             )
@@ -443,7 +486,7 @@ def build_module(
                 name="Compute T1w/T2w Myelin Map",
                 outputs=(myelin_map,),
                 inputs=(subj_t1, subj_t2, t2_nonzero),
-                force=opts.force,
+                force=opts.overwrite,
                 env=env,
             )
         )
@@ -472,7 +515,7 @@ def build_module(
             t2w=subj_t2,
             subjects_dir=opts.freesurfer_subjects_dir,
             fs_subject=opts.fs_subject,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     aseg_mgz = subject_dir / "mri" / "aseg.mgz"
@@ -492,7 +535,7 @@ def build_module(
                 labels=labels,
                 name=f"Extract {structure} FreeSurfer Labels",
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -501,7 +544,7 @@ def build_module(
                 src=temporary,
                 ref_image=subject_anat,
                 dst=output,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -533,7 +576,7 @@ def build_module(
             env=env,
             src=brainmask_mgz,
             dst=brain_temporary,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -542,7 +585,7 @@ def build_module(
             src=brain_temporary,
             ref_image=subject_anat,
             dst=brain_mask,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -563,7 +606,7 @@ def build_module(
             labels=gray_labels,
             name="Extract Gray Matter FreeSurfer Labels",
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -572,7 +615,7 @@ def build_module(
             src=gray_temporary,
             ref_image=subject_anat,
             dst=gray_mask,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -592,7 +635,7 @@ def build_module(
             source=ribbon_mgz,
             output=ribbon_temporary,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -601,7 +644,7 @@ def build_module(
             src=ribbon_temporary,
             ref_image=subject_anat,
             dst=ribbon_mask,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -631,7 +674,7 @@ def build_module(
             output=t1_to_fsnative,
             registration_file=t1_to_fsnative_reg,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -639,7 +682,7 @@ def build_module(
             source=t1_to_fsnative,
             output=fsnative_to_t1,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     fsnative_xfms = {
@@ -672,7 +715,7 @@ def build_module(
             source=fsnative_ref,
             output=fs_t1_ref_nii,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
             name="Convert FreeSurfer T1 Reference to NIfTI",
         )
     )
@@ -694,7 +737,7 @@ def build_module(
                         source=source,
                         output=output,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                         name="Convert FreeSurfer Sphere",
                         executable="mris_convert",
                     )
@@ -707,7 +750,7 @@ def build_module(
                         source=source,
                         output=raw,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                         name="Surface Conversion",
                         to_scanner=True,
                         executable="mris_convert",
@@ -721,14 +764,14 @@ def build_module(
                         target_volume=subject_t1,
                         output=affined,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 runner.add_step(
                     _strip_freesurfer_volgeom_metadata(
                         surf_in=affined,
                         surf_out=output,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
             runner.add_step(
@@ -760,7 +803,7 @@ def build_module(
                     output=metric_output,
                     description=metric_description,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -789,7 +832,7 @@ def build_module(
                 pial=pial,
                 output=midthickness,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -830,7 +873,7 @@ def build_module(
                 output=forward,
                 name=f"Export Hemisphere {hemi_label} fsnative-to-{fsaverage_space} Sphere",
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 executable="mris_convert",
             )
         )
@@ -838,7 +881,7 @@ def build_module(
             create_copy_file_step(
                 src=fsaverage_sphere,
                 dst=inverse,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name=f"Export Hemisphere {hemi_label} {fsaverage_space}-to-fsnative Sphere",
             )
         )
@@ -903,7 +946,7 @@ def build_module(
                     "Steps": [str(fsnative_to_fsaverage)],
                 },
                 inputs=(fsnative_to_fsaverage,),
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -921,7 +964,7 @@ def build_module(
                     "Steps": [str(fsaverage_to_fsnative)],
                 },
                 inputs=(fsaverage_to_fsnative,),
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         t1_fsaverage_xfms[f"hemi-{hemi_label}_t1_to_{fsaverage_space}"] = str(forward)
@@ -958,7 +1001,7 @@ def build_module(
             produced_forward=produced_t1_to_mni,
             produced_inverse=produced_mni_to_t1,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -967,7 +1010,7 @@ def build_module(
             produced_inverse=produced_mni_to_t1,
             forward=t1_to_mni,
             inverse=mni_to_t1,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     mni_xfms = {"t1_to_mni": str(t1_to_mni), "mni_to_t1": str(mni_to_t1)}
@@ -1031,7 +1074,7 @@ def build_module(
                 from_space=from_space,
                 to_space=to_space,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -1053,6 +1096,10 @@ def build_module(
         "fs_subject": opts.fs_subject,
         "fsaverage_template": opts.fsaverage_template,
         "selection_strategy": opts.selection_strategy,
+        "gradient_unwarping": {
+            str(path): resolution.scientific_record()
+            for path, resolution in gradient_resolutions.items()
+        },
         "inputs": {
             "t1w": [str(item.image) for item in inputs.t1w],
             "t2w": [str(item.image) for item in inputs.t2w],
@@ -1085,6 +1132,7 @@ def build_module(
             ),
             "configuration": {
                 "selection_strategy": opts.selection_strategy,
+                "gradient_unwarping": opts.gradient_unwarping,
                 "fs_subject": opts.fs_subject,
                 "fsaverage_template": opts.fsaverage_template,
                 "mni_template": str(opts.mni_template),
@@ -1135,7 +1183,7 @@ def build_module(
             name="Write Anatomical Publication Manifest",
             outputs=(manifest_path,),
             inputs=(*published_outputs, *public_inputs),
-            force=opts.force,
+            force=opts.overwrite,
             action=publish_manifest,
             validate=validate_publication,
             completion_boundary=True,
@@ -1175,29 +1223,26 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--selection-strategy", choices=["first", "robust_average"], default=cfg.selection_strategy
     )
+    p.add_argument(
+        "--gradient-unwarping",
+        choices=["auto", "off"],
+        default=cfg.gradient_unwarping,
+    )
     p.add_argument("--mni-template", type=Path, default=cfg.mni_template)
     p.add_argument("--synthstrip-container", type=Path, default=cfg.synthstrip_container)
     p.add_argument("--freesurfer-subjects-dir", type=Path, default=cfg.freesurfer_subjects_dir)
     p.add_argument("--out-dir", type=Path, default=cfg.out_dir)
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
-    p.add_argument("--force", action="store_true", default=cfg.force)
+    p.add_argument("--overwrite", action="store_true", default=cfg.overwrite)
     p.add_argument("--verbose", action="store_true", default=cfg.verbose)
-    p.add_argument("--container", type=Path, default=DEFAULT_CONTAINER)
-    p.add_argument("--no-container", action="store_true", default=cfg.no_container)
-    p.add_argument("--container-engine", default=cfg.container_engine)
-    p.add_argument(
-        "--container-no-cleanenv", action="store_true", default=not bool(cfg.container_cleanenv)
-    )
-    p.add_argument("--container-bind", action="append", default=list(cfg.container_bind))
-    p.add_argument("--container-home", type=Path, default=cfg.container_home)
-    p.add_argument("--container-inner-setup", default=cfg.container_inner_setup)
+    add_container_arguments(p, cfg.container)
     return p
 
 
 def main(
     argv: Optional[Sequence[str]] = None, *, execution_context: ExecutionContext | None = None
 ) -> None:
-    """Parse and execute one anatomical module instance."""
+    """Parse and execute one anatomical module work item."""
     args = _build_argparser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -1232,19 +1277,12 @@ def main(
     synthstrip_image = resolve_project_path(args.synthstrip_container, project=project)
     if synthstrip_image is None:
         raise SystemExit("Missing --synthstrip-container path.")
-    container: Optional[ContainerSpec]
-    if args.no_container:
-        container = None
-    else:
-        container_home = args.container_home or (work_dir / "_qunex_home")
-        container = ContainerSpec(
-            image=Path(args.container),
-            engine=str(args.container_engine),
-            cleanenv=not bool(args.container_no_cleanenv),
-            extra_binds=tuple(args.container_bind or []),
-            home_dir=Path(container_home),
-            inner_setup=str(args.container_inner_setup or ""),
-        )
+    site, _ = site_settings()
+    container = build_container(
+        ContainerSettings.from_args(args),
+        work_directory=work_dir,
+        execution_context=execution_context,
+    )
     run(
         Inputs(sub_id=str(args.sub_id), t1w=tuple(t1w), t2w=tuple(t2w)),
         Options(
@@ -1256,10 +1294,13 @@ def main(
             fs_subject=str(args.fs_subject or args.sub_id),
             fsaverage_template=str(args.fsaverage_template),
             selection_strategy=str(args.selection_strategy),
+            gradient_unwarping=str(args.gradient_unwarping),
+            gradient_unwarp_image=Path(site["gradient_unwarp"]),
+            gradient_unwarp_runtime=str(site["runtime"]),
             mni_template=mni_template,
             container=container,
             synthstrip_image=synthstrip_image,
-            force=bool(args.force),
+            overwrite=bool(args.overwrite),
         ),
         execution_context=execution_context,
     )

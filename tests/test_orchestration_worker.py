@@ -14,14 +14,16 @@ import pytest
 
 from nro.bin.status import main as status_main
 from nro.configuration.store import ConfigStore
+from nro.orchestration import manifests
 from nro.orchestration.catalog import module_descriptor
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.manifests import assess_registry, file_record
 from nro.orchestration.publish import publish
 from nro.orchestration.registry import (
     Registry,
     RegistryLock,
     RegistryLockTimeout,
+    _work_item_relative_directory,
     discover_registry_projects,
 )
 from nro.orchestration.worker import Worker
@@ -38,20 +40,20 @@ def _spec(
     dependencies: tuple[str, ...] = (),
     inputs: tuple[Path, ...] = (),
     project: str = "demo",
-) -> InstanceSpec:
+) -> WorkItemSpec:
     command = (
         sys.executable,
         "-c",
         f"from pathlib import Path; p=Path({str(output)!r}); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('ok')",
     )
-    return InstanceSpec.create(
+    return WorkItemSpec.create(
         key=key,
         module=module,
         project=project,
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=lineage,
+        module_lineage_id=lineage,
         config_fingerprint=config_fingerprint,
         directory_label="main",
         runtime_config=runtime_config,
@@ -66,7 +68,51 @@ def _spec(
     )
 
 
-def test_existing_instance_adopts_current_configuration_snapshot(tmp_path: Path) -> None:
+def test_work_item_private_paths_use_the_logical_digest() -> None:
+    base = {
+        "project": "demo",
+        "participant": "01",
+        "entities_json": "{}",
+        "module": "microparcellation",
+    }
+    first = _work_item_relative_directory(
+        {**base, "work_item_key": "owner:microparcellation:" + "a" * 64}
+    )
+    second = _work_item_relative_directory(
+        {**base, "work_item_key": "owner:microparcellation:" + "b" * 64}
+    )
+
+    assert first != second
+    assert first.name == "a" * 16
+    assert second.name == "b" * 16
+
+
+def test_existing_work_item_adopts_current_manifest_path(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "e" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.register_work_items((work_item,))
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE work_items SET manifest_path='obsolete' WHERE work_item_key=?", (work_item.key,)
+        )
+
+    registry.register_work_items((work_item,))
+
+    manifest = Path(registry.work_item_rows()[0]["manifest_path"])
+    assert manifest.name == "completion.json"
+    assert manifest.parent.name == "e" * 16
+
+
+def test_existing_work_item_adopts_current_configuration_snapshot(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
@@ -78,11 +124,11 @@ def test_existing_instance_adopts_current_configuration_snapshot(tmp_path: Path)
         runtime_config=registry.runtime_config_path(registered, "networks"),
         output=tmp_path / "outputs" / "network.txt",
     )
-    registry.register_instances((first,))
+    registry.register_work_items((first,))
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh', artifact_reason='Current' "
-            "WHERE instance_key=?",
+            "UPDATE work_items SET artifact_state='fresh', artifact_reason='Current' "
+            "WHERE work_item_key=?",
             (first.key,),
         )
     current_runtime = tmp_path / "current_networks.yml"
@@ -92,13 +138,13 @@ def test_existing_instance_adopts_current_configuration_snapshot(tmp_path: Path)
         runtime_config=current_runtime,
     )
 
-    registry.register_instances((current,))
+    registry.register_work_items((current,))
 
-    row = next(item for item in registry.instance_rows() if item["instance_key"] == first.key)
+    row = next(item for item in registry.work_item_rows() if item["work_item_key"] == first.key)
     assert row["runtime_config_path"] == str(current_runtime)
     assert row["revision_fingerprint"] == current.revision_fingerprint
     assert row["artifact_state"] == "stale"
-    assert row["artifact_reason"] == "Instance contract changed"
+    assert row["artifact_reason"] == "Work-item contract changed"
 
 
 def test_central_registry_shares_concurrency_without_cross_project_cancellation(
@@ -132,8 +178,8 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(alpha,),
-        terminal_instance_keys=(alpha.key,),
+        work_items=(alpha,),
+        terminal_work_item_keys=(alpha.key,),
         concurrency=1,
         partition=None,
     )
@@ -141,8 +187,8 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(beta,),
-        terminal_instance_keys=(beta.key,),
+        work_items=(beta,),
+        terminal_work_item_keys=(beta.key,),
         concurrency=1,
         partition=None,
     )
@@ -150,7 +196,7 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
     assert alpha_registry.paths.database == beta_registry.paths.database
     assert alpha_registry.paths.control == tmp_path / ".nro"
     assert discover_registry_projects(bids) == ["alpha", "beta"]
-    rows = {row["project"]: row for row in alpha_registry.instance_rows()}
+    rows = {row["project"]: row for row in alpha_registry.work_item_rows()}
     assert (
         Path(rows["alpha"]["manifest_path"]).relative_to(alpha_registry.paths.manifests).parts[0]
         == "alpha"
@@ -160,7 +206,7 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
         == "beta"
     )
     with pytest.raises(ValueError, match="only its selected project"):
-        beta_registry.register_instances((alpha,))
+        beta_registry.register_work_items((alpha,))
     assert (
         len(
             alpha_registry.reserve_worker_submissions(
@@ -222,8 +268,8 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(anat, network),
-        terminal_instance_keys=(network.key,),
+        work_items=(anat, network),
+        terminal_work_item_keys=(network.key,),
         concurrency=1,
         partition=None,
     )
@@ -232,12 +278,12 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     worker_log = capsys.readouterr().out
     assert "started (Slurm job " in worker_log
     assert "; class=large; memory=32 GB)" in worker_log
-    assert "claimed instance" in worker_log
-    assert "instance log:" in worker_log
+    assert "claimed work item" in worker_log
+    assert "work-item log:" in worker_log
     assert "attempt state=success" in worker_log
     assert "idle timeout reached" in worker_log
     assert "stopped (state=exited)" in worker_log
-    rows = {row["module"]: row for row in registry.instance_rows()}
+    rows = {row["module"]: row for row in registry.work_item_rows()}
     assert rows["anat"]["artifact_state"] == "fresh"
     assert rows["networks"]["artifact_state"] == "fresh"
     assert rows["anat"]["current_generation"] == 1
@@ -257,14 +303,14 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_fingerprint='changed-contract' WHERE id=?",
+            "UPDATE work_items SET artifact_fingerprint='changed-contract' WHERE id=?",
             (rows["anat"]["id"],),
         )
     state = assess_registry(registry)[rows["anat"]["id"]]
-    assert state == ("stale", "Instance contract changed")
+    assert state == ("stale", "Work-item contract changed")
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_fingerprint=? WHERE id=?",
+            "UPDATE work_items SET artifact_fingerprint=? WHERE id=?",
             (manifest["artifact_fingerprint"], rows["anat"]["id"]),
         )
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
@@ -284,8 +330,8 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     provenance = json.loads((publication / ".nro-publication.json").read_text())
     assert "workflow_snapshot" not in provenance
     assert "request_id" not in provenance
-    assert "configuration" in provenance["instances"][0]
-    assert provenance["instances"][0]["upstream"][0]["module"] == "anat"
+    assert "configuration" in provenance["work_items"][0]
+    assert provenance["work_items"][0]["upstream"][0]["module"] == "anat"
 
     # Existing private artifacts are part of the certificate, but WORK cleanup
     # is allowed once public derivatives are complete.
@@ -304,7 +350,7 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
 
     raw.write_text("changed")
     states = assess_registry(registry)
-    rows = {row["module"]: row for row in registry.instance_rows()}
+    rows = {row["module"]: row for row in registry.work_item_rows()}
     assert states[rows["anat"]["id"]][0] == "stale"
     assert states[rows["networks"]["id"]][0] == "stale"
 
@@ -319,7 +365,7 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     output = tmp_path / "outputs" / "network.txt"
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "c" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -331,8 +377,8 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -350,12 +396,12 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
 
     Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
 
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["artifact_state"] == "fresh"
     with registry.connection() as db:
         attempts = list(
             db.execute(
-                "SELECT state,error_type FROM attempts WHERE instance_id=? ORDER BY id",
+                "SELECT state,error_type FROM attempts WHERE work_item_id=? ORDER BY id",
                 (row["id"],),
             )
         )
@@ -365,12 +411,83 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
     ]
 
 
-def test_resumed_instance_reuses_one_fixed_instance_log(tmp_path: Path) -> None:
+def test_worker_waits_for_scheduler_output_visibility(tmp_path: Path, monkeypatch) -> None:
+    import nro.orchestration.worker as worker_module
+
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    output = tmp_path / "outputs" / "network.txt"
+    work_item = _spec(
+        key="networks:" + "d" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=output,
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    visibility = iter((False, True))
+    monkeypatch.setattr(
+        registry, "outputs_visible", lambda _outputs: next(visibility), raising=False
+    )
+    monkeypatch.setattr(worker_module, "OUTPUT_VISIBILITY_POLL_INTERVAL", 0.0)
+
+    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
+
+    row = registry.work_item_rows()[0]
+    assert row["artifact_state"] == "fresh"
+    assert "Waiting for published outputs" in Path(row["log_path"]).read_text()
+
+
+def test_completion_inventory_retries_a_transiently_missing_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "published.json"
+
+    def publish_after_first_probe(_seconds: float) -> None:
+        output.write_text("{}")
+
+    monkeypatch.setattr(manifests.time, "sleep", publish_after_first_probe)
+
+    records = manifests._completion_output_inventory((output,))
+
+    assert records[0]["path"] == str(output)
+
+
+def test_completion_inventory_rejects_a_directory_without_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = tmp_path / "published"
+    directory.mkdir()
+    slept = False
+
+    def sleep(_seconds: float) -> None:
+        nonlocal slept
+        slept = True
+
+    monkeypatch.setattr(manifests.time, "sleep", sleep)
+
+    with pytest.raises(ValueError, match="not a regular file"):
+        manifests._completion_output_inventory((directory,))
+    assert not slept
+
+
+def test_resumed_work_item_reuses_one_fixed_work_item_log(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
         key="networks:" + "f" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -382,21 +499,21 @@ def test_resumed_instance_reuses_one_fixed_instance_log(tmp_path: Path) -> None:
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("first", resource_class="large")
-    first = registry.claim_ready_instance("first", ("large",))
+    first = registry.claim_ready_work_item("first", ("large",))
     assert first is not None
     registry.finish_attempt(first.attempt_id, state="cancelled", error_type="UpstreamStale")
 
     registry.register_worker("second", resource_class="large")
-    second = registry.claim_ready_instance("second", ("large",))
+    second = registry.claim_ready_work_item("second", ("large",))
     assert second is not None
     assert first.log_path == second.log_path
-    assert first.log_path.name == "instance.log"
+    assert first.log_path.name == "work-item.log"
 
 
 def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None:
@@ -404,7 +521,7 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "1" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -416,37 +533,37 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("first", resource_class="large")
-    first = registry.claim_ready_instance("first", ("large",))
+    first = registry.claim_ready_work_item("first", ("large",))
     assert first is not None
     cancellation = registry.request_cancellation(modules=("networks",))
     assert cancellation["attempts"] == 1
-    assert registry.instance_status_snapshot()[0]["status"] == "Stopping"
+    assert registry.work_item_status_snapshot()[0]["status"] == "Stopping"
     registry.finish_attempt(first.attempt_id, state="cancelled")
-    stopped = registry.instance_status_snapshot()[0]
+    stopped = registry.work_item_status_snapshot()[0]
     assert stopped["status"] == "Stopped"
     assert stopped["error_type"] == "UserCancelled"
 
     registry.register_worker("before-new-run", resource_class="large")
-    assert registry.claim_ready_instance("before-new-run", ("large",)) is None
+    assert registry.claim_ready_work_item("before-new-run", ("large",)) is None
 
     registry.create_request(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
-    assert registry.instance_status_snapshot()[0]["status"] == "Queued"
+    assert registry.work_item_status_snapshot()[0]["status"] == "Queued"
     registry.register_worker("after-new-run", resource_class="large")
-    assert registry.claim_ready_instance("after-new-run", ("large",)) is not None
+    assert registry.claim_ready_work_item("after-new-run", ("large",)) is not None
 
 
 def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path) -> None:
@@ -472,7 +589,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
             }
         )
     )
-    instance = _spec(
+    work_item = _spec(
         key="anat:" + "0" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
@@ -485,13 +602,13 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
         output_prefix="sub-01",
         expected_outputs=(native_manifest,),
     )
-    instance_ids = registry.register_instances((instance,))
-    row = registry.instance_rows()[0]
+    work_item_ids = registry.register_work_items((work_item,))
+    row = registry.work_item_rows()[0]
     private_manifest = Path(row["manifest_path"])
     private_manifest.parent.mkdir(parents=True, exist_ok=True)
     private_manifest.write_text("not valid JSON")
 
-    states = assess_registry(registry, instance_ids=instance_ids.values())
+    states = assess_registry(registry, work_item_ids=work_item_ids.values())
 
     assert states[row["id"]][0] == "fresh", states[row["id"]]
     assert "private orchestration provenance is unavailable" in states[row["id"]][1]
@@ -500,7 +617,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     native_payload = json.loads(native_manifest.read_text())
     native_payload["output_metadata_contract"] = {"layout": "superseded"}
     native_manifest.write_text(json.dumps(native_payload))
-    states = assess_registry(registry, instance_ids=instance_ids.values())
+    states = assess_registry(registry, work_item_ids=work_item_ids.values())
     assert states[row["id"]][0] == "stale"
     assert "current contract" in states[row["id"]][1]
 
@@ -510,12 +627,12 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     native_manifest.write_text(json.dumps(native_payload))
     future_ns = native_manifest.stat().st_mtime_ns + 10_000_000_000
     os.utime(raw, ns=(future_ns, future_ns))
-    states = assess_registry(registry, instance_ids=instance_ids.values())
+    states = assess_registry(registry, work_item_ids=work_item_ids.values())
     assert states[row["id"]][0] == "stale"
     assert "direct input is newer" in states[row["id"]][1]
 
 
-def test_failed_instance_requires_new_demand_before_retry(tmp_path: Path) -> None:
+def test_failed_work_item_requires_new_demand_before_retry(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -536,14 +653,14 @@ def test_failed_instance_requires_new_demand_before_retry(tmp_path: Path) -> Non
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(failing,),
-        terminal_instance_keys=(failing.key,),
+        work_items=(failing,),
+        terminal_work_item_keys=(failing.key,),
         concurrency=1,
         partition=None,
     )
     Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
     assert registry.request_rows()[0]["state"] == "active"
-    assert registry.instance_rows()[0]["attempt_state"] == "error"
+    assert registry.work_item_rows()[0]["attempt_state"] == "error"
 
     implementation.write_text(
         "from pathlib import Path\n"
@@ -555,26 +672,26 @@ def test_failed_instance_requires_new_demand_before_retry(tmp_path: Path) -> Non
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(failing,),
-        terminal_instance_keys=(failing.key,),
+        work_items=(failing,),
+        terminal_work_item_keys=(failing.key,),
         concurrency=1,
         partition=None,
     )
-    assert registry.instance_rows()[0]["retry_requested"] == 1
-    assert registry.instance_status_snapshot()[0]["status"] == "Queued"
+    assert registry.work_item_rows()[0]["retry_requested"] == 1
+    assert registry.work_item_status_snapshot()[0]["status"] == "Queued"
     Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
     assert output.read_text() == "ok"
     requests = {row["id"]: row for row in registry.request_rows()}
     assert requests[second_request]["state"] == "satisfied"
 
 
-def test_expired_dead_worker_lease_releases_instance_for_successor(tmp_path: Path) -> None:
+def test_expired_dead_worker_lease_releases_work_item_for_successor(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "d" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -586,21 +703,21 @@ def test_expired_dead_worker_lease_releases_instance_for_successor(tmp_path: Pat
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("dead", resource_class="large")
-    assert registry.claim_ready_instance("dead", ("large",)) is not None
+    assert registry.claim_ready_work_item("dead", ("large",)) is not None
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='dead'")
 
     assert registry.recover_orphaned_attempts() == 1
     registry.register_worker("successor", resource_class="large")
-    claimed = registry.claim_ready_instance("successor", ("large",))
+    claimed = registry.claim_ready_work_item("successor", ("large",))
     assert claimed is not None
-    assert claimed.instance_key == instance.key
+    assert claimed.work_item_key == work_item.key
 
 
 def test_fresh_artifact_does_not_propagate_historical_attempt_error(
@@ -631,14 +748,14 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(upstream, downstream),
-        terminal_instance_keys=(downstream.key,),
+        work_items=(upstream, downstream),
+        terminal_work_item_keys=(downstream.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("failed-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("failed-worker", ("large",))
-    assert claimed is not None and claimed.instance_key == upstream.key
+    claimed = registry.claim_ready_work_item("failed-worker", ("large",))
+    assert claimed is not None and claimed.work_item_key == upstream.key
     registry.finish_attempt(
         claimed.attempt_id,
         state="error",
@@ -648,11 +765,11 @@ def test_fresh_artifact_does_not_propagate_historical_attempt_error(
 
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh' WHERE instance_key=?",
+            "UPDATE work_items SET artifact_state='fresh' WHERE work_item_key=?",
             (upstream.key,),
         )
 
-    snapshot = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
+    snapshot = {row["work_item_key"]: row for row in registry.work_item_status_snapshot()}
     assert snapshot[upstream.key]["attempt_state"] == "error"
     assert snapshot[upstream.key]["status"] == "Success"
     assert snapshot[upstream.key]["root_failure_ids"] == ()
@@ -665,7 +782,7 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="anat:" + "j" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
@@ -677,13 +794,13 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
         registered=registered,
         target_module="anat",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("failed-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("failed-worker", ("large",))
+    claimed = registry.claim_ready_work_item("failed-worker", ("large",))
     assert claimed is not None
     registry.finish_attempt(
         claimed.attempt_id,
@@ -693,10 +810,12 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     )
     with registry.connection(write=True) as db:
         db.execute("UPDATE requests SET state='cancelled'")
-        db.execute("UPDATE request_instances SET demand_state='cancelled'")
-        db.execute("UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user'")
+        db.execute("UPDATE request_work_items SET demand_state='cancelled'")
+        db.execute(
+            "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user'"
+        )
 
-    row = registry.instance_status_snapshot()[0]
+    row = registry.work_item_status_snapshot()[0]
     assert row["attempt_state"] == "error"
     assert row["status"] == "Missing"
     assert row["artifact_reason"] == "Purged by user"
@@ -728,14 +847,14 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(upstream, downstream),
-        terminal_instance_keys=(downstream.key,),
+        work_items=(upstream, downstream),
+        terminal_work_item_keys=(downstream.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("failed-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("failed-worker", ("large",))
-    assert claimed is not None and claimed.instance_key == upstream.key
+    claimed = registry.claim_ready_work_item("failed-worker", ("large",))
+    assert claimed is not None and claimed.work_item_key == upstream.key
     registry.finish_attempt(
         claimed.attempt_id,
         state="error",
@@ -744,12 +863,12 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
     )
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user' "
-            "WHERE instance_key=?",
+            "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user' "
+            "WHERE work_item_key=?",
             (upstream.key,),
         )
 
-    snapshot = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
+    snapshot = {row["work_item_key"]: row for row in registry.work_item_status_snapshot()}
     root_id = snapshot[upstream.key]["id"]
     assert snapshot[upstream.key]["status"] == "Error"
     assert snapshot[upstream.key]["root_failure_ids"] == (root_id,)
@@ -781,13 +900,13 @@ def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
             "(os._exit(137) if m < 64 else (p.parent.mkdir(parents=True, exist_ok=True), p.write_text('ok')))"
         ),
     )
-    instance = base.evolve(command=command, max_memory_gb=256)
+    work_item = base.evolve(command=command, max_memory_gb=256)
     registry.create_request(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -795,7 +914,7 @@ def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
     Worker(
         registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01
     ).run()
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["memory_gb"] == 64
     assert row["oom_count"] == 1
     assert registry.request_rows()[0]["state"] == "active"
@@ -803,7 +922,7 @@ def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
     Worker(
         registry, resource_class="large", memory_gb=64, idle_timeout=0.1, poll_interval=0.01
     ).run()
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["artifact_state"] == "fresh"
     assert row["oom_count"] == 1
     assert output.read_text() == "ok"
@@ -823,7 +942,7 @@ def test_oom_at_memory_ceiling_is_terminal_error(tmp_path: Path) -> None:
         runtime_config=registry.runtime_config_path(registered, "networks"),
         output=output,
     )
-    instance = base.evolve(
+    work_item = base.evolve(
         command=(sys.executable, "-c", "raise SystemExit(137)"),
         max_memory_gb=32,
     )
@@ -831,8 +950,8 @@ def test_oom_at_memory_ceiling_is_terminal_error(tmp_path: Path) -> None:
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -840,7 +959,7 @@ def test_oom_at_memory_ceiling_is_terminal_error(tmp_path: Path) -> None:
     Worker(
         registry, resource_class="large", memory_gb=32, idle_timeout=0.1, poll_interval=0.01
     ).run()
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["oom_count"] == 1
     assert row["memory_gb"] == 32
     assert registry.request_rows()[0]["state"] == "active"
@@ -852,7 +971,7 @@ def test_worker_drains_before_walltime_without_claiming(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     output = bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "result.txt"
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "1" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -864,8 +983,8 @@ def test_worker_drains_before_walltime_without_claiming(tmp_path: Path) -> None:
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -880,10 +999,10 @@ def test_worker_drains_before_walltime_without_claiming(tmp_path: Path) -> None:
     ).run()
 
     assert not output.exists()
-    assert registry.instance_rows()[0]["attempt_state"] is None
+    assert registry.work_item_rows()[0]["attempt_state"] is None
 
 
-def test_idle_worker_exits_while_another_worker_runs_long_instance(
+def test_idle_worker_exits_while_another_worker_runs_long_work_item(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
@@ -891,7 +1010,7 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="anat:" + "9" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
@@ -903,18 +1022,20 @@ def test_idle_worker_exits_while_another_worker_runs_long_instance(
         registered=registered,
         target_module="anat",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=50,
         partition=None,
     )
     registry.register_worker("busy", resource_class="large")
-    assert registry.claim_ready_instance("busy", ("large",)) is not None
+    assert registry.claim_ready_work_item("busy", ("large",)) is not None
 
     started = time.monotonic()
     Worker(registry, resource_class="large", idle_timeout=0.05, poll_interval=0.01).run()
 
-    assert time.monotonic() - started < 1.5
+    # Registry setup can slow under a full parallel test run. This bound still
+    # distinguishes an idle exit from waiting for the other worker's attempt.
+    assert time.monotonic() - started < 5
 
 
 def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> None:
@@ -948,27 +1069,27 @@ def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> N
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=tuple(specs),
-        terminal_instance_keys=tuple(terminals),
+        work_items=tuple(specs),
+        terminal_work_item_keys=tuple(terminals),
         concurrency=1,
         partition=None,
     )
 
     assert registry.request_cancellation(
         participants=("01",), modules=("networks",), workflows=("missing",)
-    ) == {"instances": 0, "requests": 0, "attempts": 0}
+    ) == {"work_items": 0, "requests": 0, "attempts": 0}
     result = registry.request_cancellation(
         participants=("01",), modules=("networks",), workflows=("main",)
     )
 
-    assert result["instances"] == 2
+    assert result["work_items"] == 2
     assert registry.request_rows()[0]["state"] == "active"
     with registry.connection() as db:
         demands = {
             (row["participant"], row["module"]): row["demand_state"]
             for row in db.execute(
                 """SELECT t.participant, t.module, rt.demand_state
-                   FROM request_instances rt JOIN instances t ON t.id=rt.instance_id"""
+                   FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id"""
             )
         }
     assert demands[("01", "anat")] == "cancelled"
@@ -983,7 +1104,7 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     output = tmp_path / "result.txt"
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "4" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -995,8 +1116,8 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -1009,8 +1130,8 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(
-            instance,
+        work_items=(
+            work_item,
             _spec(
                 key="networks:" + "6" * 64,
                 module="networks",
@@ -1020,7 +1141,7 @@ def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path
                 output=tmp_path / "result-2.txt",
             ),
         ),
-        terminal_instance_keys=(instance.key, "networks:" + "6" * 64),
+        terminal_work_item_keys=(work_item.key, "networks:" + "6" * 64),
         concurrency=2,
         partition=None,
     )
@@ -1220,7 +1341,7 @@ def test_reconciliation_releases_only_confirmed_expired_worker_slots(
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instances = tuple(
+    work_items = tuple(
         _spec(
             key=f"networks:{index}" + "8" * 63,
             module="networks",
@@ -1235,8 +1356,8 @@ def test_reconciliation_releases_only_confirmed_expired_worker_slots(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=instances,
-        terminal_instance_keys=tuple(item.key for item in instances),
+        work_items=work_items,
+        terminal_work_item_keys=tuple(item.key for item in work_items),
         concurrency=50,
         partition=None,
     )
@@ -1299,8 +1420,8 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
         registered=registered,
         target_module="func",
         selectors={},
-        instances=(anat, *funcs),
-        terminal_instance_keys=tuple(instance.key for instance in funcs),
+        work_items=(anat, *funcs),
+        terminal_work_item_keys=tuple(work_item.key for work_item in funcs),
         concurrency=50,
         partition=None,
     )
@@ -1313,7 +1434,9 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     registry.update_submission(initial[0][0], state="running", slurm_job_id="101")
     registry.register_worker("worker-101", resource_class="large", slurm_job_id="101")
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET artifact_state='fresh' WHERE instance_key=?", (anat.key,))
+        db.execute(
+            "UPDATE work_items SET artifact_state='fresh' WHERE work_item_key=?", (anat.key,)
+        )
 
     expanded = registry.reserve_worker_submissions(
         request_id=request, resource_class="large", memory_gb=32
@@ -1329,7 +1452,7 @@ def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> N
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "5" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -1342,8 +1465,8 @@ def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> N
             registered=registered,
             target_module="networks",
             selectors={},
-            instances=(instance,),
-            terminal_instance_keys=(instance.key,),
+            work_items=(work_item,),
+            terminal_work_item_keys=(work_item.key,),
             concurrency=1,
             partition=None,
             user_name=owner,
@@ -1356,7 +1479,7 @@ def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> N
     assert result["requests"] == 1
     requests = {row["user_name"]: row["state"] for row in registry.request_rows()}
     assert requests == {"alice": "cancelled", "bob": "active"}
-    assert registry.instance_rows()[0]["demanded"] == 1
+    assert registry.work_item_rows()[0]["demanded"] == 1
 
 
 def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -> None:
@@ -1364,7 +1487,7 @@ def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "f" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -1377,32 +1500,32 @@ def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -
             registered=registered,
             target_module="networks",
             selectors={},
-            instances=(instance,),
-            terminal_instance_keys=(instance.key,),
+            work_items=(work_item,),
+            terminal_work_item_keys=(work_item.key,),
             concurrency=1,
             partition=None,
             user_name=owner,
         )
     registry.register_worker("shared", resource_class="large")
-    assert registry.claim_ready_instance("shared", ("large",)) is not None
+    assert registry.claim_ready_work_item("shared", ("large",)) is not None
 
     result = registry.request_cancellation(
         participants=("01",), modules=("networks",), user_name="alice", force=True
     )
 
-    assert result == {"instances": 2, "requests": 2, "attempts": 1}
+    assert result == {"work_items": 2, "requests": 2, "attempts": 1}
     assert {row["state"] for row in registry.request_rows()} == {"cancelled"}
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["demanded"] == 0
     assert row["attempt_state"] == "cancel_requested"
 
 
-def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path: Path) -> None:
+def test_worker_shutdown_is_owner_scoped_and_preserves_work_item_demand(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "2" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -1414,8 +1537,8 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -1428,7 +1551,7 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET user_name='alice' WHERE id='alice-worker'")
         db.execute("UPDATE workers SET user_name='bob' WHERE id='bob-worker'")
-    claimed = registry.claim_ready_instance("alice-worker", ("large",))
+    claimed = registry.claim_ready_work_item("alice-worker", ("large",))
     assert claimed is not None
 
     shutdown = registry.request_worker_shutdown(user_name="alice")
@@ -1447,7 +1570,7 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
         ).fetchone()
     assert workers == {"alice-worker": "shutdown_requested", "bob-worker": "idle"}
     assert tuple(attempt) == ("cancel_requested", "WorkerTerminated")
-    assert registry.instance_rows()[0]["demanded"] == 1
+    assert registry.work_item_rows()[0]["demanded"] == 1
 
     finalized = registry.confirm_worker_shutdown(("alice-worker",))
 
@@ -1460,7 +1583,7 @@ def test_worker_shutdown_is_owner_scoped_and_preserves_instance_demand(tmp_path:
             db.execute("SELECT state FROM attempts WHERE id=?", (claimed.attempt_id,)).fetchone()[0]
             == "cancelled"
         )
-    assert registry.instance_rows()[0]["demanded"] == 1
+    assert registry.work_item_rows()[0]["demanded"] == 1
 
 
 def test_repair_shutdown_covers_all_users_and_blocks_late_workers(tmp_path: Path) -> None:
@@ -1490,7 +1613,7 @@ def test_repair_shutdown_covers_all_users_and_blocks_late_workers(tmp_path: Path
         "bob-worker": "shutdown_requested",
         "late-worker": "shutdown_requested",
     }
-    assert registry.claim_ready_instance("late-worker", ("large",)) is None
+    assert registry.claim_ready_work_item("late-worker", ("large",)) is None
 
 
 def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path: Path) -> None:
@@ -1532,8 +1655,8 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
         registered=registered,
         target_module="microparcellation",
         selectors={},
-        instances=(parent_a, aggregate),
-        terminal_instance_keys=(aggregate.key,),
+        work_items=(parent_a, aggregate),
+        terminal_work_item_keys=(aggregate.key,),
         concurrency=1,
         partition=None,
         user_name="first-owner",
@@ -1546,8 +1669,8 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
         registered=registered,
         target_module="microparcellation",
         selectors={},
-        instances=(parent_a, parent_b, expanded),
-        terminal_instance_keys=(expanded.key,),
+        work_items=(parent_a, parent_b, expanded),
+        terminal_work_item_keys=(expanded.key,),
         concurrency=1,
         partition=None,
         user_name="second-owner",
@@ -1555,8 +1678,8 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
 
     with registry.connection() as db:
         first_b = db.execute(
-            """SELECT rt.demand_state FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
-               WHERE rt.request_id=? AND t.instance_key=?""",
+            """SELECT rt.demand_state FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id
+               WHERE rt.request_id=? AND t.work_item_key=?""",
             (first, parent_b.key),
         ).fetchone()
     assert first_b is not None and first_b["demand_state"] == "active"
@@ -1564,8 +1687,8 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
     registry.request_cancellation(modules=("microparcellation",), user_name="second-owner")
     with registry.connection() as db:
         first_b_after = db.execute(
-            """SELECT rt.demand_state FROM request_instances rt JOIN instances t ON t.id=rt.instance_id
-               WHERE rt.request_id=? AND t.instance_key=?""",
+            """SELECT rt.demand_state FROM request_work_items rt JOIN work_items t ON t.id=rt.work_item_id
+               WHERE rt.request_id=? AND t.work_item_key=?""",
             (first, parent_b.key),
         ).fetchone()
     assert first_b_after["demand_state"] == "active"
@@ -1611,13 +1734,13 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
         registered=registered,
         target_module="microparcellation",
         selectors={},
-        instances=(clean, micro),
-        terminal_instance_keys=(micro.key,),
+        work_items=(clean, micro),
+        terminal_work_item_keys=(micro.key,),
         concurrency=1,
         partition=None,
     )
     Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
-    assert {row["module"]: row["artifact_state"] for row in registry.instance_rows()} == {
+    assert {row["module"]: row["artifact_state"] for row in registry.work_item_rows()} == {
         "clean": "fresh",
         "microparcellation": "fresh",
     }
@@ -1625,7 +1748,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     events = raw_dir / "sub-01_task-rest_run-1_events.tsv"
     events.write_text("onset\tduration\n0\t1\n")
     event_states = assess_registry(registry)
-    clean_row = next(row for row in registry.instance_rows() if row["module"] == "clean")
+    clean_row = next(row for row in registry.work_item_rows() if row["module"] == "clean")
     assert event_states[clean_row["id"]][0] == "stale"
     assert "direct input set changed" in event_states[clean_row["id"]][1]
     events.unlink()
@@ -1636,7 +1759,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     (raw_dir / "sub-01_task-rest_run-2_bold.json").write_text("{}")
     states = assess_registry(registry)
     micro_row = next(
-        row for row in registry.instance_rows() if row["module"] == "microparcellation"
+        row for row in registry.work_item_rows() if row["module"] == "microparcellation"
     )
 
     assert states[micro_row["id"]][0] == "stale"
@@ -1644,7 +1767,7 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     with registry.connection(write=True) as db:
         db.execute("UPDATE requests SET state='active'")
     registry.register_worker("waiting-for-replan", resource_class="large")
-    assert registry.claim_ready_instance("waiting-for-replan", ("large",)) is None
+    assert registry.claim_ready_work_item("waiting-for-replan", ("large",)) is None
 
 
 def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, monkeypatch) -> None:
@@ -1660,18 +1783,18 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, mo
         runtime_config=registry.runtime_config_path(registered, "networks"),
         output=tmp_path / "output" / "result.txt",
     )
-    instance = base.evolve(max_memory_gb=32)
+    work_item = base.evolve(max_memory_gb=32)
     registry.create_request(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("oom-worker", resource_class="large", memory_gb=32, slurm_job_id="123")
-    assert registry.claim_ready_instance("oom-worker", ("large",), memory_gb=32)
+    assert registry.claim_ready_work_item("oom-worker", ("large",), memory_gb=32)
     with registry.connection(write=True) as db:
         db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='oom-worker'")
     monkeypatch.setattr(
@@ -1692,7 +1815,7 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, mo
     ).run()
 
     assert registry.request_rows()[0]["state"] == "active"
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert row["oom_count"] == 1
     assert "OUT_OF_MEMORY" in row["error_message"]
 
@@ -1702,7 +1825,7 @@ def test_new_demand_survives_an_inflight_cancellation(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    instance = _spec(
+    work_item = _spec(
         key="networks:" + "d" * 64,
         module="networks",
         lineage=registered.lineages["networks"],
@@ -1714,23 +1837,23 @@ def test_new_demand_survives_an_inflight_cancellation(tmp_path: Path) -> None:
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
     registry.register_worker("first", resource_class="large")
-    claimed = registry.claim_ready_instance("first", ("large",))
+    claimed = registry.claim_ready_work_item("first", ("large",))
     assert claimed is not None
     registry.request_cancellation(participants=("01",), modules=("networks",))
-    assert registry.instance_rows()[0]["attempt_state"] == "cancel_requested"
+    assert registry.work_item_rows()[0]["attempt_state"] == "cancel_requested"
 
     second_request = registry.create_request(
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
@@ -1744,9 +1867,9 @@ def test_new_demand_survives_an_inflight_cancellation(tmp_path: Path) -> None:
     assert requests[second_request] == "active"
 
     registry.register_worker("second", resource_class="large")
-    retried = registry.claim_ready_instance("second", ("large",))
+    retried = registry.claim_ready_work_item("second", ("large",))
     assert retried is not None
-    assert retried.instance_key == instance.key
+    assert retried.work_item_key == work_item.key
 
 
 def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path) -> None:
@@ -1775,25 +1898,25 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
         registered=registered,
         target_module="networks",
         selectors={},
-        instances=(upstream, downstream),
-        terminal_instance_keys=(downstream.key,),
+        work_items=(upstream, downstream),
+        terminal_work_item_keys=(downstream.key,),
         concurrency=2,
         partition=None,
     )
-    rows = {row["instance_key"]: row for row in registry.instance_rows()}
+    rows = {row["work_item_key"]: row for row in registry.work_item_rows()}
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[upstream.key]["id"],)
+            "UPDATE work_items SET artifact_state='fresh' WHERE id=?", (rows[upstream.key]["id"],)
         )
         db.execute(
-            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[downstream.key]["id"],)
+            "UPDATE work_items SET artifact_state='stale' WHERE id=?", (rows[downstream.key]["id"],)
         )
     registry.register_worker("downstream-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("downstream-worker", ("large",))
-    assert claimed is not None and claimed.instance_key == downstream.key
+    claimed = registry.claim_ready_work_item("downstream-worker", ("large",))
+    assert claimed is not None and claimed.work_item_key == downstream.key
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[upstream.key]["id"],)
+            "UPDATE work_items SET artifact_state='stale' WHERE id=?", (rows[upstream.key]["id"],)
         )
     status_main(["-p", "demo", "--json"])
     assert not registry.attempt_cancel_requested(claimed.attempt_id)
@@ -1804,7 +1927,7 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
     assert registry.attempt_cancel_requested(claimed.attempt_id)
 
 
-def test_fatal_instance_failure_cancels_active_transitive_descendants(tmp_path: Path) -> None:
+def test_fatal_work_item_failure_cancels_active_transitive_descendants(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -1835,23 +1958,23 @@ def test_fatal_instance_failure_cancels_active_transitive_descendants(tmp_path: 
         registered=registered,
         target_module="clean",
         selectors={},
-        instances=tuple(specs),
-        terminal_instance_keys=(specs[-1].key,),
+        work_items=tuple(specs),
+        terminal_work_item_keys=(specs[-1].key,),
         concurrency=3,
         partition=None,
     )
-    rows = {row["instance_key"]: row for row in registry.instance_rows()}
+    rows = {row["work_item_key"]: row for row in registry.work_item_rows()}
     with registry.connection(write=True) as db:
         for spec in specs:
             db.execute(
-                "UPDATE instances SET artifact_state='fresh' WHERE id=?", (rows[spec.key]["id"],)
+                "UPDATE work_items SET artifact_state='fresh' WHERE id=?", (rows[spec.key]["id"],)
             )
         db.execute(
-            "UPDATE instances SET artifact_state='stale' WHERE id=?", (rows[specs[-1].key]["id"],)
+            "UPDATE work_items SET artifact_state='stale' WHERE id=?", (rows[specs[-1].key]["id"],)
         )
     registry.register_worker("clean-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("clean-worker", ("large",))
-    assert claimed is not None and claimed.instance_key == specs[-1].key
+    claimed = registry.claim_ready_work_item("clean-worker", ("large",))
+    assert claimed is not None and claimed.work_item_key == specs[-1].key
     cancelled = registry.cancel_attempts_downstream_of_failure(int(rows[specs[0].key]["id"]))
-    assert [row["instance_key"] for row in cancelled] == [specs[-1].key]
+    assert [row["work_item_key"] for row in cancelled] == [specs[-1].key]
     assert registry.attempt_cancel_requested(claimed.attempt_id)

@@ -32,11 +32,19 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from nro.configuration.hardware import GradientUnwarpingResolution, resolve_gradient_unwarping
 from nro.configuration.runtime import SETTINGS
 from nro.configuration.schema import scientific_values
+from nro.configuration.site import settings as site_settings
 from nro.engine.bids import (
     bids_entity,
     bids_readout_time,
+)
+from nro.engine.container import (
+    ContainerSettings,
+    add_container_arguments,
+    bind_container_to_execution,
+    build_container,
 )
 from nro.engine.execution import (
     collect_bind_directories,
@@ -45,6 +53,7 @@ from nro.engine.execution import (
     neuroimaging_environment,
     require_existing_path,
 )
+from nro.engine.gradient_unwarping import create_gradient_unwarping_step
 from nro.engine.images import (
     nifti_spatial_shape,
     nifti_stem,
@@ -98,11 +107,7 @@ from nro.modules.func.resolver import (
 )
 from nro.modules.func.synbold_disco import create_synthetic_reference_step, ensure_image
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.runner import (
-    ContainerSpec,
-    Runner,
-    write_completion_breadcrumb,
-)
+from nro.orchestration.runner import ContainerSpec, Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
 
@@ -111,68 +116,77 @@ from .constants import (
     _ICA_AROMA_MELODIC_MASK_DILATION_MM,
     _ICA_AROMA_REGRESSION_MASK_DILATION_MM,
 )
-from .steps import (
-    TopupDfOutputs,
+from .denoising_steps import (
+    _create_confounds_step,
+    _create_dilated_anatomical_mask_step,
+    _create_epi_support_step,
+    _create_ica_aroma_workflow_step,
+    _create_melodic_smoothing_step,
+    _create_shared_aroma_regression_step,
+    _ica_aroma_policy_payload,
+    _ica_aroma_shared_regression_policy_payload,
+)
+from .reference_steps import (
+    _create_functional_reference_selection_step,
+    _create_robust_bold_reference_step,
+)
+from .registration_steps import (
     _ants_pe_aligned_frame,
-    _canonical_fieldmap_order,
-    _create_afni_bold_resampling_step,
-    _create_afni_motion_affines_step,
-    _create_afni_warp_step,
     _create_ants_composite_to_itk_warp_step,
     _create_ants_registration_step,
     _create_ants_synboldaff_step,
-    _create_applywarp_step,
-    _create_average_jacobian_step,
     _create_bbregister_step,
     _create_bold_ref_to_topup_transform_step,
     _create_concat_mats_step,
-    _create_confounds_step,
-    _create_convertwarp_conjugate_affine_step,
-    _create_convertwarp_merge_warps_step,
-    _create_convertwarp_postmat_step,
-    _create_convertwarp_premat_and_warp_step,
-    _create_convertwarp_premat_step,
-    _create_dilated_anatomical_mask_step,
-    _create_epi_support_step,
     _create_flirt_registration_step,
-    _create_functional_reference_selection_step,
-    _create_ica_aroma_workflow_step,
     _create_invert_mat_step,
     _create_local_rigid_refinement_step,
-    _create_melodic_smoothing_step,
     _create_mni_2mm_target_step,
     _create_mris_convert_step,
     _create_nifti_in_ants_frame_step,
     _create_restore_ants_warp_step,
-    _create_robust_bold_reference_step,
-    _create_shared_aroma_regression_step,
     _create_synbold_rigid_registration_step,
     _create_t1_epi_vox_target_step,
     _create_t1_native_target_step,
     _create_target_readout_warp_step,
     _create_target_shift_step,
-    _create_temporal_mean_step,
     _create_tkregister2_regheader_fslmat_step,
+    _create_wb_convert_itk_warp_to_fnirt_step,
+)
+from .resampling_steps import (
+    _create_afni_bold_resampling_step,
+    _create_afni_motion_affines_step,
+    _create_afni_warp_step,
+    _create_applywarp_step,
+    _create_temporal_mean_step,
+    _create_world_warp_step,
+)
+from .sdc_steps import (
+    TopupDfOutputs,
+    _canonical_fieldmap_order,
+    _create_average_jacobian_step,
+    _create_convertwarp_conjugate_affine_step,
+    _create_convertwarp_merge_warps_step,
+    _create_convertwarp_postmat_step,
+    _create_convertwarp_premat_and_warp_step,
+    _create_convertwarp_premat_step,
     _create_topup_dfout_step,
     _create_warp_jacobian_step,
-    _create_wb_convert_itk_warp_to_fnirt_step,
-    _create_wb_metric_resample_step,
-    _create_wb_volume_to_surface_mapping_step,
-    _create_world_warp_step,
-    _ica_aroma_output_label,
-    _ica_aroma_policy_payload,
-    _ica_aroma_shared_regression_policy_payload,
     _normalized_topup_matrix,
     _pe_to_fsl_shift_direction,
+)
+from .step_support import (
+    _ica_aroma_output_label,
     _resolve_fieldmapless_sdc_method,
     _resolve_sdc_reference_policy,
     _with_suffix,
-    next_step,
+)
+from .surface_steps import (
+    _create_wb_metric_resample_step,
+    _create_wb_volume_to_surface_mapping_step,
 )
 
 LOG = logging.getLogger("func")
-
-DEFAULT_QUNEX_CONTAINER = Path(SETTINGS.common.qunex_container)
 
 
 @dataclass(frozen=True)
@@ -208,7 +222,7 @@ class Options:
     func_id: str
     sub_id: str
     ses_id: Optional[str]
-    force: bool
+    overwrite: bool
     output_grid: str
     topup_config: str
     ica_aroma_cmd: Optional[Path]
@@ -226,6 +240,9 @@ class Options:
     ica_aroma_denoise_type: str
     marss_mode: str
     marss_min_multiband_factor: int
+    gradient_unwarping: str
+    gradient_unwarp_image: Path
+    gradient_unwarp_runtime: str
     fsaverage_template: str
     bbregister_surf: str
     bbregister_init: str
@@ -249,7 +266,11 @@ class Options:
     anat_id: str
 
 
-def _functional_config_payload(opts: Options) -> dict[str, object]:
+def _functional_config_payload(
+    opts: Options,
+    *,
+    gradient_unwarping: GradientUnwarpingResolution | None = None,
+) -> dict[str, object]:
     """Canonical output-affecting configuration recorded by every new run."""
     payload = {
         "output_grid": opts.output_grid,
@@ -273,7 +294,10 @@ def _functional_config_payload(opts: Options) -> dict[str, object]:
         "debug_first_nvols": int(opts.debug_first_nvols),
         "output_spaces": list(opts.output_spaces),
         "fsaverage_template": opts.fsaverage_template,
-        "final_resampling": final_resampling_contract(),
+        "gradient_unwarping": opts.gradient_unwarping,
+        "final_resampling": final_resampling_contract(
+            gradient_unwarping=bool(gradient_unwarping and gradient_unwarping.applied)
+        ),
         "sdc_method": opts.sdc_method,
         "synbold_disco_image": str(opts.synbold_disco_image),
         "synbold_disco_engine": opts.synbold_disco_engine,
@@ -333,20 +357,14 @@ def build_module(
     The caller authorizes an optional execution context. Anatomical paths come
     from the selected producer's manifest; all new outputs belong to this attempt.
     """
+    source_inputs = inputs
     if execution_context is not None:
         if execution_context.project != opts.project:
             raise ValueError("Functional project differs from its execution context")
-        container = opts.container
-        if container is not None and container.home_dir is not None:
-            container = replace(
-                container,
-                home_dir=execution_context.output_path(container.home_dir, private=True),
-            )
         opts = replace(
             opts,
             out_dir=execution_context.output_path(opts.out_dir),
             work_dir=execution_context.output_path(opts.work_dir, private=True),
-            container=container,
         )
     require_existing_path(inputs.epi, "epi")
     require_existing_path(inputs.epi_json, "epi-json")
@@ -366,6 +384,36 @@ def build_module(
     se2_metadata_sources = inputs.se2_metadata_sources or (
         (inputs.se2_json,) if inputs.se2_json is not None else ()
     )
+
+    def acquisition_metadata(
+        path: Path | None,
+        explicit: dict[str, Any] | None,
+        sidecar: Path | None,
+    ) -> dict[str, Any]:
+        if path is None:
+            return {}
+        if explicit is not None:
+            return dict(explicit)
+        return read_json(sidecar) if sidecar is not None and sidecar.is_file() else {}
+
+    gradient_resolutions = {
+        "epi": resolve_gradient_unwarping(epi_input_meta, mode=opts.gradient_unwarping),
+        "sbref": resolve_gradient_unwarping(
+            acquisition_metadata(inputs.sbref, inputs.sbref_metadata, inputs.sbref_json),
+            mode=opts.gradient_unwarping,
+        ),
+        "se1": resolve_gradient_unwarping(
+            acquisition_metadata(inputs.se1, inputs.se1_metadata, inputs.se1_json),
+            mode=opts.gradient_unwarping,
+        ),
+        "se2": resolve_gradient_unwarping(
+            acquisition_metadata(inputs.se2, inputs.se2_metadata, inputs.se2_json),
+            mode=opts.gradient_unwarping,
+        ),
+    }
+    gradient_resolution = gradient_resolutions["epi"]
+    if any(resolution.applied for resolution in gradient_resolutions.values()):
+        require_existing_path(opts.gradient_unwarp_image, "gradient-unwarping image")
     anat_manifest = anatomical_manifest_path(
         opts.sub_id,
         project=opts.project,
@@ -460,14 +508,19 @@ def build_module(
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             opts.out_dir,
             opts.work_dir,
+            opts.gradient_unwarp_image if gradient_resolution.applied else None,
+            *(
+                resolution.coefficients
+                for resolution in gradient_resolutions.values()
+                if resolution.applied
+            ),
         ]
     )
     runner = Runner(
         module_name="Functional Module",
-        container=opts.container,
+        container=bind_container_to_execution(opts.container, execution_context),
         binds=binds,
         logger=LOG,
-        next_step=next_step,
         execution_context=execution_context,
     )
     initialized = opts.work_dir / "initialized.complete"
@@ -494,7 +547,10 @@ def build_module(
         )
     )
     configuration = {
-        "configuration": _functional_config_payload(opts),
+        "configuration": _functional_config_payload(
+            opts,
+            gradient_unwarping=gradient_resolution,
+        ),
         "configuration_fingerprint": selected_configuration_fingerprint(),
     }
     configuration_snapshot = opts.work_dir / "configuration.json"
@@ -515,7 +571,7 @@ def build_module(
             name="Write Functional Configuration",
             outputs=(configuration_snapshot,),
             inputs=(initialized,),
-            force=opts.force,
+            force=opts.overwrite,
             action=lambda: write_json(configuration_snapshot, configuration),
             validate=validate_configuration,
         )
@@ -582,7 +638,7 @@ def build_module(
         Step.python(
             name="Check Functional Dependencies",
             outputs=(dependency_check,),
-            force=opts.force,
+            force=opts.overwrite,
             action=check_dependencies,
         )
     )
@@ -624,7 +680,7 @@ def build_module(
                 name="Select Debug BOLD Volumes",
                 outputs=(debug_epi,),
                 inputs=(inputs.epi,),
-                force=opts.force,
+                force=opts.overwrite,
                 env=env,
                 prepare=lambda: ensure_directory(debug_dir),
             )
@@ -644,7 +700,7 @@ def build_module(
             source_bold=epi_for_proc,
             work_dir=marss_dir / "motion",
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
         runner.add_step(motion_step)
         marss_step, marss_outputs = create_marss_step(
@@ -659,10 +715,67 @@ def build_module(
             mode=marss_mode,
             min_multiband_factor=int(opts.marss_min_multiband_factor),
             chunk_volumes=max(1, int(opts.io_chunk_vols)),
-            force=opts.force,
+            force=opts.overwrite,
         )
         runner.add_step(marss_step)
         epi_for_proc = marss_outputs.bold
+
+    final_resampling_source = epi_for_proc
+    gradient_afni_warp: Path | None = None
+    gradient_relative_warp: Path | None = None
+    gradient_dir: Path | None = None
+    if gradient_resolution.applied:
+        gradient_dir = opts.work_dir / "gradient_unwarping" / "bold"
+        corrected_bold = gradient_dir / f"{run_stem}_desc-gradientCorrected_bold.nii.gz"
+        gradient_relative_warp = gradient_dir / f"{run_stem}_gradient_warp.nii.gz"
+        gradient_metadata = gradient_dir / f"{run_stem}_gradient.json"
+        runner.add_step(
+            create_gradient_unwarping_step(
+                runner=runner,
+                source=final_resampling_source,
+                corrected=corrected_bold,
+                warp=gradient_relative_warp,
+                metadata=gradient_metadata,
+                resolution=gradient_resolution,
+                runtime=opts.gradient_unwarp_runtime,
+                image=opts.gradient_unwarp_image,
+                force=opts.overwrite,
+            )
+        )
+        epi_for_proc = corrected_bold
+
+    def corrected_auxiliary(kind: str, source: Path | None):
+        resolution = gradient_resolutions[kind]
+        if source is None or not resolution.applied:
+            return source, None
+        directory = opts.work_dir / "gradient_unwarping" / kind
+        corrected = directory / source.name
+        stem = nifti_stem(source)
+        step = create_gradient_unwarping_step(
+            runner=runner,
+            source=source,
+            corrected=corrected,
+            warp=directory / f"{stem}_gradient_warp.nii.gz",
+            metadata=directory / f"{stem}_gradient.json",
+            resolution=resolution,
+            runtime=opts.gradient_unwarp_runtime,
+            image=opts.gradient_unwarp_image,
+            force=opts.overwrite,
+        )
+        return corrected, step
+
+    sbref, sbref_gradient_step = corrected_auxiliary("sbref", inputs.sbref)
+    se1, se1_gradient_step = corrected_auxiliary("se1", inputs.se1)
+    se2, se2_gradient_step = corrected_auxiliary("se2", inputs.se2)
+    for step in (sbref_gradient_step, se1_gradient_step, se2_gradient_step):
+        if step is not None:
+            runner.add_step(step)
+    inputs = replace(
+        inputs,
+        sbref=sbref,
+        se1=se1,
+        se2=se2,
+    )
 
     robust_reference_step = _create_robust_bold_reference_step(
         run_child=runner.run_child,
@@ -671,11 +784,34 @@ def build_module(
         run_stem=run_stem,
         mc_dir=mc_dir,
         env=env,
-        force=opts.force,
+        force=opts.overwrite,
     )
     runner.add_step(robust_reference_step.step)
     robust_ref = robust_reference_step.reference
     robust_reference_metadata = robust_reference_step.metadata
+    if gradient_relative_warp is not None and gradient_dir is not None:
+        gradient_world_warp = gradient_dir / f"{run_stem}_gradient_world.nii.gz"
+        gradient_afni_warp = gradient_dir / f"{run_stem}_gradient_afni_lps.nii.gz"
+        runner.add_step(
+            _create_world_warp_step(
+                run_child=runner.run_child,
+                motion_ref_3d=robust_ref,
+                ref_3d=robust_ref,
+                fnirt_warp=gradient_relative_warp,
+                world_warp=gradient_world_warp,
+                env=env,
+                force=opts.overwrite,
+            )
+        )
+        runner.add_step(
+            _create_afni_warp_step(
+                world_warp=gradient_world_warp,
+                motion_ref_3d=robust_ref,
+                ref_3d=robust_ref,
+                afni_warp=gradient_afni_warp,
+                force=opts.overwrite,
+            )
+        )
     selected_reference = _create_functional_reference_selection_step(
         run_child=runner.run_child,
         robust_ref=robust_ref,
@@ -692,7 +828,7 @@ def build_module(
         max_displacement_mm=opts.sbref_max_rigid_displacement_mm,
         min_support_overlap=opts.sbref_min_support_overlap,
         min_correlation=opts.sbref_min_intensity_correlation,
-        force=opts.force,
+        force=opts.overwrite,
     )
     runner.add_step(selected_reference.step)
     reg_ref_tag = "regRef"
@@ -740,14 +876,14 @@ def build_module(
                     source=subject_sphere,
                     output=subject_output,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
                 create_copy_file_step(
                     src=fsaverage_sphere,
                     dst=fsaverage_output,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name=f"Stage {fsaverage_space} Hemisphere {hemi_label} Sphere",
                 )
             )
@@ -948,7 +1084,7 @@ def build_module(
                     t1_brain_cmd,
                     outputs=(t1_brain,),
                     inputs=(anat_t1, anat_brain_mask),
-                    force=opts.force,
+                    force=opts.overwrite,
                     env=env,
                     name="Prepare SynBOLD-DisCo T1",
                     prepare=lambda: ensure_directory(t1_brain.parent),
@@ -966,7 +1102,7 @@ def build_module(
                 env=env,
                 max_translation_mm=opts.synbold_max_rigid_translation_mm,
                 max_rotation_degrees=opts.synbold_max_rigid_rotation_degrees,
-                force=opts.force,
+                force=opts.overwrite,
             )
             runner.add_step(synbold_rigid_step.step)
             synbold_rigid_mat = synbold_rigid_step.matrix
@@ -980,7 +1116,7 @@ def build_module(
                 license_file=opts.synbold_disco_license,
                 engine=opts.synbold_disco_engine,
                 work_dir=synbold_work,
-                force=opts.force,
+                force=opts.overwrite,
             )
             runner.add_step(synthetic_step)
             synthetic_ref = synthetic_step.outputs[0]
@@ -997,7 +1133,7 @@ def build_module(
                 topup_dir=topup_work_dir,
                 topup_config=opts.topup_config,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 spatial_shape=source_spatial_shape,
                 volumes_a=1,
                 volumes_b=1,
@@ -1012,7 +1148,7 @@ def build_module(
                 create_copy_nifti_step(
                     src=topup_native.dfout,
                     dst=warp_sbref,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name="Place SynBOLD-DisCo TOPUP Warp",
                 )
             )
@@ -1080,7 +1216,7 @@ def build_module(
                 topup_dir=topup_work_dir,
                 topup_config=opts.topup_config,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 spatial_shape=nifti_spatial_shape(se_a),
                 volumes_a=nifti_volume_count(se_a),
                 volumes_b=nifti_volume_count(se_b),
@@ -1106,7 +1242,7 @@ def build_module(
                     index_zero_based=0,
                     out_3d=se_match_ref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                     label="Extract Matching Distorted SE Reference",
                 )
             )
@@ -1120,7 +1256,7 @@ def build_module(
                     out_mask=pose_mask,
                     erosion_voxels=1,
                     minimum_voxels=100,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1132,7 +1268,7 @@ def build_module(
                     work_dir=pose_work,
                     fixed_mask=pose_mask,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1140,7 +1276,7 @@ def build_module(
                     mat=se2sbref_mat,
                     out_mat=sbref2se_mat,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
 
@@ -1155,7 +1291,7 @@ def build_module(
                     second=sbref2se_mat,
                     out_mat=reg_ref_to_topup_mat,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             topup_to_reg_ref_mat = opts.work_dir / "pose" / f"topup2{reg_ref_tag}_6dof.mat"
@@ -1164,7 +1300,7 @@ def build_module(
                     mat=reg_ref_to_topup_mat,
                     out_mat=topup_to_reg_ref_mat,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
 
@@ -1181,7 +1317,7 @@ def build_module(
                     env=env,
                     outputs=(corrected_se_median,),
                     inputs=(topup_native.iout,),
-                    force=opts.force,
+                    force=opts.overwrite,
                     name="Build Corrected SE Reference",
                 )
             )
@@ -1199,7 +1335,7 @@ def build_module(
                     readout_time=float(registration_readout),
                     shift_vox=registration_shift_vox,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1210,7 +1346,7 @@ def build_module(
                     shift_vox=registration_shift_vox,
                     out_warp=registration_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
 
@@ -1223,7 +1359,7 @@ def build_module(
                     premat=reg_ref_to_topup_mat,
                     out_img=initial_dc_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             postdc_refine_mat = opts.work_dir / "pose" / f"{reg_ref_tag}2topup_postdc_6dof.mat"
@@ -1240,7 +1376,7 @@ def build_module(
                     out_registered=postdc_registered,
                     qc_json=postdc_refine_qc_path,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             postdc_refine_qc = postdc_refine_qc_path
@@ -1253,7 +1389,7 @@ def build_module(
                     second=postdc_refine_mat,
                     out_mat=topup_to_reg_ref_refined_mat,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
 
@@ -1265,7 +1401,7 @@ def build_module(
                     out_mask=pe_overlap,
                     erosion_voxels=opts.synbold_overlap_erosion_voxels,
                     minimum_voxels=opts.synbold_min_overlap_voxels,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             pe_frame = _ants_pe_aligned_frame(inputs.epi, reg_ref_ped)
@@ -1278,7 +1414,7 @@ def build_module(
                     source=postdc_registered,
                     out_image=pe_moving,
                     frame=pe_frame,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1286,7 +1422,7 @@ def build_module(
                     source=corrected_se_median,
                     out_image=pe_fixed,
                     frame=pe_frame,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1294,7 +1430,7 @@ def build_module(
                     source=pe_overlap,
                     out_image=pe_mask,
                     frame=pe_frame,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             pe_registration = _create_ants_registration_step(
@@ -1304,7 +1440,7 @@ def build_module(
                 work_dir=pe_aligned_dir / "ants",
                 out_prefix="PEResidual_",
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 include_linear=False,
                 write_composite=False,
                 fixed_mask=pe_mask,
@@ -1323,7 +1459,7 @@ def build_module(
                     original_reference=postdc_registered,
                     out_warp=pe_residual_itk,
                     frame=pe_frame,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             pe_residual_fnirt = pe_work / "residual_fnirt_warp.nii.gz"
@@ -1333,7 +1469,7 @@ def build_module(
                     src_space_ref=postdc_registered,
                     out_warp=pe_residual_fnirt,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             pe_residual_details = {
@@ -1364,7 +1500,7 @@ def build_module(
                     postmat=postdc_refine_mat,
                     out_warp=registration_rigid_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             registration_complete_warp_topup = (
@@ -1377,7 +1513,7 @@ def build_module(
                     warp2=pe_residual_fnirt,
                     out_warp=registration_complete_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             warp_sbref = sdc_dir / f"WarpField_{reg_ref_tag}Space.nii.gz"
@@ -1389,7 +1525,7 @@ def build_module(
                     postmat=topup_to_reg_ref_mat,
                     out_warp=warp_sbref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
 
@@ -1398,7 +1534,7 @@ def build_module(
                 epi_ref_to_reg_ref_mat=selected_reference.epi_to_reference,
                 work_dir=opts.work_dir,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
             runner.add_step(bold_ref_to_topup_step)
             bold_ref_to_topup_mat = bold_ref_to_topup_step.outputs[0]
@@ -1411,7 +1547,7 @@ def build_module(
                     readout_time=float(bold_readout),
                     shift_vox=bold_shift_vox,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1422,7 +1558,7 @@ def build_module(
                     shift_vox=bold_shift_vox,
                     out_warp=bold_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             bold_rigid_warp_topup = topup_work_dir / "WarpField_bold_postRigid.nii.gz"
@@ -1433,7 +1569,7 @@ def build_module(
                     postmat=postdc_refine_mat,
                     out_warp=bold_rigid_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             bold_complete_warp_topup = topup_work_dir / "WarpField_bold_complete.nii.gz"
@@ -1444,7 +1580,7 @@ def build_module(
                     warp2=pe_residual_fnirt,
                     out_warp=bold_complete_warp_topup,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             warp_bold_to_reg_ref = sdc_dir / "WarpField_boldToRegRef.nii.gz"
@@ -1456,7 +1592,7 @@ def build_module(
                     postmat=topup_to_reg_ref_mat,
                     out_warp=warp_bold_to_reg_ref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             fieldmap_transfer_details = {
@@ -1499,7 +1635,7 @@ def build_module(
                 warp=warp_sbref,
                 out_img=reg_ref_dc,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         if opts.use_jacobian:
@@ -1515,7 +1651,7 @@ def build_module(
                     temporary=jacobian_temporary,
                     junk=jacobian_junk,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             runner.add_step(
@@ -1526,7 +1662,7 @@ def build_module(
                     ref=reg_ref_dist_ref,
                     out_jac=jac_sbref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             reg_ref_dc_jac = sdc_dir / f"{reg_ref_tag}_dc_jac.nii.gz"
@@ -1536,7 +1672,7 @@ def build_module(
                     jac_cmd,
                     outputs=(reg_ref_dc_jac,),
                     inputs=(reg_ref_dc, jac_sbref),
-                    force=opts.force,
+                    force=opts.overwrite,
                     env=env,
                 )
             )
@@ -1548,7 +1684,7 @@ def build_module(
                 in_img=reg_ref_dc_ref,
                 out_img=reg_ref_dc_ref_n4,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -1561,7 +1697,7 @@ def build_module(
                 init=opts.bbregister_init,
                 dof=opts.bbregister_dof,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     # Output grid
@@ -1573,7 +1709,7 @@ def build_module(
                 source_epi=inputs.epi,
                 out_target=t1_ref,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     else:
@@ -1583,7 +1719,7 @@ def build_module(
                 t1_image=anat_t1,
                 out_target=t1_ref,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     if not use_syn_fallback:
@@ -1595,7 +1731,7 @@ def build_module(
                     source_epi=inputs.epi,
                     out_target=bbr_t1_ref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
         else:
@@ -1604,7 +1740,7 @@ def build_module(
                     t1_image=fs_t1_image,
                     out_target=bbr_t1_ref,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
         runner.add_step(
@@ -1613,7 +1749,7 @@ def build_module(
                 targ_img=t1_ref,
                 out_mat=fs_t1_to_t1w_mat,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         assert fsl_mat is not None
@@ -1623,7 +1759,7 @@ def build_module(
                 second=fsl_mat,
                 out_mat=reg_ref_to_t1w_mat,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     syn_fixed_mask = reg_dir / f"{run_stem}_t1_brain_mask.nii.gz"
@@ -1632,7 +1768,7 @@ def build_module(
             src_mask=anat_brain_mask,
             ref_img=t1_ref,
             out_mask=syn_fixed_mask,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     runner.add_step(
@@ -1640,7 +1776,7 @@ def build_module(
             mni_template=anat_mni_template,
             out_target=mni_ref,
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
     syn_refine_fnirt_warp: Optional[Path] = None
@@ -1661,7 +1797,7 @@ def build_module(
             env=env,
             max_translation_mm=opts.synbold_max_rigid_translation_mm,
             max_rotation_degrees=opts.synbold_max_rigid_rotation_degrees,
-            force=opts.force,
+            force=opts.overwrite,
             rigid_mat_out=epi_mean_to_t1_fallback_mat,
             rigid_qc_out=epi_mean_nodc_t1_affine,
             registration_label="fieldmapless EPI-to-T1",
@@ -1673,7 +1809,7 @@ def build_module(
                 in_img=epi_mean_nodc_t1_affine,
                 out_img=reg_ref_in_t1_base_n4,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 mask=syn_fixed_mask,
             )
         )
@@ -1683,7 +1819,7 @@ def build_module(
             work_dir=syn_work,
             out_prefix=f"{run_stem}_SyNBoldAff_",
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
             fixed_mask=syn_fixed_mask,
             moving_mask=syn_fixed_mask,
             syn_transform=opts.syn_base_transform,
@@ -1701,7 +1837,7 @@ def build_module(
                 ref_img=t1_ref,
                 out_warp=fallback_base_itk_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         fallback_base_fnirt_warp = fallback_base_fnirt_planned
@@ -1711,7 +1847,7 @@ def build_module(
                 src_space_ref=reg_ref_in_t1_base_n4,
                 out_warp=fallback_base_fnirt_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         syn_refine_fnirt_warp = fallback_base_fnirt_warp
@@ -1722,7 +1858,7 @@ def build_module(
                 premat=epi_mean_to_t1_fallback_mat,
                 out_warp=fallback_affine_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         fallback_base_warp = fallback_base_warp_planned
@@ -1733,7 +1869,7 @@ def build_module(
                 warp2=fallback_base_fnirt_warp,
                 out_warp=fallback_base_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         warp_regref2t1_refined = fallback_base_warp
@@ -1744,7 +1880,7 @@ def build_module(
                 warp1=fallback_base_warp,
                 out_warp=epi_to_t1_warp_planned,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         base_static_warp = epi_to_t1_warp_planned
@@ -1755,7 +1891,7 @@ def build_module(
                 warp=fallback_base_warp,
                 out_img=reg_ref_in_t1_affine,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         base_ref_in_t1 = reg_ref_in_t1_affine
@@ -1767,7 +1903,7 @@ def build_module(
                 warp=fallback_base_warp,
                 out_img=boldref_t1,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     else:
@@ -1786,7 +1922,7 @@ def build_module(
                 mat=reg_ref_to_t1w_mat,
                 out_img=reg_ref_in_t1_linear,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         pre_nonlinear_ref_in_t1 = reg_ref_in_t1_linear
@@ -1797,7 +1933,7 @@ def build_module(
                 postmat=reg_ref_to_t1w_mat,
                 out_warp=warp_sbref2t1,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         syn_moving = reg_ref_dist_ref
@@ -1808,7 +1944,7 @@ def build_module(
                 warp=warp_sbref2t1,
                 out_img=reg_ref_in_t1_affine,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         if use_fieldmap_sdc:
@@ -1820,7 +1956,7 @@ def build_module(
                     postmat=reg_ref_to_t1w_mat,
                     out_warp=epi_to_t1_warp_planned,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             base_static_warp = epi_to_t1_warp_planned
@@ -1832,7 +1968,7 @@ def build_module(
                     warp1=warp_sbref2t1,
                     out_warp=epi_to_t1_warp_planned,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             base_static_warp = epi_to_t1_warp_planned
@@ -1846,7 +1982,7 @@ def build_module(
                 warp=warp_sbref2t1,
                 out_img=boldref_t1,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         assert topup_native is not None and se2sbref_mat is not None
@@ -1859,7 +1995,7 @@ def build_module(
                 mat=field_to_reg_ref_mat,
                 out_img=field_hz_regref,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
 
@@ -1885,7 +2021,7 @@ def build_module(
                 out_mask=native_overlap_mask,
                 erosion_voxels=opts.synbold_overlap_erosion_voxels,
                 minimum_voxels=opts.synbold_min_overlap_voxels,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         pe_frame = _ants_pe_aligned_frame(inputs.epi, reg_ref_ped)
@@ -1896,7 +2032,7 @@ def build_module(
                 source=reg_ref_dc_ref,
                 out_image=aligned_moving,
                 frame=pe_frame,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         aligned_fixed = aligned_work / "fixed_synthetic_reference.nii.gz"
@@ -1905,7 +2041,7 @@ def build_module(
                 source=synthetic_ref,
                 out_image=aligned_fixed,
                 frame=pe_frame,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         aligned_mask = aligned_work / "overlap_mask.nii.gz"
@@ -1914,7 +2050,7 @@ def build_module(
                 source=native_overlap_mask,
                 out_image=aligned_mask,
                 frame=pe_frame,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         LOG.info(
@@ -1931,7 +2067,7 @@ def build_module(
             work_dir=aligned_work / "ants",
             out_prefix=f"{run_stem}_SynBOLDResidual_",
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
             include_linear=False,
             write_composite=False,
             fixed_mask=aligned_mask,
@@ -1951,7 +2087,7 @@ def build_module(
                 original_reference=reg_ref_dc_ref,
                 out_warp=refine_warp,
                 frame=pe_frame,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         ants_forward_xfm = refine_warp
@@ -1962,7 +2098,7 @@ def build_module(
                 src_space_ref=reg_ref_dc_ref,
                 out_warp=syn_refine_fnirt_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         combined_native_warp = native_refine_work / "fieldmap_plus_residual_warp.nii.gz"
@@ -1973,7 +2109,7 @@ def build_module(
                 warp2=syn_refine_fnirt_warp,
                 out_warp=combined_native_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         warp_regref2t1_refined = warp_regref2t1_refined_planned
@@ -1984,7 +2120,7 @@ def build_module(
                 postmat=reg_ref_to_t1w_mat,
                 out_warp=warp_regref2t1_refined,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         warp_sbref2t1_refined = warp_sbref2t1_refined_planned
@@ -1997,7 +2133,7 @@ def build_module(
                 warp2=syn_refine_fnirt_warp,
                 out_warp=bold_combined_native_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2007,7 +2143,7 @@ def build_module(
                 postmat=reg_ref_to_t1w_mat,
                 out_warp=warp_sbref2t1_refined,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     elif do_refinement:
@@ -2017,7 +2153,7 @@ def build_module(
                 in_img=base_ref_in_t1,
                 out_img=reg_ref_in_t1_refine_n4,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 mask=syn_fixed_mask,
             )
         )
@@ -2028,7 +2164,7 @@ def build_module(
             work_dir=syn_work,
             out_prefix=f"{run_stem}_SyNRefine_",
             env=env,
-            force=opts.force,
+            force=opts.overwrite,
             include_linear=False,
             write_composite=False,
             fixed_mask=syn_fixed_mask,
@@ -2048,7 +2184,7 @@ def build_module(
                 src_space_ref=reg_ref_in_t1_refine_n4,
                 out_warp=syn_refine_fnirt_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         assert warp_regref2t1_refined is not None
@@ -2061,7 +2197,7 @@ def build_module(
                 warp2=syn_refine_fnirt_warp,
                 out_warp=warp_regref2t1_refined,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         warp_sbref2t1_refined = warp_sbref2t1_refined_planned
@@ -2072,7 +2208,7 @@ def build_module(
                 warp2=syn_refine_fnirt_warp,
                 out_warp=warp_sbref2t1_refined,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     else:
@@ -2097,14 +2233,14 @@ def build_module(
                 warp=warp_regref2t1_refined,
                 out_img=fieldmap_hz_in_t1,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     runner.add_step(
         create_copy_nifti_step(
             src=pre_nonlinear_ref_in_t1,
             dst=reg_prenonlinear_qc_out,
-            force=opts.force,
+            force=opts.overwrite,
             step_name="Finalize Registration QC",
         )
     )
@@ -2112,7 +2248,7 @@ def build_module(
         create_copy_nifti_step(
             src=base_ref_in_t1,
             dst=reg_base_qc_out,
-            force=opts.force,
+            force=opts.overwrite,
             step_name="Finalize Registration QC",
         )
     )
@@ -2124,7 +2260,7 @@ def build_module(
                 warp=warp_regref2t1_refined,
                 out_img=reg_refine_qc_out,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
     else:
@@ -2132,7 +2268,7 @@ def build_module(
             create_copy_nifti_step(
                 src=reg_base_qc_out,
                 dst=reg_refine_qc_out,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Finalize Registration QC",
             )
         )
@@ -2143,7 +2279,7 @@ def build_module(
                 ref_img=mni_ref,
                 out_warp=t1_to_mni_itk_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2152,7 +2288,7 @@ def build_module(
                 src_space_ref=anat_t1,
                 out_warp=t1_to_mni_fnirt_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2162,7 +2298,7 @@ def build_module(
                 warp2=t1_to_mni_fnirt_warp,
                 out_warp=warp_epi2mni,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
 
@@ -2197,7 +2333,7 @@ def build_module(
                 warp2=t1_to_mni_fnirt_warp,
                 out_warp=warp_regref2mni,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2207,7 +2343,7 @@ def build_module(
                 warp=warp_regref2mni,
                 out_img=reg_mni_qc_out,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
 
@@ -2217,7 +2353,7 @@ def build_module(
             motion_ref_3d=robust_ref,
             mc_mat_dir=mc_mat_dir,
             out_affines=afni_motion_affines,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
 
@@ -2255,7 +2391,7 @@ def build_module(
                 fnirt_warp=warp_img,
                 world_warp=world_warp,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2264,20 +2400,21 @@ def build_module(
                 motion_ref_3d=robust_ref,
                 ref_3d=ref_img,
                 afni_warp=afni_warp,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
             _create_afni_bold_resampling_step(
                 run_child=runner.run_child,
-                in_4d=epi_for_proc,
+                in_4d=final_resampling_source,
                 motion_ref_3d=robust_ref,
                 ref_3d=ref_img,
                 afni_warp=afni_warp,
                 motion_affines=afni_motion_affines,
+                gradient_warp=gradient_afni_warp,
                 out_4d=raw_4d,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         runner.add_step(
@@ -2285,7 +2422,7 @@ def build_module(
                 in_4d=raw_4d,
                 out_3d=mean_3d,
                 env=env,
-                force=opts.force,
+                force=opts.overwrite,
                 chunk_vols=opts.io_chunk_vols,
             )
         )
@@ -2294,7 +2431,7 @@ def build_module(
                 src_mask=anat_brain_mask,
                 ref_img=mean_3d,
                 out_mask=mask_3d,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
 
@@ -2315,7 +2452,7 @@ def build_module(
                     support_mask=support_mask,
                     work_dir=aroma_work,
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             if space == "T1w":
@@ -2328,7 +2465,7 @@ def build_module(
                         output=melodic_mask,
                         dilation_mm=_ICA_AROMA_MELODIC_MASK_DILATION_MM,
                         role="MELODIC Estimation",
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 runner.add_step(
@@ -2338,7 +2475,7 @@ def build_module(
                         output=regression_mask,
                         dilation_mm=_ICA_AROMA_REGRESSION_MASK_DILATION_MM,
                         role="ICA Regression",
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 runner.add_step(
@@ -2346,7 +2483,7 @@ def build_module(
                         epi=raw_4d,
                         output=melodic_input,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 aroma_anat = aroma_work / "anat"
@@ -2358,7 +2495,7 @@ def build_module(
                         ref_img=anat_mni_template,
                         out_warp=t1_to_mni_itk,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 runner.add_step(
@@ -2367,7 +2504,7 @@ def build_module(
                         src_space_ref=anat_t1,
                         out_warp=t1_to_mni_warp,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 identity_transform = aroma_work / "epi_in_t1_identity.mat"
@@ -2404,7 +2541,7 @@ def build_module(
                         repetition_time=repetition_time,
                         denoise_type=denoise_type,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 cleaned_epi = aroma_dir / (
@@ -2416,7 +2553,7 @@ def build_module(
                     create_copy_nifti_step(
                         src=cleaned_epi,
                         dst=aroma_out_4d,
-                        force=opts.force,
+                        force=opts.overwrite,
                         step_name="Install ICA-AROMA Denoised BOLD",
                     )
                 )
@@ -2425,7 +2562,7 @@ def build_module(
                         in_4d=aroma_out_4d,
                         out_3d=aroma_out_mean,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                         chunk_vols=opts.io_chunk_vols,
                     )
                 )
@@ -2440,7 +2577,7 @@ def build_module(
                             external_aroma=opts.ica_aroma_cmd is not None,
                         ),
                         inputs=(aroma_out_4d, aroma_out_mean),
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 final_4d = aroma_out_4d
@@ -2457,7 +2594,7 @@ def build_module(
                         output=regression_mask,
                         dilation_mm=_ICA_AROMA_REGRESSION_MASK_DILATION_MM,
                         role=f"{space} ICA Regression",
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 aroma_dir = aroma_work / "aroma"
@@ -2479,7 +2616,7 @@ def build_module(
                         outputs=tuple(denoised_outputs),
                         denoise_type=denoise_type,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 cleaned_epi = aroma_dir / (
@@ -2491,7 +2628,7 @@ def build_module(
                     create_copy_nifti_step(
                         src=cleaned_epi,
                         dst=aroma_out_4d,
-                        force=opts.force,
+                        force=opts.overwrite,
                         step_name=f"Install {space} ICA-AROMA Denoised BOLD",
                     )
                 )
@@ -2500,7 +2637,7 @@ def build_module(
                         in_4d=aroma_out_4d,
                         out_3d=aroma_out_mean,
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                         chunk_vols=opts.io_chunk_vols,
                     )
                 )
@@ -2515,7 +2652,7 @@ def build_module(
                             shared_work_dir=aroma_t1_dir,
                         ),
                         inputs=(aroma_out_4d, aroma_out_mean),
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
                 final_4d = aroma_out_4d
@@ -2525,7 +2662,7 @@ def build_module(
             create_copy_nifti_step(
                 src=final_4d,
                 dst=final_dst,
-                force=opts.force,
+                force=opts.overwrite,
             )
         )
         final_output_4d = final_dst
@@ -2549,7 +2686,7 @@ def build_module(
             brain_mask_in_epi=confounds_mask,
             out_tsv=confounds_tsv,
             out_json=confounds_json,
-            force=opts.force,
+            force=opts.overwrite,
         )
     )
 
@@ -2558,7 +2695,7 @@ def build_module(
             create_copy_nifti_step(
                 src=field_hz_regref,
                 dst=fmap_field_hz_out,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Finalize Fieldmap Derivative",
             )
         )
@@ -2566,7 +2703,7 @@ def build_module(
             create_copy_nifti_step(
                 src=topup_native.out_prefix.with_name("topup_results_fieldcoef.nii.gz"),
                 dst=fmap_topup_coeff_out,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Finalize Fieldmap Derivative",
             )
         )
@@ -2574,7 +2711,7 @@ def build_module(
             create_copy_nifti_step(
                 src=warp_sbref,
                 dst=fmap_sdc_warp_out,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Finalize Fieldmap Derivative",
             )
         )
@@ -2583,7 +2720,7 @@ def build_module(
                 create_copy_nifti_step(
                     src=warp_bold_to_reg_ref,
                     dst=fmap_bold_sdc_warp_out,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name="Finalize BOLD-Readout SDC Warp",
                 )
             )
@@ -2593,7 +2730,7 @@ def build_module(
                 create_copy_nifti_step(
                     src=jac_sbref,
                     dst=fmap_jacobian_out,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name="Finalize Fieldmap Derivative",
                 )
             )
@@ -2602,7 +2739,7 @@ def build_module(
                 create_copy_nifti_step(
                     src=synthetic_ref,
                     dst=fmap_synbold_ref_out,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name="Finalize SynBOLD-DisCo Reference",
                 )
             )
@@ -2611,7 +2748,7 @@ def build_module(
                 create_copy_nifti_step(
                     src=synbold_rigid_qc,
                     dst=fmap_synbold_rigid_out,
-                    force=opts.force,
+                    force=opts.overwrite,
                     step_name="Finalize SynBOLD Rigid-Registration QC",
                 )
             )
@@ -2621,7 +2758,7 @@ def build_module(
             create_copy_nifti_step(
                 src=aroma_t1_dir / "aroma" / "melodic.ica" / "melodic_IC.nii.gz",
                 dst=melodic_ic_t1_out,
-                force=opts.force,
+                force=opts.overwrite,
                 step_name="Finalize ICA-AROMA Derivative",
             )
         )
@@ -2648,7 +2785,7 @@ def build_module(
                     pial=fsnative_surfaces[f"{hemi}.pial"],
                     out_metric=fsnative_metric_outputs[hemi],
                     env=env,
-                    force=opts.force,
+                    force=opts.overwrite,
                 )
             )
             if want_fsaverage:
@@ -2659,7 +2796,7 @@ def build_module(
                         new_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.new"],
                         out_metric=preproc_fsaverage[hemi],
                         env=env,
-                        force=opts.force,
+                        force=opts.overwrite,
                     )
                 )
 
@@ -2733,11 +2870,11 @@ def build_module(
         "run_stem": run_base,
         "complete": True,
         "inputs": {
-            "epi": str(inputs.epi),
+            "epi": str(source_inputs.epi),
             "epi_metadata": [str(path) for path in epi_metadata_sources],
-            "sbref": str(inputs.sbref) if inputs.sbref is not None else None,
-            "se1": str(inputs.se1) if inputs.se1 is not None else None,
-            "se2": str(inputs.se2) if inputs.se2 is not None else None,
+            "sbref": str(source_inputs.sbref) if source_inputs.sbref is not None else None,
+            "se1": str(source_inputs.se1) if source_inputs.se1 is not None else None,
+            "se2": str(source_inputs.se2) if source_inputs.se2 is not None else None,
             "anatomical_manifest": str(anat_manifest),
         },
         "options": configuration,
@@ -2775,7 +2912,13 @@ def build_module(
                 "sdc_fallback_reason": sdc_fallback_reason,
                 "reference_selection": selection,
                 "static_warp": str(warp_sbref2t1_refined),
-                "final_resampling": final_resampling_metadata(),
+                "final_resampling": final_resampling_metadata(
+                    gradient_unwarping=gradient_resolution.applied
+                ),
+                "gradient_unwarping": {
+                    key: resolution.scientific_record()
+                    for key, resolution in gradient_resolutions.items()
+                },
                 "fieldmap_transfer": fieldmap_transfer_details,
                 "pe_residual_refinement": pe_residual_details,
             },
@@ -2800,7 +2943,7 @@ def build_module(
             metadata = {
                 **epi_input_meta,
                 "Description": "nro functional preprocessing derivative.",
-                "Sources": [str(inputs.epi), str(anat_manifest)],
+                "Sources": [str(source_inputs.epi), str(anat_manifest)],
                 "SpatialReference": space,
                 "Registration": payload["registration"],
                 "Denoising": payload["denoising"],
@@ -2829,7 +2972,13 @@ def build_module(
                 "sdc_method": resolved_sdc_method,
                 "sdc_fallback_reason": sdc_fallback_reason,
                 "static_warp": str(warp_sbref2t1_refined),
-                "final_resampling": final_resampling_metadata(),
+                "final_resampling": final_resampling_metadata(
+                    gradient_unwarping=gradient_resolution.applied
+                ),
+                "gradient_unwarping": {
+                    key: resolution.scientific_record()
+                    for key, resolution in gradient_resolutions.items()
+                },
                 "fieldmap_transfer": fieldmap_transfer_details,
                 "pe_residual_refinement": pe_residual_details,
             }.items()
@@ -2864,7 +3013,7 @@ def build_module(
             name="Publish Functional Derivatives",
             outputs=(*metadata_outputs, publication_manifest),
             inputs=(*public_files, selected_reference.metadata, robust_reference_metadata),
-            force=opts.force,
+            force=opts.overwrite,
             action=publish,
             validate=validate_publication,
             completion_boundary=True,
@@ -3030,6 +3179,12 @@ def _build_argparser() -> argparse.ArgumentParser:
         default=int(cfg.marss_min_multiband_factor),
         help="Minimum multiband factor corrected by MARSS auto mode.",
     )
+    p.add_argument(
+        "--gradient-unwarping",
+        choices=["auto", "off"],
+        default=cfg.gradient_unwarping,
+        help="Apply a matching site hardware profile, or disable gradient unwarping.",
+    )
 
     p.add_argument(
         "--project",
@@ -3063,7 +3218,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         default=int(cfg.io_chunk_vols),
         help="Number of volumes to read at a time for chunked nibabel-based I/O operations.",
     )
-    p.add_argument("--force", action="store_true", default=cfg.force)
+    p.add_argument("--overwrite", action="store_true", default=cfg.overwrite)
     p.add_argument(
         "--output-spaces",
         nargs="+",
@@ -3072,16 +3227,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--verbose", action="store_true", default=cfg.verbose)
 
-    # Container
-    p.add_argument("--container", type=Path, default=DEFAULT_QUNEX_CONTAINER)
-    p.add_argument("--no-container", action="store_true", default=cfg.no_container)
-    p.add_argument("--container-engine", type=str, default=cfg.container_engine)
-    p.add_argument(
-        "--container-no-cleanenv", action="store_true", default=not bool(cfg.container_cleanenv)
-    )
-    p.add_argument("--container-bind", action="append", default=list(cfg.container_bind))
-    p.add_argument("--container-home", type=Path, default=cfg.container_home)
-    p.add_argument("--container-inner-setup", type=str, default=cfg.container_inner_setup)
+    add_container_arguments(p, cfg.container)
     return p
 
 
@@ -3209,19 +3355,12 @@ def main(
                 ", ".join(str(path) for path in resolved.bold.metadata_sources),
             )
 
-    container: Optional[ContainerSpec]
-    if args.no_container:
-        container = None
-    else:
-        container_home = args.container_home or (work_dir / "_qunex_home")
-        container = ContainerSpec(
-            image=Path(args.container),
-            engine=str(args.container_engine),
-            cleanenv=not bool(args.container_no_cleanenv),
-            extra_binds=tuple(args.container_bind or []),
-            home_dir=Path(container_home),
-            inner_setup=str(args.container_inner_setup or ""),
-        )
+    container = build_container(
+        ContainerSettings.from_args(args),
+        work_directory=work_dir,
+        execution_context=execution_context,
+    )
+    site, _ = site_settings()
 
     inputs = Inputs(
         sbref=args.sbref,
@@ -3251,7 +3390,7 @@ def main(
         anat_id=str(args.anat_id),
         sub_id=str(args.sub_id),
         ses_id=ses_id,
-        force=bool(args.force),
+        overwrite=bool(args.overwrite),
         output_grid=str(args.output_grid),
         topup_config=str(args.topup_config),
         ica_aroma_cmd=(Path(args.ica_aroma_cmd) if args.ica_aroma_cmd is not None else None),
@@ -3269,6 +3408,9 @@ def main(
         ica_aroma_denoise_type=str(args.ica_aroma_denoise_type),
         marss_mode=str(args.marss_mode),
         marss_min_multiband_factor=int(args.marss_min_multiband_factor),
+        gradient_unwarping=str(args.gradient_unwarping),
+        gradient_unwarp_image=Path(site["gradient_unwarp"]),
+        gradient_unwarp_runtime=str(site["runtime"]),
         fsaverage_template=str(args.fsaverage_template),
         bbregister_surf=str(args.bbregister_surf),
         bbregister_init=str(args.bbregister_init),

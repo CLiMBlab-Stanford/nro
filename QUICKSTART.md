@@ -66,13 +66,17 @@ The main settings are:
 | `bids` | Directory containing one subdirectory per BIDS project. |
 | `work` | Intermediate processing files. |
 | `registry` | Private scheduler state, logs, and source snapshots. |
-| `definitions` | Workflows, module configurations, task models, and event files. |
+| `definitions` | Version-controlled site settings, workflows, module configurations, task models, and event files. |
 | `development` | Isolated outputs for development branches. |
 | `images`, `templates`, `workbench`, `oslom` | Installed processing resources. |
 | `license` | Existing FreeSurfer `license.txt`. |
 | `runtime` | Singularity or Apptainer command or absolute executable path. |
 | `partition`, `account` | Slurm submission settings. Enter `-` for no account. |
 | `viewing_partition` | Slurm partition for X11 scene-viewing jobs. |
+
+The installer saves these values in `site/site.yml` inside the definitions
+repository. Keep that repository under version control. The local site TOML is
+only a generated pointer to the repository and can be recreated by setup.
 
 Enter the path to your existing FreeSurfer license when prompted. For Slurm,
 replace the proposed partition and account with values for your cluster. The
@@ -158,7 +162,7 @@ Follow the request with:
 
 ```bash
 nro status -P example -p 01
-nro log -P example -p 01 -m anat -i
+nro log -P example -p 01 -m anat
 ```
 
 By default, `nro status` quickly reports the registry's saved state. Run

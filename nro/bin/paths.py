@@ -1,8 +1,9 @@
-"""View and edit default site paths."""
+"""View and edit protected site settings."""
 
 import argparse
+from pathlib import Path
 
-from nro.configuration.site import settings, site_file
+from nro.configuration.site import settings, site_definition_path, site_file
 from nro.engine.site_setup import edit_settings
 
 
@@ -19,8 +20,9 @@ def main(argv=None, *, prog="nro paths"):
     args = parser.parse_args(argv)
     try:
         if args.action == "show":
-            print(f"Site configuration: {site_file()}")
             values, sources = settings()
+            print(f"Definitions locator: {site_file()}")
+            print(f"Protected site definition: {site_definition_path(Path(values['definitions']))}")
             for key, value in sorted(values.items()):
                 print(f"{key:16} {value!s:60} [{sources[key]}]")
         else:

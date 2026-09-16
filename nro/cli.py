@@ -23,7 +23,7 @@ COMMAND_HELP = {
     "setup": "Set up dependencies or connect to a shared installation.",
     "paths": "View and edit site paths.",
     "doctor": "Check dependencies and site access.",
-    "log": "Browse worker or derivative-instance logs.",
+    "log": "Browse work-item or worker logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
     "promote": "Accept equivalent development artifacts after an approved merge.",
     "purge": "Remove nro-controlled derivatives and logs.",

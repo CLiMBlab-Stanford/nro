@@ -1,29 +1,25 @@
-"""Instance completion certificates and filesystem-authoritative freshness checks.
+"""Assess artifact freshness from completion certificates and the filesystem.
 
-The orchestration layer validates direct inputs, upstream instance generations, and
-public artifacts below an instance's derivative output root.  It also records
-private step artifacts when available: a changed private artifact invalidates
-the instance, while an absent one is tolerated because the module can recreate it
-when it next needs to run.
+The orchestration layer validates direct inputs, upstream work-item generations,
+and public artifacts below a work item's derivative output root. Private
+intermediates can invalidate an artifact when changed, but their absence is
+tolerated because a module can recreate them when needed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Iterable
 
 import yaml
 
 from nro.configuration.store import fingerprint
 from nro.engine.bids import discover_raw_runs, matches_filter
-from nro.engine.io import atomic_write_json
-from nro.orchestration import dependency_state
 from nro.orchestration.assessment import (
     AssessmentConflict,
     AssessmentReport,
@@ -31,21 +27,22 @@ from nro.orchestration.assessment import (
     apply_assessment,
     capture_assessment,
 )
-from nro.orchestration.ownership import missing_instance_ownership, write_instance_ownership
-from nro.orchestration.registry import Registry, ensure_shared_directory, utcnow
+from nro.orchestration.ownership import missing_work_item_ownership, write_work_item_ownership
+from nro.orchestration.registry import Registry
 
-MANIFEST_VERSION = 3
+MANIFEST_VERSION = 5
 SMALL_DIGEST_LIMIT = 1024 * 1024
+COMPLETION_VISIBILITY_TIMEOUT = 30.0
+COMPLETION_VISIBILITY_POLL_INTERVAL = 0.25
 
 
 def file_record(path: str | Path) -> dict:
     """Describe one completed file for later integrity checks."""
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
-        raise ValueError(
-            "Completion manifests may record only files; directory-producing instances "
-            f"must expose a final completion breadcrumb: {resolved}"
-        )
+        if resolved.exists():
+            raise ValueError(f"Completion artifact is not a regular file: {resolved}")
+        raise ValueError(f"Completion artifact is missing: {resolved}")
     stat = resolved.stat()
     record = {"path": str(resolved), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
     if stat.st_size <= SMALL_DIGEST_LIMIT:
@@ -56,6 +53,28 @@ def file_record(path: str | Path) -> dict:
 def inventory(paths: Iterable[str | Path]) -> list[dict]:
     """Return deterministic integrity records for unique resolved files."""
     return [file_record(path) for path in sorted({Path(path).resolve() for path in paths})]
+
+
+def _completion_output_inventory(paths: Iterable[str | Path]) -> list[dict]:
+    """Read completed outputs after bounded shared-filesystem visibility retries.
+
+    A worker publishes each file atomically and checks it before asking the scheduler
+        to certify the work item. Some shared filesystems can nevertheless expose a newly
+    replaced directory entry to another node only after a short delay. Retry missing
+    paths here, at the authoritative scheduler read, while rejecting visible
+    non-files immediately.
+    """
+    resolved = tuple(sorted({Path(path).expanduser().resolve() for path in paths}))
+    deadline = time.monotonic() + COMPLETION_VISIBILITY_TIMEOUT
+    while True:
+        try:
+            return inventory(resolved)
+        except ValueError:
+            if any(path.exists() and not path.is_file() for path in resolved):
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(COMPLETION_VISIBILITY_POLL_INTERVAL)
 
 
 def _same_file(record: dict) -> tuple[bool, str | None]:
@@ -80,7 +99,7 @@ def _same_existing_private_file(record: dict) -> tuple[bool, str | None]:
 
     WORK cleanup is normal and must not schedule a completed derivative.  An
     existing file whose recorded state changes, however, is direct evidence of
-    interference and should make the owning instance stale.
+    interference and should make the owning work item stale.
     """
     if not Path(record["path"]).is_file():
         return True, None
@@ -88,7 +107,7 @@ def _same_existing_private_file(record: dict) -> tuple[bool, str | None]:
 
 
 def _is_orchestration_control_artifact(path: Path, registry: Registry) -> bool:
-    """Control records describe execution; they are never instance inputs.
+    """Control records describe execution; they are never work-item inputs.
 
     In particular, the completion manifest is written after the worker's step
     ledger has been updated.  Recording it as a private artifact would make a
@@ -120,10 +139,14 @@ def _current_contract(row: dict) -> tuple[dict, str, bool]:
         contract = canonical_contract(contract, configuration)
     except (ValueError, TypeError, KeyError):
         return contract, fingerprint(contract), True
-    current = module_descriptor(str(row["module"])).processing_for(json.loads(row["entities_json"]))
+    descriptor = module_descriptor(str(row["module"]))
+    current = descriptor.processing_for(json.loads(row["entities_json"]))
     recorded_processing = contract.get("processing", {})
     if "source_markup" in recorded_processing:
         current["source_markup"] = recorded_processing["source_markup"]
+    for key in descriptor.dynamic_processing_keys:
+        if key in recorded_processing:
+            current[key] = recorded_processing[key]
     changed = contract.get("processing", {}) != current
     if current:
         contract["processing"] = deepcopy(current)
@@ -184,32 +207,34 @@ def preview_registry(
     inspect private WORK artifacts, or promote a nonfresh registry record to
     fresh.  It is a fast warning layer, not an alternative registry assessor.
     """
-    instances = registry.instance_rows(read_only=True)
-    dependencies = registry.instance_dependencies(read_only=True)
+    work_items = registry.work_item_rows(read_only=True)
+    dependencies = registry.work_item_dependencies(read_only=True)
     if projects is not None:
         selected_projects = set(projects)
-        selected = {int(row["id"]) for row in instances if str(row["project"]) in selected_projects}
-        instances = [row for row in instances if int(row["id"]) in selected]
+        selected = {
+            int(row["id"]) for row in work_items if str(row["project"]) in selected_projects
+        }
+        work_items = [row for row in work_items if int(row["id"]) in selected]
         dependencies = [
-            (instance_id, upstream_id)
-            for instance_id, upstream_id in dependencies
-            if instance_id in selected and upstream_id in selected
+            (work_item_id, upstream_id)
+            for work_item_id, upstream_id in dependencies
+            if work_item_id in selected and upstream_id in selected
         ]
 
-    by_id = {int(row["id"]): row for row in instances}
+    by_id = {int(row["id"]): row for row in work_items}
     upstream: dict[int, list[int]] = {}
-    for instance_id, upstream_id in dependencies:
-        upstream.setdefault(instance_id, []).append(upstream_id)
+    for work_item_id, upstream_id in dependencies:
+        upstream.setdefault(work_item_id, []).append(upstream_id)
 
     states: dict[int, tuple[str, str]] = {}
     remaining = set(by_id)
     while remaining:
         progressed = False
-        for instance_id in tuple(remaining):
-            parents = upstream.get(instance_id, [])
+        for work_item_id in tuple(remaining):
+            parents = upstream.get(work_item_id, [])
             if any(parent in remaining for parent in parents):
                 continue
-            row = by_id[instance_id]
+            row = by_id[work_item_id]
             if compiled:
                 current_fingerprint = row["artifact_fingerprint"]
                 contract_changed = False
@@ -269,12 +294,12 @@ def preview_registry(
                                     "Public derivative outputs are present; deep provenance was not checked",
                                 )
                             )
-            states[instance_id] = state
-            remaining.remove(instance_id)
+            states[work_item_id] = state
+            remaining.remove(work_item_id)
             progressed = True
         if not progressed:
-            for instance_id in remaining:
-                states[instance_id] = ("stale", "Instance dependency cycle detected")
+            for work_item_id in remaining:
+                states[work_item_id] = ("stale", "Work-item dependency cycle detected")
             break
     return states
 
@@ -330,9 +355,9 @@ def _read_yaml_mapping(path: Path) -> dict | None:
 def _public_derivative_completion(
     row: dict, registry: Registry, *, compiled: bool = False
 ) -> tuple[_PublicDerivativeCompletion | None, str]:
-    """Validate the instance's fixed public derivative contract.
+    """Validate the work item's fixed public derivative contract.
 
-    The expected root manifests are fixed when the instance DAG is constructed.
+    The expected root manifests are fixed when the work item DAG is constructed.
     Their inventories may describe a variable-cardinality directory product,
     but neither this fallback nor freshness assessment is allowed to discover
     files by walking a derivatives directory.
@@ -393,7 +418,7 @@ def _public_derivative_completion(
                 path.relative_to(root)
             except ValueError:
                 # External paths in a public manifest are provenance inputs,
-                # never discovered instance outputs.
+                # never discovered work item outputs.
                 continue
             outputs.add(path)
             if path.name.endswith(("_manifest.json", "_manifest.yaml", "_manifest.yml")):
@@ -424,7 +449,7 @@ def _public_derivative_completion(
 def assess_registry(
     registry: Registry,
     *,
-    instance_ids: Iterable[int] | None = None,
+    work_item_ids: Iterable[int] | None = None,
     projects: Iterable[str] | None = None,
     compiled: bool = False,
 ) -> dict[int, tuple[str, str]]:
@@ -436,10 +461,10 @@ def assess_registry(
     captured state. Persistent contention raises AssessmentConflict rather than
     overwriting a newer result with an outdated assessment.
     """
-    instance_ids = None if instance_ids is None else tuple(instance_ids)
+    work_item_ids = None if work_item_ids is None else tuple(work_item_ids)
     projects = None if projects is None else tuple(projects)
     for attempt in range(3):
-        snapshot = capture_assessment(registry, instance_ids=instance_ids, projects=projects)
+        snapshot = capture_assessment(registry, work_item_ids=work_item_ids, projects=projects)
         report = (
             evaluate_assessment(snapshot, compiled=True)
             if compiled
@@ -451,9 +476,9 @@ def assess_registry(
         except AssessmentConflict:
             if attempt == 2:
                 raise
-    fresh = [instance_id for instance_id, (state, _reason) in states.items() if state == "fresh"]
-    for instance_id in missing_instance_ownership(registry, fresh):
-        write_instance_ownership(registry, instance_id)
+    fresh = [work_item_id for work_item_id, (state, _reason) in states.items() if state == "fresh"]
+    for work_item_id in missing_work_item_ownership(registry, fresh):
+        write_work_item_ownership(registry, work_item_id)
     return states
 
 
@@ -468,46 +493,48 @@ def evaluate_assessment(
     freshness.
     """
     if not compiled:
+        from nro.configuration.hardware import gradient_unwarping_records
         from nro.configuration.markup import MarkupStore
         from nro.modules.anat.planning import raw_anatomical_inputs
         from nro.modules.clean.planning import clean_direct_inputs
+        from nro.modules.func.contract import final_resampling_contract
         from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
         from nro.orchestration.catalog import module_descriptor
-    instances = deepcopy(snapshot.instances)
+    work_items = deepcopy(snapshot.work_items)
     dependencies = [
-        (edge["instance_id"], edge["upstream_instance_id"]) for edge in snapshot.dependencies
+        (edge["work_item_id"], edge["upstream_work_item_id"]) for edge in snapshot.dependencies
     ]
     registry = snapshot
-    by_id = {int(row["id"]): row for row in instances}
+    by_id = {int(row["id"]): row for row in work_items}
     contract_updates: dict[int, tuple[str, str]] = {}
     changed_contracts: set[int] = set()
     command_updates: dict[int, str] = {}
-    for instance_id, row in by_id.items():
+    for work_item_id, row in by_id.items():
         if compiled or row.get("execution_branch") not in (None, "main"):
             continue
         contract, current_fingerprint, changed = _current_contract(row)
         if changed:
-            changed_contracts.add(instance_id)
+            changed_contracts.add(work_item_id)
         if changed or fingerprint(json.loads(row["artifact_contract_json"])) != current_fingerprint:
             row["artifact_contract_json"] = json.dumps(
                 contract, sort_keys=True, separators=(",", ":")
             )
             row["artifact_fingerprint"] = current_fingerprint
-            contract_updates[instance_id] = (row["artifact_contract_json"], current_fingerprint)
+            contract_updates[work_item_id] = (row["artifact_contract_json"], current_fingerprint)
             refresh_command = module_descriptor(row["module"]).refresh_command
             if changed and refresh_command is not None:
                 row["command_json"] = json.dumps(
                     refresh_command(tuple(json.loads(row["command_json"])), contract["processing"])
                 )
-                command_updates[instance_id] = row["command_json"]
+                command_updates[work_item_id] = row["command_json"]
     config_records = {int(row["id"]): dict(row) for row in snapshot.configurations}
     config_values = {
         lineage_id: yaml.safe_load(record["resolved_yaml"]) or {}
         for lineage_id, record in config_records.items()
     }
     upstream: dict[int, list[int]] = {}
-    for instance_id, upstream_id in dependencies:
-        upstream.setdefault(instance_id, []).append(upstream_id)
+    for work_item_id, upstream_id in dependencies:
+        upstream.setdefault(work_item_id, []).append(upstream_id)
 
     states: dict[int, tuple[str, str]] = {}
     input_updates: dict[int, str] = {}
@@ -518,16 +545,16 @@ def evaluate_assessment(
     remaining = set(by_id)
     while remaining:
         progressed = False
-        for instance_id in tuple(remaining):
-            parents = upstream.get(instance_id, [])
+        for work_item_id in tuple(remaining):
+            parents = upstream.get(work_item_id, [])
             if any(parent in remaining for parent in parents):
                 continue
-            row = by_id[instance_id]
+            row = by_id[work_item_id]
             registered_only = compiled or row.get("execution_branch") not in (None, "main")
             project = str(row["project"])
             participant = str(row["participant"])
             subject_dir = registry.paths.bids_root / project / f"sub-{participant}"
-            config = config_values[int(row["configuration_lineage_id"])]
+            config = config_values[int(row["module_lineage_id"])]
             module_config = (
                 config[row["module"]] if isinstance(config.get(row["module"]), dict) else config
             )
@@ -539,14 +566,11 @@ def evaluate_assessment(
             source_markup = None if registered_only else markups[markup_key]
             run_key = markup_key
             command = [str(value) for value in json.loads(row["command_json"])]
-            expected_module = {
-                "anat": "nro.modules.anat",
-                "func": "nro.modules.func",
-                "clean": "nro.modules.clean",
-            }.get(str(row["module"]))
-            managed_direct_inputs = not registered_only and bool(
-                expected_module and expected_module in command
+            descriptor = None if registered_only else module_descriptor(row["module"])
+            managed_direct_inputs = descriptor is not None and bool(
+                descriptor.execution_module in command
             )
+            expected_paths: tuple[Path, ...] = ()
             direct_universe_error: str | None = None
             if managed_direct_inputs and row["module"] in {"func", "clean"}:
                 try:
@@ -592,10 +616,10 @@ def evaluate_assessment(
                     }
                     current_paths = {str(Path(value).resolve()) for value in expected_paths}
                     if current_paths != recorded_paths:
-                        input_updates[instance_id] = json.dumps(sorted(current_paths))
+                        input_updates[work_item_id] = json.dumps(sorted(current_paths))
                         direct_universe_error = (
                             "Selected direct input set changed: expected "
-                            f"{len(current_paths)} file(s), instance records {len(recorded_paths)}"
+                            f"{len(current_paths)} file(s), work item records {len(recorded_paths)}"
                         )
                 except (KeyError, OSError, ValueError) as error:
                     direct_universe_error = f"Could not reassess selected direct inputs: {error}"
@@ -608,24 +632,55 @@ def evaluate_assessment(
                     str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
                 }
                 if expected_paths != recorded_paths:
-                    input_updates[instance_id] = json.dumps(sorted(expected_paths))
+                    input_updates[work_item_id] = json.dumps(sorted(expected_paths))
                     direct_universe_error = (
                         "Selected anatomical input set changed: expected "
-                        f"{len(expected_paths)} file(s), instance records {len(recorded_paths)}"
+                        f"{len(expected_paths)} file(s), work item records {len(recorded_paths)}"
                     )
+            if (
+                not registered_only
+                and managed_direct_inputs
+                and expected_paths
+                and row["module"] in {"anat", "func"}
+            ):
+                images = [
+                    Path(path)
+                    for path in expected_paths
+                    if Path(path).name.endswith((".nii", ".nii.gz"))
+                ]
+                records, resolutions = gradient_unwarping_records(
+                    images,
+                    mode=str(module_config.get("gradient_unwarping", "off")),
+                    markup=source_markup,
+                )
+                expected_dynamic = {"gradient_unwarping": records}
+                if row["module"] == "func":
+                    bold_path = matches[0].path.expanduser().absolute()
+                    bold_resolution = resolutions.get(bold_path)
+                    expected_dynamic["final_resampling"] = final_resampling_contract(
+                        gradient_unwarping=bool(bold_resolution and bold_resolution.applied)
+                    )
+                contract = json.loads(row["artifact_contract_json"])
+                processing = dict(contract.get("processing", {}))
+                if any(processing.get(key) != value for key, value in expected_dynamic.items()):
+                    processing.update(expected_dynamic)
+                    contract["processing"] = processing
+                    current_fingerprint = fingerprint(contract)
+                    row["artifact_contract_json"] = json.dumps(
+                        contract, sort_keys=True, separators=(",", ":")
+                    )
+                    row["artifact_fingerprint"] = current_fingerprint
+                    contract_updates[work_item_id] = (
+                        row["artifact_contract_json"],
+                        current_fingerprint,
+                    )
+                    changed_contracts.add(work_item_id)
             multirun_error: str | None = None
-            descriptor = (
-                SimpleNamespace(direct_inputs=None, select_runs=None)
-                if registered_only
-                else module_descriptor(row["module"])
-            )
-            package = (
-                f"nro.modules.{row['module']}"
-                if row["module"]
-                in {"anat", "func", "clean", "dynconn", "microparcellation", "networks"}
-                else f"nro.{row['module']}"
-            )
-            if descriptor.direct_inputs is not None and package in command:
+            if (
+                descriptor is not None
+                and descriptor.direct_inputs is not None
+                and descriptor.execution_module in command
+            ):
                 try:
                     if run_key not in raw_runs_by_participant:
                         raw_runs_by_participant[run_key] = discover_raw_runs(
@@ -643,7 +698,7 @@ def evaluate_assessment(
                         str(Path(path).resolve()) for path in json.loads(row["input_paths_json"])
                     }
                     if current_paths != recorded_paths:
-                        input_updates[instance_id] = json.dumps(sorted(current_paths))
+                        input_updates[work_item_id] = json.dumps(sorted(current_paths))
                         direct_universe_error = "Selected direct input set changed"
                 except (KeyError, OSError, ValueError) as error:
                     direct_universe_error = f"Could not reassess selected direct inputs: {error}"
@@ -688,14 +743,14 @@ def evaluate_assessment(
                             f"{len(expected_entities)} run(s), dependency graph records "
                             f"{len(recorded_entities)}; submit python -m "
                             "nro.bin.run to plan the "
-                            "new upstream instance set"
+                            "new upstream work item set"
                         )
                 except (KeyError, OSError, ValueError) as error:
                     multirun_error = f"Could not reassess selected raw run universe: {error}"
             manifest_path = Path(row["manifest_path"])
             manifest = _read_manifest(manifest_path)
             certificate_bounds: tuple[int, int] | None = None
-            if instance_id in changed_contracts:
+            if work_item_id in changed_contracts:
                 state = ("stale", "Current module processing contract changed")
             elif manifest is None:
                 if registered_only and row["artifact_state"] != "fresh":
@@ -755,7 +810,7 @@ def evaluate_assessment(
                                         "fresh",
                                         "Public derivative outputs validate; private orchestration provenance is unavailable",
                                     )
-                                    completion_bounds[instance_id] = (
+                                    completion_bounds[work_item_id] = (
                                         recovered.oldest_completion_ns,
                                         recovered.newest_completion_ns,
                                     )
@@ -767,8 +822,8 @@ def evaluate_assessment(
             elif manifest.get("manifest_version") != MANIFEST_VERSION:
                 state = ("stale", "Completion manifest version changed")
             else:
-                # The instance key binds the module, entities, and immutable
-                # instance-level configuration instance.  Implementation hashes
+                # The work item key binds the module, entities, and immutable
+                # work-item-level configuration. Implementation hashes
                 # are retained as provenance only: editing the scheduler,
                 # runner, or code after a derivative completed is not direct
                 # evidence that the derivative on disk is stale.  Direct
@@ -776,14 +831,14 @@ def evaluate_assessment(
                 # below remain the authoritative freshness contract.
                 configuration_compatible = (manifest.get("configuration") or {}).get(
                     "fingerprint"
-                ) == config_records[int(row["configuration_lineage_id"])]["config_fingerprint"]
+                ) == config_records[int(row["module_lineage_id"])]["config_fingerprint"]
                 recorded_configuration = manifest.get("configuration") or {}
                 if not registered_only and isinstance(recorded_configuration.get("resolved"), dict):
                     from nro.configuration.store import configuration_fingerprint
 
                     descriptor = module_descriptor(row["module"])
                     try:
-                        current_values = config_values[int(row["configuration_lineage_id"])]
+                        current_values = config_values[int(row["module_lineage_id"])]
                         identifier = recorded_configuration["id"]
                         configuration_compatible = configuration_fingerprint(
                             descriptor.configuration_class,
@@ -801,16 +856,16 @@ def evaluate_assessment(
                 if not _certificate_matches_contract(
                     manifest, row["artifact_fingerprint"], compiled=registered_only
                 ):
-                    state = ("stale", "Instance contract changed")
+                    state = ("stale", "Work-item contract changed")
                 elif (
                     manifest.get("revision_fingerprint") != row["revision_fingerprint"]
                     and not configuration_compatible
                 ):
-                    state = ("stale", "Instance contract or resolved configuration changed")
+                    state = ("stale", "Work-item contract or resolved configuration changed")
                 # The runtime snapshot is orchestration metadata, not a derivative
                 # input.  A missing snapshot must not make otherwise valid public
                 # derivatives stale.  A present-but-changed snapshot is covered by
-                # the instance/configuration revision check above.
+                # the work item/configuration revision check above.
                 elif direct_universe_error:
                     state = ("stale", direct_universe_error)
                 elif multirun_error:
@@ -819,7 +874,7 @@ def evaluate_assessment(
                     state = ("stale", "An upstream derivative is missing or stale")
                 else:
                     recorded_upstream = {
-                        int(item["instance_id"]): int(item["generation"])
+                        int(item["work_item_id"]): int(item["generation"])
                         for item in manifest.get("upstream", [])
                     }
                     current_upstream = {
@@ -887,9 +942,9 @@ def evaluate_assessment(
                                         for item in public_outputs
                                     ]
                                     certificate_bounds = (min(output_mtimes), max(output_mtimes))
-            if state[0] == "fresh" and instance_id not in completion_bounds:
+            if state[0] == "fresh" and work_item_id not in completion_bounds:
                 if certificate_bounds is not None:
-                    completion_bounds[instance_id] = certificate_bounds
+                    completion_bounds[work_item_id] = certificate_bounds
                 else:
                     try:
                         recovered, _recovery_error = _public_derivative_completion(
@@ -898,235 +953,38 @@ def evaluate_assessment(
                     except _PublicDerivativeContractMismatch:
                         recovered = None
                     if recovered is not None:
-                        completion_bounds[instance_id] = (
+                        completion_bounds[work_item_id] = (
                             recovered.oldest_completion_ns,
                             recovered.newest_completion_ns,
                         )
                     elif manifest_path.is_file():
                         stamp = manifest_path.stat().st_mtime_ns
-                        completion_bounds[instance_id] = (stamp, stamp)
-            states[instance_id] = state
-            remaining.remove(instance_id)
+                        completion_bounds[work_item_id] = (stamp, stamp)
+            states[work_item_id] = state
+            remaining.remove(work_item_id)
             progressed = True
         if not progressed:
-            for instance_id in remaining:
-                states[instance_id] = ("stale", "Instance dependency cycle detected")
+            for work_item_id in remaining:
+                states[work_item_id] = ("stale", "Work-item dependency cycle detected")
             break
 
     return AssessmentReport(
         snapshot.fingerprint,
         tuple(
             {
-                "id": instance_id,
+                "id": work_item_id,
                 "state": state,
                 "reason": reason,
-                "contract": json.loads(contract_updates[instance_id][0])
-                if instance_id in contract_updates
+                "contract": json.loads(contract_updates[work_item_id][0])
+                if work_item_id in contract_updates
                 else None,
-                "command": json.loads(command_updates[instance_id])
-                if instance_id in command_updates
+                "command": json.loads(command_updates[work_item_id])
+                if work_item_id in command_updates
                 else None,
-                "inputs": json.loads(input_updates[instance_id])
-                if instance_id in input_updates
+                "inputs": json.loads(input_updates[work_item_id])
+                if work_item_id in input_updates
                 else None,
             }
-            for instance_id, (state, reason) in sorted(states.items())
+            for work_item_id, (state, reason) in sorted(states.items())
         ),
     )
-
-
-def _private_step_artifacts(
-    registry: Registry,
-    *,
-    attempt_id: int,
-    output_root: Path,
-) -> list[dict]:
-    """Inventory absolute, persistent step outputs outside the derivative root.
-
-    Runner ledgers are intentionally best-effort diagnostics, so a malformed
-    or relative output entry is simply not eligible for instance-level validation.
-    Module-level staleness still owns all such details whenever the module is
-    invoked.
-    """
-    with registry.connection() as db:
-        row = db.execute("SELECT log_path FROM attempts WHERE id=?", (attempt_id,)).fetchone()
-    if row is None or not row["log_path"]:
-        return []
-    ledger = Path(str(row["log_path"])).parent / "current-steps.json"
-    value = _read_manifest(ledger)
-    if value is None:
-        return []
-    public_root = output_root.resolve()
-    paths: set[Path] = set()
-    for step in value.values():
-        if not isinstance(step, dict):
-            continue
-        cwd = step.get("cwd")
-        for item in step.get("outputs", []):
-            if not isinstance(item, str) or not item.strip():
-                continue
-            path = Path(item).expanduser()
-            if not path.is_absolute():
-                # Relative output paths are only meaningful when the ledger
-                # recorded a concrete working directory.
-                if not cwd:
-                    continue
-                path = Path(str(cwd)).expanduser() / path
-            try:
-                resolved = path.resolve()
-                resolved.relative_to(public_root)
-            except ValueError:
-                if resolved.is_file() and not _is_orchestration_control_artifact(
-                    resolved, registry
-                ):
-                    paths.add(resolved)
-    return inventory(paths)
-
-
-def record_completion(
-    registry: Registry,
-    *,
-    instance_id: int,
-    attempt_id: int,
-    outputs: Iterable[str | Path],
-) -> dict:
-    """Write a completion manifest last, then advance the registry generation."""
-    with registry.connection() as db:
-        existing = db.execute(
-            "SELECT manifest_path,artifact_state FROM instances WHERE id=?", (instance_id,)
-        ).fetchone()
-    if existing is not None and existing["artifact_state"] == "fresh":
-        path = Path(existing["manifest_path"])
-        if path.is_file():
-            manifest = json.loads(path.read_text())
-            if int(manifest.get("attempt_id", -1)) == attempt_id:
-                return manifest
-    with registry.connection() as db:
-        instance = dict(
-            db.execute(
-                """SELECT t.*, ci.config_id, ci.config_fingerprint,
-                          ci.lineage_fingerprint, ci.resolved_yaml
-                   FROM instances t JOIN configuration_lineages ci ON ci.id=t.configuration_lineage_id
-                   WHERE t.id=?""",
-                (instance_id,),
-            ).fetchone()
-        )
-        dependency_state.check_completion(db, instance, attempt_id)
-        execution = db.execute(
-            "SELECT provenance_json,command_json FROM attempt_execution WHERE attempt_id=?",
-            (attempt_id,),
-        ).fetchone()
-        parents = [
-            dict(row)
-            for row in db.execute(
-                """
-                SELECT t.id, t.current_generation, t.manifest_path
-                FROM instance_dependencies td JOIN instances t ON t.id=td.upstream_instance_id
-                WHERE td.instance_id=? ORDER BY t.id
-                """,
-                (instance_id,),
-            )
-        ]
-    output_records = inventory(outputs)
-    if not output_records:
-        raise RuntimeError(
-            f"Instance produced no discoverable outputs under {instance['output_root']}"
-        )
-    private_records = _private_step_artifacts(
-        registry,
-        attempt_id=attempt_id,
-        output_root=Path(instance["output_root"]),
-    )
-    input_records = inventory(json.loads(instance["input_paths_json"]))
-    generation = int(instance["current_generation"]) + 1
-    runtime_config = file_record(instance["runtime_config_path"])
-    manifest = {
-        "manifest_version": MANIFEST_VERSION,
-        "instance_id": instance_id,
-        "instance_key": instance["instance_key"],
-        "module": instance["module"],
-        "project": instance["project"],
-        "participant": instance["participant"],
-        "entities": json.loads(instance["entities_json"]),
-        "configuration_lineage_id": instance["configuration_lineage_id"],
-        "revision_fingerprint": instance["revision_fingerprint"],
-        "artifact_contract": json.loads(instance["artifact_contract_json"]),
-        "artifact_fingerprint": instance["artifact_fingerprint"],
-        "configuration": {
-            "id": instance["config_id"],
-            "fingerprint": instance["config_fingerprint"],
-            "lineage_fingerprint": instance["lineage_fingerprint"],
-            "resolved": yaml.safe_load(instance["resolved_yaml"]) or {},
-        },
-        "runtime_config": runtime_config,
-        "software": {
-            "name": "nro",
-            "python": sys.version,
-            "executable": sys.executable,
-            "command": json.loads(instance["command_json"]),
-        },
-        "generation": generation,
-        "attempt_id": attempt_id,
-        "completed_at": utcnow(),
-        "inputs": input_records,
-        "upstream": [
-            {
-                "instance_id": int(parent["id"]),
-                "generation": int(parent["current_generation"]),
-                "manifest": parent["manifest_path"],
-            }
-            for parent in parents
-        ],
-        "public_outputs": output_records,
-        "private_artifacts": private_records,
-    }
-    path = Path(instance["manifest_path"])
-    if execution is not None:
-        manifest["implementation"] = json.loads(execution["provenance_json"])
-        manifest["software"]["command"] = json.loads(execution["command_json"])
-    ensure_shared_directory(path.parent)
-    write_instance_ownership(registry, instance_id, attempt_id=attempt_id)
-    with registry.connection(write=True) as db:
-        dependency_state.check_completion(db, instance, attempt_id)
-        atomic_write_json(path, manifest, sort_keys=True, mode=0o664, durable=True)
-        db.execute(
-            """
-            UPDATE instances SET artifact_state='fresh', artifact_reason='Completed successfully',
-                current_generation=?, updated_at=? WHERE id=?
-            """,
-            (generation, utcnow(), instance_id),
-        )
-        db.executemany(
-            """UPDATE instance_dependencies SET required_generation=?
-                          WHERE instance_id=? AND upstream_instance_id=?""",
-            [(parent["current_generation"], instance_id, parent["id"]) for parent in parents],
-        )
-        for item in input_records:
-            db.execute(
-                """INSERT INTO artifacts(instance_id, attempt_id, direction, path, size, mtime_ns,
-                   digest_algorithm, digest, metadata_json) VALUES (?, ?, 'input', ?, ?, ?, ?, ?, '{}')""",
-                (
-                    instance_id,
-                    attempt_id,
-                    item["path"],
-                    item["size"],
-                    item["mtime_ns"],
-                    "sha256" if "sha256" in item else None,
-                    item.get("sha256"),
-                ),
-            )
-        for item in output_records:
-            db.execute(
-                """INSERT INTO artifacts(instance_id, attempt_id, direction, path, size, mtime_ns,
-                   digest_algorithm, digest, metadata_json) VALUES (?, ?, 'output', ?, ?, ?, ?, ?, '{}')""",
-                (
-                    instance_id,
-                    attempt_id,
-                    item["path"],
-                    item["size"],
-                    item["mtime_ns"],
-                    "sha256" if "sha256" in item else None,
-                    item.get("sha256"),
-                ),
-            )
-    return manifest

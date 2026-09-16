@@ -351,8 +351,18 @@ def _synthetic_project(tmp_path, domain):
             )
             sidecar = path.with_name(path.name.removesuffix(".nii.gz") + ".json")
             sidecar.write_text(
-                '{"RepetitionTime": 1, "Denoising": {"applied": true, '
-                '"method": "ICA-AROMA", "mode": "nonaggr"}}'
+                json.dumps(
+                    {
+                        "RepetitionTime": 1,
+                        "Denoising": {
+                            "applied": True,
+                            "method": "ICA-AROMA",
+                            "mode": "nonaggr",
+                            "removed_noise_ic_indices": [i, i + 2],
+                            "simultaneous_slice_artifact": {"score": i / 10},
+                        },
+                    }
+                )
             )
         else:
             for hemi in ("L", "R"):
@@ -367,8 +377,18 @@ def _synthetic_project(tmp_path, domain):
                     path,
                 )
                 path.with_suffix(".json").write_text(
-                    '{"RepetitionTime": 1, "Denoising": {"applied": true, '
-                    '"method": "ICA-AROMA", "mode": "nonaggr"}}'
+                    json.dumps(
+                        {
+                            "RepetitionTime": 1,
+                            "Denoising": {
+                                "applied": True,
+                                "method": "ICA-AROMA",
+                                "mode": "nonaggr",
+                                "removed_noise_ic_indices": [i, i + 2],
+                                "simultaneous_slice_artifact": {"score": i / 10},
+                            },
+                        }
+                    )
                 )
     return root
 
@@ -396,6 +416,15 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
     path = run_module(**kwargs)
     assert validate_completion(path)[0]
     document = json.loads(path.read_text())
+    input_denoising = document["input_denoising"]
+    assert input_denoising["policy"] == {
+        "applied": True,
+        "method": "ICA-AROMA",
+        "mode": "nonaggr",
+    }
+    assert {
+        tuple(metadata["removed_noise_ic_indices"]) for metadata in input_denoising["runs"].values()
+    } == {(1, 3), (2, 4)}
     assert any(
         o["contrast"] == "N" and o["reason"] == "missing_condition" for o in document["omissions"]
     )
@@ -550,8 +579,8 @@ def test_absent_named_dummy_contrast_is_recorded():
 def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     import yaml
 
-    from nro.bin.purge import _instance_paths
-    from nro.orchestration.planner import build_subject_instances
+    from nro.bin.purge import _work_item_paths
+    from nro.orchestration.planner import build_subject_work_items
     from nro.orchestration.registry import Registry
 
     root = _synthetic_project(tmp_path / "bids", "volume")
@@ -561,7 +590,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=root.parent)
     registered = registry.register_workflow(workflow)
-    specs = build_subject_instances(
+    specs = build_subject_work_items(
         project="demo",
         participant="01",
         module="firstlevels",
@@ -586,20 +615,20 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     target = targets[0]
     runtime = yaml.safe_load(target.runtime_config.read_text())
     assert "func_ica_aroma" not in runtime
-    ids = registry.register_instances(specs)
-    row = next(row for row in registry.instance_rows() if row["id"] == ids[target.key])
+    ids = registry.register_work_items(specs)
+    row = next(row for row in registry.work_item_rows() if row["id"] == ids[target.key])
     output = target.expected_outputs[0]
     output.parent.mkdir(parents=True)
     output.write_text("{}")
     other = output.with_name(output.name.replace("model-main", "model-other"))
     other.write_text("{}")
-    controlled, _ = _instance_paths(row, registry=registry, work_root=tmp_path / "work")
+    controlled, _ = _work_item_paths(row, registry=registry, work_root=tmp_path / "work")
     assert output in controlled
     assert other not in controlled
 
 
 def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
-    from nro.modules.firstlevels.paths import artifact_root, instance_prefix
+    from nro.modules.firstlevels.paths import artifact_root, work_item_prefix
     from nro.orchestration.discovery import register_existing_artifacts
     from nro.orchestration.registry import Registry
 
@@ -609,11 +638,11 @@ def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
     nib.save(nib.Nifti1Image(np.ones((2, 2, 2), np.float32), np.eye(4)), anatomy)
     directory = artifact_root(root, "main", "01") / "task-langlocSN/node-run"
     directory.mkdir(parents=True)
-    prefix = instance_prefix("01", "langlocSN/main", "T1w", 0)
+    prefix = work_item_prefix("01", "langlocSN/main", "T1w", 0)
     (directory / f"{prefix}_partial.txt").write_text("partial artifact")
     registry = Registry.for_project("demo", bids_root=root.parent)
     register_existing_artifacts(registry, bids_root=root.parent, inventory={"demo": ("01",)})
-    assert any(row["module"] == "firstlevels" for row in registry.instance_rows())
+    assert any(row["module"] == "firstlevels" for row in registry.work_item_rows())
     with registry.connection() as db:
         assert db.execute("SELECT count(*) FROM requests").fetchone()[0] == 0
 
@@ -653,7 +682,7 @@ def test_model_set_default_and_explicit_selection(task_store):
 
 def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
     from nro.bin.run import build_parser
-    from nro.engine.cli import core_selection, matches_instance_selectors
+    from nro.engine.cli import core_selection, matches_work_item_selectors
 
     selection = core_selection(
         build_parser().parse_args(
@@ -675,13 +704,13 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
     )
     assert selection.runs == {"task": ("langlocSN",)}
     entities = {"task": "langlocSN", "model": "dev", "space": "T1w", "smoothing": "0"}
-    assert matches_instance_selectors(entities, selection.instance_entities)
-    assert not matches_instance_selectors(
-        {**entities, "model": "main"}, selection.instance_entities
+    assert matches_work_item_selectors(entities, selection.work_item_entities)
+    assert not matches_work_item_selectors(
+        {**entities, "model": "main"}, selection.work_item_entities
     )
     with pytest.raises(ValueError, match="disjoint"):
         core_selection(build_parser().parse_args(["--task", "other", "--run", "task=langlocSN"]))
-    assert matches_instance_selectors(entities, {"model": ("langlocSN/dev",)})
+    assert matches_work_item_selectors(entities, {"model": ("langlocSN/dev",)})
 
 
 def test_model_membership_does_not_change_contract_or_configuration(task_store, tmp_path):
@@ -689,7 +718,7 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
 
     from nro.modules.firstlevels.task_models import model_contract, scientific_model
     from nro.orchestration.manifests import _current_contract, assess_registry
-    from nro.orchestration.planner import build_subject_instances
+    from nro.orchestration.planner import build_subject_work_items
     from nro.orchestration.registry import Registry
 
     root = _synthetic_project(tmp_path / "bids", "volume")
@@ -714,12 +743,12 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
         smoothing_levels=(0,),
         models=("main", "dev"),
     )
-    specs = build_subject_instances(**kwargs)
+    specs = build_subject_work_items(**kwargs)
     targets = {s.entities["model"]: s for s in specs if s.module == "firstlevels"}
     assert set(targets) == {"main", "dev"}
-    ids = registry.register_instances(specs)
+    ids = registry.register_work_items(specs)
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET artifact_state='fresh'")
+        db.execute("UPDATE work_items SET artifact_state='fresh'")
     model = load_task_model("langlocSN/main")
     scientific = scientific_model(model)
     path = task_store / "models/langlocSN/main.yml"
@@ -727,10 +756,10 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
         yaml.safe_dump({**model, "model_set": ["experiment"], "description": "New description"})
     )
     assert model_contract(targets["main"].entities)["task_model"] == scientific
-    updated = build_subject_instances(**kwargs)
+    updated = build_subject_work_items(**kwargs)
     assert [s.as_record() for s in specs] == [s.as_record() for s in updated]
-    registry.register_instances(updated)
-    assert all(row["artifact_state"] == "fresh" for row in registry.instance_rows())
+    registry.register_work_items(updated)
+    assert all(row["artifact_state"] == "fresh" for row in registry.work_item_rows())
     for spec in targets.values():
         assert not _current_contract(spec.as_record())[2]
         assert path not in spec.input_paths
@@ -741,7 +770,7 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
     assert not _current_contract(targets["dev"].as_record())[2]
     assert ConfigStore().resolve("main").fingerprint == workflow.fingerprint
     assess_registry(registry, projects=["demo"])
-    row = next(r for r in registry.instance_rows() if r["id"] == ids[targets["main"].key])
+    row = next(r for r in registry.work_item_rows() if r["id"] == ids[targets["main"].key])
     command = json.loads(row["command_json"])
     snapshot = json.loads(command[command.index("--model-definition") + 1])
     assert snapshot == scientific_model(changed)

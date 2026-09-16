@@ -11,12 +11,12 @@ from typing import Mapping, Sequence
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
 from nro.engine.paths import module_artifact_root
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.ownership import (
-    materialize_instance_specs,
+    materialize_work_item_specs,
     read_ownership_records,
-    write_instance_ownership,
+    write_work_item_ownership,
 )
 from nro.orchestration.planner import Planner
 from nro.orchestration.planning_context import ParticipantUnavailableError
@@ -31,7 +31,7 @@ class ArtifactDiscovery:
 
     workflows: int
     artifacts: int
-    instances: int
+    work_items: int
     unavailable: tuple[str, ...]
 
 
@@ -94,7 +94,7 @@ def _recovery_target(path: Path, root: Path, configuration_class: str) -> _Recov
 
 def _unrecorded_targets(
     project_root: Path,
-    owned: Sequence[InstanceSpec],
+    owned: Sequence[WorkItemSpec],
     directories: Mapping[str, set[str]],
 ) -> dict[_RecoveryTarget, list[Path]]:
     """Index existing public files not covered by recovered ownership records."""
@@ -134,7 +134,7 @@ def _unrecorded_targets(
     return targets
 
 
-def _dependency_closure(existing: set[str], specs: Mapping[str, InstanceSpec]) -> set[str]:
+def _dependency_closure(existing: set[str], specs: Mapping[str, WorkItemSpec]) -> set[str]:
     selected = set(existing)
     pending = list(existing)
     while pending:
@@ -157,7 +157,7 @@ def register_existing_artifacts(
 ) -> ArtifactDiscovery:
     """Scan controlled roots and register only artifacts represented on disk."""
     store = store or ConfigStore()
-    lineage_records, instance_records, ownership_errors = read_ownership_records(
+    lineage_records, work_item_records, ownership_errors = read_ownership_records(
         bids_root, inventory
     )
     known_lineages = {str(record["lineage_fingerprint"]) for record in lineage_records}
@@ -192,21 +192,21 @@ def register_existing_artifacts(
             for record in lineage_records
             if str(record["lineage_fingerprint"]) not in incomplete_lineages
         ]
-        instance_records = [
+        work_item_records = [
             item
-            for item in instance_records
+            for item in work_item_records
             if str(item[0]["lineage_fingerprint"]) not in incomplete_lineages
         ]
     lineage_ids = registry.register_owned_lineages(lineage_records) if lineage_records else {}
-    owned_specs, materialization_errors = materialize_instance_specs(
-        registry, instance_records, lineage_ids
+    owned_specs, materialization_errors = materialize_work_item_specs(
+        registry, work_item_records, lineage_ids
     )
     workflows = {workflow_id: store.resolve(workflow_id) for workflow_id in _workflow_ids(store)}
     registered = {
         workflow_id: registry.register_workflow(workflow)
         for workflow_id, workflow in workflows.items()
     }
-    all_specs: dict[str, InstanceSpec] = {spec.key: spec for spec in owned_specs}
+    all_specs: dict[str, WorkItemSpec] = {spec.key: spec for spec in owned_specs}
     existing_keys: set[str] = set(all_specs)
     fallback_existing: set[str] = set()
     unavailable: list[str] = [*ownership_errors, *materialization_errors]
@@ -295,23 +295,23 @@ def register_existing_artifacts(
         fallback_existing.discard(key)
 
     selected_keys = _dependency_closure(existing_keys, all_specs)
-    by_project: dict[str, list[InstanceSpec]] = {}
+    by_project: dict[str, list[WorkItemSpec]] = {}
     for key in selected_keys:
         spec = all_specs[key]
         by_project.setdefault(spec.project, []).append(spec)
     registered_ids: dict[str, int] = {}
     for project, specs in by_project.items():
         registered_ids.update(
-            Registry.for_project(project, bids_root=bids_root).register_instances(specs)
+            Registry.for_project(project, bids_root=bids_root).register_work_items(specs)
         )
     if selected_keys:
         assess_registry(registry, projects=tuple(by_project))
     for key in sorted(fallback_existing.intersection(registered_ids)):
         project_registry = Registry.for_project(all_specs[key].project, bids_root=bids_root)
-        write_instance_ownership(project_registry, registered_ids[key])
+        write_work_item_ownership(project_registry, registered_ids[key])
     return ArtifactDiscovery(
         workflows=len(workflows),
         artifacts=len(existing_keys),
-        instances=len(selected_keys),
+        work_items=len(selected_keys),
         unavailable=tuple(unavailable),
     )

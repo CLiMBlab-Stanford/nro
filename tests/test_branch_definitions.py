@@ -12,7 +12,11 @@ from nro.orchestration.branch_store import BranchStore
 @pytest.fixture
 def stores(tmp_path, monkeypatch):
     shared = create_store(tmp_path / "shared-definitions")
-    private = create_store(tmp_path / "private-definitions")
+    private = create_store(
+        tmp_path / "private-definitions",
+        include_site=False,
+        inherited_site=shared,
+    )
     store = BranchStore(tmp_path / "control")
     checkout = tmp_path / "source"
 
@@ -50,6 +54,14 @@ def test_default_read_only_and_explicit_private_selection(stores):
     assert branch_definitions.selected_definitions(store.control, dict(record), shared) == private
     branch_definitions.select_definitions(store, checkout, shared, None)
     assert site.definitions_root() == shared
+
+
+def test_private_store_cannot_define_protected_site_settings(stores):
+    store, checkout, shared, private, _ = stores
+    private_site = private / "site/site.yml"
+    private_site.write_bytes((shared / "site/site.yml").read_bytes())
+    with pytest.raises(ValueError, match="cannot contain site/site.yml"):
+        branch_definitions.select_definitions(store, checkout, shared, private)
 
 
 def test_edits_are_published_only_inside_the_private_store(stores):
@@ -118,9 +130,9 @@ def test_changed_git_branch_or_registration_cannot_use_the_selection(stores, mon
 def test_private_selection_does_not_mutate_scientific_contracts(stores):
     store, checkout, shared, private, _ = stores
     registry = store.registry("dev")
-    instance = registry.record_instance("test", {"configuration": "same"}, expected_revision=None)
+    work_item = registry.record_work_item("test", {"configuration": "same"}, expected_revision=None)
     branch_definitions.select_definitions(store, checkout, shared, private)
-    assert registry.instances() == (instance,)
+    assert registry.work_items() == (work_item,)
 
 
 def test_selection_cannot_change_during_publication(stores):

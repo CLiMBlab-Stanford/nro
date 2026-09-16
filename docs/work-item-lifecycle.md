@@ -1,57 +1,60 @@
-# Instance planning and execution
+# Work-item planning and execution
 
 This document defines the records and state transitions that connect planning,
 scheduling, execution, and freshness. General scientific vocabulary is defined
 in [Core concepts](concepts.md).
 
-## The instance specification
+The Python records, registry schema, and command-line interface all follow the
+vocabulary in [Core concepts](concepts.md).
 
-The planner represents one complete unit of possible work with an
-`InstanceSpec`. It is an aggregate, not another kind of scientific object:
+## The work-item specification
+
+The planner represents one complete unit of possible work with a
+`WorkItemSpec`. It is an aggregate, not another kind of scientific object:
 
 ```text
-InstanceSpec
-├── InstanceIdentity
-├── InstanceContract
+WorkItemSpec
+├── WorkItemIdentity
+├── WorkItemContract
 ├── ExecutionRecipe
 ├── ResourceRequest
 ├── scope
 └── derivative directory label
 ```
 
-### InstanceIdentity
+### WorkItemIdentity
 
-`InstanceIdentity` says which logical schedulable instance this is:
+`WorkItemIdentity` says which logical schedulable work item this is:
 
 - project;
 - module;
 - participant;
-- configuration lineage;
+- module lineage;
 - applicable BIDS entities; and
-- the derived stable instance key.
+- the derived stable work-item key.
 
 Identity allows several requests to refer to the same logical work. It does not
 say whether that work is currently needed or fresh.
 
-The stable key hashes the configuration lineage fingerprint, not the registry's
-integer lineage row ID. The same logical instance therefore receives the same
+The stable key hashes the module-lineage fingerprint, not the registry's
+integer lineage row ID. The same logical work item therefore receives the same
 key after registry repair.
 
-### InstanceContract
+### WorkItemContract
 
-`InstanceContract` is the freshness-relevant promise made by the instance. It
+`WorkItemContract` is the freshness-relevant promise made by the work item. It
 contains:
 
 - the resolved scientific configuration fingerprint;
 - direct source inputs;
-- upstream instance dependencies;
+- upstream work-item dependencies;
 - the public output root and target-specific prefix;
 - required fixed outputs and the output format; and
 - explicit processing details that affect the meaning or construction of the
   derivative.
 
 The normalized contract is fingerprinted. A substantive contract change makes
-the existing instance output stale. Code that changes scientific behavior is
+the existing artifact stale. Code that changes scientific behavior is
 responsible for changing an appropriate configuration, dependency, output, or
 explicit processing field; a source-code version is not a substitute for a
 semantic contract.
@@ -73,9 +76,8 @@ declaration. Adding, removing, or changing a promised metadata field therefore
 changes the artifact contract; formatting, key order, optional descriptive
 metadata, and values that legitimately depend on the input do not.
 
-`InstanceContract` describes the output boundary of the whole instance. An
-artifact is merely one concrete file or directory participating in that
-boundary.
+`WorkItemContract` describes the artifact promised by the whole work item. Each
+concrete file or atomic directory in that artifact is a product.
 
 ### ExecutionRecipe
 
@@ -96,11 +98,11 @@ establish a new recipe for the changed work.
 memory tier, and maximum memory. Resource changes affect where and when work can
 run, not what the derivative means, so they do not affect freshness.
 
-### InstanceSpec
+### WorkItemSpec
 
-`InstanceSpec` contains the four records above plus planner metadata such as
+`WorkItemSpec` contains the four records above plus planner metadata such as
 scope and derivative directory label. It is therefore a strict conceptual
-superset of `InstanceContract`:
+superset of `WorkItemContract`:
 
 - the contract answers **what substantive result is promised?**
 - the complete specification answers **which work is this, how can it run, and
@@ -124,19 +126,19 @@ The distinction permits operational changes without spurious invalidation.
 selection + workflow
         │
         ▼
-Planner constructs complete InstanceSpecs
+Planner constructs complete WorkItemSpecs
         │
         ▼
-Registry merges logical instances and dependency edges
+Registry merges logical work items and dependency edges
         │
         ▼
-Request creates active demand for terminal and upstream instances
+Request creates active demand for terminal and upstream work items
         │
         ▼
-Filesystem assessment classifies instance outputs
+Filesystem assessment classifies artifacts
         │
         ▼
-Worker claims one demanded, nonfresh instance whose upstreams are fresh
+Worker claims one demanded, nonfresh work item whose upstreams are fresh
         │
         ▼
 Registry creates an attempt and returns an ExecutionEnvelope
@@ -154,9 +156,9 @@ Worker validates public outputs and writes the completion manifest
 ### ExecutionEnvelope
 
 An `ExecutionEnvelope` is the typed boundary between the registry and worker.
-It contains the claimed instance and attempt IDs, identity, normalized instance
-contract, execution recipe, exact inputs and outputs, manifest destination, and
-log destination.
+It contains the claimed work-item and attempt IDs, identity, normalized
+work-item contract, execution recipe, exact inputs and outputs, manifest
+destination, and log destination.
 
 The registry decodes its SQL and JSON storage representation before returning
 the envelope. Worker execution therefore does not depend on database column
@@ -173,10 +175,10 @@ retry, and completion logic independent of how a module process is launched.
 
 State is deliberately not compressed into one ambiguous status:
 
-- **Instance output state:** `missing`, `stale`, or `fresh`.
+- **Artifact state:** `missing`, `stale`, or `fresh`.
 - **Request state:** `active`, `cancelled`, or `satisfied`.
 - **Demand state:** whether a particular request still needs a particular
-  instance.
+  work item.
 - **Attempt state:** `queued`, `running`, `cancel_requested`, `cancelled`,
   `success`, or `error`.
 - **Worker state:** idle, running, draining, shutdown-requested, or terminal.
@@ -185,12 +187,12 @@ State is deliberately not compressed into one ambiguous status:
 
 These axes answer different questions. A successful historical attempt can
 have stale outputs later. A previous attempt error can coexist with a fresh
-instance produced by a later attempt. Cancelling one request does not erase an
-instance or its history.
+artifact produced by a later attempt. Cancelling one request does not erase a
+work item or its history.
 
 ### Input changes during execution
 
-Claiming an attempt records its resolved upstream instance IDs and generations,
+Claiming an attempt records its resolved upstream work-item IDs and generations,
 including transitive ancestors. These references remain unchanged if replanning
 replaces the current dependency graph. They describe the inputs actually selected
 for that attempt, not the branch names or locations used to discover them.
@@ -218,18 +220,18 @@ invalidation semantics.
 
 ## Freshness boundary
 
-The planner always constructs the complete module and instance dependency graph
-before assessing freshness. Assessment compares the instance contract and
+The planner always constructs the complete module and work-item dependency graph
+before assessing freshness. Assessment compares the work-item contract and
 completion manifest with current filesystem evidence, including:
 
 - direct source inputs;
 - required upstream generations;
 - public output inventory and integrity records; and
-- existing private artifacts recorded for resumption.
+- existing private intermediates recorded for resumption.
 
 Missing private intermediaries alone do not invalidate an intact public
-boundary because they can be regenerated. Missing or changed public artifacts,
-changed existing private artifacts, changed direct inputs, or changed upstream
+boundary because they can be regenerated. Missing or changed products, changed
+existing private intermediates, changed direct inputs, or changed upstream
 generations are freshness evidence.
 
 The command, interpreter path, memory tier, and source revision are execution
@@ -262,14 +264,14 @@ The central planner owns dependency traversal. The closed catalog in
 classes, scopes, resource defaults, output formats, dependencies, and planning
 functions.
 
-Each `nro/modules/<module>/planning.py` function constructs only instances of its own
-module from a resolved `SubjectPlanningContext` and already constructed
-upstream specifications. It returns new `InstanceSpec` objects and does not
+Each `nro/modules/<module>/planning.py` function constructs only work items for
+its own module from a resolved `SubjectPlanningContext` and already constructed
+upstream specifications. It returns new `WorkItemSpec` objects and does not
 mutate the registry or planner as a side effect.
 
 If required source data do not exist, module planning may declare that
 participant unavailable for the selected terminal module. This is a normal
-selection outcome, not a partially constructed instance and not an execution
+selection outcome, not a partially constructed work item and not an execution
 failure. The central planner records the reason, omits that participant from
 the request group, and continues planning other participants and projects.
 Unexpected path or metadata failures remain errors and stop planning.

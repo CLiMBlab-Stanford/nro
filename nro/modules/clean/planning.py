@@ -1,4 +1,4 @@
-"""Planner-facing construction of cleaned run instances."""
+"""Planner-facing construction of cleaned run work items."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Mapping
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.paths import clean_manifest_path, module_subject_dir
 from nro.engine.targets import smoothing_entity_value
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
@@ -28,13 +28,13 @@ def clean_direct_inputs(
     )
 
 
-def plan_instances(
+def plan_work_items(
     context: SubjectPlanningContext,
-    upstream: Mapping[str, tuple[InstanceSpec, ...]],
+    upstream: Mapping[str, tuple[WorkItemSpec, ...]],
     descriptor: ModuleDescriptor,
-) -> tuple[InstanceSpec, ...]:
-    """Construct requested space/smoothing instances for each selected run."""
-    func_by_prefix = {instance.output_prefix: instance for instance in upstream["func"]}
+) -> tuple[WorkItemSpec, ...]:
+    """Construct requested space/smoothing work items for each selected run."""
+    func_by_prefix = {work_item.output_prefix: work_item for work_item in upstream["func"]}
     anat = upstream["anat"][0]
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
@@ -47,14 +47,14 @@ def plan_instances(
         bids_root=context.bids_root,
     )
     clean_values = context.workflow.configuration("clean").values
-    result: list[InstanceSpec] = []
+    result: list[WorkItemSpec] = []
     for run in context.runs:
         for space, smoothing in context.target_pairs:
             entities = {**run.entities, "space": space, "smoothing": str(smoothing)}
             prefix = f"{run.stem}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
             result.append(
-                InstanceSpec.create(
-                    key=instance_key(
+                WorkItemSpec.create(
+                    key=work_item_key(
                         context.project,
                         descriptor.name,
                         context.registered.lineage_fingerprints[descriptor.configuration_class],
@@ -66,7 +66,7 @@ def plan_instances(
                     participant=context.participant,
                     entities=entities,
                     scope=descriptor.scope,
-                    configuration_lineage_id=lineage,
+                    module_lineage_id=lineage,
                     config_fingerprint=context.workflow.configuration(
                         descriptor.configuration_class
                     ).scientific_fingerprint,
@@ -75,7 +75,7 @@ def plan_instances(
                     command=(
                         sys.executable,
                         "-m",
-                        "nro.modules.clean",
+                        descriptor.execution_module,
                         "--participant",
                         context.participant,
                         "--project",

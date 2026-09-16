@@ -2,18 +2,14 @@
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from nro.configuration.site import CHECKOUT, settings
 from nro.configuration.store import ConfigStore
-from nro.engine.bids import ENTITY_ORDER
-from nro.engine.cli import matches_instance_selectors
+from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
 from nro.orchestration.branch_requests import register_requests
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.catalog import MODULES, module_descriptor
-from nro.orchestration.planner import Planner, RequestPlan, _minimal_requests
-from nro.orchestration.planning_context import ParticipantUnavailableError
-from nro.orchestration.source_snapshots import source_fingerprint
+from nro.orchestration.planner import Planner, RegisteredTarget
 
 
 def refresh(rows: list[dict], selection) -> None:
@@ -27,8 +23,7 @@ def refresh(rows: list[dict], selection) -> None:
         return
     values = settings()[0]
     scientific = BranchStore(Path(values["registry"])).registry_for_checkout(CHECKOUT)
-    revisions = {row.key: row.revision for row in scientific.instances()}
-    source = source_fingerprint(CHECKOUT)
+    revisions = {row.key: row.revision for row in scientific.work_items()}
     store = ConfigStore()
     workflows = {
         path.name.removesuffix("_workflow.yml"): store.resolve(
@@ -38,7 +33,7 @@ def refresh(rows: list[dict], selection) -> None:
     }
     registered = {}
     planner = Planner(scientific, bids_root=Path(values["bids"]))
-    requests, seen = [], set()
+    targets = []
     for row in rows:
         if (
             row["module"] not in MODULES
@@ -48,12 +43,13 @@ def refresh(rows: list[dict], selection) -> None:
             and row["participant"] not in selection.participants
             or selection.modules
             and row["module"] not in selection.modules
+            or not matches_module_lineage(row["module"], row["directory_label"], selection.lineages)
         ):
             continue
         entities = json.loads(row["entities_json"])
-        if not matches_instance_selectors(entities, selection.instance_entities):
+        if not matches_work_item_selectors(entities, selection.work_item_entities):
             continue
-        names = set(filter(None, row.get("workflow_ids", "").split(","))) or set(workflows)
+        names = set(filter(None, row.get("workflow_ids", "").split(",")))
         if selection.workflows:
             names &= set(selection.workflows)
         for name in sorted(names & workflows.keys()):
@@ -63,77 +59,36 @@ def refresh(rows: list[dict], selection) -> None:
             configuration_class = module_descriptor(row["module"]).configuration_class
             if registration.directory_for(configuration_class) != row["directory_label"]:
                 continue
-            identity = (
-                name,
-                row["project"],
-                row["participant"],
-                row["module"],
-                row["entities_json"],
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            selectors = {
-                key: (value,)
-                for key, value in entities.items()
-                if key in ENTITY_ORDER and key != "sub"
-            }
-            if row["module"] in {"anat", "dynconn", "microparcellation", "networks"}:
-                selectors = None
-            elif row["module"] == "firstlevels":
-                selectors = {"task": (entities["task"],)}
-            try:
-                specs = planner.plan_subject(
+            targets.append(
+                RegisteredTarget(
                     project=row["project"],
                     participant=row["participant"],
                     module=row["module"],
-                    workflow=workflows[name],
-                    registered=registration,
-                    selectors=selectors,
-                    spaces=(entities["space"],) if "space" in entities else None,
-                    smoothing_levels=(int(entities["smoothing"]),)
-                    if "smoothing" in entities
-                    else None,
-                    models=(f"{entities['task']}/{entities['model']}",)
-                    if row["module"] == "firstlevels"
-                    else (),
-                    model_sets=(),
+                    workflow_id=name,
+                    work_item_key=row.get("logical_key") or row["work_item_key"],
+                    entities=entities,
                     memory_gb=row["memory_gb"],
                     max_memory_gb=row["max_memory_gb"],
                 )
-            except (FileNotFoundError, ParticipantUnavailableError):
-                # Filesystem assessment still reports missing inputs. Missing
-                # raw data cannot supply a replacement scientific graph.
-                continue
-            targets = tuple(spec.key for spec in specs if spec.module == row["module"])
-            requests.append(
-                RequestPlan(
-                    row["project"],
-                    name,
-                    registration,
-                    row["module"],
-                    (row["participant"],),
-                    specs,
-                    targets,
-                )
             )
-    if requests:
-        requests = _minimal_requests(requests)
-        plan = SimpleNamespace(
-            requests=requests,
-            instances={spec.key: spec for request in requests for spec in request.instances},
-            source_digest=source,
-            site_settings=values,
+    if targets:
+        plan = planner.plan_registered_targets(
+            targets,
+            workflows=workflows,
+            registered_workflows=registered,
+            memory_gb=1,
+            max_memory_gb=1,
         )
-        register_requests(
-            scientific,
-            plan,
-            selectors={},
-            concurrency=1,
-            partition=None,
-            expected_revisions=revisions,
-            demand=False,
-        )
+        if plan.requests:
+            register_requests(
+                scientific,
+                plan,
+                selectors={},
+                concurrency=1,
+                partition=None,
+                expected_revisions=revisions,
+                demand=False,
+            )
 
 
 def preview(rows: list[dict], visible: set[int], dependencies=()) -> list[dict]:

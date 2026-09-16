@@ -100,11 +100,13 @@ def cleaning_case(tmp_path, request):
             Path(clean.__file__).parents[2] / "configuration/starters/configs/clean/main_clean.yml"
         ).read_text()
     )
-    cfg.update(
-        container="/tmp/qunex.sif",
-        container_engine="singularity",
-        container_bind=[],
-        no_container=True,
+    container_image = tmp_path / "qunex.sif"
+    container_image.write_bytes(b"container")
+    cfg["container"].update(
+        image=str(container_image),
+        engine="true",
+        bind=[],
+        no_container=False,
     )
     configure(
         {

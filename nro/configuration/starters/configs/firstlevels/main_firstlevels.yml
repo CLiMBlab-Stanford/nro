@@ -9,4 +9,5 @@ aggregation_weighting: precision
 noise_model: ar1
 ar_grid: [-0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 spatial_block_size: 2048
+overwrite: false
 wb_command: site:workbench

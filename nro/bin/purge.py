@@ -10,12 +10,17 @@ from typing import Iterable
 
 from nro.configuration.paths import WORK_PATH
 from nro.engine.bids import parse_bids_entities
-from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
-from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.cli import (
+    add_core_selection_arguments,
+    core_selection,
+    matches_module_lineage,
+    page_text,
+)
+from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES, normalize_module
 from nro.orchestration.ownership import (
-    instance_record_path,
     remove_empty_ownership_root,
+    work_item_record_path,
 )
 from nro.orchestration.purge_paths import (
     _is_within,
@@ -32,7 +37,7 @@ class PurgeResult:
     """Counters and removed-path records accumulated during a purge."""
 
     projects: int = 0
-    instances: int = 0
+    work_items: int = 0
     derivative_paths: int = 0
     work_paths: int = 0
     attempt_logs: int = 0
@@ -53,17 +58,18 @@ def _modules(values: Iterable[str] | None) -> set[str]:
     return modules
 
 
-def _matching_instances(
+def _matching_work_items(
     registry: Registry,
     *,
     participants: Iterable[str],
     modules: set[str],
     workflows: set[str],
+    lineages: set[str],
     selectors: dict[str, tuple[str, ...] | None],
 ) -> list[dict]:
     participant_set = {value.removeprefix("sub-") for value in participants}
     result = []
-    for row in registry.instance_rows():
+    for row in registry.work_item_rows():
         if str(row["project"]) != registry.paths.project:
             continue
         if participant_set and str(row["participant"]) not in participant_set:
@@ -71,6 +77,8 @@ def _matching_instances(
         if modules and str(row["module"]) not in modules:
             continue
         if workflows and not workflows.intersection(str(row.get("workflow_ids") or "").split(",")):
+            continue
+        if not matches_module_lineage(str(row["module"]), str(row["directory_label"]), lineages):
             continue
         entities = json.loads(row["entities_json"])
         if selectors and not matches_selectors(entities, selectors):
@@ -89,7 +97,7 @@ def _prefix_owned_paths(
     entities: dict[str, str],
     inventories: dict[Path, tuple[Path, ...]] | None = None,
 ) -> list[Path]:
-    """Return files owned by one exact instance prefix.
+    """Return files owned by one exact work-item prefix.
 
     A simple subject prefix is not sufficient: for example, ``sub-01`` is also
     a prefix of every run and of the subject's anatomical products. Compare
@@ -130,30 +138,30 @@ def _prefix_owned_paths(
     return selected
 
 
-def _instance_paths(
-    instance: dict,
+def _work_item_paths(
+    work_item: dict,
     *,
     registry: Registry,
     work_root: Path,
     inventories: dict[Path, tuple[Path, ...]] | None = None,
 ) -> tuple[list[Path], list[Path]]:
-    """Return instance-owned derivative/control paths and external WORK paths."""
-    module = str(instance["module"])
-    participant = str(instance["participant"]).removeprefix("sub-")
+    """Return work-item-owned derivative/control paths and external WORK paths."""
+    module = str(work_item["module"])
+    participant = str(work_item["participant"]).removeprefix("sub-")
     sub_id = f"sub-{participant}"
-    output_root = Path(instance["output_root"])
-    output_prefix = str(instance.get("output_prefix") or "")
+    output_root = Path(work_item["output_root"])
+    output_prefix = str(work_item.get("output_prefix") or "")
     derivatives_root = registry.paths.project_root / "derivatives" / "nro"
     project_work_derivatives = work_root / registry.paths.project / "derivatives" / "nro"
 
     derivative_paths: list[Path] = []
     work_paths: list[Path] = []
-    entities = json.loads(instance["entities_json"])
+    entities = json.loads(work_item["entities_json"])
     if module == "anat":
         derivative_paths.append(output_root)
     elif module in {"dynconn", "microparcellation", "networks"}:
         # Space and smoothing targets share the subject directory. The full
-        # output prefix identifies the files owned by this instance.
+        # output prefix identifies the files owned by this work item.
         derivative_paths.extend(
             _prefix_owned_paths(
                 output_root,
@@ -164,7 +172,7 @@ def _instance_paths(
         )
     elif module == "firstlevels":
         # A subject root spans tasks, variants, levels, and spatial targets.
-        # Only the selected instance's full prefix is owned here.
+        # Only the selected work item's full prefix is owned here.
         derivative_paths.extend(
             path
             for path in output_root.rglob(f"{output_prefix}_*")
@@ -209,7 +217,7 @@ def _instance_paths(
             work_paths.append(
                 project_work_derivatives
                 / module
-                / str(instance["directory_label"])
+                / str(work_item["directory_label"])
                 / target
                 / sub_id
             )
@@ -217,18 +225,18 @@ def _instance_paths(
             work_paths.append(
                 project_work_derivatives
                 / "firstlevels"
-                / str(instance["directory_label"])
+                / str(work_item["directory_label"])
                 / output_prefix
             )
 
-    derivative_paths.append(Path(instance["manifest_path"]))
+    derivative_paths.append(Path(work_item["manifest_path"]))
     derivative_paths.append(
-        instance_record_path(
+        work_item_record_path(
             registry.paths.project_root,
-            str(instance["configuration_class"]),
-            str(instance["directory_label"]),
+            str(work_item["configuration_class"]),
+            str(work_item["directory_label"]),
             module,
-            str(instance["instance_key"]),
+            str(work_item["work_item_key"]),
         )
     )
     allowed_derivative_roots = (derivatives_root, registry.paths.control)
@@ -248,83 +256,85 @@ def _instance_paths(
     return derivative_paths, work_paths
 
 
-def _active_instances(registry: Registry, instance_ids: set[int]) -> list[dict]:
-    if not instance_ids:
+def _active_work_items(registry: Registry, work_item_ids: set[int]) -> list[dict]:
+    if not work_item_ids:
         return []
-    placeholders = ",".join("?" for _ in instance_ids)
+    placeholders = ",".join("?" for _ in work_item_ids)
     with registry.connection() as db:
         rows = db.execute(
             f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
-                FROM attempts a JOIN instances i ON i.id=a.instance_id
-                WHERE a.instance_id IN ({placeholders})
+                FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+                WHERE a.work_item_id IN ({placeholders})
                   AND a.state IN ('queued', 'running', 'cancel_requested')
                 ORDER BY i.project, i.module, i.participant, i.id""",
-            tuple(sorted(instance_ids)),
+            tuple(sorted(work_item_ids)),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
 def _active_error(active: list[dict]) -> str:
     rendered = ", ".join(
-        f"{instance['project']}:{instance['module']}:sub-{instance['participant']}"
-        for instance in active
+        f"{work_item['project']}:{work_item['module']}:sub-{work_item['participant']}"
+        for work_item in active
     )
     return f"Refusing to purge active derivative attempt(s): {rendered}"
 
 
-def _purge_instances(
+def _purge_work_items(
     planned: list[tuple[Registry, list[dict]]],
     *,
     work_root: Path,
     dry_run: bool,
 ) -> PurgeResult:
-    ids = {int(instance["id"]) for _registry, instances in planned for instance in instances}
+    ids = {int(work_item["id"]) for _registry, work_items in planned for work_item in work_items}
     if dry_run or not ids:
-        return _purge_reserved_instances(planned, work_root=work_root, dry_run=dry_run)
+        return _purge_reserved_work_items(planned, work_root=work_root, dry_run=dry_run)
     registry = planned[0][0]
-    active = _active_instances(registry, ids)
+    active = _active_work_items(registry, ids)
     if active:
         raise SystemExit(_active_error(active))
     try:
         with registry.artifact_mutation(ids):
-            return _purge_reserved_instances(planned, work_root=work_root, dry_run=False)
+            return _purge_reserved_work_items(planned, work_root=work_root, dry_run=False)
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
 
 
-def _purge_reserved_instances(
+def _purge_reserved_work_items(
     planned: list[tuple[Registry, list[dict]]],
     *,
     work_root: Path,
     dry_run: bool,
 ) -> PurgeResult:
-    selected = [(registry, instance) for registry, instances in planned for instance in instances]
+    selected = [
+        (registry, work_item) for registry, work_items in planned for work_item in work_items
+    ]
     if not selected:
         return PurgeResult()
-    instance_ids = {int(instance["id"]) for _registry, instance in selected}
+    work_item_ids = {int(work_item["id"]) for _registry, work_item in selected}
     derivative_count = 0
     work_count = 0
     central_registry = planned[0][0]
     inventories: dict[Path, tuple[Path, ...]] = {}
     # Hold the one lab-wide registry lock across the full multi-project purge.
-    # This prevents a worker from claiming any selected instance after the
+    # This prevents a worker from claiming any selected work item after the
     # active-attempt check but before its artifact state is updated.
     with central_registry.connection(write=True) as db:
-        placeholders = ",".join("?" for _ in instance_ids)
+        placeholders = ",".join("?" for _ in work_item_ids)
         active = db.execute(
             f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
-                FROM attempts a JOIN instances i ON i.id=a.instance_id
-                WHERE a.instance_id IN ({placeholders})
+                FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+                WHERE a.work_item_id IN ({placeholders})
                   AND a.state IN ('queued', 'running', 'cancel_requested')
                 ORDER BY i.project, i.module, i.participant, i.id""",
-            tuple(sorted(instance_ids)),
+            tuple(sorted(work_item_ids)),
         ).fetchall()
         if active:
             raise SystemExit(_active_error([dict(row) for row in active]))
 
-        for registry, instance in selected:
-            derivatives, work = _instance_paths(
-                instance,
+        for registry, work_item in selected:
+            derivatives, work = _work_item_paths(
+                work_item,
                 registry=registry,
                 work_root=work_root,
                 inventories=inventories,
@@ -344,25 +354,25 @@ def _purge_reserved_instances(
 
         if not dry_run:
             db.execute(
-                f"""UPDATE instances SET artifact_state='missing', artifact_reason='Purged by user',
+                f"""UPDATE work_items SET artifact_state='missing', artifact_reason='Purged by user',
                     updated_at=? WHERE id IN ({placeholders})""",
-                (utcnow(), *tuple(sorted(instance_ids))),
+                (utcnow(), *tuple(sorted(work_item_ids))),
             )
 
     if not dry_run:
         lineage_roots = {
             (
                 registry.paths.project_root,
-                str(instance["configuration_class"]),
-                str(instance["directory_label"]),
+                str(work_item["configuration_class"]),
+                str(work_item["directory_label"]),
             )
-            for registry, instance in selected
+            for registry, work_item in selected
         }
         for project_root, configuration_class, directory_label in lineage_roots:
             remove_empty_ownership_root(project_root, configuration_class, directory_label)
 
     return PurgeResult(
-        instances=len(instance_ids),
+        work_items=len(work_item_ids),
         derivative_paths=derivative_count,
         work_paths=work_count,
     )
@@ -376,10 +386,10 @@ def _planned_paths(
     public: set[Path] = set()
     private: set[Path] = set()
     inventories: dict[Path, tuple[Path, ...]] = {}
-    for registry, instances in planned:
-        for instance in instances:
-            derivatives, work = _instance_paths(
-                instance,
+    for registry, work_items in planned:
+        for work_item in work_items:
+            derivatives, work = _work_item_paths(
+                work_item,
                 registry=registry,
                 work_root=work_root,
                 inventories=inventories,
@@ -541,7 +551,10 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
             and row["module"] not in selection.modules
             or selection.workflows
             and not set(selection.workflows).intersection(row["workflow_ids"].split(","))
-            or not matches_selectors(json.loads(row["entities_json"]), selection.instance_entities)
+            or not matches_module_lineage(
+                str(row["module"]), str(row["directory_label"]), selection.lineages
+            )
+            or not matches_selectors(json.loads(row["entities_json"]), selection.work_item_entities)
         ):
             continue
         if not args.logs and row["attempt_state"] in {"queued", "running", "cancel_requested"}:
@@ -557,7 +570,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
         derivatives, work = (
             ([], [])
             if args.logs
-            else _instance_paths(
+            else _work_item_paths(
                 row, registry=facade, work_root=context.paths.private_project(row["project"]).parent
             )
         )
@@ -603,7 +616,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     else:
         verb = "Would purge" if args.dry_run else "Purged"
         print(
-            f"{verb} {result['instances']} instance(s), {result['derivative_paths']} derivative/control paths, "
+            f"{verb} {result['work_items']} work item(s), {result['derivative_paths']} derivative/control paths, "
             f"{result['work_paths']} WORK paths, and {result['attempt_logs'] + result['worker_logs']} logs."
         )
 
@@ -634,7 +647,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
         return
     bids_root = Path(values["bids"]).resolve()
     work_root = Path(args.work_root).expanduser().resolve()
-    selectors = selection.instance_entities
+    selectors = selection.work_item_entities
     modules = _modules(selection.modules)
     projects = selected_projects(bids_root, selection.projects)
     if not projects:
@@ -643,21 +656,22 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     planned: list[tuple[Registry, list[dict]]] = []
     for project in projects:
         registry = Registry.for_project(project, bids_root=bids_root)
-        instances = _matching_instances(
+        work_items = _matching_work_items(
             registry,
             participants=selection.participants,
             modules=modules,
             workflows=set(selection.workflows),
+            lineages=set(selection.lineages),
             selectors=selectors,
         )
-        planned.append((registry, instances))
+        planned.append((registry, work_items))
 
-    selected_instance_ids = {
-        int(instance["id"]) for _registry, instances in planned for instance in instances
+    selected_work_item_ids = {
+        int(work_item["id"]) for _registry, work_items in planned for work_item in work_items
     }
     central_registry = planned[0][0]
     if not args.logs:
-        active = _active_instances(central_registry, selected_instance_ids)
+        active = _active_work_items(central_registry, selected_work_item_ids)
         if active:
             raise SystemExit(_active_error(active))
 
@@ -676,16 +690,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
 
     total = PurgeResult(projects=len(projects))
     if not args.logs:
-        result = _purge_instances(planned, work_root=work_root, dry_run=args.dry_run)
+        result = _purge_work_items(planned, work_root=work_root, dry_run=args.dry_run)
         total = total.add(
-            instances=result.instances,
+            work_items=result.work_items,
             derivative_paths=result.derivative_paths,
             work_paths=result.work_paths,
         )
     total = total.add(
         attempt_logs=_purge_attempt_logs(
             central_registry,
-            instance_ids=selected_instance_ids,
+            work_item_ids=selected_work_item_ids,
             dry_run=args.dry_run,
         ),
         worker_logs=_purge_inactive_worker_logs(central_registry, dry_run=args.dry_run),
@@ -703,7 +717,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
         verb = "Would purge" if args.dry_run else "Purged"
         if not args.logs:
             print(
-                f"{verb} {total.instances} instance(s): "
+                f"{verb} {total.work_items} work item(s): "
                 f"{total.derivative_paths} derivative/control "
                 f"path(s), {total.work_paths} WORK path(s), {total.attempt_logs} attempt log(s), "
                 f"and {total.worker_logs} inactive worker log(s)."

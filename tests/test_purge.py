@@ -12,7 +12,7 @@ from nro.orchestration.branch_purge import (
     _contains_protected_output,
     _protected_output_index,
 )
-from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.planner import build_subject_work_items
 from nro.orchestration.purge_paths import _remove_path
 from nro.orchestration.registry import Registry, utcnow
 
@@ -34,7 +34,7 @@ def _registry_with_two_runs(tmp_path: Path):
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="clean",
@@ -47,22 +47,22 @@ def _registry_with_two_runs(tmp_path: Path):
         registered=registered,
         target_module="clean",
         selectors={},
-        instances=instances,
-        terminal_instance_keys=[
-            instance.key for instance in instances if instance.module == "clean"
+        work_items=work_items,
+        terminal_work_item_keys=[
+            work_item.key for work_item in work_items if work_item.module == "clean"
         ],
         concurrency=2,
         partition=None,
     )
-    return bids, registry, instances, request
+    return bids, registry, work_items, request
 
 
-def _instance_row(registry: Registry, module: str, run: str | None = None) -> dict:
-    for row in registry.instance_rows():
+def _work_item_row(registry: Registry, module: str, run: str | None = None) -> dict:
+    for row in registry.work_item_rows():
         entities = json.loads(row["entities_json"])
         if row["module"] == module and (run is None or entities.get("run") == run):
             return row
-    raise AssertionError(f"Missing instance {module=} {run=}")
+    raise AssertionError(f"Missing work_item {module=} {run=}")
 
 
 def test_remove_path_prunes_empty_parents_but_preserves_boundary(tmp_path: Path) -> None:
@@ -97,13 +97,13 @@ def test_protected_output_index_detects_only_equal_or_descendant_paths(tmp_path:
     assert not _contains_protected_output(protected.parent / "other.nii.gz", index)
 
 
-def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, capsys) -> None:
-    bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
+def test_targeted_purge_removes_only_directly_selected_work_item(tmp_path: Path, capsys) -> None:
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
     work = tmp_path / "work"
-    anat = _instance_row(registry, "anat")
-    func1 = _instance_row(registry, "func", "1")
-    func10 = _instance_row(registry, "func", "10")
-    clean1 = _instance_row(registry, "clean", "1")
+    anat = _work_item_row(registry, "anat")
+    func1 = _work_item_row(registry, "func", "1")
+    func10 = _work_item_row(registry, "func", "10")
+    clean1 = _work_item_row(registry, "clean", "1")
 
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func1_file = _write(
@@ -166,7 +166,7 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
     result = json.loads(capsys.readouterr().out)
 
     assert result["mode"] == "all"
-    assert result["instances"] == 1
+    assert result["work_items"] == 1
     assert not func1_file.exists()
     assert not func1_work.exists()
     assert not completion.exists()
@@ -174,7 +174,7 @@ def test_targeted_purge_removes_only_directly_selected_instance(tmp_path: Path, 
     assert func10_work.exists()
     assert anat_file.exists()
     assert clean1_file.exists()  # downstream files are deliberately untouched
-    assert _instance_row(registry, "func", "1")["artifact_state"] == "missing"
+    assert _work_item_row(registry, "func", "1")["artifact_state"] == "missing"
 
 
 def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, capsys) -> None:
@@ -187,7 +187,7 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, ca
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="func",
@@ -196,9 +196,9 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, ca
         registry=registry,
         bids_root=bids,
     )
-    registry.register_instances(instances)
-    anat = next(instance for instance in instances if instance.module == "anat")
-    func = next(instance for instance in instances if instance.module == "func")
+    registry.register_work_items(work_items)
+    anat = next(work_item for work_item in work_items if work_item.module == "anat")
+    func = next(work_item for work_item in work_items if work_item.module == "func")
     anat_file = _write(Path(anat.output_root) / "sub-01_desc-preproc_T1w.nii.gz")
     freesurfer_file = _write(
         Path(anat.output_root).parent.parent
@@ -234,13 +234,13 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, ca
 
 
 def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Path, capsys) -> None:
-    bids, registry, _instances, request = _registry_with_two_runs(tmp_path)
-    terminal_instance = _instance_row(registry, "func", "1")
-    active_instance = _instance_row(registry, "func", "10")
+    bids, registry, _work_items, request = _registry_with_two_runs(tmp_path)
+    terminal_work_item = _work_item_row(registry, "func", "1")
+    active_work_item = _work_item_row(registry, "func", "10")
     derivative = _write(
-        Path(terminal_instance["output_root"])
+        Path(terminal_work_item["output_root"])
         / "func"
-        / f"{terminal_instance['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
+        / f"{terminal_work_item['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     terminal_log = _write(registry.paths.events / "terminal" / "attempt-1.log")
     active_log = _write(registry.paths.events / "active" / "attempt-2.log")
@@ -249,12 +249,12 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Pat
     now = utcnow()
     with registry.connection(write=True) as db:
         db.execute(
-            """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
+            """INSERT INTO attempts(work_item_id, state, revision_fingerprint, memory_gb,
                started_at, completed_at, log_path, created_at)
                VALUES (?, 'success', ?, 32, ?, ?, ?, ?)""",
             (
-                terminal_instance["id"],
-                terminal_instance["revision_fingerprint"],
+                terminal_work_item["id"],
+                terminal_work_item["revision_fingerprint"],
                 now,
                 now,
                 str(terminal_log),
@@ -262,12 +262,12 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Pat
             ),
         )
         db.execute(
-            """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
+            """INSERT INTO attempts(work_item_id, state, revision_fingerprint, memory_gb,
                started_at, log_path, created_at)
                VALUES (?, 'running', ?, 32, ?, ?, ?)""",
             (
-                active_instance["id"],
-                active_instance["revision_fingerprint"],
+                active_work_item["id"],
+                active_work_item["revision_fingerprint"],
                 now,
                 str(active_log),
                 now,
@@ -308,22 +308,22 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Pat
 
 
 def test_targeted_purge_refuses_active_attempt(tmp_path: Path) -> None:
-    bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
-    instance = _instance_row(registry, "func", "1")
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
+    work_item = _work_item_row(registry, "func", "1")
     derivative = _write(
-        Path(instance["output_root"])
+        Path(work_item["output_root"])
         / "func"
-        / f"{instance['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
+        / f"{work_item['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     now = utcnow()
     with registry.connection(write=True) as db:
         db.execute(
-            """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
+            """INSERT INTO attempts(work_item_id, state, revision_fingerprint, memory_gb,
                started_at, log_path, created_at)
                VALUES (?, 'running', ?, 32, ?, ?, ?)""",
             (
-                instance["id"],
-                instance["revision_fingerprint"],
+                work_item["id"],
+                work_item["revision_fingerprint"],
                 now,
                 str(tmp_path / "active.log"),
                 now,
@@ -349,11 +349,11 @@ def test_targeted_purge_refuses_active_attempt(tmp_path: Path) -> None:
 
 
 def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None:
-    bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
     work = tmp_path / "work"
-    anat = _instance_row(registry, "anat")
-    func = _instance_row(registry, "func", "1")
-    clean = _instance_row(registry, "clean", "1")
+    anat = _work_item_row(registry, "anat")
+    func = _work_item_row(registry, "func", "1")
+    clean = _work_item_row(registry, "clean", "1")
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func_file = _write(
         Path(func["output_root"])
@@ -385,7 +385,7 @@ def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None
     )
     result = json.loads(capsys.readouterr().out)
 
-    assert result["instances"] == 2
+    assert result["work_items"] == 2
     assert not func_file.exists()
     assert not clean_file.exists()
     assert anat_file.exists()
@@ -400,7 +400,7 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="microparcellation",
@@ -411,8 +411,8 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
         spaces=("fsnative", "T1w"),
         smoothing_levels=(0, 2),
     )
-    registry.register_instances(instances)
-    micro = [row for row in registry.instance_rows() if row["module"] == "microparcellation"]
+    registry.register_work_items(work_items)
+    micro = [row for row in registry.work_item_rows() if row["module"] == "microparcellation"]
     selected = next(
         row
         for row in micro
@@ -462,7 +462,7 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
     )
     result = json.loads(capsys.readouterr().out)
 
-    assert result["instances"] == 1
+    assert result["work_items"] == 1
     assert not selected_file.exists()
     assert not selected_work.exists()
     assert preserved_file.exists()
@@ -472,10 +472,10 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
 def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     tmp_path: Path, capsys
 ) -> None:
-    bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
     work = tmp_path / "work"
-    anat = _instance_row(registry, "anat")
-    func = _instance_row(registry, "func", "1")
+    anat = _work_item_row(registry, "anat")
+    func = _work_item_row(registry, "func", "1")
     anat_file = _write(Path(anat["output_root"]) / "sub-01_desc-test_T1w.nii.gz")
     func_file = _write(
         Path(func["output_root"])
@@ -488,11 +488,11 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
         / f"{func['output_prefix']}_bold/scratch.txt"
     )
     foreign = _write(bids / "demo/derivatives/other-system/sub-01/foreign_result.nii.gz")
-    attempt_log = _write(registry.paths.events / "complete" / "instance.log")
+    attempt_log = _write(registry.paths.events / "complete" / "work-item.log")
     now = utcnow()
     with registry.connection(write=True) as db:
         db.execute(
-            """INSERT INTO attempts(instance_id, state, revision_fingerprint, memory_gb,
+            """INSERT INTO attempts(work_item_id, state, revision_fingerprint, memory_gb,
                started_at, completed_at, log_path, created_at)
                VALUES (?, 'success', ?, 32, ?, ?, ?, ?)""",
             (
@@ -516,7 +516,7 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     result = json.loads(capsys.readouterr().out)
 
     assert result["mode"] == "all"
-    assert result["instances"] == 5
+    assert result["work_items"] == 5
     assert not anat_file.exists()
     assert not func_file.exists()
     assert not func_work.exists()
@@ -526,8 +526,8 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
 
 
 def test_purge_reports_plan_and_requires_confirmation(tmp_path: Path, capsys, monkeypatch) -> None:
-    bids, registry, _instances, _request = _registry_with_two_runs(tmp_path)
-    func = _instance_row(registry, "func", "1")
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
+    func = _work_item_row(registry, "func", "1")
     derivative = _write(
         Path(func["output_root"])
         / "func"

@@ -13,7 +13,7 @@ from nro.orchestration import branches
 from nro.orchestration.branch_registry import SCHEMA_VERSION, BranchRegistry
 from nro.orchestration.branch_repair import _repair_records_locked
 from nro.orchestration.branch_store import BranchStore
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
 
 
@@ -28,8 +28,8 @@ def test_checkouts_share_one_central_database(tmp_path, monkeypatch):
     two = BranchStore(store.control).registry_for_checkout(second)
     assert one.database == two.database == store.control / "branches/dev/registry.sqlite3"
     assert one.record.registry_id == two.record.registry_id
-    instance = one.record_instance("demo", {"scientific_setting": 10}, expected_revision=None)
-    assert two.instances() == (instance,)
+    work_item = one.record_work_item("demo", {"scientific_setting": 10}, expected_revision=None)
+    assert two.work_items() == (work_item,)
     assert not first.exists() and not second.exists()
     assert not (store.control / "registry.sqlite3").exists()
 
@@ -40,20 +40,20 @@ def test_branches_have_independent_science_and_no_pool_tables(tmp_path):
     store.register("feature/a", "dev", revision=snapshot.revision)
     one, two = store.registry("dev"), store.registry("feature/a")
     contract = {"module": "clean", "config": {"nuisance": True}}
-    a = one.record_instance("same-key", contract, expected_revision=None)
-    b = two.record_instance("same-key", contract, expected_revision=None)
+    a = one.record_work_item("same-key", contract, expected_revision=None)
+    b = two.record_work_item("same-key", contract, expected_revision=None)
     assert a.contract_fingerprint == b.contract_fingerprint
     assert one.record.registry_id != two.record.registry_id
-    two.record_instance("same-key", {"module": "clean"}, expected_revision=1)
-    assert one.instances() == (a,)
+    two.record_work_item("same-key", {"module": "clean"}, expected_revision=1)
+    assert one.work_items() == (a,)
     with sqlite3.connect(two.database) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {
         "identity",
-        "instances",
+        "work_items",
         "workflow_revisions",
-        "configuration_lineages",
-        "configuration_lineage_dependencies",
+        "module_lineages",
+        "module_lineage_dependencies",
         "workflow_bindings",
     }
 
@@ -65,14 +65,14 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
     runtime = registry.runtime_config_path(registered, "anat")
 
     def spec(key, output, dependencies=()):
-        return InstanceSpec.create(
+        return WorkItemSpec.create(
             key=key,
             module="anat",
             project="demo",
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.lineages["anat"],
+            module_lineage_id=registered.lineages["anat"],
             config_fingerprint="test",
             directory_label="main",
             runtime_config=runtime,
@@ -89,21 +89,21 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
     parent_output = tmp_path / "outputs" / "parent.txt"
     downstream_output = tmp_path / "outputs" / "downstream.txt"
     orphan_output = tmp_path / "outputs" / "orphan.txt"
-    instances = (
+    work_items = (
         spec("parent", parent_output),
         spec("downstream", downstream_output, ("parent",)),
         spec("orphan", orphan_output),
     )
     downstream_output.parent.mkdir(parents=True)
     downstream_output.write_text("present")
-    ids = registry.register_instances(instances)
+    ids = registry.register_work_items(work_items)
     store = BranchStore(registry.paths.control)
     owner = store.initialize().topology.records["dev"].registry_id
     with registry.connection(write=True) as db:
-        for item in instances:
+        for item in work_items:
             contract = json.dumps({"key": item.key})
             db.execute(
-                "INSERT INTO branch_instances VALUES (?,?,?,?)",
+                "INSERT INTO branch_work_items VALUES (?,?,?,?)",
                 (owner, item.key, ids[item.key], contract),
             )
             db.execute(
@@ -114,7 +114,7 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
         mapped = {
             row[0]
             for row in db.execute(
-                "SELECT logical_key FROM branch_instances WHERE registry_id=?", (owner,)
+                "SELECT logical_key FROM branch_work_items WHERE registry_id=?", (owner,)
             )
         }
         revisions = {
@@ -135,14 +135,14 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
     )
     downstream_output.unlink()
     legacy_downstream_output.write_text("present")
-    legacy_ids = registry.register_instances(legacy)
+    legacy_ids = registry.register_work_items(legacy)
     main_owner = store.read().topology.records["main"].registry_id
     with registry.connection(write=True) as db:
         repaired = _repair_records_locked(db, branch="main", registry_id=main_owner)
         mapped = {
             row[0]
             for row in db.execute(
-                "SELECT logical_key FROM branch_instances WHERE registry_id=?", (main_owner,)
+                "SELECT logical_key FROM branch_work_items WHERE registry_id=?", (main_owner,)
             )
         }
 
@@ -155,30 +155,30 @@ def test_contract_revision_protects_edits_and_observations(tmp_path):
     store = BranchStore(tmp_path)
     store.initialize()
     one, two = store.registry("dev"), store.registry("dev")
-    original = one.record_instance("demo", {"a": 1, "b": 2}, expected_revision=None)
+    original = one.record_work_item("demo", {"a": 1, "b": 2}, expected_revision=None)
     with pytest.raises(ValueError, match="changed"):
-        two.record_instance("demo", {"a": 1, "b": 2}, expected_revision=None)
+        two.record_work_item("demo", {"a": 1, "b": 2}, expected_revision=None)
     one.record_observation("demo", {"complete": True}, expected_revision=original.revision)
-    same = two.record_instance("demo", {"b": 2, "a": 1}, expected_revision=1)
+    same = two.record_work_item("demo", {"b": 2, "a": 1}, expected_revision=1)
     assert same.revision == 1 and same.observation == {"complete": True}
-    changed = one.record_instance("demo", {"a": 3, "b": 2}, expected_revision=1)
+    changed = one.record_work_item("demo", {"a": 3, "b": 2}, expected_revision=1)
     assert changed.revision == 2 and changed.observation is None
     with pytest.raises(ValueError, match="changed"):
-        two.record_instance("demo", {"a": 4}, expected_revision=1)
+        two.record_work_item("demo", {"a": 4}, expected_revision=1)
     with pytest.raises(ValueError, match="changed"):
         two.record_observation("demo", {"complete": True}, expected_revision=1)
-    assert two.instances() == (changed,)
+    assert two.work_items() == (changed,)
 
 
 def test_observation_batch_rejects_a_superseded_contract(tmp_path):
     store = BranchStore(tmp_path)
     store.initialize()
     registry = store.registry("dev")
-    registry.record_instance("demo", {"setting": 1}, expected_revision=None)
-    registry.record_instance("demo", {"setting": 2}, expected_revision=1)
+    registry.record_work_item("demo", {"setting": 1}, expected_revision=None)
+    registry.record_work_item("demo", {"setting": 2}, expected_revision=1)
     with pytest.raises(ValueError, match="changed"):
         registry.record_observations({"demo": (1, {"artifact_state": "fresh"})})
-    assert registry.instances()[0].observation is None
+    assert registry.work_items()[0].observation is None
 
 
 def test_concurrent_scientific_edits_do_not_lose_updates(tmp_path):
@@ -189,14 +189,14 @@ def test_concurrent_scientific_edits_do_not_lose_updates(tmp_path):
     def record(pair):
         registry, setting = pair
         try:
-            return registry.record_instance("demo", {"setting": setting}, expected_revision=None)
+            return registry.record_work_item("demo", {"setting": setting}, expected_revision=None)
         except ValueError:
             return None
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(record, [(first, 1), (second, 2)]))
     assert sum(result is not None for result in results) == 1
-    assert first.instances() == tuple(result for result in results if result is not None)
+    assert first.work_items() == tuple(result for result in results if result is not None)
 
 
 @pytest.mark.parametrize("replacement", ["branch", "scheduler"])
@@ -246,17 +246,17 @@ def test_scientific_schema_change_is_local_to_its_branch(tmp_path):
     with sqlite3.connect(dev.database) as db:
         db.execute("PRAGMA user_version=999")
     with pytest.raises(ValueError, match="scientific registry schema"):
-        dev.instances()
-    assert store.registry("main").instances() == ()
+        dev.work_items()
+    assert store.registry("main").work_items() == ()
     store.register("new", "dev", revision=snapshot.revision)
-    assert store.registry("new").instances() == ()
+    assert store.registry("new").work_items() == ()
 
 
-def test_scientific_schema_rebuild_preserves_contracts_and_revisions(tmp_path):
+def test_scientific_schema_rebuild_does_not_migrate_obsolete_records(tmp_path):
     store = BranchStore(tmp_path)
     store.initialize()
     registry = store.registry("main")
-    original = registry.record_instance("example", {"module": "anat"}, expected_revision=None)
+    registry.record_work_item("example", {"module": "anat"}, expected_revision=None)
     registry.record_observation("example", {"artifact_state": "fresh"}, expected_revision=1)
     snapshot = registry.paths.workflows / "legacy/1_workflow.yml"
     snapshot.parent.mkdir(parents=True)
@@ -271,8 +271,7 @@ def test_scientific_schema_rebuild_preserves_contracts_and_revisions(tmp_path):
     )
     with sqlite3.connect(registry.database) as db:
         db.execute(
-            "ALTER TABLE configuration_lineages "
-            "RENAME COLUMN configuration_class TO derivative_class"
+            "ALTER TABLE module_lineages RENAME COLUMN configuration_class TO derivative_class"
         )
         db.execute(
             "ALTER TABLE workflow_bindings RENAME COLUMN configuration_class TO derivative_class"
@@ -283,12 +282,7 @@ def test_scientific_schema_rebuild_preserves_contracts_and_revisions(tmp_path):
 
     assert backup == registry.root / "registry-before-repair.sqlite3"
     assert backup.is_file()
-    rebuilt = registry.instances()
-    assert len(rebuilt) == 1
-    assert rebuilt[0].key == original.key
-    assert rebuilt[0].revision == original.revision
-    assert rebuilt[0].contract == original.contract
-    assert rebuilt[0].observation is None
+    assert registry.work_items() == ()
     assert registry.stored_schema_version() == SCHEMA_VERSION
     with registry.connection() as db:
         assert (
@@ -306,7 +300,7 @@ def test_branch_names_do_not_collide_with_catalog_files(tmp_path, name):
     store = BranchStore(tmp_path)
     snapshot = store.initialize()
     store.register(name, "dev", revision=snapshot.revision)
-    assert store.registry(name).instances() == ()
+    assert store.registry(name).work_items() == ()
     assert store.path.is_file()
     assert not store.pending.exists()
 
@@ -347,7 +341,7 @@ def test_interrupted_registration_resumes_same_registry_identity(tmp_path, monke
         assert "feature" not in store.read().topology.records
     resumed = BranchStore(tmp_path).initialize()
     assert resumed.topology.records["feature"].registry_id == expected_id
-    assert store.registry("feature").instances() == ()
+    assert store.registry("feature").work_items() == ()
     assert not store.pending.exists()
     for name in ("main", "dev"):
         assert resumed.topology.records[name] == initial.topology.records[name]

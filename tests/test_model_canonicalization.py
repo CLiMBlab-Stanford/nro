@@ -124,7 +124,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
 
     from nro.modules.firstlevels import task_models
     from nro.orchestration.catalog import module_descriptor
-    from nro.orchestration.contracts import InstanceSpec
+    from nro.orchestration.contracts import WorkItemSpec
     from nro.orchestration.manifests import (
         MANIFEST_VERSION,
         assess_registry,
@@ -143,14 +143,14 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     output = tmp_path / "output.txt"
     output.write_text("synthetic completed derivative")
     entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}
-    spec = InstanceSpec.create(
+    spec = WorkItemSpec.create(
         key="firstlevels:" + "a" * 64,
         module="firstlevels",
         project="demo",
         participant="01",
         entities=entities,
         scope="subject",
-        configuration_lineage_id=registered.lineages["firstlevels"],
+        module_lineage_id=registered.lineages["firstlevels"],
         config_fingerprint=workflow.configuration("firstlevels").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "firstlevels"),
@@ -163,17 +163,17 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
         expected_outputs=(output,),
         processing=module_descriptor("firstlevels").processing_for(entities),
     )
-    instance_id = registry.register_instances((spec,))[spec.key]
-    row = registry.instance_rows()[0]
-    recorded = spec.instance_contract
+    work_item_id = registry.register_work_items((spec,))[spec.key]
+    row = registry.work_item_rows()[0]
+    recorded = spec.work_item_contract
     recorded["processing"]["task_model"] = _source()
     old_fingerprint = fingerprint(recorded)
 
     def record_source_contract():
         with registry.connection(write=True) as db:
             db.execute(
-                "UPDATE instances SET artifact_contract_json=?, artifact_fingerprint=?, artifact_state='fresh' WHERE id=?",
-                (json.dumps(recorded), old_fingerprint, instance_id),
+                "UPDATE work_items SET artifact_contract_json=?, artifact_fingerprint=?, artifact_state='fresh' WHERE id=?",
+                (json.dumps(recorded), old_fingerprint, work_item_id),
             )
 
     record_source_contract()
@@ -193,18 +193,18 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
         )
     )
     stamp = output.stat().st_mtime_ns
-    assert preview_registry(registry)[instance_id][0] == "fresh"
-    assert registry.instance_rows()[0]["artifact_fingerprint"] == old_fingerprint
-    assert assess_registry(registry)[instance_id][0] == "fresh"
-    assert registry.instance_rows()[0]["artifact_fingerprint"] == spec.contract_fingerprint
+    assert preview_registry(registry)[work_item_id][0] == "fresh"
+    assert registry.work_item_rows()[0]["artifact_fingerprint"] == old_fingerprint
+    assert assess_registry(registry)[work_item_id][0] == "fresh"
+    assert registry.work_item_rows()[0]["artifact_fingerprint"] == spec.contract_fingerprint
     record_source_contract()
-    registry.register_instances((spec,))
-    assert registry.instance_rows()[0]["artifact_state"] == "fresh"
-    assert assess_registry(registry)[instance_id][0] == "fresh"
+    registry.register_work_items((spec,))
+    assert registry.work_item_rows()[0]["artifact_state"] == "fresh"
+    assert assess_registry(registry)[work_item_id][0] == "fresh"
     assert output.stat().st_mtime_ns == stamp
     model_path.write_text(yaml.safe_dump({**_source(), "hrf": "glover"}))
-    assert preview_registry(registry)[instance_id][0] == "stale"
-    assert assess_registry(registry)[instance_id][0] == "stale"
+    assert preview_registry(registry)[work_item_id][0] == "stale"
+    assert assess_registry(registry)[work_item_id][0] == "stale"
 
 
 @pytest.mark.parametrize("runs", [None, ["run-01", "run-02"]])

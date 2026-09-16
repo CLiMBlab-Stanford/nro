@@ -1,8 +1,8 @@
 """Declarative, filesystem-backed execution graphs for nro modules.
 
-The orchestration registry schedules module instances. Each :class:`Runner`
+The orchestration registry schedules work items. Each :class:`Runner`
 owns one :class:`RunnerGraph`, which describes every step inside one such
-instance before any step is considered for execution. The graph is
+work item before any step is considered for execution. The graph is
 deterministic from resolved BIDS data and workflow configuration; filesystem
 freshness affects execution records, never topology.
 """
@@ -41,6 +41,48 @@ class StepKind(str, Enum):
 
 Validator = Callable[[], tuple[bool, str]]
 Action = Callable[[], None]
+_SOURCE_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def _contract_path(path: Path) -> str:
+    """Return a stable identity for paths inside captured source trees.
+
+    Workers execute immutable source captures addressed by their content digest.
+    A packaged resource can therefore move between capture directories without
+    changing its role in a module graph. Its bytes remain ordinary step inputs;
+    only the structural path stored in the runner contract is normalized here.
+    """
+    value = str(path)
+    if value.startswith("$NRO_EXECUTION_SOURCE/"):
+        return value
+    resolved = Path(path).resolve(strict=False)
+    source_value = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
+    if not source_value:
+        return str(resolved)
+    source = Path(source_value).resolve(strict=False)
+    try:
+        relative = resolved.relative_to(source)
+    except ValueError:
+        try:
+            captured = resolved.relative_to(source.parent)
+        except ValueError:
+            return str(resolved)
+        if len(captured.parts) < 2 or _SOURCE_DIGEST.fullmatch(captured.parts[0]) is None:
+            return str(resolved)
+        relative = Path(*captured.parts[1:])
+    return "$NRO_EXECUTION_SOURCE/" + relative.as_posix()
+
+
+def _canonical_contract_node(node: Mapping[str, object]) -> dict[str, object]:
+    """Normalize relocatable paths in a serialized step declaration."""
+    normalized = dict(node)
+    for key in ("inputs", "outputs"):
+        values = normalized.get(key)
+        if isinstance(values, list):
+            normalized[key] = [
+                _contract_path(Path(value)) if isinstance(value, str) else value for value in values
+            ]
+    return normalized
 
 
 def _normalized_command(command: Sequence[str]) -> list[str]:
@@ -52,7 +94,9 @@ def _normalized_command(command: Sequence[str]) -> list[str]:
             normalized.extend((option, value))
         else:
             normalized.append(token)
-    return normalized
+    return [
+        _contract_path(Path(token)) if Path(token).is_absolute() else token for token in normalized
+    ]
 
 
 def path_mtime(path: Path) -> float:
@@ -545,8 +589,8 @@ class RunnerGraph:
             "id": step.id,
             "name": step.name,
             "kind": step.kind.value,
-            "inputs": [str(path.resolve(strict=False)) for path in step.inputs],
-            "outputs": [str(path.resolve(strict=False)) for path in step.outputs],
+            "inputs": [_contract_path(path) for path in step.inputs],
+            "outputs": [_contract_path(path) for path in step.outputs],
             "dependencies": list(self._dependencies[step.id]),
         }
         if step.scientific_signature:
@@ -570,7 +614,7 @@ class RunnerGraph:
         }
 
     def bind_contract(self, path: Path, *, signature: str) -> None:
-        """Validate immutable topology against its prior instance contract."""
+        """Validate immutable topology against its prior work-item contract."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before binding its contract.")
         try:
@@ -590,11 +634,13 @@ class RunnerGraph:
         def topology(nodes: object) -> object:
             if not isinstance(nodes, list):
                 return nodes
-            return [
-                {key: node.get(key) for key in structural_fields}
-                for node in nodes
-                if isinstance(node, dict)
-            ]
+            result = []
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                normalized = _canonical_contract_node(node)
+                result.append({key: normalized.get(key) for key in structural_fields})
+            return result
 
         if existing.get("module") != current["module"] or topology(
             existing.get("nodes")
@@ -607,8 +653,8 @@ class RunnerGraph:
     def changed_steps(self, path: Path, *, signature: str) -> frozenset[str]:
         """Return nodes whose scientific declarations changed from the prior contract.
 
-        A new instance has no prior contract and therefore relies on ordinary
-        artifact freshness. When an instance contract changes, nodes are
+        A new work item has no prior contract and therefore relies on ordinary
+        artifact freshness. When a work-item contract changes, nodes are
         compared independently so the runner can invalidate only changed nodes
         and their descendants. The enclosing signature is intentionally not a
         node-level freshness input.
@@ -647,8 +693,14 @@ class RunnerGraph:
             # Names are presentation. Commands contribute only their normalized
             # signature; factories separately declare parameters used by Python
             # actions and compound command steps.
-            comparable_old = {key: value for key, value in old.items() if key != "name"}
-            comparable_current = {key: value for key, value in current.items() if key != "name"}
+            comparable_old = {
+                key: value for key, value in _canonical_contract_node(old).items() if key != "name"
+            }
+            comparable_current = {
+                key: value
+                for key, value in _canonical_contract_node(current).items()
+                if key != "name"
+            }
             if comparable_old != comparable_current:
                 changed.add(step.id)
         return frozenset(changed)

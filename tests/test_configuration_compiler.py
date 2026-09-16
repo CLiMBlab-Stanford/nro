@@ -219,6 +219,41 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     )
 
 
+@pytest.mark.parametrize("kind", SCHEMAS)
+def test_every_module_uses_execution_only_overwrite(store, kind):
+    config = store.load_configuration(kind, "main")
+    assert config.values["overwrite"] is False
+    changed = store.load_configuration(
+        kind,
+        "main",
+        document={**config.values, "overwrite": True},
+    )
+    assert changed.fingerprint != config.fingerprint
+    assert changed.scientific_fingerprint == config.scientific_fingerprint
+
+
+@pytest.mark.parametrize("kind", ("anat", "func", "clean"))
+def test_legacy_execution_and_flat_container_fields_are_rejected(store, kind):
+    with pytest.raises(ValueError, match="force"):
+        store.load_configuration(kind, "legacy", document={"force": False})
+    with pytest.raises(ValueError, match="container_engine"):
+        store.load_configuration(kind, "legacy", document={"container_engine": "apptainer"})
+
+
+@pytest.mark.parametrize("kind", ("anat", "func", "clean"))
+def test_nested_container_changes_remain_scientific(store, kind):
+    config = store.load_configuration(kind, "main")
+    changed = store.load_configuration(
+        kind,
+        "main",
+        document={
+            **config.values,
+            "container": {**config.values["container"], "cleanenv": False},
+        },
+    )
+    assert changed.scientific_fingerprint != config.scientific_fingerprint
+
+
 def test_marss_cutoff_is_scientific_only_when_auto_mode_uses_it(store):
     defaults = store.load_configuration("func", "main")
     changed_auto = store.load_configuration(
@@ -284,7 +319,7 @@ def test_execution_edit_preserves_completed_registry_artifacts(
     store, tmp_path, record_full_snapshot
 ):
     from nro.orchestration.catalog import module_descriptor
-    from nro.orchestration.contracts import InstanceSpec
+    from nro.orchestration.contracts import WorkItemSpec
     from nro.orchestration.manifests import (
         MANIFEST_VERSION,
         assess_registry,
@@ -299,7 +334,7 @@ def test_execution_edit_preserves_completed_registry_artifacts(
     config = workflow.configuration("clean")
     output = tmp_path / "result.txt"
     output.write_text("completed science")
-    spec = InstanceSpec.create(
+    spec = WorkItemSpec.create(
         key="clean:" + "f" * 64,
         module="clean",
         project="demo",
@@ -307,7 +342,7 @@ def test_execution_edit_preserves_completed_registry_artifacts(
         entities={"space": "T1w", "smoothing": "2"},
         scope="run",
         directory_label="main",
-        configuration_lineage_id=registered.lineages["clean"],
+        module_lineage_id=registered.lineages["clean"],
         config_fingerprint=config.scientific_fingerprint,
         runtime_config=registry.runtime_config_path(registered, "clean"),
         command=("true",),
@@ -319,9 +354,9 @@ def test_execution_edit_preserves_completed_registry_artifacts(
         resource_class="large",
         processing=module_descriptor("clean").processing_contract(),
     )
-    instance_id = registry.register_instances((spec,))[spec.key]
-    row = registry.instance_rows()[0]
-    contract = spec.instance_contract
+    work_item_id = registry.register_work_items((spec,))[spec.key]
+    row = registry.work_item_rows()[0]
+    contract = spec.work_item_contract
     snapshot = deepcopy(config.values)
     if record_full_snapshot:
         snapshot["min_trs"] = 50.0
@@ -329,8 +364,8 @@ def test_execution_edit_preserves_completed_registry_artifacts(
     contract_hash = fingerprint(contract)
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh', artifact_contract_json=?, artifact_fingerprint=? WHERE id=?",
-            (json.dumps(contract), contract_hash, instance_id),
+            "UPDATE work_items SET artifact_state='fresh', artifact_contract_json=?, artifact_fingerprint=? WHERE id=?",
+            (json.dumps(contract), contract_hash, work_item_id),
         )
     manifest = Path(row["manifest_path"])
     manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -352,8 +387,8 @@ def test_execution_edit_preserves_completed_registry_artifacts(
             }
         )
     )
-    assert preview_registry(registry)[instance_id][0] == "fresh"
-    assert assess_registry(registry)[instance_id][0] == "fresh"
+    assert preview_registry(registry)[work_item_id][0] == "fresh"
+    assert assess_registry(registry)[work_item_id][0] == "fresh"
     stamp = output.stat().st_mtime_ns
     external_main = store.configs / "clean" / "main_clean.yml"
     external_main.write_text(yaml.safe_dump({"verbose": True}))
@@ -365,15 +400,15 @@ def test_execution_edit_preserves_completed_registry_artifacts(
         config_fingerprint=updated.configuration("clean").scientific_fingerprint,
         runtime_config=registry.runtime_config_path(selected, "clean"),
     )
-    registry.register_instances((replacement,))
-    assert registry.instance_rows()[0]["artifact_state"] == "fresh"
-    assert preview_registry(registry)[instance_id][0] == "fresh"
-    assert assess_registry(registry)[instance_id][0] == "fresh"
+    registry.register_work_items((replacement,))
+    assert registry.work_item_rows()[0]["artifact_state"] == "fresh"
+    assert preview_registry(registry)[work_item_id][0] == "fresh"
+    assert assess_registry(registry)[work_item_id][0] == "fresh"
     assert output.stat().st_mtime_ns == stamp
     changed = spec.evolve(
         config_fingerprint=store.load_configuration(
             "clean", "main", document={**config.values, "nuisance_variance_explained": 0.9}
         ).scientific_fingerprint
     )
-    registry.register_instances((changed,))
-    assert assess_registry(registry)[instance_id][0] == "stale"
+    registry.register_work_items((changed,))
+    assert assess_registry(registry)[work_item_id][0] == "stale"

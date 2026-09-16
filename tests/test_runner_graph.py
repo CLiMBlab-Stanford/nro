@@ -152,7 +152,7 @@ def test_changed_steps_compares_scientific_declarations_independently(tmp_path: 
             parameters={"method": "same"},
         )
     )
-    original.freeze().reconcile_contract(contract, signature="old-instance")
+    original.freeze().reconcile_contract(contract, signature="old-work_item")
 
     current = RunnerGraph("test")
     changed = current.add(
@@ -174,4 +174,4 @@ def test_changed_steps_compares_scientific_declarations_independently(tmp_path: 
     current.freeze()
 
     assert first.id == changed.id
-    assert current.changed_steps(contract, signature="old-instance") == frozenset({changed.id})
+    assert current.changed_steps(contract, signature="old-work_item") == frozenset({changed.id})

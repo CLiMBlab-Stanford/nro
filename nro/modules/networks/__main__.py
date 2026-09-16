@@ -1,10 +1,9 @@
-"""Select inputs and run one individualized-networks module instance."""
+"""Select inputs and run one individualized-networks module work item."""
 
 import argparse
 import json
 import logging
 import time
-from itertools import count
 from pathlib import Path
 
 from nro.configuration.markup import load_source_markup
@@ -200,7 +199,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     micro_config = micro_configuration.get("resolved") or {}
     participant_id = f"sub-{participant}"
     load_source_markup(
-        config.get("markup"),
+        config["markup"],
         args.project,
         bids_root / args.project / participant_id,
     )
@@ -298,7 +297,6 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         container=None,
         binds=(),
         logger=logging.getLogger("networks"),
-        next_step=count(1).__next__,
         execution_context=execution_context,
     )
     result = build_module(cfg, runner, completion_boundary=False)

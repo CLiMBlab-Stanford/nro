@@ -10,14 +10,34 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.events import EventStore, task_key
-from nro.configuration.site import definitions_root
+from nro.configuration.site import (
+    definitions_root,
+    read_site_definition,
+    site_definition_path,
+    write_site_definition,
+)
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 
 STARTERS = Path(__file__).parent / "starters"
-CATEGORIES = ("configs", "workflows", "models", "events", "markup", "bidsify", "scanplans")
+CATEGORIES = (
+    "site",
+    "configs",
+    "workflows",
+    "models",
+    "events",
+    "markup",
+    "hardware",
+    "bidsify",
+    "scanplans",
+)
 
 
-def validate_store(root: Path | None = None) -> dict[str, int]:
+def validate_store(
+    root: Path | None = None,
+    *,
+    require_site: bool = False,
+    inherited_site: Path | None = None,
+) -> dict[str, int]:
     """Check every definition and reference without changing files or registry state.
 
     Validate filenames, compiled configurations and models, workflow references,
@@ -32,12 +52,14 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
     store = ConfigStore(root)
     errors = []
     counts = dict(
+        site=0,
         configs=0,
         workflows=0,
         models=0,
         event_ids=0,
         event_tsvs=0,
         markup=0,
+        hardware_profiles=0,
         bidsify=0,
         scanplan_parsers=0,
     )
@@ -54,7 +76,7 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         directory = root / category
         # Markup and scan-plan parsing are optional site capabilities. Missing
         # directories preserve the default behavior for either capability.
-        if not directory.is_dir() and category not in {"markup", "scanplans"}:
+        if not directory.is_dir() and category not in {"markup", "hardware", "scanplans"}:
             errors.append(f"Missing directory: {directory}")
         paths = []
         if directory.is_symlink():
@@ -77,6 +99,16 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
                     elif path.is_file():
                         paths.append(path)
         files[category] = sorted(paths)
+
+    expected_site = site_definition_path(root)
+    for path in files["site"]:
+        if path != expected_site:
+            errors.append(f"Expected site/site.yml: {path}")
+    if not expected_site.is_file():
+        if require_site:
+            errors.append(f"Missing protected site definition: {expected_site}")
+    elif check(expected_site, lambda: read_site_definition(root)) is not None:
+        counts["site"] = 1
 
     for kind in CONFIGURATION_CLASSES:
         check(store.configs / kind, lambda kind=kind: store.load_configuration(kind, "main"))
@@ -122,6 +154,21 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
         check(path, lambda identifier=identifier: markup_store.load(identifier))
         counts["markup"] += 1
 
+    from nro.configuration.hardware import validate_gradient_unwarping_catalog
+
+    hardware_files = files["hardware"]
+    expected_hardware = root / "hardware" / "gradient_unwarping.yml"
+    for path in hardware_files:
+        if path != expected_hardware:
+            errors.append(f"Expected hardware/gradient_unwarping.yml: {path}")
+    if expected_hardware.is_file():
+        count = check(
+            expected_hardware,
+            lambda: validate_gradient_unwarping_catalog(root),
+        )
+        if count is not None:
+            counts["hardware_profiles"] = count
+
     if (root / "events").is_dir():
         events = EventStore(root / "events")
         referenced, tasks = set(), {}
@@ -154,7 +201,7 @@ def validate_store(root: Path | None = None) -> dict[str, int]:
             errors.append(f"Expected bidsify/PROFILE.yml: {path}")
             continue
         check(path, lambda: validate_config_id(path.stem, kind="ingestion profile"))
-        check(path, lambda: load_config(path, root=root))
+        check(path, lambda: load_config(path, root=root, site_root=inherited_site))
         counts["bidsify"] += 1
     from nro.bidsify.scanplans import load_parser
 
@@ -189,7 +236,14 @@ def _publish(staged: Path, destination: Path) -> None:
         marker.unlink()
 
 
-def create_store(root: Path | None = None) -> Path:
+def create_store(
+    root: Path | None = None,
+    *,
+    include_site: bool = True,
+    site_values: dict | None = None,
+    site_bidsify: dict | None = None,
+    inherited_site: Path | None = None,
+) -> Path:
     """Publish a new validated starter store; refuse every existing destination.
 
     Create parent directories as needed. Leave existing stores and site settings
@@ -221,7 +275,17 @@ def create_store(root: Path | None = None) -> Path:
             (staged / category).mkdir(exist_ok=True)
         for category in ("models", "events"):
             (staged / category / ".gitkeep").touch()
-        validate_store(staged)
+        if include_site:
+            if site_values is None:
+                from nro.configuration import site
+
+                site_values = site.settings()[0]
+            write_site_definition(staged, site_values, bidsify=site_bidsify)
+        validate_store(
+            staged,
+            require_site=include_site,
+            inherited_site=inherited_site,
+        )
         _publish(staged, destination)
     return destination
 
@@ -231,5 +295,5 @@ def ensure_store(root: Path | None = None) -> Path:
     root = Path(root).expanduser().absolute() if root is not None else definitions_root()
     if not root.exists():
         return create_store(root)
-    validate_store(root)
+    validate_store(root, require_site=True)
     return root

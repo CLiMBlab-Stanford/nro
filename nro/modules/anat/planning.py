@@ -1,4 +1,4 @@
-"""Planner-facing construction of anatomical instances."""
+"""Planner-facing construction of anatomical work items."""
 
 from __future__ import annotations
 
@@ -6,14 +6,15 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
+from nro.configuration.hardware import gradient_unwarping_records
 from nro.configuration.markup import SubjectMarkup
 from nro.engine.images import image_source_paths
 from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
     SubjectPlanningContext,
-    instance_key,
+    work_item_key,
 )
 
 if TYPE_CHECKING:
@@ -61,12 +62,12 @@ def raw_anatomical_inputs(
     return tuple(dict.fromkeys(result))
 
 
-def plan_instances(
+def plan_work_items(
     context: SubjectPlanningContext,
-    upstream: Mapping[str, tuple[InstanceSpec, ...]],
+    upstream: Mapping[str, tuple[WorkItemSpec, ...]],
     descriptor: ModuleDescriptor,
-) -> tuple[InstanceSpec, ...]:
-    """Construct the one subject-level anatomical instance."""
+) -> tuple[WorkItemSpec, ...]:
+    """Construct the one subject-level anatomical work item."""
     del upstream
     lineage = context.registered.lineages[descriptor.name]
     directory_label = context.registered.directories[descriptor.name]
@@ -74,9 +75,15 @@ def plan_instances(
     if not inputs:
         raise ParticipantUnavailableError(f"No T1w or T2w images found under {context.subject_dir}")
     entities: dict[str, str] = {}
+    config = context.workflow.configuration(descriptor.configuration_class).values
+    gradient_records, _ = gradient_unwarping_records(
+        list(raw_anatomical_images(context.subject_dir, context.source_markup)),
+        mode=str(config["gradient_unwarping"]),
+        markup=context.source_markup,
+    )
     return (
-        InstanceSpec.create(
-            key=instance_key(
+        WorkItemSpec.create(
+            key=work_item_key(
                 context.project,
                 descriptor.name,
                 context.registered.lineage_fingerprints[descriptor.name],
@@ -88,7 +95,7 @@ def plan_instances(
             participant=context.participant,
             entities=entities,
             scope=descriptor.scope,
-            configuration_lineage_id=lineage,
+            module_lineage_id=lineage,
             config_fingerprint=context.workflow.configuration(
                 descriptor.configuration_class
             ).module_fingerprint(descriptor.name),
@@ -97,7 +104,7 @@ def plan_instances(
             command=(
                 sys.executable,
                 "-m",
-                "nro.modules.anat",
+                descriptor.execution_module,
                 "--participant",
                 context.participant,
                 "--project",
@@ -124,6 +131,9 @@ def plan_instances(
                     bids_root=context.bids_root,
                 ),
             ),
-            processing=context.processing_contract(descriptor),
+            processing=context.processing_contract(
+                descriptor,
+                gradient_unwarping=gradient_records,
+            ),
         ),
     )

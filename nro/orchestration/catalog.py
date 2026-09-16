@@ -7,34 +7,34 @@ from typing import TYPE_CHECKING, Callable, Mapping
 
 from nro.modules import MODULE_NAMES
 from nro.modules.anat.contract import anatomical_output_contract
-from nro.modules.anat.planning import plan_instances as plan_anat_instances
+from nro.modules.anat.planning import plan_work_items as plan_anat_work_items
 from nro.modules.clean.contract import clean_output_contract
-from nro.modules.clean.planning import plan_instances as plan_clean_instances
+from nro.modules.clean.planning import plan_work_items as plan_clean_work_items
 from nro.modules.dynconn.contract import dynconn_output_contract
-from nro.modules.dynconn.planning import plan_instances as plan_dynconn_instances
+from nro.modules.dynconn.planning import plan_work_items as plan_dynconn_work_items
 from nro.modules.firstlevels.contract import firstlevels_output_contract, validate_public_definition
 from nro.modules.firstlevels.planning import direct_inputs as firstlevels_direct_inputs
-from nro.modules.firstlevels.planning import plan_instances as plan_firstlevels_instances
+from nro.modules.firstlevels.planning import plan_work_items as plan_firstlevels_work_items
 from nro.modules.firstlevels.planning import refresh_command as refresh_firstlevels_command
 from nro.modules.firstlevels.planning import select_model_runs
 from nro.modules.firstlevels.task_models import canonical_processing, model_contract, select_models
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
-from nro.modules.func.planning import plan_instances as plan_func_instances
+from nro.modules.func.planning import plan_work_items as plan_func_work_items
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.microparcellation.planning import (
-    plan_instances as plan_microparcellation_instances,
+    plan_work_items as plan_microparcellation_work_items,
 )
 from nro.modules.networks.contract import networks_output_contract
-from nro.modules.networks.planning import plan_instances as plan_networks_instances
+from nro.modules.networks.planning import plan_work_items as plan_networks_work_items
 
 if TYPE_CHECKING:
-    from nro.orchestration.contracts import InstanceSpec
+    from nro.orchestration.contracts import WorkItemSpec
     from nro.orchestration.planning_context import SubjectPlanningContext
 
 
 PlanFunction = Callable[
-    ["SubjectPlanningContext", Mapping[str, tuple["InstanceSpec", ...]], "ModuleDescriptor"],
-    tuple["InstanceSpec", ...],
+    ["SubjectPlanningContext", Mapping[str, tuple["WorkItemSpec", ...]], "ModuleDescriptor"],
+    tuple["WorkItemSpec", ...],
 ]
 ProcessingContractFunction = Callable[[], Mapping[str, object]]
 
@@ -83,22 +83,28 @@ class ModuleDescriptor:
     processing_contract: ProcessingContractFunction
     select_runs: Callable | None = None
     direct_inputs: Callable | None = None
-    instance_processing: Callable | None = None
+    work_item_processing: Callable | None = None
     refresh_command: Callable | None = None
     select_models: Callable | None = None
     validate_public_definition: Callable | None = None
     canonical_processing: Callable | None = None
+    dynamic_processing_keys: tuple[str, ...] = ()
 
     @property
     def configuration_class(self) -> str:
         """Return the module's configuration namespace."""
         return self.name
 
+    @property
+    def execution_module(self) -> str:
+        """Return the Python module used to execute this scientific module."""
+        return f"nro.modules.{self.name}"
+
     def processing_for(self, entities: dict) -> dict:
-        """Combine module policy with any instance-specific scientific definition."""
+        """Combine module policy with any work item-specific scientific definition."""
         return {
             **self.processing_contract(),
-            **(self.instance_processing(entities) if self.instance_processing else {}),
+            **(self.work_item_processing(entities) if self.work_item_processing else {}),
         }
 
 
@@ -109,8 +115,9 @@ BUILTIN_MODULES = (
         output_format="BIDS-like anatomical images, surfaces, transforms, and module manifest",
         resource_class="large",
         upstream_modules=(),
-        plan=plan_anat_instances,
+        plan=plan_anat_work_items,
         processing_contract=_anat_processing_contract,
+        dynamic_processing_keys=("gradient_unwarping",),
     ),
     ModuleDescriptor(
         name="func",
@@ -118,8 +125,9 @@ BUILTIN_MODULES = (
         output_format="BIDS-like functional images, confounds, transforms, and module manifest",
         resource_class="large",
         upstream_modules=("anat",),
-        plan=plan_func_instances,
+        plan=plan_func_work_items,
         processing_contract=_func_processing_contract,
+        dynamic_processing_keys=("gradient_unwarping", "final_resampling"),
     ),
     ModuleDescriptor(
         name="clean",
@@ -127,7 +135,7 @@ BUILTIN_MODULES = (
         output_format="BIDS cleaned functional images and module manifest",
         resource_class="medium",
         upstream_modules=("func", "anat"),
-        plan=plan_clean_instances,
+        plan=plan_clean_work_items,
         processing_contract=_clean_processing_contract,
     ),
     ModuleDescriptor(
@@ -136,7 +144,7 @@ BUILTIN_MODULES = (
         output_format="Full or low-rank dynamic-connectivity time series and metadata",
         resource_class="large",
         upstream_modules=("clean",),
-        plan=plan_dynconn_instances,
+        plan=plan_dynconn_work_items,
         processing_contract=_dynconn_processing_contract,
     ),
     ModuleDescriptor(
@@ -144,8 +152,8 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="Subject-level BIDS-like CIFTI microparcellation products",
         resource_class="large",
-        upstream_modules=("clean",),
-        plan=plan_microparcellation_instances,
+        upstream_modules=("clean", "anat"),
+        plan=plan_microparcellation_work_items,
         processing_contract=_microparcellation_processing_contract,
     ),
     ModuleDescriptor(
@@ -154,23 +162,20 @@ BUILTIN_MODULES = (
         output_format="Subject-level BIDS-like CIFTI network maps, labels, and metadata",
         resource_class="medium",
         upstream_modules=("microparcellation", "anat"),
-        plan=plan_networks_instances,
+        plan=plan_networks_work_items,
         processing_contract=_networks_processing_contract,
     ),
-)
-
-BUILTIN_MODULES += (
     ModuleDescriptor(
         name="firstlevels",
         scope="subject",
         output_format="Task/model run, session and subject GLM maps and compact covariance",
         resource_class="medium",
         upstream_modules=("func", "anat"),
-        plan=plan_firstlevels_instances,
+        plan=plan_firstlevels_work_items,
         processing_contract=_firstlevels_processing_contract,
         select_runs=select_model_runs,
         direct_inputs=firstlevels_direct_inputs,
-        instance_processing=model_contract,
+        work_item_processing=model_contract,
         refresh_command=refresh_firstlevels_command,
         select_models=select_models,
         validate_public_definition=validate_public_definition,

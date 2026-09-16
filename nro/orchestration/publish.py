@@ -23,17 +23,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _derivative_root(project_root: Path, instance: dict) -> Path:
-    path = Path(instance["output_root"]).resolve()
+def _derivative_root(project_root: Path, work_item: dict) -> Path:
+    path = Path(work_item["output_root"]).resolve()
     expected = module_artifact_root(
         project_root,
-        str(instance["module"]),
-        str(instance["directory_label"]),
+        str(work_item["module"]),
+        str(work_item["directory_label"]),
     ).resolve()
     try:
         path.relative_to(expected)
     except ValueError as error:
-        raise RuntimeError(f"Instance output is outside its derivative dataset: {path}") from error
+        raise RuntimeError(f"Work-item output is outside its derivative dataset: {path}") from error
     return expected
 
 
@@ -78,14 +78,14 @@ def publish(
     Run an available BIDS validator unless validate is false.
     """
     assess_registry(registry, projects=(registry.paths.project,), compiled=compiled)
-    request, instances = registry.publication_instances(request_id)
-    if not instances:
-        raise RuntimeError(f"Request has no terminal derivative instances: {request_id}")
-    not_fresh = [instance for instance in instances if instance["artifact_state"] != "fresh"]
+    request, work_items = registry.publication_work_items(request_id)
+    if not work_items:
+        raise RuntimeError(f"Request has no terminal derivative work items: {request_id}")
+    not_fresh = [item for item in work_items if item["artifact_state"] != "fresh"]
     if not_fresh:
         raise RuntimeError(
             "Cannot publish a request with nonfresh terminal derivatives: "
-            + ", ".join(str(instance["id"]) for instance in not_fresh)
+            + ", ".join(str(work_item["id"]) for work_item in not_fresh)
         )
     destination = destination.expanduser().resolve()
     if destination.exists():
@@ -96,19 +96,19 @@ def publish(
     copied: list[dict] = []
     expected_generations: dict[int, tuple[int, str]] = {}
     provenance_manifests: dict[Path, str] = {}
-    embedded_instances: list[dict] = []
+    embedded_work_items: list[dict] = []
     try:
-        for instance in instances:
-            manifest_path = Path(instance["manifest_path"])
+        for work_item in work_items:
+            manifest_path = Path(work_item["manifest_path"])
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            expected_generations[int(instance["id"])] = (
-                int(instance["current_generation"]),
+            expected_generations[int(work_item["id"])] = (
+                int(work_item["current_generation"]),
                 _sha256(manifest_path),
             )
             with registry.connection() as db:
                 execution = db.execute(
-                    "SELECT context_json FROM instance_execution WHERE instance_id=?",
-                    (instance["id"],),
+                    "SELECT context_json FROM work_item_execution WHERE work_item_id=?",
+                    (work_item["id"],),
                 ).fetchone()
             project_root = registry.paths.project_root
             if execution:
@@ -116,8 +116,8 @@ def publish(
 
                 project_root = ExecutionContext.from_dict(
                     json.loads(execution[0])
-                ).paths.output_project(instance["project"])
-            root = _derivative_root(project_root, instance)
+                ).paths.output_project(work_item["project"])
+            root = _derivative_root(project_root, work_item)
             for item in manifest["public_outputs"]:
                 source = Path(item["path"]).resolve()
                 relative = source.relative_to(root)
@@ -131,7 +131,7 @@ def publish(
                 copied.append(
                     {"source": str(source), "path": str(relative), "sha256": target_digest}
                 )
-            embedded_instances.append(
+            embedded_work_items.append(
                 _portable_manifest(manifest_path, set(), provenance_manifests)
             )
         description = {
@@ -148,7 +148,7 @@ def publish(
             "published_at": utcnow(),
             "project": request["project"],
             "target_module": request["target_module"],
-            "instances": embedded_instances,
+            "work_items": embedded_work_items,
             "files": [
                 {key: value for key, value in item.items() if key != "source"} for item in copied
             ],
@@ -165,15 +165,15 @@ def publish(
                 capture_output=True,
             )
         assess_registry(registry, projects=(registry.paths.project,), compiled=compiled)
-        _request_after, instances_after = registry.publication_instances(request_id)
-        if any(instance["artifact_state"] != "fresh" for instance in instances_after):
+        _request_after, work_items_after = registry.publication_work_items(request_id)
+        if any(work_item["artifact_state"] != "fresh" for work_item in work_items_after):
             raise RuntimeError("Live derivative changed or became stale during publication")
-        current = {int(instance["id"]): instance for instance in instances_after}
-        for instance_id, (generation, manifest_digest) in expected_generations.items():
-            instance = current.get(instance_id)
-            if instance is None or int(instance["current_generation"]) != generation:
+        current = {int(work_item["id"]): work_item for work_item in work_items_after}
+        for work_item_id, (generation, manifest_digest) in expected_generations.items():
+            work_item = current.get(work_item_id)
+            if work_item is None or int(work_item["current_generation"]) != generation:
                 raise RuntimeError("Live derivative generation changed during publication")
-            if _sha256(Path(instance["manifest_path"])) != manifest_digest:
+            if _sha256(Path(work_item["manifest_path"])) != manifest_digest:
                 raise RuntimeError("Live derivative manifest changed during publication")
         for item in copied:
             if _sha256(Path(item["source"])) != item["sha256"]:

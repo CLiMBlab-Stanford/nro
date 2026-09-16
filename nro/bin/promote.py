@@ -51,7 +51,7 @@ def main(argv=None, *, prog="nro promote"):
         registered = {
             name: scientific.register_workflow(workflow) for name, workflow in workflows.items()
         }
-        revisions = {row.key: row.revision for row in scientific.instances()}
+        revisions = {row.key: row.revision for row in scientific.work_items()}
         plan = Planner(scientific, bids_root=bids).plan(
             projects=selection.projects or tuple(discover_bids_inventory(bids)),
             requested_participants=selection.participants,
@@ -65,6 +65,7 @@ def main(argv=None, *, prog="nro promote"):
             max_memory_gb=64,
             models=selection.models,
             model_sets=selection.model_sets,
+            lineage_ids=selection.lineages,
         )
         if plan.unavailable:
             raise ValueError(

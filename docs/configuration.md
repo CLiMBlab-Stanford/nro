@@ -15,7 +15,8 @@ safeguards.
 The same definitions store contains a [standard event-file catalog](event-files.md)
 used for task-name suggestions during bidsification. It may also contain
 [source markup](definitions.md#source-markup) for manual anatomical selection
-and known-bad source exclusion.
+and known-bad source exclusion. A site can also define
+[gradient-unwarping hardware](definitions.md#gradient-unwarping-hardware).
 
 ```{literalinclude} ../nro/configuration/starters/workflows/main_workflow.yml
 :language: yaml
@@ -80,17 +81,18 @@ creating a new workflow revision with the updated runtime configuration.
 Artifact contracts use a separate scientific fingerprint that excludes fields
 explicitly marked as execution-only:
 
-- Anat and func `force` and `verbose`, plus func `io_chunk_vols`.
-- Clean `force` and `verbose`.
+- Anat, func, clean, dynconn, firstlevels, microparcellation, and networks
+  `overwrite` settings.
+- Anat, func, and clean `verbose` settings, plus func `io_chunk_vols`.
 - Firstlevels `spatial_block_size`.
-- Microparcellation `overwrite` and `connectivity.temporal_block_size`.
-- Networks `overwrite` and `oslom.timeout_seconds`.
+- Microparcellation `connectivity.temporal_block_size`.
+- Networks `oslom.timeout_seconds`.
 
 Other settings remain scientific by default. In particular, random seeds,
 solver tolerances, iteration counts, clustering batch size, and software
 resource paths remain part of scientific comparison. Changing an execution
 setting does not by itself make a completed derivative stale. An explicit
-force/overwrite instruction still controls execution when the module is run.
+`overwrite` instruction still controls execution when the module is run.
 Already-started attempts retain their selected execution snapshot.
 
 Recorded specifications are normalized for comparison without rewriting the
@@ -150,12 +152,13 @@ Task/model/model-set selectors choose work; model-set membership does not
 contribute to scientific fingerprints.
 
 Site resources use `site:KEY` references, resolved before configuration
-fingerprinting. Site TOML handles filesystem locations, executables, binds,
-and Slurm routing. `nro paths` edits that layer; it does not edit scientific
-YAML. Changing a resolved resource path may affect freshness even when a human
-believes the content is identical.
+fingerprinting. The protected `site/site.yml` in the definitions store owns
+filesystem locations, executables, binds, and Slurm routing. The installation's
+TOML file only locates that store. `nro paths` edits the protected site document;
+it does not edit module configuration YAML. Changing a resolved resource path
+may affect freshness even when a human believes the content is identical.
 
-The registry saves resolved runtime configuration for attempts. An instance's
+The registry saves resolved runtime configuration for attempts. A work item's
 contract includes the relevant configuration and its upstream dependencies.
 Worker CPU/memory limits and execution command spelling are distinct from that
 scientific contract. Existing historical lineages can remain owned and usable

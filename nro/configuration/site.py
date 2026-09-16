@@ -1,7 +1,8 @@
-"""Resolve installation settings independently of scientific configurations."""
+"""Resolve protected site definitions and immutable execution snapshots."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -9,8 +10,14 @@ import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
+import yaml
+
+from nro.engine.io import atomic_write_text
+
 CHECKOUT = Path(__file__).resolve().parents[2]
 RECORD_NAME = ".nro-installation.json"
+SITE_DEFINITION_VERSION = 1
+SITE_DEFINITION = Path("site/site.yml")
 LAB = Path("/juice6/u/nlp/climblab")
 DEFAULTS = {
     "definitions": str(LAB / "nro-definitions"),
@@ -19,6 +26,7 @@ DEFAULTS = {
     "development": str(LAB / "NRO_DEV"),
     "registry": str(LAB / ".nro"),
     "images": str(LAB / "apptainer/images"),
+    "gradient_coefficients": str(LAB / "shared/gradient-coefficients"),
     "templates": str(LAB / "templateflow"),
     "workbench": str(LAB / "shared/workbench/bin_linux64/wb_command"),
     "oslom": str(LAB / "shared/oslom/oslom_undir"),
@@ -41,6 +49,7 @@ DERIVED = {
     "qunex": ("images", "qunex_suite-1.5.1.sif"),
     "synthstrip": ("images", "synthstrip_1.7.sif"),
     "synbold": ("images", "synbold-disco_v1.4.sif"),
+    "gradient_unwarp": ("images", "hcp-base_1.0.3_4.3.0.sif"),
     "mni_template": (
         "templates",
         "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
@@ -59,6 +68,38 @@ PATH_KEYS = (
     }
 ) | set(DERIVED)
 
+SITE_SECTIONS = {
+    "storage": ("bids", "work", "development", "registry"),
+    "resources": (
+        "images",
+        "gradient_coefficients",
+        "templates",
+        "workbench",
+        "oslom",
+        "license",
+        "qunex",
+        "synthstrip",
+        "synbold",
+        "gradient_unwarp",
+        "mni_template",
+    ),
+    "execution": ("runtime", "partition", "viewing_partition", "account", "binds"),
+}
+REQUIRED_SITE_KEYS = {
+    "storage": SITE_SECTIONS["storage"],
+    "resources": ("images", "gradient_coefficients", "templates", "workbench", "oslom", "license"),
+    "execution": SITE_SECTIONS["execution"],
+}
+SITE_BIDSIFY_KEYS = {
+    "default_server",
+    "default_project",
+    "servers",
+    "project_sources",
+    "scanplans",
+    "session_rules",
+    "event_rules",
+}
+
 
 def generic_defaults() -> dict:
     """Return checkout-independent path proposals for a new standalone site."""
@@ -73,6 +114,7 @@ def generic_defaults() -> dict:
                 "development": "development",
                 "registry": ".nro",
                 "images": "images",
+                "gradient_coefficients": "gradient-coefficients",
                 "templates": "templateflow",
                 "workbench": "workbench/bin_linux64/wb_command",
                 "oslom": "oslom/oslom_undir",
@@ -125,7 +167,7 @@ def site_file() -> Path:
 
 
 def read_overrides(path: Path) -> dict:
-    """Read and validate site overrides; return an empty mapping for an absent file."""
+    """Read a locator, resolved execution snapshot, or legacy site TOML file."""
     if not path.exists():
         return {}
     with path.open("rb") as stream:
@@ -136,6 +178,160 @@ def read_overrides(path: Path) -> dict:
     for key, value in values.items():
         validate_setting(key, value)
     return values
+
+
+def _definitions_from_locator(path: Path, overrides: dict) -> Path:
+    """Resolve the authoritative definitions root without reading its contents."""
+    value = overrides.get("definitions", DEFAULTS["definitions"])
+    if not LAB.is_dir() or not os.access(LAB, os.R_OK | os.X_OK):
+        value = overrides.get("definitions", generic_defaults()["definitions"])
+    return Path(value).expanduser().resolve()
+
+
+def site_definition_path(definitions: Path) -> Path:
+    """Return the protected site document in a definitions store."""
+    return Path(definitions).expanduser().resolve() / SITE_DEFINITION
+
+
+def _validate_bidsify_site(value: object) -> dict:
+    """Validate protected ingestion routing without importing bidsification code."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict) or set(value) - SITE_BIDSIFY_KEYS:
+        raise ValueError(
+            "site.bidsify accepts only default_server, default_project, servers, "
+            "project_sources, scanplans, session_rules, and event_rules"
+        )
+    defaults = {
+        "default_server": None,
+        "default_project": None,
+        "servers": {},
+        "project_sources": {},
+        "scanplans": {"location": None, "credential_env": None},
+        "session_rules": [],
+        "event_rules": [],
+    }
+    result = {**defaults, **value}
+    supplied_scanplans = value.get("scanplans")
+    if supplied_scanplans is not None and not isinstance(supplied_scanplans, dict):
+        raise ValueError("site.bidsify.scanplans must be a mapping")
+    result["scanplans"] = {**defaults["scanplans"], **(supplied_scanplans or {})}
+    for key in ("default_server", "default_project"):
+        if result[key] is not None and not isinstance(result[key], str):
+            raise ValueError(f"site.bidsify.{key} must be a string or null")
+    if not isinstance(result["servers"], dict):
+        raise ValueError("site.bidsify.servers must be a mapping")
+    if not isinstance(result["project_sources"], dict):
+        raise ValueError("site.bidsify.project_sources must be a mapping")
+    scanplans = result["scanplans"]
+    if not isinstance(scanplans, dict) or set(scanplans) != {"location", "credential_env"}:
+        raise ValueError("site.bidsify.scanplans requires location and credential_env")
+    for key, item in scanplans.items():
+        if item is not None and (not isinstance(item, str) or not item.strip()):
+            raise ValueError(f"site.bidsify.scanplans.{key} must be a string or null")
+    for key in ("session_rules", "event_rules"):
+        if not isinstance(result[key], list):
+            raise ValueError(f"site.bidsify.{key} must be a list")
+    return result
+
+
+def validate_site_document(value: object) -> tuple[dict, dict]:
+    """Validate a protected site document and return flat settings and ingestion facts."""
+    if not isinstance(value, dict) or set(value) != {
+        "version",
+        "storage",
+        "resources",
+        "execution",
+        "bidsify",
+    }:
+        raise ValueError(
+            "site/site.yml requires version, storage, resources, execution, and bidsify"
+        )
+    if value["version"] != SITE_DEFINITION_VERSION:
+        raise ValueError(f"Unsupported site definition version: {value['version']!r}")
+    settings_values: dict = {}
+    for section, keys in SITE_SECTIONS.items():
+        section_value = value[section]
+        if not isinstance(section_value, dict) or set(section_value) - set(keys):
+            raise ValueError(f"site.{section} contains unknown settings")
+        missing = set(REQUIRED_SITE_KEYS[section]) - set(section_value)
+        if missing:
+            raise ValueError(f"site.{section} is missing: {', '.join(sorted(missing))}")
+        settings_values.update(section_value)
+    for key, item in settings_values.items():
+        validate_setting(key, item)
+    return settings_values, _validate_bidsify_site(value["bidsify"])
+
+
+def read_site_definition(definitions: Path, *, required: bool = True) -> tuple[dict, dict]:
+    """Read the protected site document from an authoritative definitions store."""
+    path = site_definition_path(definitions)
+    if not path.is_file():
+        if required:
+            raise ValueError(f"Definitions store has no protected site definition: {path}")
+        return {}, _validate_bidsify_site({})
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise ValueError(f"Cannot read protected site definition {path}: {error}") from error
+    return validate_site_document(value)
+
+
+def make_site_document(settings_values: dict, *, bidsify: dict | None = None) -> dict:
+    """Build the canonical protected document from resolved deployment values."""
+    settings_values = dict(settings_values)
+    for key, (parent, suffix) in DERIVED.items():
+        if settings_values.get(key) == str(Path(settings_values.get(parent, "")) / suffix):
+            settings_values.pop(key)
+    document = {
+        "version": SITE_DEFINITION_VERSION,
+        **{
+            section: {key: settings_values[key] for key in keys if key in settings_values}
+            for section, keys in SITE_SECTIONS.items()
+        },
+        "bidsify": _validate_bidsify_site(bidsify or {}),
+    }
+    validate_site_document(document)
+    return document
+
+
+def write_site_definition(
+    definitions: Path, settings_values: dict, *, bidsify: dict | None = None
+) -> Path:
+    """Atomically publish protected site settings inside a definitions store."""
+    path = site_definition_path(definitions)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = make_site_document(settings_values, bidsify=bidsify)
+    text = yaml.safe_dump(document, sort_keys=False)
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return path
+    atomic_write_text(
+        path,
+        text,
+        mode=0o644,
+        durable=True,
+    )
+    return path
+
+
+def protected_site(definitions: Path | None = None) -> tuple[dict, dict]:
+    """Return centrally governed settings and ingestion facts."""
+    if definitions is None:
+        path = site_file()
+        overrides = read_overrides(path)
+        definitions = _definitions_from_locator(path, overrides)
+    return read_site_definition(Path(definitions))
+
+
+def protected_site_fingerprint(definitions: Path | None = None) -> str:
+    """Identify the canonical site-wide settings admitted by the scheduler."""
+    site_settings, bidsify = protected_site(definitions)
+    payload = json.dumps(
+        {"settings": site_settings, "bidsify": bidsify},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def validate_setting(key: str, value: object) -> None:
@@ -172,8 +368,26 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
         values.update(proposals)
         sources.update({key: "home default" for key in proposals})
     overrides = read_overrides(path)
-    values.update(overrides)
-    sources.update({key: str(path) for key in overrides})
+    locator_only = set(overrides) <= {"definitions"}
+    if locator_only:
+        definitions = _definitions_from_locator(path, overrides)
+        values["definitions"] = str(definitions)
+        sources["definitions"] = str(path) if "definitions" in overrides else sources["definitions"]
+        protected_path = site_definition_path(definitions)
+        if protected_path.is_file():
+            protected, bidsify = read_site_definition(definitions)
+            values.update(protected)
+            values["flywheel_server"] = bidsify["default_server"] or ""
+            values["flywheel_project"] = bidsify["default_project"] or ""
+            sources.update({key: str(protected_path) for key in protected})
+            sources["flywheel_server"] = str(protected_path)
+            sources["flywheel_project"] = str(protected_path)
+    else:
+        # Full TOML files are legacy installation state or immutable execution
+        # snapshots. Installation migrates the former; workers must keep using
+        # the latter without consulting mutable definitions.
+        values.update(overrides)
+        sources.update({key: str(path) for key in overrides})
     if installation_record().get("mode") not in {"shared", "branch"}:
         for variable, key in ENVIRONMENT_KEYS.items():
             if os.environ.get(variable):

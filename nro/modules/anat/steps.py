@@ -1,6 +1,5 @@
 """Build anatomical preprocessing steps and their validation helpers."""
 
-import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -10,7 +9,6 @@ from typing import Callable, Optional, Sequence
 from nro.engine.execution import (
     create_copy_file_step,
     ensure_directory,
-    new_step_counter,
 )
 from nro.engine.images import sidecar_json_path
 from nro.engine.io import invalid_gzip_files
@@ -46,9 +44,6 @@ def _robust_template_command(
     for path in inputs:
         command.extend(("--mov", str(path)))
     return command
-
-
-next_step = new_step_counter()
 
 
 @dataclass(frozen=True)
@@ -99,9 +94,7 @@ def _plan_session_anatomicals(
             for image in session_images
         }
         for image in session_images:
-            payload: dict[str, object] = {}
-            if image.json is not None and image.json.exists():
-                payload = json.loads(image.json.read_text(encoding="utf-8"))
+            payload: dict[str, object] = dict(image.metadata)
             payload["Sources"] = [str(image.image)]
             payload["BiasCorrection"] = "N4BiasFieldCorrection"
             staged_preprocessed = staged[image.image]

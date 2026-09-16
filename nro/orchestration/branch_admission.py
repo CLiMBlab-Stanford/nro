@@ -17,20 +17,20 @@ from nro.orchestration.registry import utcnow
 def _workflow(
     db, payload: dict, owner: str, *, required_lineages: set[int] | None = None
 ) -> tuple[int, dict[int, int]]:
-    """Import a workflow and any auxiliary lineages used by its instance graph."""
+    """Import a workflow and any auxiliary lineages used by its work-item graph."""
     revision = payload["revision"]
     lineages, bindings, dependencies = (
         payload[key] for key in ("lineages", "bindings", "dependencies")
     )
     needed = {
-        *(row["configuration_lineage_id"] for row in bindings),
+        *(row["module_lineage_id"] for row in bindings),
         *(required_lineages or ()),
     }
     while True:
         expanded = needed | {
-            row["upstream_configuration_lineage_id"]
+            row["upstream_module_lineage_id"]
             for row in dependencies
-            if row["configuration_lineage_id"] in needed
+            if row["module_lineage_id"] in needed
         }
         if expanded == needed:
             break
@@ -41,7 +41,7 @@ def _workflow(
             continue
         signature = fingerprint({"owner": owner, "lineage": row["lineage_fingerprint"]})
         db.execute(
-            """INSERT OR IGNORE INTO configuration_lineages
+            """INSERT OR IGNORE INTO module_lineages
             (configuration_class,config_id,config_fingerprint,lineage_fingerprint,resolved_yaml,directory_label,created_at)
             VALUES (?,?,?,?,?,?,?)""",
             (
@@ -55,17 +55,17 @@ def _workflow(
             ),
         )
         mapping[row["id"]] = db.execute(
-            """SELECT id FROM configuration_lineages
+            """SELECT id FROM module_lineages
             WHERE configuration_class=? AND lineage_fingerprint=?""",
             (row["configuration_class"], signature),
         ).fetchone()[0]
     for row in dependencies:
-        if row["configuration_lineage_id"] in needed:
+        if row["module_lineage_id"] in needed:
             db.execute(
-                "INSERT OR IGNORE INTO configuration_lineage_dependencies VALUES (?,?,?)",
+                "INSERT OR IGNORE INTO module_lineage_dependencies VALUES (?,?,?)",
                 (
-                    mapping[row["configuration_lineage_id"]],
-                    mapping[row["upstream_configuration_lineage_id"]],
+                    mapping[row["module_lineage_id"]],
+                    mapping[row["upstream_module_lineage_id"]],
                     row["role"],
                 ),
             )
@@ -89,7 +89,7 @@ def _workflow(
     for row in bindings:
         db.execute(
             "INSERT OR IGNORE INTO workflow_bindings VALUES (?,?,?)",
-            (revision_id, row["configuration_class"], mapping[row["configuration_lineage_id"]]),
+            (revision_id, row["configuration_class"], mapping[row["module_lineage_id"]]),
         )
     return revision_id, mapping
 
@@ -136,8 +136,8 @@ def admit_plan(
         from nro.orchestration.branch_registry import BranchRegistry
 
         scientific = BranchRegistry(branches.control, snapshot.topology.records[name])
-        recorded = {item.key: item for item in scientific.instances()}
-        for item in plan.instances:
+        recorded = {item.key: item for item in scientific.work_items()}
+        for item in plan.work_items:
             if (
                 item.context.paths.branch != name
                 or item.context.paths.bids != registry.paths.bids_root.resolve()
@@ -150,6 +150,7 @@ def admit_plan(
                 item.spec.key
             ].contract_fingerprint != fingerprint(item.contract):
                 raise ValueError("Scientific plan changed before admission; resolve it again")
+        from nro.configuration.site import protected_site_fingerprint
         from nro.orchestration.compiled_request import encode_spec, export_workflow
 
         payload = dict(
@@ -157,21 +158,22 @@ def admit_plan(
             branch=name,
             registry_id=owner,
             project=registry.paths.project,
-            context=plan.instances[0].context.as_dict(),
+            context=plan.work_items[0].context.as_dict(),
             specifications=[
                 encode_spec(spec)
-                for spec in (plan.specifications or tuple(item.spec for item in plan.instances))
+                for spec in (plan.specifications or tuple(item.spec for item in plan.work_items))
             ],
             revisions={
                 spec.key: recorded[spec.key].revision
-                for spec in (plan.specifications or tuple(item.spec for item in plan.instances))
+                for spec in (plan.specifications or tuple(item.spec for item in plan.work_items))
             },
-            contracts={item.spec.key: item.contract for item in plan.instances},
+            contracts={item.spec.key: item.contract for item in plan.work_items},
             terminals=list(plan.terminals),
             inherit=plan.inherit,
             workflow=export_workflow(scientific, registered),
             source=dict(root=str(source.root), digest=source.digest),
             site=str(site),
+            site_fingerprint=protected_site_fingerprint(),
             python=str(python),
             selectors=selectors,
             concurrency=concurrency,
@@ -203,14 +205,14 @@ def _admit_resolved(
     release = payload["release"]
     external = {}
     keys = {}
-    for item in plan.instances:
+    for item in plan.work_items:
         artifact = item.artifact
         if artifact is None:
             keys[item.spec.key] = item.spec.key if name == "main" else owner + ":" + item.spec.key
             continue
         row = db.execute(
-            """SELECT i.* FROM instances i LEFT JOIN instance_execution e ON e.instance_id=i.id
-            WHERE COALESCE(e.branch,'main')=? AND COALESCE(e.logical_key,i.instance_key)=?""",
+            """SELECT i.* FROM work_items i LEFT JOIN work_item_execution e ON e.work_item_id=i.id
+            WHERE COALESCE(e.branch,'main')=? AND COALESCE(e.logical_key,i.work_item_key)=?""",
             (artifact.branch, artifact.key),
         ).fetchone()
         if (
@@ -220,13 +222,13 @@ def _admit_resolved(
             or Path(row["output_root"]).resolve() != artifact.root.resolve()
         ):
             raise ValueError("Inherited artifact changed before admission; resolve it again")
-        keys[item.spec.key] = row["instance_key"]
-        external[row["instance_key"]] = int(row["id"])
+        keys[item.spec.key] = row["work_item_key"]
+        external[row["work_item_key"]] = int(row["id"])
     revision_id, lineages = _workflow(
         db,
         payload["workflow"],
         owner,
-        required_lineages={item.spec.configuration_lineage_id for item in plan.work},
+        required_lineages={item.spec.module_lineage_id for item in plan.work},
     )
     specs = []
     for item in plan.work:
@@ -234,7 +236,7 @@ def _admit_resolved(
         specs.append(
             spec.evolve(
                 key=keys[spec.key],
-                configuration_lineage_id=lineages[spec.configuration_lineage_id],
+                module_lineage_id=lineages[spec.module_lineage_id],
                 dependencies=tuple(keys[key] for key in spec.dependencies),
                 input_paths=tuple(item.context.input_path(path) for path in spec.input_paths),
                 output_root=item.context.output_path(spec.output_root),
@@ -245,7 +247,7 @@ def _admit_resolved(
             )
         )
     now = utcnow()
-    ids = registry._upsert_instance_graph_locked(
+    ids = registry._upsert_work_item_graph_locked(
         db,
         tuple(
             (spec, spec.as_record(compiled_contract=spec.contract.as_dict(spec.identity)))
@@ -256,9 +258,9 @@ def _admit_resolved(
         owner_branch=name,
     )
     for item in plan.work:
-        instance_id = ids[keys[item.spec.key]]
+        work_item_id = ids[keys[item.spec.key]]
         previous = db.execute(
-            "SELECT * FROM instance_execution WHERE instance_id=?", (instance_id,)
+            "SELECT * FROM work_item_execution WHERE work_item_id=?", (work_item_id,)
         ).fetchone()
         if previous is not None:
             from nro.orchestration import dependency_state
@@ -269,35 +271,35 @@ def _admit_resolved(
             if science_changed:
                 dependency_state.invalidate(
                     db,
-                    [instance_id],
+                    [work_item_id],
                     now=now,
                     include_roots=True,
                     reason="Resolved scientific contract changed",
                 )
                 db.execute(
-                    "UPDATE instances SET command_json=?, runtime_config_path=? WHERE id=?",
+                    "UPDATE work_items SET command_json=?, runtime_config_path=? WHERE id=?",
                     (
                         json.dumps(
                             source.command((str(python), *item.spec.command[1:]), site=site)
                         ),
                         str(item.spec.runtime_config),
-                        instance_id,
+                        work_item_id,
                     ),
                 )
         sources = []
         for key in dict.fromkeys(item.spec.dependencies):
             upstream = ids[keys[key]]
             contract = db.execute(
-                "SELECT artifact_fingerprint FROM instances WHERE id=?", (upstream,)
+                "SELECT artifact_fingerprint FROM work_items WHERE id=?", (upstream,)
             ).fetchone()[0]
             sources.append(dict(id=upstream, contract=contract, inherited=keys[key] in external))
         db.execute(
-            """INSERT INTO instance_execution VALUES (?,?,?,?,?,?,?,?)
-            ON CONFLICT(instance_id) DO UPDATE SET context_json=excluded.context_json,
+            """INSERT INTO work_item_execution VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(work_item_id) DO UPDATE SET context_json=excluded.context_json,
             binding_sources_json=excluded.binding_sources_json,
             provenance_json=excluded.provenance_json, scientific_contract_json=excluded.scientific_contract_json""",
             (
-                instance_id,
+                work_item_id,
                 name,
                 owner,
                 item.spec.key,
@@ -337,24 +339,24 @@ def _admit_resolved(
                 id=ids[keys[item.spec.key]],
                 branch=item.artifact.branch,
                 contract=db.execute(
-                    "SELECT artifact_fingerprint FROM instances WHERE id=?",
+                    "SELECT artifact_fingerprint FROM work_items WHERE id=?",
                     (ids[keys[item.spec.key]],),
                 ).fetchone()[0],
             )
-            for item in plan.instances
+            for item in plan.work_items
             if item.artifact is not None
         ],
     )
-    db.execute("DELETE FROM request_instances WHERE request_id=?", (request_id,))
+    db.execute("DELETE FROM request_work_items WHERE request_id=?", (request_id,))
     db.execute("DELETE FROM request_artifacts WHERE request_id=?", (request_id,))
     db.executemany(
         "INSERT OR IGNORE INTO request_artifacts VALUES (?,?)",
-        [(request_id, ids[keys[item.spec.key]]) for item in plan.instances],
+        [(request_id, ids[keys[item.spec.key]]) for item in plan.work_items],
     )
-    for item in plan.instances:
+    for item in plan.work_items:
         db.execute(
-            """INSERT INTO branch_instances VALUES (?,?,?,?)
-            ON CONFLICT(registry_id,logical_key) DO UPDATE SET instance_id=excluded.instance_id,
+            """INSERT INTO branch_work_items VALUES (?,?,?,?)
+            ON CONFLICT(registry_id,logical_key) DO UPDATE SET work_item_id=excluded.work_item_id,
             scientific_contract_json=excluded.scientific_contract_json""",
             (owner, item.spec.key, ids[keys[item.spec.key]], json.dumps(item.contract)),
         )
@@ -365,7 +367,7 @@ def _admit_resolved(
     )
     for item in plan.work:
         db.execute(
-            "INSERT INTO request_instances VALUES (?,?,?,?)",
+            "INSERT INTO request_work_items VALUES (?,?,?,?)",
             (
                 request_id,
                 ids[keys[item.spec.key]],
@@ -378,7 +380,7 @@ def _admit_resolved(
 
 
 def prepare_attempt(
-    registry, db, instance: dict, metadata: dict, log_dir: Path
+    registry, db, work_item: dict, metadata: dict, log_dir: Path
 ) -> tuple[str, ...] | None:
     """Pin actual input generations and route one claimed recipe through context transport.
 
@@ -402,7 +404,7 @@ def prepare_attempt(
     bindings = []
     for binding, source in zip(context.inputs, sources):
         row = db.execute(
-            "SELECT current_generation,artifact_fingerprint,artifact_state FROM instances WHERE id=?",
+            "SELECT current_generation,artifact_fingerprint,artifact_state FROM work_items WHERE id=?",
             (source["id"],),
         ).fetchone()
         if (
@@ -412,13 +414,13 @@ def prepare_attempt(
             or (source["inherited"] and row["artifact_fingerprint"] != source["contract"])
         ):
             db.execute(
-                "UPDATE instances SET artifact_state='stale', artifact_reason=? WHERE id=?",
-                ("Inherited input requires local replanning", instance["id"]),
+                "UPDATE work_items SET artifact_state='stale', artifact_reason=? WHERE id=?",
+                ("Inherited input requires local replanning", work_item["id"]),
             )
             return None
         bindings.append(replace(binding, generation=row["current_generation"]))
     context = replace(context, inputs=tuple(bindings))
-    command = tuple(json.loads(instance["command_json"]))
+    command = tuple(json.loads(work_item["command_json"]))
     # SourceSnapshot.command fixes these positions and verifies the source/site
     # digests before this entry point imports any scientific module.
     if len(command) < 6 or Path(command[1]).name != "source_launcher.py":
@@ -426,8 +428,8 @@ def prepare_attempt(
     data, digest = encode_payload(
         module=command[5],
         argv=list(command[6:]),
-        runtime_config=Path(instance["runtime_config_path"]),
-        configuration=instance["config_fingerprint"],
+        runtime_config=Path(work_item["runtime_config_path"]),
+        configuration=work_item["config_fingerprint"],
         context=context,
     )
     path = log_dir / (digest + ".attempt.json")

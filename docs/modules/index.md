@@ -27,7 +27,7 @@ space, and smoothing. The planner records exclusions of unusable source
 selections. Artifact metadata records downstream run-quality exclusions.
 
 `firstlevels` follows its own dependency path from `func`. It fits task models
-per run and summarizes effects within each participant. Its instances
+per run and summarizes effects within each participant. Its work items
 distinguish model, space, and smoothing, with separate run/session/subject
 output directories.
 

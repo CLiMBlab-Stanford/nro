@@ -27,7 +27,7 @@ def _rows(db):
     return {
         row["id"]: dict(row)
         for row in db.execute("""SELECT i.*,c.config_fingerprint
-        FROM instances i JOIN configuration_lineages c ON c.id=i.configuration_lineage_id""")
+        FROM work_items i JOIN module_lineages c ON c.id=i.module_lineage_id""")
     }
 
 
@@ -71,12 +71,13 @@ def preview(
             ids.update(
                 row[0]
                 for row in db.execute(
-                    "SELECT instance_id FROM request_artifacts WHERE request_id=?", (request,)
+                    "SELECT work_item_id FROM request_artifacts WHERE request_id=?", (request,)
                 )
             )
         rows = _rows(db)
         execution = {
-            row["instance_id"]: dict(row) for row in db.execute("SELECT * FROM instance_execution")
+            row["work_item_id"]: dict(row)
+            for row in db.execute("SELECT * FROM work_item_execution")
         }
         candidates = [
             candidate
@@ -84,38 +85,40 @@ def preview(
             for candidate in candidates_locked(db, project)
         ]
         contracts = {
-            row["instance_id"]: json.loads(row["scientific_contract_json"])
-            for row in db.execute("SELECT * FROM branch_instances WHERE registry_id=?", (owner,))
+            row["work_item_id"]: json.loads(row["scientific_contract_json"])
+            for row in db.execute("SELECT * FROM branch_work_items WHERE registry_id=?", (owner,))
         }
         items = []
-        for instance_id in sorted(ids):
-            row = rows[instance_id]
+        for work_item_id in sorted(ids):
+            row = rows[work_item_id]
             matches = [
                 candidate
                 for candidate in candidates
                 if candidate.branch == source
-                and fingerprint(candidate.contract) == fingerprint(contracts[instance_id])
+                and fingerprint(candidate.contract) == fingerprint(contracts[work_item_id])
             ]
             if len(matches) > 1:
                 raise ValueError("Ambiguous matching source artifacts")
             if row["artifact_state"] == "fresh":
                 items.append(
                     dict(
-                        target=instance_id,
-                        source=matches[0].evidence["instance_id"] if matches else None,
+                        target=work_item_id,
+                        source=matches[0].evidence["work_item_id"] if matches else None,
                         action="keep",
                         root=row["output_root"],
-                        target_token=token(row, execution.get(instance_id, {}).get("context_json")),
+                        target_token=token(
+                            row, execution.get(work_item_id, {}).get("context_json")
+                        ),
                     )
                 )
                 continue
             if not matches:
                 raise ValueError(
-                    f"No fresh, scientifically equivalent {source} artifact for {row['instance_key']}"
+                    f"No fresh, scientifically equivalent {source} artifact for {row['work_item_key']}"
                 )
             candidate = matches[0]
-            producer = rows[candidate.evidence["instance_id"]]
-            metadata = execution.get(instance_id)
+            producer = rows[candidate.evidence["work_item_id"]]
+            metadata = execution.get(work_item_id)
             if metadata is None or metadata["registry_id"] != owner:
                 raise ValueError("Promotion cannot replace inherited outputs")
             completion, reason = _public_derivative_completion(producer, registry, compiled=True)
@@ -126,7 +129,7 @@ def preview(
             conflict = any((destination / member).exists() for member in files)
             items.append(
                 dict(
-                    target=instance_id,
+                    target=work_item_id,
                     source=producer["id"],
                     action="replace" if conflict else "copy",
                     root=str(destination),
@@ -200,8 +203,8 @@ def _committed(registry, event: str, target: int) -> bool:
     """Return whether the scheduler committed this promotion event."""
     with registry.connection() as db:
         row = db.execute(
-            """SELECT i.artifact_state,e.provenance_json FROM instances i
-            JOIN instance_execution e ON e.instance_id=i.id WHERE i.id=?""",
+            """SELECT i.artifact_state,e.provenance_json FROM work_items i
+            JOIN work_item_execution e ON e.work_item_id=i.id WHERE i.id=?""",
             (target,),
         ).fetchone()
     if row is None or row["artifact_state"] != "fresh":
@@ -212,13 +215,13 @@ def _committed(registry, event: str, target: int) -> bool:
 
 def _recover_transfer(registry, journal: Path, record: dict, contexts: dict) -> str:
     """Finish ownership metadata or roll back an interrupted transfer."""
-    from nro.orchestration.ownership import write_instance_ownership
+    from nro.orchestration.ownership import write_work_item_ownership
 
     for item in record.get("items", []):
         if not item.get("staged"):
             continue
         if item["target"] not in contexts:
-            raise ValueError("Promotion journal refers to an unavailable target instance")
+            raise ValueError("Promotion journal refers to an unavailable target work item")
         stage = Path(item["staged"])
         contexts[item["target"]].require_output(stage)
         if (
@@ -227,7 +230,7 @@ def _recover_transfer(registry, journal: Path, record: dict, contexts: dict) -> 
         ):
             raise ValueError("Promotion journal contains an invalid staging path")
         if _committed(registry, record["event"], item["target"]):
-            write_instance_ownership(registry, item["target"])
+            write_work_item_ownership(registry, item["target"])
         else:
             _rollback_publication(item)
         if stage.exists():
@@ -255,9 +258,9 @@ def publish(registry, *, checkout: Path, report: dict, replace: bool, attest: bo
     with RegistryLock(root / "promotion.lock", root / "promotion.recovery-lock"):
         with registry.connection() as db:
             contexts = {
-                row["instance_id"]: ExecutionContext.from_dict(json.loads(row["context_json"]))
+                row["work_item_id"]: ExecutionContext.from_dict(json.loads(row["context_json"]))
                 for row in db.execute(
-                    "SELECT * FROM instance_execution WHERE registry_id=?",
+                    "SELECT * FROM work_item_execution WHERE registry_id=?",
                     (topology.records[target].registry_id,),
                 )
             }
@@ -305,12 +308,13 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
     if not copies:
         return {"promoted": 0, "retained": len(report["items"])}
     from nro.orchestration.execution_context import ExecutionContext
-    from nro.orchestration.ownership import write_instance_ownership
+    from nro.orchestration.ownership import write_work_item_ownership
 
     with registry.connection() as db:
         rows = _rows(db)
         execution = {
-            row["instance_id"]: dict(row) for row in db.execute("SELECT * FROM instance_execution")
+            row["work_item_id"]: dict(row)
+            for row in db.execute("SELECT * FROM work_item_execution")
         }
     context = ExecutionContext.from_dict(json.loads(execution[copies[0]["target"]]["context_json"]))
     mappings = [
@@ -389,11 +393,11 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                 for kept in (item for item in report["items"] if item["action"] == "keep"):
                     row = dict(
                         db.execute(
-                            "SELECT * FROM instances WHERE id=?", (kept["target"],)
+                            "SELECT * FROM work_items WHERE id=?", (kept["target"],)
                         ).fetchone()
                     )
                     metadata = db.execute(
-                        "SELECT context_json FROM instance_execution WHERE instance_id=?",
+                        "SELECT context_json FROM work_item_execution WHERE work_item_id=?",
                         (kept["target"],),
                     ).fetchone()
                     if (
@@ -405,11 +409,11 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                     for role in ("source", "target"):
                         row = dict(
                             db.execute(
-                                "SELECT * FROM instances WHERE id=?", (item[role],)
+                                "SELECT * FROM work_items WHERE id=?", (item[role],)
                             ).fetchone()
                         )
                         metadata = db.execute(
-                            "SELECT context_json FROM instance_execution WHERE instance_id=?",
+                            "SELECT context_json FROM work_item_execution WHERE work_item_id=?",
                             (item[role],),
                         ).fetchone()
                         if token(row, metadata[0] if metadata else None) != item[role + "_token"]:
@@ -431,7 +435,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                         if not any(
                             row[0] in pending
                             for row in db.execute(
-                                "SELECT upstream_instance_id FROM instance_dependencies WHERE instance_id=?",
+                                "SELECT upstream_work_item_id FROM work_item_dependencies WHERE work_item_id=?",
                                 (key,),
                             )
                         )
@@ -445,7 +449,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                             dict(parent)
                             for parent in db.execute(
                                 """SELECT i.id,i.current_generation,i.manifest_path,i.artifact_state
-                            FROM instance_dependencies d JOIN instances i ON i.id=d.upstream_instance_id WHERE d.instance_id=?""",
+                            FROM work_item_dependencies d JOIN work_items i ON i.id=d.upstream_work_item_id WHERE d.work_item_id=?""",
                                 (key,),
                             )
                         ]
@@ -494,8 +498,8 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                         )
                         manifest = dict(
                             manifest_version=MANIFEST_VERSION,
-                            instance_id=key,
-                            instance_key=row["instance_key"],
+                            work_item_id=key,
+                            work_item_key=row["work_item_key"],
                             module=row["module"],
                             project=row["project"],
                             participant=row["participant"],
@@ -511,7 +515,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                             private_artifacts=[],
                             upstream=[
                                 dict(
-                                    instance_id=parent["id"],
+                                    work_item_id=parent["id"],
                                     generation=parent["current_generation"],
                                     manifest=parent["manifest_path"],
                                 )
@@ -521,15 +525,15 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                         )
                         atomic_write_json(Path(row["manifest_path"]), manifest, durable=True)
                         db.execute(
-                            "UPDATE instances SET artifact_state='fresh',artifact_reason='Promoted with target contract validation',current_generation=?,updated_at=? WHERE id=?",
+                            "UPDATE work_items SET artifact_state='fresh',artifact_reason='Promoted with target contract validation',current_generation=?,updated_at=? WHERE id=?",
                             (manifest["generation"], utcnow(), key),
                         )
                         db.execute(
-                            "UPDATE instance_execution SET provenance_json=? WHERE instance_id=?",
+                            "UPDATE work_item_execution SET provenance_json=? WHERE work_item_id=?",
                             (json.dumps(provenance), key),
                         )
                         db.executemany(
-                            "UPDATE instance_dependencies SET required_generation=? WHERE instance_id=? AND upstream_instance_id=?",
+                            "UPDATE work_item_dependencies SET required_generation=? WHERE work_item_id=? AND upstream_work_item_id=?",
                             [
                                 (parent["current_generation"], key, parent["id"])
                                 for parent in parents
@@ -537,7 +541,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                         )
                         record["completed"].append(key)
             for item in copies:
-                write_instance_ownership(registry, item["target"])
+                write_work_item_ownership(registry, item["target"])
         record.update(state="complete", completed_at=utcnow())
         atomic_write_json(journal, record, durable=True)
         return {

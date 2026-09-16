@@ -34,8 +34,8 @@ def demand(registry):
         registered=registered,
         target_module="anat",
         selectors={},
-        instances=(),
-        terminal_instance_keys=(),
+        work_items=(),
+        terminal_work_item_keys=(),
         concurrency=1,
         partition=None,
     )

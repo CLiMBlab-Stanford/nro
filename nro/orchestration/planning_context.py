@@ -1,4 +1,4 @@
-"""Shared immutable inputs supplied to module-local instance planners."""
+"""Shared immutable inputs supplied to module-local work-item planners."""
 
 from __future__ import annotations
 
@@ -13,21 +13,23 @@ from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegi
 
 
 class ParticipantUnavailableError(RuntimeError):
-    """The selected participant cannot support any instance of the target."""
+    """The selected participant cannot support any work item of the target."""
 
 
-def instance_key(
+def work_item_key(
     project: str,
     module: str,
-    configuration_lineage_fingerprint: str,
+    module_lineage_fingerprint: str,
     participant: str,
     entities: Mapping[str, str],
 ) -> str:
-    """Return the stable identity key for one logical instance."""
+    """Return the stable identity key for one logical work item."""
     identity = {
         "project": project,
         "module": module,
-        "configuration_lineage": configuration_lineage_fingerprint,
+        # Retain the historical field label so a vocabulary-only change does
+        # not alter stable work-item keys.
+        "module_lineage": module_lineage_fingerprint,
         "participant": participant,
         "entities": dict(sorted(entities.items())),
     }

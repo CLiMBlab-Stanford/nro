@@ -149,6 +149,9 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         "sub-1",
         "fsaverage6",
         "average",
+        "off",
+        tmp_path / "gradient.sif",
+        "singularity",
         template,
         ContainerSpec(
             image=synthstrip,
@@ -182,6 +185,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         json.dumps(
             {
                 "selection_strategy": "average",
+                "gradient_unwarping": "off",
                 "fs_subject": "sub-1",
                 "mni_template": str(template),
                 "synthstrip_image": str(synthstrip),

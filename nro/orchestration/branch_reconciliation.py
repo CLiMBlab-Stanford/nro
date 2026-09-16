@@ -8,7 +8,7 @@ from nro.orchestration.artifact_resolution import ArtifactCandidate, scientific_
 from nro.orchestration.branch_planning import resolve_branch_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.execution_cache import cache_publication
 from nro.orchestration.execution_context import ExecutionContext
 
@@ -21,18 +21,18 @@ def candidates_locked(
         dict(row)
         for row in db.execute(
             """SELECT i.*, c.directory_label,c.config_fingerprint,
-        e.branch,e.logical_key,e.scientific_contract_json FROM instances i
-        JOIN configuration_lineages c ON c.id=i.configuration_lineage_id
-        LEFT JOIN instance_execution e ON e.instance_id=i.id WHERE i.project=?""",
+        e.branch,e.logical_key,e.scientific_contract_json FROM work_items i
+        JOIN module_lineages c ON c.id=i.module_lineage_id
+        LEFT JOIN work_item_execution e ON e.work_item_id=i.id WHERE i.project=?""",
             (project,),
         )
     ]
     by_id = {row["id"]: row for row in rows}
     parents = {}
-    for edge in db.execute("SELECT instance_id,upstream_instance_id FROM instance_dependencies"):
-        if edge["instance_id"] in by_id:
-            parents.setdefault(edge["instance_id"], []).append(
-                by_id[edge["upstream_instance_id"]]["instance_key"]
+    for edge in db.execute("SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"):
+        if edge["work_item_id"] in by_id:
+            parents.setdefault(edge["work_item_id"], []).append(
+                by_id[edge["upstream_work_item_id"]]["work_item_key"]
             )
     contracts = {}
     if any(not row["scientific_contract_json"] for row in rows):
@@ -40,14 +40,14 @@ def candidates_locked(
         for row in rows:
             contract = json.loads(row["artifact_contract_json"])
             specs.append(
-                InstanceSpec.create(
-                    key=row["instance_key"],
+                WorkItemSpec.create(
+                    key=row["work_item_key"],
                     module=row["module"],
                     project=row["project"],
                     participant=row["participant"],
                     entities=json.loads(row["entities_json"]),
                     scope=row["scope"],
-                    configuration_lineage_id=row["configuration_lineage_id"],
+                    module_lineage_id=row["module_lineage_id"],
                     config_fingerprint=row["config_fingerprint"],
                     directory_label=row["directory_label"],
                     runtime_config=Path(row["runtime_config_path"]),
@@ -70,16 +70,16 @@ def candidates_locked(
         contract = (
             json.loads(row["scientific_contract_json"])
             if row["scientific_contract_json"]
-            else contracts[row["instance_key"]]
+            else contracts[row["work_item_key"]]
         )
         candidates.append(
             ArtifactCandidate(
                 row["branch"] or "main",
-                row["logical_key"] or row["instance_key"],
+                row["logical_key"] or row["work_item_key"],
                 contract,
                 row["current_generation"],
                 Path(row["output_root"]),
-                {"instance_id": row["id"]},
+                {"work_item_id": row["id"]},
                 fingerprint(contract),
             )
         )
@@ -141,7 +141,7 @@ def reconcile_branch_requests(registry) -> int:
                     ids = [
                         row[0]
                         for row in db.execute(
-                            "SELECT instance_id FROM request_instances WHERE request_id=?",
+                            "SELECT work_item_id FROM request_work_items WHERE request_id=?",
                             (request["request_id"],),
                         )
                     ]
@@ -155,7 +155,7 @@ def reconcile_branch_requests(registry) -> int:
                 needs_replay = False
                 for selected in payload.get("inherited", []):
                     row = db.execute(
-                        "SELECT artifact_state,artifact_fingerprint FROM instances WHERE id=?",
+                        "SELECT artifact_state,artifact_fingerprint FROM work_items WHERE id=?",
                         (selected["id"],),
                     ).fetchone()
                     if (
@@ -172,7 +172,7 @@ def reconcile_branch_requests(registry) -> int:
                     row[0]
                     for row in db.execute(
                         """SELECT e.logical_key
-                    FROM request_instances ri JOIN instance_execution e ON e.instance_id=ri.instance_id
+                    FROM request_work_items ri JOIN work_item_execution e ON e.work_item_id=ri.work_item_id
                     WHERE ri.request_id=? AND ri.role='target' AND ri.demand_state='active' """,
                         (request["request_id"],),
                     )
@@ -197,7 +197,7 @@ def reconcile_branch_requests(registry) -> int:
                     fingerprint(json.loads(row["scientific_contract_json"]))
                     != fingerprint(contracts[row["logical_key"]])
                     for row in db.execute(
-                        "SELECT logical_key,scientific_contract_json FROM branch_instances WHERE registry_id=?",
+                        "SELECT logical_key,scientific_contract_json FROM branch_work_items WHERE registry_id=?",
                         (payload["registry_id"],),
                     )
                     if row["logical_key"] in contracts

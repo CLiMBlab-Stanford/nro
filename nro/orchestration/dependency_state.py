@@ -1,4 +1,4 @@
-"""Apply invalidation to resolved instance dependencies, independent of their owners."""
+"""Apply invalidation to resolved work-item dependencies, independent of their owners."""
 
 import sqlite3
 from collections.abc import Iterable
@@ -6,16 +6,16 @@ from collections.abc import Iterable
 ACTIVE = "('queued','running','cancel_requested')"
 WRITE_READY = f"""NOT EXISTS (
     SELECT 1 FROM attempt_dependencies pinned JOIN attempts reader ON reader.id=pinned.attempt_id
-    WHERE pinned.upstream_instance_id=t.id AND reader.state IN {ACTIVE}
+    WHERE pinned.upstream_work_item_id=t.id AND reader.state IN {ACTIVE}
 ) AND NOT EXISTS (
     WITH RECURSIVE ancestors(id) AS (
-        SELECT t.id UNION SELECT edge.upstream_instance_id FROM instance_dependencies edge
-        JOIN ancestors parent ON edge.instance_id=parent.id
-    ) SELECT 1 FROM ancestors JOIN artifact_mutations mutation ON mutation.instance_id=ancestors.id
+        SELECT t.id UNION SELECT edge.upstream_work_item_id FROM work_item_dependencies edge
+        JOIN ancestors parent ON edge.work_item_id=parent.id
+    ) SELECT 1 FROM ancestors JOIN artifact_mutations mutation ON mutation.work_item_id=ancestors.id
 )"""
 
-EDGES = f"""SELECT instance_id, upstream_instance_id FROM instance_dependencies
-UNION SELECT reader.instance_id, pinned.upstream_instance_id
+EDGES = f"""SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies
+UNION SELECT reader.work_item_id, pinned.upstream_work_item_id
 FROM attempt_dependencies pinned JOIN attempts reader ON reader.id=pinned.attempt_id
 WHERE reader.state IN {ACTIVE}"""
 
@@ -24,17 +24,17 @@ class AttemptInvalidated(RuntimeError):
     """Completion was superseded while the attempt was computing or being validated."""
 
 
-def capture_inputs(db: sqlite3.Connection, attempt_id: int, instance_id: int) -> None:
+def capture_inputs(db: sqlite3.Connection, attempt_id: int, work_item_id: int) -> None:
     """Pin all resolved ancestors and generations under the same lock as claiming work."""
     db.execute(
         """WITH RECURSIVE ancestors(id) AS (
-        SELECT upstream_instance_id FROM instance_dependencies WHERE instance_id=?
-        UNION SELECT edge.upstream_instance_id FROM instance_dependencies edge
-              JOIN ancestors parent ON edge.instance_id=parent.id
-    ) INSERT INTO attempt_dependencies(attempt_id, upstream_instance_id, generation)
+        SELECT upstream_work_item_id FROM work_item_dependencies WHERE work_item_id=?
+        UNION SELECT edge.upstream_work_item_id FROM work_item_dependencies edge
+              JOIN ancestors parent ON edge.work_item_id=parent.id
+    ) INSERT INTO attempt_dependencies(attempt_id, upstream_work_item_id, generation)
       SELECT ?, upstream.id, upstream.current_generation
-      FROM ancestors JOIN instances upstream ON upstream.id=ancestors.id""",
-        (instance_id, attempt_id),
+      FROM ancestors JOIN work_items upstream ON upstream.id=ancestors.id""",
+        (work_item_id, attempt_id),
     )
 
 
@@ -51,7 +51,7 @@ def invalidate(
 
     The caller supplies concrete producer IDs, not branch names. Only fresh
     downstream artifacts change state; missing outputs and existing errors keep
-    their more specific reasons. Set include_roots when the supplied instances
+    their more specific reasons. Set include_roots when the supplied work items
     themselves need invalidation. Cancellation is not confirmation of shutdown.
     """
     roots = tuple(sorted(set(roots)))
@@ -62,10 +62,10 @@ def invalidate(
         row[0]
         for row in db.execute(
             f"""WITH RECURSIVE
-        edges(instance_id, upstream_instance_id) AS ({EDGES}),
+        edges(work_item_id, upstream_work_item_id) AS ({EDGES}),
         affected(id) AS (
-            SELECT instance_id FROM edges WHERE upstream_instance_id IN ({placeholders})
-            UNION SELECT edge.instance_id FROM edges edge JOIN affected parent ON edge.upstream_instance_id=parent.id
+            SELECT work_item_id FROM edges WHERE upstream_work_item_id IN ({placeholders})
+            UNION SELECT edge.work_item_id FROM edges edge JOIN affected parent ON edge.upstream_work_item_id=parent.id
         ) SELECT id FROM affected""",
             roots,
         )
@@ -76,16 +76,16 @@ def invalidate(
         return []
     placeholders = ",".join("?" for _ in descendants)
     db.execute(
-        f"""UPDATE instances SET artifact_state='stale', artifact_reason=?, updated_at=?
+        f"""UPDATE work_items SET artifact_state='stale', artifact_reason=?, updated_at=?
                    WHERE id IN ({placeholders}) AND artifact_state='fresh' """,
         (reason, now, *descendants),
     )
     rows = [
         dict(row)
         for row in db.execute(
-            f"""SELECT a.id AS attempt_id, a.instance_id, a.worker_id,
-        i.instance_key, i.module FROM attempts a JOIN instances i ON i.id=a.instance_id
-        WHERE a.instance_id IN ({placeholders}) AND a.state IN ('queued','running')""",
+            f"""SELECT a.id AS attempt_id, a.work_item_id, a.worker_id,
+        i.work_item_key, i.module FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+        WHERE a.work_item_id IN ({placeholders}) AND a.state IN ('queued','running')""",
             descendants,
         )
     ]
@@ -100,16 +100,18 @@ def invalidate(
 def synchronize(db: sqlite3.Connection, *, now: str) -> list[dict]:
     """Propagate current staleness and changed captured generations before scheduling."""
     db.execute(
-        """UPDATE instances SET artifact_state='stale', artifact_reason='Outputs reserved for mutation',
-                  updated_at=? WHERE id IN (SELECT instance_id FROM artifact_mutations) AND artifact_state='fresh'""",
+        """UPDATE work_items SET artifact_state='stale', artifact_reason='Outputs reserved for mutation',
+                  updated_at=? WHERE id IN (SELECT work_item_id FROM artifact_mutations) AND artifact_state='fresh'""",
         (now,),
     )
-    roots = {row[0] for row in db.execute("SELECT id FROM instances WHERE artifact_state!='fresh'")}
+    roots = {
+        row[0] for row in db.execute("SELECT id FROM work_items WHERE artifact_state!='fresh'")
+    }
     changed = [
         row[0]
-        for row in db.execute("""SELECT edge.instance_id
-        FROM instance_dependencies edge JOIN instances upstream ON upstream.id=edge.upstream_instance_id
-        JOIN instances consumer ON consumer.id=edge.instance_id
+        for row in db.execute("""SELECT edge.work_item_id
+        FROM work_item_dependencies edge JOIN work_items upstream ON upstream.id=edge.upstream_work_item_id
+        JOIN work_items consumer ON consumer.id=edge.work_item_id
         WHERE consumer.artifact_state='fresh' AND edge.required_generation IS NOT NULL
               AND edge.required_generation!=upstream.current_generation""")
     ]
@@ -122,8 +124,8 @@ def synchronize(db: sqlite3.Connection, *, now: str) -> list[dict]:
     )
     roots.update(
         row[0]
-        for row in db.execute(f"""SELECT pinned.upstream_instance_id
-        FROM attempt_dependencies pinned JOIN instances upstream ON upstream.id=pinned.upstream_instance_id
+        for row in db.execute(f"""SELECT pinned.upstream_work_item_id
+        FROM attempt_dependencies pinned JOIN work_items upstream ON upstream.id=pinned.upstream_work_item_id
         JOIN attempts reader ON reader.id=pinned.attempt_id
         WHERE reader.state IN {ACTIVE} AND pinned.generation!=upstream.current_generation""")
     )
@@ -135,26 +137,28 @@ def synchronize(db: sqlite3.Connection, *, now: str) -> list[dict]:
     )
 
 
-def check_completion(db: sqlite3.Connection, instance: dict, attempt_id: int) -> None:
+def check_completion(db: sqlite3.Connection, work_item: dict, attempt_id: int) -> None:
     """Reject late completion under the publication lock if its inputs or contract changed."""
     row = db.execute(
-        """SELECT a.state, a.instance_id, a.revision_fingerprint AS started_revision,
+        """SELECT a.state, a.work_item_id, a.revision_fingerprint AS started_revision,
                        i.revision_fingerprint, i.artifact_fingerprint, i.current_generation
-                       FROM attempts a JOIN instances i ON i.id=a.instance_id WHERE a.id=?""",
+                       FROM attempts a JOIN work_items i ON i.id=a.work_item_id WHERE a.id=?""",
         (attempt_id,),
     ).fetchone()
     if (
         row is None
         or row["state"] != "running"
-        or row["instance_id"] != instance["id"]
+        or row["work_item_id"] != work_item["id"]
         or row["started_revision"] != row["revision_fingerprint"]
-        or row["artifact_fingerprint"] != instance["artifact_fingerprint"]
-        or row["current_generation"] != instance["current_generation"]
+        or row["artifact_fingerprint"] != work_item["artifact_fingerprint"]
+        or row["current_generation"] != work_item["current_generation"]
     ):
-        raise AttemptInvalidated("Attempt or instance changed before completion could be published")
+        raise AttemptInvalidated(
+            "Attempt or work item changed before completion could be published"
+        )
     if db.execute(
         """SELECT 1 FROM attempt_dependencies pinned
-        JOIN instances upstream ON upstream.id=pinned.upstream_instance_id
+        JOIN work_items upstream ON upstream.id=pinned.upstream_work_item_id
         WHERE pinned.attempt_id=? AND (upstream.artifact_state!='fresh' OR upstream.current_generation!=pinned.generation)
         LIMIT 1""",
         (attempt_id,),
@@ -163,8 +167,8 @@ def check_completion(db: sqlite3.Connection, instance: dict, attempt_id: int) ->
             "A captured upstream artifact changed before completion could be published"
         )
     if db.execute(
-        """SELECT 1 FROM artifact_mutations WHERE instance_id=? OR instance_id IN (
-        SELECT upstream_instance_id FROM attempt_dependencies WHERE attempt_id=?) LIMIT 1""",
-        (instance["id"], attempt_id),
+        """SELECT 1 FROM artifact_mutations WHERE work_item_id=? OR work_item_id IN (
+        SELECT upstream_work_item_id FROM attempt_dependencies WHERE attempt_id=?) LIMIT 1""",
+        (work_item["id"], attempt_id),
     ).fetchone():
         raise AttemptInvalidated("An input or output is reserved for replacement")

@@ -11,13 +11,13 @@ configuration owns that choice.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 
 from nro.configuration.runtime import SETTINGS
+from nro.engine.io import atomic_write_json
 from nro.engine.paths import resolve_project_path
 
 WM_LABELS = frozenset(
@@ -582,7 +582,7 @@ def get_confounds(
             "get_confounds loads the full 4D EPI exactly once to avoid repeated .nii.gz decompression.",
         ],
     }
-    out_json.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(out_json, meta)
     return 0
 
 

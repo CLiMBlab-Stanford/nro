@@ -9,7 +9,7 @@ import pytest
 
 from nro.bin import cutover as command
 from nro.orchestration import control_cutover as cutover
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import APPLICATION_ID, SCHEMA_SQL, SCHEMA_VERSION, Registry
 
@@ -26,16 +26,16 @@ def flat_store(tmp_path):
     output = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/result.nii"
     output.parent.mkdir(parents=True)
     output.write_bytes(b"original scientific data")
-    manifest_path = root / "manifests/instance.json"
+    manifest_path = root / "manifests/work_item.json"
     manifest_path.parent.mkdir()
-    spec = InstanceSpec.create(
+    spec = WorkItemSpec.create(
         key="anat:example",
         module="anat",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=1,
+        module_lineage_id=1,
         config_fingerprint="config",
         directory_label="main",
         resource_class="large",
@@ -49,7 +49,7 @@ def flat_store(tmp_path):
         output_format="test",
     )
     manifest = dict(
-        artifact_contract=spec.instance_contract,
+        artifact_contract=spec.work_item_contract,
         artifact_fingerprint=spec.contract_fingerprint,
         generation=7,
         software={"command": list(spec.command)},
@@ -69,7 +69,7 @@ def flat_store(tmp_path):
             [("schema_version", str(SCHEMA_VERSION)), ("registry_uuid", "original-id")],
         )
         db.execute(
-            "INSERT INTO configuration_lineages VALUES (1,'anat','main','config','lineage','{}','main','now')"
+            "INSERT INTO module_lineages VALUES (1,'anat','main','config','lineage','{}','main','now')"
         )
         row = dict(
             spec.as_record(),
@@ -80,7 +80,7 @@ def flat_store(tmp_path):
             updated_at="original-date",
         )
         db.execute(
-            f"INSERT INTO instances ({','.join(row)}) VALUES ({','.join('?' for _ in row)})",
+            f"INSERT INTO work_items ({','.join(row)}) VALUES ({','.join('?' for _ in row)})",
             tuple(row.values()),
         )
     return root, spec, manifest, output
@@ -106,14 +106,14 @@ def test_cutover_preserves_identity_contracts_and_public_files(flat_store):
         "demo", bids_root=output.parents[6] / "BIDS", registry_path=root
     )
     with registry.read_connection() as db:
-        row = dict(db.execute("SELECT * FROM instances").fetchone())
+        row = dict(db.execute("SELECT * FROM work_items").fetchone())
         assert (
             db.execute("SELECT value FROM metadata WHERE key='registry_uuid'").fetchone()[0]
             == "original-id"
         )
     assert row["artifact_state"] == "fresh" and row["current_generation"] == 7
     assert row["artifact_fingerprint"] == spec.contract_fingerprint
-    assert json.loads(row["artifact_contract_json"]) == spec.instance_contract
+    assert json.loads(row["artifact_contract_json"]) == spec.work_item_contract
     assert row["created_at"] == row["updated_at"] == "original-date"
     runtime = paths.branch("main") / "snapshots/main_preprocess.yml"
     assert row["runtime_config_path"] == str(runtime)
@@ -249,7 +249,7 @@ def test_publication_can_resume_at_each_rename_boundary(flat_store, monkeypatch,
 
 def test_scientific_private_path_dependency_is_not_rewritten(flat_store):
     root, _, _, _ = flat_store
-    path = root / "manifests/instance.json"
+    path = root / "manifests/work_item.json"
     manifest = json.loads(path.read_text())
     manifest["artifact_contract"]["inputs"] = [str(root / "snapshots/main_preprocess.yml")]
     path.write_text(json.dumps(manifest))
@@ -287,7 +287,7 @@ def test_branch_databases_keep_their_identities(flat_store):
     cutover.execute(root)
     store = BranchStore(root)
     assert store.read().topology.records == records.records
-    assert store.registry("dev").instances() == ()
+    assert store.registry("dev").work_items() == ()
 
 
 def test_execution_source_cache_remains_byte_identical(flat_store, tmp_path):

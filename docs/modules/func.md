@@ -3,7 +3,7 @@
 `func` prepares one BOLD run using the subject's completed anatomy. It has its
 own configuration and output directory. Computation across spaces shares motion
 estimation, distortion correction, and ICA-AROMA; spaces are not separate
-functional instances.
+functional work items.
 
 ## Inputs and processing choices
 
@@ -41,7 +41,12 @@ every run used the default path.
    retaining the resampled motion-estimation series. The official MARSS package
    performs the correction. nro stores its slice-wise rank-one artifact as a 3D
    loading map and a slice-by-time table, then removes the temporary 4D artifact.
-3. Prepare BOLD/SBRef references and estimate rigid motion with FSL MCFLIRT.
+3. Resolve gradient correction separately for BOLD, SBRef, and spin-echo images.
+   In `auto` mode, a matching site profile applies HCP gradient unwarping unless
+   the input reports prior nonlinear-gradient correction. Unmatched acquisitions
+   pass through. Gradient correction follows MARSS so simultaneous-slice groups
+   still refer to native scanner slices. Prepare BOLD/SBRef references and
+   estimate rigid motion with FSL MCFLIRT on corrected data.
    Reference-pose checks protect registration against badly aligned or
    incompatible SBRefs.
 4. Estimate susceptibility distortion from TOPUP, SynBOLD-DisCo's synthetic
@@ -52,10 +57,14 @@ every run used the default path.
    initialization, and rigid/affine degrees of freedom. Compose anatomy-to-MNI
    transforms for template output. Publish registration-check images.
 6. Convert the composed spatial warp and per-frame motion transforms for AFNI
-   `3dNwarpApply`. Resample the 4D series without splitting every TR into a
-   permanent file. `output_grid` chooses native anatomy resolution or anatomy
-   orientation at EPI voxel size. `use_jacobian` controls intensity modulation.
-   Warp interpolation is linear; signal interpolation uses AFNI's `wsinc5`.
+   `3dNwarpApply`. When BOLD gradient correction is active, include its retained
+   source-grid displacement field in the same pull-transform chain. The final
+   operation samples the post-MARSS source once, so gradient correction does not
+   add another interpolation to the published series. Resample the 4D series
+   without splitting every TR into a permanent file. `output_grid` chooses native
+   anatomy resolution or anatomy orientation at EPI voxel size. `use_jacobian`
+   controls intensity modulation. Warp interpolation is linear; signal
+   interpolation uses AFNI's `wsinc5`.
 7. Generate confounds from motion, anatomical segmentations, and BOLD signals.
    These include motion parameters, their derivatives and squares, global/CSF/WM
    signals and expansions, framewise displacement, aCompCor, DVARS, and numbered
@@ -80,8 +89,6 @@ or manual edits may require inspection and deletion of the affected artifact.
 
 The current functional graph does not perform slice-timing correction.
 Native surface sampling is ribbon-constrained between white and pial surfaces.
-It also does not correct gradient nonlinearity. Data that require gradient
-unwarping, including uncorrected 7 T acquisitions, are not yet supported.
 
 ## Public artifacts
 
@@ -106,16 +113,24 @@ required manifest and sidecar fields; the
 
 ## Configuration
 
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
 The SynBOLD overlap, translation, rotation, and SBRef support/correlation
 thresholds reject implausible reference alignment. `syn_base_*` and
 `syn_refine_*` are ANTs transform, convergence, shrink-factor, and smoothing
 schedules; they apply only to the relevant registration path. `topup_config`
 selects the TOPUP settings. `io_chunk_vols` bounds I/O chunks, not scientific
-temporal filtering. Thread/force/logging controls have the same role as in anat.
+temporal filtering. Thread, overwrite, and logging controls have the same role as in anat.
 Space is not a `func` configuration field. The selected `anat`
 `fsaverage_template` defines the available template surface, while `--space`
 selects downstream work at request time. Changing a requested space does not
 create a new `func` configuration or directory.
+
+`gradient_unwarping` selects `auto` or `off`. `auto` corrects only acquisitions
+matched by `hardware/gradient_unwarping.yml`; it is otherwise a pass-through.
+Moving an unchanged coefficient file does not change scientific identity because
+contracts record its SHA-256 digest instead of its absolute path. A matching
+profile with a missing coefficient is a site-configuration error.
 
 `marss_mode` defaults to `auto`. Its correction rule follows the publication's
 recommendation to apply MARSS at multiband factors of six or greater. The

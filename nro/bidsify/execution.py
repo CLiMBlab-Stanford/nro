@@ -7,7 +7,12 @@ import sys
 from contextlib import ExitStack
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT, installation_record, settings
+from nro.configuration.site import (
+    CHECKOUT,
+    installation_record,
+    protected_site_fingerprint,
+    settings,
+)
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_cache import cache_lock, service_lease
@@ -56,6 +61,7 @@ def launch_review(argv: list[str]) -> None:
                 source_root=str(source.root),
                 source_digest=source.digest,
                 site=str(site),
+                site_fingerprint=protected_site_fingerprint(),
                 python=sys.executable,
                 release=release,
                 command_prefix=list(
@@ -81,6 +87,9 @@ def validate_execution(pin: dict, *, current_source: bool = True) -> BranchPaths
     if current_source and source.root != CHECKOUT:
         raise ValueError("Ingestion must run from its captured implementation")
     values = settings(path=Path(pin["site"]))[0]
+    expected_site = protected_site_fingerprint(Path(values["definitions"]))
+    if pin.get("site_fingerprint") != expected_site:
+        raise ValueError("Ingestion site definitions differ from the central protected site")
     branches = BranchStore(Path(values["registry"]))
     topology = branches.read().topology
     name = topology.require_checkout(Path(pin["checkout"]))

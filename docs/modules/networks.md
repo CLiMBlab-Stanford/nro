@@ -105,6 +105,8 @@ does not copy the upstream microparcel connectivity matrix. See the
 
 ## Shipped configuration
 
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
 nro fixes output placement from the project, module ID, participant, space, and
 smoothing request. `overwrite` requests rebuilding module outputs.
 

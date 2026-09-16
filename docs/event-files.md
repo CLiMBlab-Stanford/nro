@@ -41,9 +41,9 @@ The selected TSV is validated and copied into the session's immutable review
 snapshots under its review lease. The request records the catalog ID and
 snapshot SHA-256; published BOLD metadata includes them as `NROEventsSource`.
 Later catalog edits do not alter an accepted session snapshot or published
-events. Explicit event paths and the profile's additional `event_rules` remain
+events. Explicit event paths and the protected site's additional `event_rules` remain
 available. The catalog path follows the selected definitions root; it is not
-an ingestion-profile setting.
+a conversion-profile setting.
 
 ## Editing and adding files
 

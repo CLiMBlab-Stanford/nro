@@ -54,19 +54,19 @@ def _remove_path(path: Path, *, dry_run: bool, prune_root: Path | None = None) -
 def _purge_attempt_logs(
     registry: Registry,
     *,
-    instance_ids: set[int],
+    work_item_ids: set[int],
     dry_run: bool,
 ) -> int:
-    """Remove terminal attempt logs belonging to the selected instances."""
-    if not instance_ids:
+    """Remove terminal attempt logs belonging to the selected work items."""
+    if not work_item_ids:
         return 0
     attempt_count = 0
     with registry.connection() as db:
         terminal_attempts = db.execute(
-            """SELECT id, instance_id, log_path FROM attempts
+            """SELECT id, work_item_id, log_path FROM attempts
                WHERE state NOT IN ('queued', 'running', 'cancel_requested')"""
         ).fetchall()
-        active_instance_logs = {
+        active_work_item_logs = {
             str(row["log_path"])
             for row in db.execute(
                 """SELECT DISTINCT log_path FROM attempts
@@ -77,12 +77,12 @@ def _purge_attempt_logs(
 
     deleted_attempt_ids = []
     for attempt in terminal_attempts:
-        if int(attempt["instance_id"]) not in instance_ids:
+        if int(attempt["work_item_id"]) not in work_item_ids:
             continue
         raw_path = str(attempt["log_path"] or "").strip()
-        # Sequential attempts deliberately share one current instance log. Never
+        # Sequential attempts deliberately share one current work-item log. Never
         # let bare log cleanup remove it while a newer attempt is active.
-        if not raw_path or raw_path in active_instance_logs:
+        if not raw_path or raw_path in active_work_item_logs:
             continue
         path = Path(raw_path)
         if _is_within(path, registry.paths.events) and _remove_path(

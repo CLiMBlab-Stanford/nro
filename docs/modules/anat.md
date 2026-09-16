@@ -24,8 +24,12 @@ selected sources before comparing subjects with different acquisition schemes.
 
 ## Processing sequence
 
-1. Stage acquisitions and apply ANTs N4 bias correction. Produce brain-extracted
-   session copies and masks using SynthStrip without changing their native grids.
+1. Resolve the site's gradient-unwarping policy from inherited BIDS metadata.
+   A matching `unwarp` profile runs HCP gradient correction unless the metadata
+   already reports `NonlinearGradientCorrection: true`. Unmatched acquisitions
+   pass through unchanged. Apply ANTs N4 bias correction. Then produce
+   brain-extracted session copies and masks with SynthStrip without changing
+   their native grids.
 2. Select or combine T1w and T2w acquisitions independently into participant
    references. If both exist, align the participant T2w reference to the T1w
    reference with six-degree-of-freedom FSL FLIRT. Save source lists, selection
@@ -72,13 +76,18 @@ Required metadata includes `inputs`, `selection_strategy`, `outputs`,
 
 ## Configuration
 
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
+`gradient_unwarping` selects `auto` or `off`. In `auto` mode, only acquisitions
+matched by the site's hardware catalog are eligible for correction. The catalog
+and coefficient file are site resources, not module settings.
 `fsaverage_template` selects either `fsaverage6`, the packaged default, or the
 full-resolution `fsaverage` surface target. `selection_strategy` controls
 acquisition combination. `mni_template`
 selects the registration target; `synthstrip_container` selects brain extraction.
 `freesurfer_subjects_dir` and `fs_subject` override FreeSurfer storage and identity.
 Scientific tools use the worker's CPU allocation, which `nro run --cpus` sets.
-`force` requests re-execution;
+`overwrite` requests re-execution;
 `verbose` changes logging. `container` controls the runtime, image, binds, home,
 environment isolation, and inner setup command for anatomy.
 

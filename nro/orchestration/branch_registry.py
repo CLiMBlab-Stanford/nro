@@ -15,18 +15,18 @@ from typing import Iterator, Mapping
 
 from nro.configuration.store import fingerprint
 from nro.orchestration.branches import BranchRecord
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
 from nro.orchestration.workflow_registry import WORKFLOW_SCHEMA, WorkflowRegistry
 
 APPLICATION_ID = 0x4E524F42  # NROB: branch state, distinct from the scheduler database.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 SCHEMA = (
     """
 CREATE TABLE identity (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE instances (
-    instance_key TEXT PRIMARY KEY,
+CREATE TABLE work_items (
+    work_item_key TEXT PRIMARY KEY,
     revision INTEGER NOT NULL,
     contract_json TEXT NOT NULL,
     contract_fingerprint TEXT NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE instances (
 
 
 @dataclass(frozen=True)
-class BranchInstance:
+class BranchWorkItem:
     """A scientific contract revision and optional evidence about its artifact.
 
     Observations are supplied by the scientific validator. They are not worker
@@ -131,11 +131,10 @@ class BranchRegistry(WorkflowRegistry):
                 db.close()
 
     def rebuild_schema(self) -> Path | None:
-        """Rebuild incompatible scientific storage from its stable contract records.
+        """Replace an incompatible scientific registry without migrating its records.
 
-        Workflow snapshots on disk repopulate workflow history. Observations are
-        discarded because they can be reassessed from public artifacts. The instance
-        contracts and revisions remain unchanged.
+        Workflow snapshots on disk repopulate workflow history. Work items are
+        rediscovered or registered on demand from current artifacts and definitions.
         """
         with self._lock():
             db = self._connect(check_schema=False)
@@ -143,19 +142,9 @@ class BranchRegistry(WorkflowRegistry):
                 stored = int(db.execute("PRAGMA user_version").fetchone()[0])
                 if stored == SCHEMA_VERSION:
                     return None
-                instances = [
-                    {
-                        "key": str(row["instance_key"]),
-                        "revision": int(row["revision"]),
-                        "contract": json.loads(row["contract_json"]),
-                    }
-                    for row in db.execute(
-                        "SELECT instance_key,revision,contract_json FROM instances"
-                    )
-                ]
             finally:
                 db.close()
-        self.rebuild([], instances)
+        self.rebuild([], [])
         return self.root / "registry-before-repair.sqlite3"
 
     def initialize(self) -> None:
@@ -212,30 +201,30 @@ class BranchRegistry(WorkflowRegistry):
                 db.close()
 
     @staticmethod
-    def _decode(row: sqlite3.Row) -> BranchInstance:
-        return BranchInstance(
-            row["instance_key"],
+    def _decode(row: sqlite3.Row) -> BranchWorkItem:
+        return BranchWorkItem(
+            row["work_item_key"],
             row["revision"],
             json.loads(row["contract_json"]),
             row["contract_fingerprint"],
             json.loads(row["observation_json"]) if row["observation_json"] else None,
         )
 
-    def instances(self) -> tuple[BranchInstance, ...]:
+    def work_items(self) -> tuple[BranchWorkItem, ...]:
         """Read this branch's scientific records without consulting or changing the pool."""
         with self._connection() as db:
             return tuple(
                 self._decode(row)
-                for row in db.execute("SELECT * FROM instances ORDER BY instance_key")
+                for row in db.execute("SELECT * FROM work_items ORDER BY work_item_key")
             )
 
-    def record_instance(
+    def record_work_item(
         self,
         key: str,
         contract: Mapping,
         *,
         expected_revision: int | None,
-    ) -> BranchInstance:
+    ) -> BranchWorkItem:
         """Create or update a contract, rejecting edits based on an outdated revision.
 
         The caller supplies the compiled scientific contract, not raw user
@@ -245,32 +234,32 @@ class BranchRegistry(WorkflowRegistry):
         the revision and clears observations; this method does not schedule work.
         """
         if not isinstance(key, str) or not key:
-            raise ValueError("Expected a nonempty instance key")
+            raise ValueError("Expected a nonempty work-item key")
         if expected_revision is not None and (
             type(expected_revision) is not int or expected_revision < 1
         ):
-            raise ValueError("Expected a positive instance revision or None")
+            raise ValueError("Expected a positive work-item revision or None")
         value = dict(contract)
         serialized = json.dumps(value, sort_keys=True, allow_nan=False)
         digest = fingerprint(value)
         with self._connection(write=True) as db:
-            row = db.execute("SELECT * FROM instances WHERE instance_key=?", (key,)).fetchone()
+            row = db.execute("SELECT * FROM work_items WHERE work_item_key=?", (key,)).fetchone()
             current = row["revision"] if row else None
             if current != expected_revision:
                 raise ValueError(
-                    "Scientific instance changed; read the current revision before retrying"
+                    "Scientific work item changed; read the current revision before retrying"
                 )
             if row and row["contract_fingerprint"] == digest:
                 return self._decode(row)
             revision = (current or 0) + 1
             db.execute(
-                "INSERT INTO instances VALUES (?,?,?,?,NULL) ON CONFLICT(instance_key) "
+                "INSERT INTO work_items VALUES (?,?,?,?,NULL) ON CONFLICT(work_item_key) "
                 "DO UPDATE SET revision=excluded.revision, contract_json=excluded.contract_json, "
                 "contract_fingerprint=excluded.contract_fingerprint, observation_json=NULL",
                 (key, revision, serialized, digest),
             )
             return self._decode(
-                db.execute("SELECT * FROM instances WHERE instance_key=?", (key,)).fetchone()
+                db.execute("SELECT * FROM work_items WHERE work_item_key=?", (key,)).fetchone()
             )
 
     def record_observation(self, key: str, observation: Mapping, *, expected_revision: int) -> None:
@@ -278,11 +267,11 @@ class BranchRegistry(WorkflowRegistry):
         serialized = json.dumps(dict(observation), sort_keys=True, allow_nan=False)
         with self._connection(write=True) as db:
             result = db.execute(
-                "UPDATE instances SET observation_json=? WHERE instance_key=? AND revision=?",
+                "UPDATE work_items SET observation_json=? WHERE work_item_key=? AND revision=?",
                 (serialized, key, expected_revision),
             )
             if result.rowcount != 1:
-                raise ValueError("Scientific instance changed before its observation was recorded")
+                raise ValueError("Scientific work item changed before its observation was recorded")
 
     def record_observations(self, observations: Mapping[str, tuple[int, Mapping]]) -> None:
         """Attach assessment results to specified contract revisions atomically."""
@@ -291,7 +280,7 @@ class BranchRegistry(WorkflowRegistry):
         with self._connection(write=True) as db:
             for key, (revision, observation) in observations.items():
                 result = db.execute(
-                    "UPDATE instances SET observation_json=? WHERE instance_key=? AND revision=?",
+                    "UPDATE work_items SET observation_json=? WHERE work_item_key=? AND revision=?",
                     (
                         json.dumps(dict(observation), sort_keys=True, allow_nan=False),
                         key,
@@ -300,30 +289,32 @@ class BranchRegistry(WorkflowRegistry):
                 )
                 if result.rowcount != 1:
                     raise ValueError(
-                        "Scientific instance changed before its observation was recorded"
+                        "Scientific work item changed before its observation was recorded"
                     )
 
-    def record_graph(
+    def record_work_item_graph(
         self,
-        instances: tuple[InstanceSpec, ...],
+        work_items: tuple[WorkItemSpec, ...],
         *,
         expected_revisions: Mapping[str, int | None],
-    ) -> tuple[BranchInstance, ...]:
+    ) -> tuple[BranchWorkItem, ...]:
         """Atomically record a compiled graph without making storage location scientific.
 
-        Supply the revision read for every submitted instance. A concurrent change
+        Supply the revision read for every submitted work item. A concurrent change
         rejects the entire batch. Equivalent contracts preserve their observations;
         execution recipes and resource requirements belong to the scheduler handoff.
         """
         from nro.orchestration.artifact_resolution import scientific_contracts
 
-        contracts = scientific_contracts(instances)
+        contracts = scientific_contracts(work_items)
         if set(contracts) != set(expected_revisions):
             raise ValueError("Expected revisions must cover exactly the submitted graph")
         with self._connection(write=True) as db:
             current = {}
             for key in contracts:
-                row = db.execute("SELECT * FROM instances WHERE instance_key=?", (key,)).fetchone()
+                row = db.execute(
+                    "SELECT * FROM work_items WHERE work_item_key=?", (key,)
+                ).fetchone()
                 if (row["revision"] if row else None) != expected_revisions[key]:
                     raise ValueError(
                         "Scientific graph changed; read current revisions before retrying"
@@ -335,8 +326,8 @@ class BranchRegistry(WorkflowRegistry):
                 if row and row["contract_fingerprint"] == digest:
                     continue
                 db.execute(
-                    """INSERT INTO instances VALUES (?,?,?,?,NULL)
-                    ON CONFLICT(instance_key) DO UPDATE SET revision=excluded.revision,
+                    """INSERT INTO work_items VALUES (?,?,?,?,NULL)
+                    ON CONFLICT(work_item_key) DO UPDATE SET revision=excluded.revision,
                     contract_json=excluded.contract_json, contract_fingerprint=excluded.contract_fingerprint,
                     observation_json=NULL""",
                     (
@@ -348,7 +339,7 @@ class BranchRegistry(WorkflowRegistry):
                 )
             return tuple(
                 self._decode(
-                    db.execute("SELECT * FROM instances WHERE instance_key=?", (key,)).fetchone()
+                    db.execute("SELECT * FROM work_items WHERE work_item_key=?", (key,)).fetchone()
                 )
                 for key in contracts
             )
@@ -357,7 +348,7 @@ class BranchRegistry(WorkflowRegistry):
         """Open a serialized scientific transaction; this store has no scheduler tables."""
         return self._connection(write=write)
 
-    def rebuild(self, workflows: list[dict], instances: list[dict]) -> None:
+    def rebuild(self, workflows: list[dict], work_items: list[dict]) -> None:
         """Replace scientific state from admitted records, keeping a recovery copy.
 
         The caller must reserve branch maintenance and stop its attempts first.
@@ -377,8 +368,8 @@ class BranchRegistry(WorkflowRegistry):
                     db.executemany("INSERT INTO identity VALUES (?,?)", self._identity().items())
                     for payload in workflows:
                         for table, rows in (
-                            ("configuration_lineages", payload["lineages"]),
-                            ("configuration_lineage_dependencies", payload["dependencies"]),
+                            ("module_lineages", payload["lineages"]),
+                            ("module_lineage_dependencies", payload["dependencies"]),
                             ("workflow_revisions", [payload["revision"]]),
                             ("workflow_bindings", payload["bindings"]),
                         ):
@@ -389,9 +380,9 @@ class BranchRegistry(WorkflowRegistry):
                                     f"VALUES ({','.join('?' for _ in columns)})",
                                     [row[key] for key in columns],
                                 )
-                    for row in instances:
+                    for row in work_items:
                         db.execute(
-                            "INSERT INTO instances VALUES (?,?,?,?,NULL)",
+                            "INSERT INTO work_items VALUES (?,?,?,?,NULL)",
                             (
                                 row["key"],
                                 row["revision"],

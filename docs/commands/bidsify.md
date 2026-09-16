@@ -6,7 +6,7 @@ workers perform the downloads and conversions without holding the terminal
 open. No AI service is used.
 
 Ingestion shares the [worker pool](../orchestration.md) and concurrency limit
-with derivative processing. It does not create derivative instances or request
+with derivative processing. It does not create derivative work items or request
 preprocessing. After publication, use `nro run` to request derivatives.
 
 ## Before first use
@@ -24,8 +24,8 @@ The default is `bids-validator`; this external program is not installed by the
 Python extra. Worker nodes need network access to Flywheel and shared staging.
 
 Each site defines its Flywheel servers and remote project scopes in the
-definitions store. Configure credentials outside the repository and command
-arguments. For example, the CLIMBLAB definitions store contains:
+protected `site/site.yml` document. Configure credential values outside the
+repository. For example, the CLIMBLAB definitions store contains:
 
 | Server | Host | Remote project scope | Credential environment variable |
 | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ data already stored in another project are also omitted by default.
 
 1. The wizard offers unfinished requests first. Resume selected requests or
    choose new sessions. Before listing new work, nro omits known existing BIDS
-   sessions using publication records and the profile's `session_rules`. It
+   sessions using publication records and the protected site's `session_rules`. It
    reports how many were omitted. The remote list shows session IDs and labels. Select
    numbers or `all`. Matching server rules supply the BIDS session label when
    they agree; otherwise the wizard asks for it. Supply the participant label
@@ -213,21 +213,30 @@ not proof that work stopped.
 
 ## Configuration
 
-The default profile is `DEFINITIONS/bidsify/main.yml` in the selected
-[definitions store](../definitions.md). `--config FILE` selects another complete
-profile. New stores have no configured servers; add your Flywheel hosts,
-credential environment-variable names, and project lists before ingestion.
-Copy the complete main document when creating another profile.
-Unknown keys and missing required keys are rejected. `project_sources` and
-`scanplans` are optional. Each request saves its resolved profile, so most
-later profile edits apply to new requests. Changes to a selected scan-plan file
-are detected and reparsed when the request resumes.
+The shared `DEFINITIONS/site/site.yml` document owns ingestion sources and
+routing. It contains Flywheel servers, destination-to-source project mappings,
+scan-plan locations, credential environment-variable names, session rules, and
+event lookup rules. These settings are common to every development branch.
+
+The default conversion profile is `DEFINITIONS/bidsify/main.yml`.
+`--config FILE` selects another complete profile. Profiles control conversion
+commands, worker resources, protocol classification, and scan-plan parser code.
+Unknown keys and missing required keys are rejected. Each request saves its
+resolved profile, so later edits apply to new requests. Changes to a selected
+scan-plan file are detected and reparsed when the request resumes.
 
 | Key | Purpose |
 | --- | --- |
+| Protected site key | Purpose |
+| --- | --- |
 | `servers` | Named `host`, `credential_env`, and `projects` lists. No credential values. |
-| `project_sources` | Optional BIDS project names mapped to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list; duplicate pairs are rejected. |
-| `scanplans` | Optional `location`, `parser`, and `credential_env` settings described in [configure scan plans](scanplans.md). A null location disables scan-plan integration. |
+| `project_sources` | BIDS project names mapped to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list; duplicate pairs are rejected. |
+| `scanplans.location`, `scanplans.credential_env` | Shared source and authentication variable described in [configure scan plans](scanplans.md). A null location disables scan-plan integration. |
+| `event_rules` | Additional `task` and absolute glob `pattern` pairs for candidates outside the catalog. All matches are shown; no ambiguous candidate is selected automatically. |
+| `session_rules` | Explicit remote-identity rules for recognizing existing raw BIDS subjects and sessions. |
+
+| Conversion profile key | Purpose |
+| --- | --- |
 | `staging` | Absolute shared directory outside BIDS. `null` uses `WORK/bidsify`. |
 | `dcm2niix` | Command argument list; `null` resolves the configured QuNex container command. |
 | `synthstrip` | Command argument list; `null` resolves the configured SynthStrip container command. |
@@ -235,15 +244,15 @@ are detected and reparsed when the request resumes.
 | `memory_gb`, `cpus`, `hours` | Worker allocation settings; defaults 32 GiB, 2 CPUs, 12 hours. |
 | `concurrency` | Requested shared limit; default 50. `nro set concurrency=N` updates active ingestion and derivative requests. |
 | `protocols` | Ordered metadata refinements with `pattern`, `datatype`, and `suffix`. The first rule matching `SeriesDescription`, `ProtocolName`, or `SequenceName` applies after dcm2niix supplies a supported `BidsGuess`. |
-| `event_rules` | Additional `task` and absolute glob `pattern` pairs for candidates outside the catalog. All matches are shown; no ambiguous candidate is selected automatically. |
-| `session_rules` | Explicit remote-identity rules for recognizing existing raw BIDS subjects/sessions. Empty in new stores. |
+| `scanplans.parser` | Branch-selectable parser implementation. A null value requests the packaged stub. |
 
 The standard event catalog is always `DEFINITIONS/events`. Requests record its
 resolved path as runtime metadata, alongside the selected event snapshots.
 
 ### Default source projects
 
-For a BIDS dataset receiving sessions at both sites, the mapping can be:
+For a BIDS dataset receiving sessions at both sites, the protected site mapping
+can be:
 
 ```yaml
 project_sources:
@@ -260,7 +269,8 @@ Mappings are site-specific; new stores leave them empty. Multiple BIDS datasets
 may draw different sessions from the same source project, but a source session
 has only one destination. An unmapped BIDS dataset requires source selection
 when multiple sources match its selectors. Selecting a source in the
-wizard does not edit the profile; add a mapping to retain that default.
+wizard does not edit the protected site document; use `nro paths set` or edit
+and validate that document through site maintenance to retain the default.
 
 ### Existing-session rules
 

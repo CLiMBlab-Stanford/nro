@@ -11,7 +11,7 @@ from nro.orchestration.artifact_resolution import (
     select_artifact,
 )
 from nro.orchestration.branches import BranchRecord, BranchTopology
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 
 
 def graph(root, *, key_prefix="", config="same", format="example-v1"):
@@ -20,7 +20,7 @@ def graph(root, *, key_prefix="", config="same", format="example-v1"):
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=1,
+        module_lineage_id=1,
         config_fingerprint=config,
         directory_label="main",
         runtime_config=root / "runtime.yml",
@@ -28,7 +28,7 @@ def graph(root, *, key_prefix="", config="same", format="example-v1"):
         resource_class="small",
         output_format=format,
     )
-    parent = InstanceSpec.create(
+    parent = WorkItemSpec.create(
         key=key_prefix + "parent",
         module="parent",
         dependencies=(),
@@ -38,7 +38,7 @@ def graph(root, *, key_prefix="", config="same", format="example-v1"):
         expected_outputs=(root / "parent/sub-01_result.nii",),
         **common,
     )
-    child = InstanceSpec.create(
+    child = WorkItemSpec.create(
         key=key_prefix + "child",
         module="child",
         dependencies=(parent.key,),
@@ -94,7 +94,7 @@ def test_runtime_changes_do_not_affect_scientific_contracts(tmp_path):
         command=("other", "--formatting"),
         runtime_config=tmp_path / "new.yml",
         memory_gb=128,
-        configuration_lineage_id=42,
+        module_lineage_id=42,
     )
     assert scientific_contracts((parent, child)) == scientific_contracts((parent, changed))
 
@@ -147,19 +147,21 @@ def test_branch_graph_registration_is_atomic_and_location_independent(tmp_path):
     store.initialize()
     registry = store.registry("dev")
     initial = graph(tmp_path / "first")
-    records = registry.record_graph(initial, expected_revisions={"parent": None, "child": None})
+    records = registry.record_work_item_graph(
+        initial, expected_revisions={"parent": None, "child": None}
+    )
     registry.record_observation("child", {"fresh": True}, expected_revision=1)
     relocated = graph(tmp_path / "second")
-    registry.record_graph(relocated, expected_revisions={"parent": 1, "child": 1})
-    assert next(item for item in registry.instances() if item.key == "child").observation == {
+    registry.record_work_item_graph(relocated, expected_revisions={"parent": 1, "child": 1})
+    assert next(item for item in registry.work_items() if item.key == "child").observation == {
         "fresh": True
     }
     with pytest.raises(ValueError, match="graph changed"):
-        registry.record_graph(
+        registry.record_work_item_graph(
             graph(tmp_path / "second", config="changed"),
             expected_revisions={"parent": 1, "child": None},
         )
-    assert next(item for item in registry.instances() if item.key == "parent") == records[0]
+    assert next(item for item in registry.work_items() if item.key == "parent") == records[0]
 
 
 def test_branch_workflows_do_not_change_other_branches(tmp_path):

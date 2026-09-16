@@ -8,7 +8,7 @@ from pathlib import Path
 from nro.orchestration.runner_graph import Step
 
 from .images import copy_or_convert_nifti, nifti_volume_count
-from .io import atomic_output_path, invalid_gzip_files
+from .io import atomic_output_path, atomic_write_text, invalid_gzip_files
 
 LOG = logging.getLogger(__name__)
 
@@ -338,7 +338,7 @@ def create_identity_transform_step(path: Path) -> Step:
 
     def write_identity() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
 
     return Step.python(
         name="Write Identity Transform",

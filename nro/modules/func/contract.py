@@ -37,6 +37,7 @@ FUNCTIONAL_MANIFEST_FIELDS = {
     "registration.reference_selection": "mapping",
     "registration.static_warp": "string",
     "registration.final_resampling": "mapping",
+    "registration.gradient_unwarping": "mapping",
     "registration.fieldmap_transfer": "nullable_mapping",
     "registration.pe_residual_refinement": "nullable_mapping",
     "denoising": "mapping",
@@ -58,26 +59,30 @@ FUNCTIONAL_IMAGE_SIDECAR_FIELDS = {
 }
 
 
-def final_resampling_contract() -> dict[str, object]:
+def final_resampling_contract(*, gradient_unwarping: bool = False) -> dict[str, object]:
     """Return the processing contract for final volumetric BOLD resampling."""
     return {
         "tool": FINAL_RESAMPLING_TOOL,
         "data_interpolation": FINAL_RESAMPLING_INTERPOLATION,
         "warp_interpolation": FINAL_WARP_INTERPOLATION,
         "combined_spatial_warp_and_per_volume_motion": True,
+        "gradient_unwarping_in_same_interpolation": bool(gradient_unwarping),
         "interpolation_count": 1,
     }
 
 
-def final_resampling_metadata() -> dict[str, object]:
+def final_resampling_metadata(*, gradient_unwarping: bool = False) -> dict[str, object]:
     """Return the same policy using BIDS-sidecar key conventions."""
-    contract = final_resampling_contract()
+    contract = final_resampling_contract(gradient_unwarping=gradient_unwarping)
     return {
         "Tool": contract["tool"],
         "DataInterpolation": contract["data_interpolation"],
         "WarpInterpolation": contract["warp_interpolation"],
         "CombinedSpatialWarpAndPerVolumeMotion": contract[
             "combined_spatial_warp_and_per_volume_motion"
+        ],
+        "GradientUnwarpingInSameInterpolation": contract[
+            "gradient_unwarping_in_same_interpolation"
         ],
         "InterpolationCount": contract["interpolation_count"],
     }

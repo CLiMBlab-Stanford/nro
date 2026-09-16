@@ -8,19 +8,30 @@ them consistently.
 
 ```text
 workflow
-  selects one configuration for each configuration class
+  selects one module configuration for each configuration class
 
 configuration class
-  owns the scientific settings for one module
+  defines the accepted parameter namespace for one module
+
+module configuration
+  contains the local scientific settings for one module
 
 module
-  is instantiated as schedulable work
+  defines one reusable kind of scientific work
   contains a complete graph of steps
-  owns one public artifact namespace
 
-instance
+module lineage
+  combines one module configuration with its upstream configuration closure
+
+work item
+  applies one module lineage to selected data and applicable entities
   owns one Runner, which owns one RunnerGraph
-  produces public and private artifacts
+
+artifact
+  is the exact public output set promised by one work item
+
+product
+  is one file or atomic directory within an artifact
 ```
 
 ### Configuration class and configuration
@@ -29,18 +40,22 @@ A **configuration class** is the parameter namespace for one scientific module.
 The current classes are `anat`, `func`, `clean`, `dynconn`,
 `microparcellation`, `networks`, and `firstlevels`.
 
-A **configuration** is the complete set of parameters for one configuration class.
-It has a stable human-readable ID. Configuration files contain the authority;
-Python does not maintain a second default parameter map.
+A **module configuration** is the complete set of local parameters for one
+configuration class. It has a stable human-readable ID. Configuration files
+contain the authority; Python does not maintain a second default parameter map.
 
-A **configuration lineage** identifies a configuration together with its
-upstream configuration choices. Equivalent lineages share a derivative
-directory. A substantive configuration change changes the applicable instance
-contract and therefore invalidates affected results when they are reassessed.
-Anatomy instance identity depends only on the `anat` configuration. Functional
-variants that select the same anatomy reuse one anatomical instance and
-directory. Each downstream lineage includes its own configuration ID and its
-upstream lineage, so incompatible inputs cannot write into the same directory.
+A **module lineage** identifies one module configuration together with the
+complete upstream closure of module configurations on which it depends. A
+lineage is independent of participant, run, space, smoothing, and other data
+entities. Several workflows can select the same lineage, and equivalent
+lineages share a derivative namespace. A substantive configuration change
+changes the applicable work-item contract and invalidates affected results when
+they are reassessed.
+
+Anatomy lineage depends only on the `anat` configuration. Functional lineages
+that select the same anatomy reuse it. Each downstream lineage includes its
+local configuration ID and upstream lineage, so incompatible inputs cannot
+write into the same namespace.
 
 ### Workflow
 
@@ -51,10 +66,10 @@ steps.
 
 ### Module
 
-A **module** owns one kind of schedulable scientific work and its public
-artifact namespace. The current modules are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `firstlevels`. Each module's outputs live
-under `derivatives/nro/MODULE/MODULE_ID/`.
+A **module** defines one reusable kind of scientific work and its internal DAG.
+The current modules are `anat`, `func`, `clean`, `dynconn`,
+`microparcellation`, `networks`, and `firstlevels`. A module lineage owns one
+namespace under `derivatives/nro/MODULE/LINEAGE_ID/`.
 
 A module's graph is determined entirely by resolved BIDS data and its workflow.
 It is fully constructed before freshness is examined. Existing, missing,
@@ -63,19 +78,19 @@ never change which steps exist or how they depend on one another.
 
 All scientific module packages live under `nro/modules/`. Their scientific
 construction belongs in `nro/modules/<module>/module.py`; planner-facing
-instance construction belongs in `nro/modules/<module>/planning.py`.
+work-item construction belongs in `nro/modules/<module>/planning.py`.
 
-### Instance
+### Work item
 
-An **instance** is one concrete, schedulable instantiation of a module. Its
-identity includes its project, module, participant, configuration lineage, and
-applicable BIDS entities. For example:
+A **work item** is one concrete, schedulable application of a module lineage.
+Its identity includes its project, module lineage, selected data, and applicable
+BIDS entities. For example:
 
 > `clean` for participant `t20`, one BOLD run, `fsnative` space, and 2 mm
-> smoothing under a particular clean configuration lineage.
+> smoothing under a particular `clean` module lineage.
 
-Instances can run concurrently when their dependencies permit it. Steps within
-one instance are not independently scheduled to cluster workers.
+Work items can run concurrently when their dependencies permit it. Steps within
+one work item are not independently scheduled to cluster workers.
 
 ### Step
 
@@ -95,7 +110,7 @@ while leaving independent subgraphs untouched.
 
 ### Runner and runner graph
 
-The **runner** is the one shared instance-internal execution engine,
+The **runner** is the one shared work-item-internal execution engine,
 `nro.orchestration.runner.Runner`. Every scientific module uses it; modules do
 not define their own runner implementations.
 
@@ -105,50 +120,54 @@ graph before checking freshness, then traverses it in dependency order and
 records every execute-or-skip decision.
 
 The module defines the scientific DAG. The runner implements its common
-execution semantics. The planner schedules complete instances, not runner
+execution semantics. The planner schedules complete work items, not runner
 steps.
 
-### Artifact
+### Artifact and product
 
-An **artifact** is a concrete file or directory consumed or produced by an
-instance or step. It is not schedulable and it has no independent worker.
+An **artifact** is the exact set of public outputs promised by one work item.
+It is the durable output boundary against which completion and freshness are
+assessed. An artifact is not schedulable and has no independent worker.
 
-Artifacts are classified by ownership and lifetime:
+A **product** is one concrete file or atomic directory within an artifact. A
+private intermediary under `WORK` is neither an artifact nor a product. It may
+support resumption and can be regenerated when needed.
 
-- A **public artifact** is a required result in the instance's derivative
-  directory. Public artifacts form its durable output boundary.
-- A **private artifact** is a resumable intermediary under `WORK`. It may be
-  deleted after the public boundary is complete and can be regenerated when
-  needed.
+The namespace `derivatives/nro/MODULE/LINEAGE_ID/` can contain artifacts from
+many work items. Participant and session directories organize their products;
+those directories are not themselves artifacts unless a work-item contract
+declares one as an atomic product. An artifact is therefore neither the entire
+lineage namespace nor necessarily one subject or session directory.
 
-The registry sometimes reports the collective filesystem condition of an
-instance as its **artifact state** (`missing`, `stale`, or `fresh`). This means
-the state of the instance's required artifact set; it does not turn that set
-into another kind of schedulable object.
+The registry reports an artifact's collective filesystem condition as its
+**artifact state** (`missing`, `stale`, or `fresh`).
+
+Python interfaces, command-line output, ownership receipts, and registry tables
+use this vocabulary directly.
 
 ## Orchestration hierarchy
 
 ```text
 user request
-  creates demand for terminal instances
-  expands to demand for their upstream instances
+  creates demand for terminal work items
+  expands to demand for their upstream work items
 
 planner
-  constructs and registers complete InstanceSpecs
-  assesses whether demanded instances need execution
+  constructs and registers complete WorkItemSpecs
+  assesses whether demanded work items need execution
 
 worker
-  claims one ready instance
+  claims one ready work item
   creates one attempt
   launches its immutable ExecutionEnvelope
 
 runner
-  executes or skips the instance's declared steps
+  executes or skips the work item's declared steps
 ```
 
 ### Planner
 
-The **planner** turns selections and workflows into complete instance graphs,
+The **planner** turns selections and workflows into complete work-item graphs,
 registers them, evaluates demand, and supplies the shared worker pool. Its
 scientific knowledge comes from the explicit built-in module catalog and the
 module-local planning functions.
@@ -158,13 +177,13 @@ module-local planning functions.
 The registry has two coordinated parts. The shared scheduler registry stores
 requests, attempts, workers, Slurm submissions, and the site-wide concurrency
 limit. Each development branch has a scientific registry that stores its
-discovered source tree, compiled workflows, instances, dependencies, and
+discovered source tree, compiled workflows, work items, dependencies, and
 artifact observations. This separation lets the scheduler coordinate all
 branches without importing their code.
 
-Ordinary source discovery does not create derivative instances or demand.
+Ordinary source discovery does not create derivative work items or demand.
 Registry bootstrap and repair additionally discover existing files in
-nro-controlled derivative locations and register the instances that own them,
+nro-controlled derivative locations and register the work items that own them,
 without creating demand. The registries are the locking and transaction
 authorities for their respective state; neither is a second planner
 implementation.
@@ -174,50 +193,53 @@ exist and match their completion records. The registries are authoritative for
 orchestration identity, demand, and history.
 
 Each owned derivative configuration root contains `.nro/lineage.json` and one
-receipt under `.nro/instances/` for every instance it owns. These records keep
-the configuration lineage, instance identity, dependencies, and artifact
+receipt under the storage-only `.nro/work_items/` directory for every work item
+it owns. These records keep
+the module lineage, work-item identity, dependencies, and artifact
 contract with the derivative. Registry repair reads them before resolving the
 workflows in the current definitions store. Removing or renaming a workflow
 therefore does not make its existing derivatives invisible.
 
-Ownership does not imply that an instance can be recomputed. A current workflow
-must select its configuration lineage before the planner can request it. Status
-reports a nonfresh historical instance as `Unavailable` when no current
-workflow selects that lineage. A fresh historical instance remains `Success`
+Ownership does not imply that a work item can be recomputed. A current workflow
+must select its module lineage before the planner can request it. Status reports
+a nonfresh historical work item as `Unavailable` when no current workflow
+selects that lineage. A fresh historical work item remains `Success`
 because its artifact is still usable. Purge can select either case without the
 originating workflow.
 
 ### Request and demand
 
-A **request** records a user's desire to obtain one or more terminal instances.
+A **request** records a user's desire to obtain one or more terminal work items.
 The planner expands it over upstream dependencies.
 
-**Demand** is the active association between a request and an instance. Several
-requests may share demand for the same instance. Cancelling one request does
+**Demand** is the active association between a request and a work item. Several
+requests may share demand for the same work item. Cancelling one request does
 not cancel work still demanded by another.
 
 ### Worker and attempt
 
 A **worker** is a reusable Slurm or local process that claims and supervises one
-ready instance at a time. It is cluster infrastructure, not a scientific
+ready work item at a time. It is cluster infrastructure, not a scientific
 module.
 
-An **attempt** is one historical execution of an instance by a worker. An
-instance may have several attempts because it was interrupted, failed, became
-stale, or was explicitly requested again. Attempt failure is history; it does
-not permanently redefine the instance.
+An **attempt** is one historical execution of a work item by a worker. A work
+item may have several attempts because it was interrupted, failed, became stale,
+or was explicitly requested again. Attempt failure is history; it does not
+permanently redefine the work item.
 
 ## Terms that are not interchangeable
 
 | Terms | Distinction |
 |---|---|
-| Configuration class / module | A configuration class defines the accepted settings; the module owns the work graph and public artifacts. Their names currently correspond one-to-one. |
-| Module / instance | A module is the reusable DAG definition; an instance is one schedulable application of it. |
-| Instance / artifact | An instance is work; an artifact is a file or directory used by that work. |
+| Configuration class / module | A configuration class defines the accepted settings; the module defines the work graph. Their names currently correspond one-to-one. |
+| Module configuration / module lineage | A module configuration contains local settings; a module lineage adds the complete upstream configuration closure. |
+| Module / work item | A module is the reusable DAG definition; a work item applies one module lineage to selected data and entities. |
+| Work item / artifact | A work item is schedulable work; its artifact is the exact public output set it promises. |
+| Artifact / product | An artifact is a work item's public output set; a product is one file or atomic directory within it. |
 | Workflow / module | A workflow selects configurations; a module performs scientific computation. |
-| Planner / runner | The planner schedules instances; the runner executes steps inside one instance. |
+| Planner / runner | The planner schedules work items; the runner executes steps inside one work item. |
 | Request / attempt | A request expresses demand; an attempt records one execution. |
-| Space / smoothing | Both are instance selectors from `clean` onward. nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
+| Space / smoothing | Both select work items from `clean` onward. nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
 
 The planner-facing record hierarchy is defined separately in
-[Instance planning and execution](instance-lifecycle.md).
+[Work-item planning and execution](work-item-lifecycle.md).

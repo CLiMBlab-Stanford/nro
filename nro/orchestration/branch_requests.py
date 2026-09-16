@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT, settings
+from nro.configuration.site import CHECKOUT, protected_site_fingerprint, settings
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.compiled_request import encode_spec, export_workflow
@@ -32,6 +32,7 @@ def register_requests(
     from nro.orchestration.scheduler_client import command, exchange
 
     values = settings()[0]
+    site_fingerprint = protected_site_fingerprint()
     control = Path(values["registry"])
     branches = BranchStore(control)
     topology = branches.read().topology
@@ -41,9 +42,9 @@ def register_requests(
     owner = topology.records[name].registry_id
     if scientific.record.registry_id != owner:
         raise ValueError("Scientific registry belongs to another checkout")
-    recorded = scientific.record_graph(
-        tuple(plan.instances.values()),
-        expected_revisions={key: expected_revisions.get(key) for key in plan.instances},
+    recorded = scientific.record_work_item_graph(
+        tuple(plan.work_items.values()),
+        expected_revisions={key: expected_revisions.get(key) for key in plan.work_items},
     )
     records = {row.key: row for row in recorded}
     revisions = {key: row.revision for key, row in records.items()}
@@ -73,14 +74,15 @@ def register_requests(
                 context=ExecutionContext(
                     paths, request.project, request.terminal_keys[0], ()
                 ).as_dict(),
-                specifications=[encode_spec(spec) for spec in request.instances],
-                revisions={spec.key: revisions[spec.key] for spec in request.instances},
-                contracts={spec.key: records[spec.key].contract for spec in request.instances},
+                specifications=[encode_spec(spec) for spec in request.work_items],
+                revisions={spec.key: revisions[spec.key] for spec in request.work_items},
+                contracts={spec.key: records[spec.key].contract for spec in request.work_items},
                 terminals=list(request.terminal_keys),
                 inherit=inherit,
                 workflow=export_workflow(scientific, request.registered),
                 source=dict(root=str(source.root), digest=source.digest),
                 site=str(site),
+                site_fingerprint=site_fingerprint,
                 python=sys.executable,
                 selectors=selectors,
                 concurrency=concurrency,

@@ -16,7 +16,7 @@ def artifact_root(
     )
 
 
-def instance_prefix(participant: str, model: str, space: str, smoothing: int) -> str:
+def work_item_prefix(participant: str, model: str, space: str, smoothing: int) -> str:
     """Return a prefix unique to participant, task, variant and spatial target."""
     task, variant = model.split("/")
     return f"sub-{participant.removeprefix('sub-')}_model-{variant}_task-{task}_space-{space}_smoothing-{smoothing}mm"

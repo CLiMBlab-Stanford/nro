@@ -10,7 +10,7 @@ from nro.configuration.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
-from nro.modules.func.steps import (
+from nro.modules.func.registration_steps import (
     _ants_pe_aligned_frame,
     _create_nifti_in_ants_frame_step,
     _create_restore_ants_warp_step,

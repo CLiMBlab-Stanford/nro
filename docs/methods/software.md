@@ -20,6 +20,7 @@ the model format. FitLins is not a dependency.
 | SynthStrip | Anatomical brain extraction. | [SynthStrip](https://surfer.nmr.mgh.harvard.edu/docs/synthstrip/) |
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
+| HCP Pipelines | Hardware-specific gradient-distortion estimation and correction. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
 | ICA-AROMA | Motion-component classification and denoising. | [Upstream implementation](https://github.com/maartenmennes/ICA-AROMA) |
 | MARSS 1.0.2 | Native-space estimation and removal of signal shared by simultaneous slices. | [Official implementation](https://github.com/CNaP-Lab/MARSS) |
 | Workbench | Smoothing, surfaces, CIFTI, scenes. | [Workbench](https://www.humanconnectome.org/software/connectome-workbench) |

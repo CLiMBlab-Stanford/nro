@@ -129,10 +129,10 @@ def test_staging_identifiers_reject_traversal(value):
 
 def test_ingestion_is_not_a_derivative_and_survives_repair(ingestion):
     registry, store, row = ingestion
-    assert registry.instance_rows() == []
+    assert registry.work_item_rows() == []
     registry.reinitialize()
     assert store.get(row["id"]) == row
-    assert registry.instance_rows() == []
+    assert registry.work_item_rows() == []
 
 
 def test_duplicate_requests_and_concurrent_edits(ingestion):
@@ -428,7 +428,29 @@ def test_worker_finishes_stage_without_derivative_manifest(ingestion, monkeypatc
     runner.worker_id = "worker"
     runner._execute_ingestion(row)
     assert store.get(row["id"])["state"] == "needs_input"
-    assert registry.instance_rows() == []
+    assert registry.work_item_rows() == []
+
+
+def test_ingestion_worker_records_supervision_failures(ingestion):
+    from nro.orchestration.worker import Worker
+
+    registry, store, row = ingestion
+    worker(registry)
+    row = store.claim("worker", 32)
+
+    class Launcher:
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("supervision broke")
+
+    runner = Worker(registry, resource_class="large", launcher=Launcher())
+    runner.worker_id = "worker"
+    runner._execute_ingestion(row)
+
+    completed = store.get(row["id"])
+    assert completed["state"] == "failed"
+    assert completed["issues"] == ["Ingestion worker failed: RuntimeError: supervision broke"]
+    log = store.root / f"{row['id']}.log"
+    assert "RuntimeError: supervision broke" in log.read_text(encoding="utf-8")
 
 
 def test_publication_requires_exact_approval(ingestion):
@@ -577,7 +599,7 @@ def test_status_lists_pending_without_flywheel(ingestion, capsys):
     registry, store, row = ingestion
     main(["--json"])
     report = json.loads(capsys.readouterr().out)
-    assert report["instances"] == []
+    assert report["work_items"] == []
     assert report["bidsification"][0]["id"] == row["id"]
     main(["-p", "someoneelse", "--json"])
     assert json.loads(capsys.readouterr().out)["bidsification"] == []

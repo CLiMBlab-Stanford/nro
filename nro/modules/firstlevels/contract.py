@@ -42,7 +42,7 @@ def _matches_definition(manifest: dict, expected: dict) -> bool:
 def firstlevels_output_contract() -> dict:
     """Describe the substantive estimator, covariance and omission contracts."""
     return {
-        "layout": "subject-task-level-model-target-v3",
+        "layout": "subject-task-level-model-target-v4",
         "temporal_filtering": "none",
         "design_export": "compiled-task-model-and-retained-acquisition-rows",
         "statistics": ["effect", "variance", "t", "dof"],
@@ -50,7 +50,7 @@ def firstlevels_output_contract() -> dict:
         "map_index_metadata": INDEXED_CIFTI_SCHEMA,
         "covariance": "original-run-grouped-gls",
         "degrees_of_freedom": "run-conditional-satterthwaite",
-        "input_denoising": "upstream-func-output",
+        "input_denoising": "shared-policy-and-per-run-upstream-func-output",
         "missing_conditions": "omit-maps-record-reason",
         "required_manifest_fields": [
             "complete",
