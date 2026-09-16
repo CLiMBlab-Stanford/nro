@@ -288,7 +288,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     )
 
     assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
-    assert assessments == [{"projects": ("demo",), "compiled": True}]
+    assert assessments == [{"projects": ("demo",), "compiled": True, "recover_public": True}]
     with registry.connection() as db:
         mapping = db.execute(
             "SELECT logical_key,work_item_id FROM branch_work_items WHERE registry_id=?",

@@ -108,6 +108,26 @@ def test_recovered_branch_artifact_uses_its_registered_contract(graph, monkeypat
     assert report.updates[0]["contract"] is None
 
 
+def test_repair_can_recover_branch_artifact_from_public_evidence(graph):
+    registry, _, ids = graph
+    row = next(item for item in registry.work_item_rows() if item["id"] == ids["root"])
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO branch_work_items VALUES (?,?,?,?)",
+            ("branch-owner", "root", ids["root"], row["artifact_contract_json"]),
+        )
+
+    state = manifests.assess_registry(
+        registry,
+        work_item_ids=[ids["root"]],
+        compiled=True,
+        recover_public=True,
+    )[ids["root"]]
+
+    assert state[0] == "fresh", state
+    assert "private orchestration provenance is unavailable" in state[1]
+
+
 def test_global_registry_writes_receipts_inside_the_work_item_project(graph):
     from nro.orchestration.ownership import write_work_item_ownership
 
@@ -239,8 +259,8 @@ def test_normal_assessment_retries_a_concurrent_completion(graph, monkeypatch):
     evaluate = manifests.evaluate_assessment
     calls = []
 
-    def concurrent(snapshot):
-        report = evaluate(snapshot)
+    def concurrent(snapshot, **options):
+        report = evaluate(snapshot, **options)
         calls.append(snapshot)
         if len(calls) == 1:
             with registry.connection(write=True) as db:
