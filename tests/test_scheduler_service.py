@@ -181,6 +181,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
                 environment=str(Path(sys.executable).parent.parent),
                 site=str(site),
                 branch="feature",
+                registry_id=science.record.registry_id,
             )
         )
     )
@@ -217,10 +218,11 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         command,
         cwd=feature,
         env={**os.environ, "NRO_SITE_CONFIG": str(site), "PYTHONPATH": str(feature)},
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
     )
+    assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["repaired"]
     assert science.work_items() == ()
     assert (science.root / "registry-before-repair.sqlite3").is_file()
