@@ -272,6 +272,9 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         networks_main.main(["-P", "demo", "-p", "01", "-s", "T1w"], execution_context=context)
     assert len(graphs) == 1
     assert any(manifest in step.inputs for step in graphs[0].steps)
+    completion = next(step for step in graphs[0].steps if step.completion_boundary)
+    assert any(path.name.endswith("_desc-networks_stat.dscalar.nii") for path in completion.inputs)
+    assert any(path.name.endswith("_manifest.yaml") for path in completion.inputs)
     assert not (paths.source_project("demo") / "derivatives/nro/networks").exists()
 
 

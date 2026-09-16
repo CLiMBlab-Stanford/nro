@@ -1,7 +1,9 @@
 """Scientific validators exchange bounded reports with a catalog-independent publisher."""
 
 import json
+import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +128,29 @@ def test_repair_can_recover_branch_artifact_from_public_evidence(graph):
 
     assert state[0] == "fresh", state
     assert "private orchestration provenance is unavailable" in state[1]
+
+
+def test_repair_rejects_output_newer_than_public_completion_manifest(graph):
+    registry, _, ids = graph
+    row = next(item for item in registry.work_item_rows() if item["id"] == ids["root"])
+    completion = Path(json.loads(row["expected_outputs_json"])[0])
+    derivative = completion.with_name("result.nii.gz")
+    derivative.write_bytes(b"completed derivative")
+    document = json.loads(completion.read_text())
+    document["public_outputs"] = [str(derivative)]
+    completion.write_text(json.dumps(document))
+    os.utime(completion, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(derivative, ns=(2_000_000_000, 2_000_000_000))
+
+    state = manifests.assess_registry(
+        registry,
+        work_item_ids=[ids["root"]],
+        compiled=True,
+        recover_public=True,
+    )[ids["root"]]
+
+    assert state[0] == "stale", state
+    assert "changed after its completion manifest" in state[1]
 
 
 def test_global_registry_writes_receipts_inside_the_work_item_project(graph):

@@ -376,6 +376,7 @@ def _public_derivative_completion(
         return None, f"Public {module} output contract is empty"
     outputs: set[Path] = set()
     declared_metadata_contracts: list[object] = []
+    completion_inventories: list[tuple[Path, tuple[Path, ...]]] = []
 
     pending = list(evidence)
     visited: set[Path] = set()
@@ -413,6 +414,8 @@ def _public_derivative_completion(
                 raise _PublicDerivativeContractMismatch(reason)
         inventory_value = value.get("public_outputs")
         referenced = _referenced_files(inventory_value, base=artifact.parent)
+        if value.get("complete") is True and "public_outputs" in value:
+            completion_inventories.append((artifact, referenced))
         for path in referenced:
             try:
                 path.relative_to(root)
@@ -429,6 +432,22 @@ def _public_derivative_completion(
     missing = [path for path in sorted(outputs) if not path.is_file() or path.stat().st_size <= 0]
     if missing:
         return None, f"Public {module} output is missing or empty: {missing[0]}"
+    for completion, inventory_paths in completion_inventories:
+        completion_mtime = completion.stat().st_mtime_ns
+        changed = next(
+            (
+                path
+                for path in inventory_paths
+                if path != completion
+                and path.is_relative_to(root)
+                and path.stat().st_mtime_ns > completion_mtime
+            ),
+            None,
+        )
+        if changed is not None:
+            raise _PublicDerivativeContractMismatch(
+                f"Public {module} output changed after its completion manifest: {changed}"
+            )
     current_metadata_contract = (
         json.loads(row["artifact_contract_json"]).get("processing", {}).get("output_metadata")
         if compiled

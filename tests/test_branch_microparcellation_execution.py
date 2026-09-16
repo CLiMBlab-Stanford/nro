@@ -145,6 +145,11 @@ def test_entry_routes_mixed_run_owners_and_outputs(case, monkeypatch, space):
         for step in graphs[0].steps
         for p in step.outputs
     )
+    completion = next(step for step in graphs[0].steps if step.completion_boundary)
+    assert any(path.name.endswith("_dseg.dlabel.nii") for path in completion.inputs)
+    assert any(path.name.endswith("_connectivity.pconn.nii") for path in completion.inputs)
+    assert any(path.name.endswith("_metrics.json") for path in completion.inputs)
+    assert any(path.name.endswith("_manifest.yaml") for path in completion.inputs)
     assert {p: p.read_bytes() for root in roots for p in root.rglob("*") if p.is_file()} == before
 
 

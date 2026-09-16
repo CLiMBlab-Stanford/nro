@@ -271,6 +271,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     result = build_module(cfg, runner, completion_boundary=False)
     manifest = Path(result["manifest"])
     publication_index = output_paths(cfg.output.directory, cfg.output.prefix)["index"]
+    published_outputs = tuple(path for value in result.values() for path in flatten_paths(value))
     payload = {
         "manifest_version": 1,
         "module": "microparcellation",
@@ -280,7 +281,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         "smoothing_fwhm_mm": target.smoothing_mm,
         "source_runs": [source.stem for source in selected_runs],
         "target_manifest": str(manifest),
-        "public_outputs": [str(path) for value in result.values() for path in flatten_paths(value)],
+        "public_outputs": [str(path) for path in published_outputs],
         "configuration_fingerprint": selected_configuration_fingerprint(),
         "complete": True,
     }
@@ -298,7 +299,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         Step.python(
             name="Write Microparcellation Publication Index",
             outputs=(publication_index,),
-            inputs=(manifest,),
+            inputs=published_outputs,
             force=bool(args.overwrite),
             action=lambda: atomic_write_json(publication_index, payload),
             validate=validate_index,

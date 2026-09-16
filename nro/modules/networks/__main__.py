@@ -11,7 +11,7 @@ from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.cli import stderr
-from nro.engine.io import atomic_write_json
+from nro.engine.io import atomic_write_json, flatten_paths
 from nro.engine.paths import (
     anatomical_manifest_path,
     module_derivatives_root,
@@ -302,6 +302,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     result = build_module(cfg, runner, completion_boundary=False)
     manifest = Path(result["manifest"])
     output_index = fixed_output_paths(cfg.output.directory, cfg.output.prefix)["index"]
+    published_outputs = tuple(path for value in result.values() for path in flatten_paths(value))
 
     def published_paths(value: object):
         if isinstance(value, str):
@@ -349,7 +350,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         Step.python(
             name="Write Networks Publication Index",
             outputs=(output_index,),
-            inputs=(manifest,),
+            inputs=published_outputs,
             force=bool(args.overwrite),
             action=lambda: atomic_write_json(output_index, index_payload()),
             validate=validate_index,

@@ -179,6 +179,7 @@ def main(
     result = build_module(cfg, runner, completion_boundary=False)
     index = output_paths(cfg.output.directory, cfg.output.prefix, target.domain)["index"]
     manifest = Path(result["manifest"])
+    published_outputs = tuple(path for value in result.values() for path in flatten_paths(value))
     payload = {
         "manifest_version": 1,
         "module": "dynconn",
@@ -188,7 +189,7 @@ def main(
         "smoothing_fwhm_mm": target.smoothing_mm,
         "source_runs": [run.stem for run in runs],
         "target_manifest": str(manifest),
-        "public_outputs": [str(path) for value in result.values() for path in flatten_paths(value)],
+        "public_outputs": [str(path) for path in published_outputs],
         "configuration_fingerprint": selected_configuration_fingerprint(),
         "complete": True,
     }
@@ -207,7 +208,7 @@ def main(
     runner.add_step(
         Step.python(
             name="Write Dynamic-Connectivity Publication Index",
-            inputs=(manifest,),
+            inputs=published_outputs,
             outputs=(index,),
             force=bool(args.overwrite),
             action=lambda: atomic_write_json(index, payload),
