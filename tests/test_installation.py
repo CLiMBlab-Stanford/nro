@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from nro.configuration import site
 from nro.configuration.store import ConfigStore
@@ -90,10 +91,10 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
     functional = store.load_configuration("func", "main").values
     clean = store.load_configuration("clean", "main").values
     assert anatomy["container"]["image"] == functional["container"]["image"]
-    assert functional["container"]["image"] == clean["container"]
-    assert clean["container"].startswith(str(tmp_path))
-    assert functional["container"]["engine"] == clean["container_engine"] == "apptainer"
-    assert functional["container"]["bind"] == clean["container_bind"] == []
+    assert functional["container"]["image"] == clean["container"]["image"]
+    assert clean["container"]["image"].startswith(str(tmp_path))
+    assert functional["container"]["engine"] == clean["container"]["engine"] == "apptainer"
+    assert functional["container"]["bind"] == clean["container"]["bind"] == []
     assert functional["synbold_disco_license"] == str(tmp_path / "license")
     assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
 
@@ -117,27 +118,88 @@ def test_flywheel_defaults_are_optional_validated_site_settings(isolated_site):
         edit_settings(["flywheel_project=project-only"])
 
 
+def test_site_locator_updates_versioned_protected_definition(isolated_site, tmp_path):
+    from nro.configuration.definitions import create_store
+    from nro.configuration.site import read_site_definition
+
+    definitions = create_store(tmp_path / "definitions")
+    isolated_site.write_text(f'definitions = "{definitions}"\n')
+    destination = save_settings(isolated_site, {"work": "/updated/work"})
+    assert destination == definitions / "site/site.yml"
+    assert site.read_overrides(isolated_site) == {"definitions": str(definitions)}
+    protected, _ = read_site_definition(definitions)
+    assert protected["work"] == "/updated/work"
+
+
+def test_installation_migrates_legacy_site_and_bidsify_settings(isolated_site, tmp_path):
+    from nro.configuration.definitions import create_store
+    from nro.configuration.site import read_site_definition
+
+    definitions = create_store(tmp_path / "definitions")
+    (definitions / "site/site.yml").unlink()
+    profile_path = definitions / "bidsify/main.yml"
+    profile = yaml.safe_load(profile_path.read_text())
+    profile.update(
+        servers={
+            "cni": {
+                "host": "cni.example.org",
+                "credential_env": "CNI_API_KEY",
+                "projects": ["lab/study"],
+            }
+        },
+        project_sources={"study": [{"server": "cni", "project": "lab/study"}]},
+        session_rules=[],
+        event_rules=[],
+    )
+    profile["scanplans"].update(
+        location="https://drive.google.com/drive/folders/example",
+        credential_env="GOOGLE_APPLICATION_CREDENTIALS",
+    )
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False))
+    isolated_site.write_text(
+        f'definitions = "{definitions}"\n'
+        'bids = "/legacy/BIDS"\n'
+        'flywheel_server = "cni"\n'
+        'flywheel_project = "lab/study"\n'
+    )
+
+    destination = site_setup.migrate_site_configuration(isolated_site)
+
+    assert destination == definitions / "site/site.yml"
+    assert site.read_overrides(isolated_site) == {"definitions": str(definitions)}
+    protected, bidsify = read_site_definition(definitions)
+    assert protected["bids"] == "/legacy/BIDS"
+    assert bidsify["default_server"] == "cni"
+    assert bidsify["project_sources"]["study"][0]["project"] == "lab/study"
+    migrated_profile = yaml.safe_load(profile_path.read_text())
+    assert set(migrated_profile["scanplans"]) == {"parser"}
+    assert "servers" not in migrated_profile
+
+
 @pytest.mark.parametrize("shared", [False, True])
 def test_interactive_generic_defaults_preserve_explicit_paths(
     isolated_site, tmp_path, monkeypatch, shared
 ):
     monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
+    monkeypatch.setattr(site, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(
         site_setup, "installation_record", lambda: {"mode": "shared" if shared else "personal"}
     )
     save_settings(isolated_site, {"work": "/configured/work"})
     _, sources = site.settings()
-    proposed = site_setup.interactive_defaults(sources)
-    assert proposed["images"] == str(tmp_path / "home/nro/images")
-    assert proposed["registry"] == str(tmp_path / "home/nro/.nro")
-    assert "work" not in proposed
-    assert proposed["bids"] == str(tmp_path / "home/nro/bids")
-    assert proposed["binds"] == []
+    values, _ = site.settings()
+    assert values["images"] == str(tmp_path / "home/nro/images")
+    assert values["registry"] == str(tmp_path / "home/nro/.nro")
+    assert values["work"] == "/configured/work"
+    assert values["bids"] == str(tmp_path / "home/nro/bids")
+    assert values["binds"] == []
 
 
 def test_interactive_defaults_keep_reachable_lab(isolated_site, tmp_path, monkeypatch):
     monkeypatch.setattr(site_setup, "LAB", tmp_path)
+    monkeypatch.setattr(site, "LAB", tmp_path)
+    monkeypatch.setitem(site.DEFAULTS, "definitions", str(tmp_path / "absent-definitions"))
     _, sources = site.settings()
     assert site_setup.interactive_defaults(sources) == {}
     monkeypatch.setattr(site_setup.os, "access", lambda *args: False)
@@ -149,6 +211,7 @@ def test_interactive_paths_display_and_save_proposals(
     isolated_site, tmp_path, monkeypatch, capsys, accept_all
 ):
     monkeypatch.setattr(site_setup, "LAB", tmp_path / "absent-lab")
+    monkeypatch.setattr(site, "LAB", tmp_path / "absent-lab")
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(site_setup, "installation_record", lambda: {})
     monkeypatch.setattr(site_setup.sys.stdin, "isatty", lambda: True)

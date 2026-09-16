@@ -15,6 +15,7 @@ from nro.orchestration import scheduler_implementation
 @pytest.fixture(scope="session")
 def definitions_fixture(tmp_path_factory):
     from nro.configuration.definitions import create_store
+    from nro.configuration.site import read_site_definition, write_site_definition
 
     root = create_store(tmp_path_factory.mktemp("definitions") / "store")
     shutil.copytree(Path(__file__).parent / "fixtures/models", root / "models", dirs_exist_ok=True)
@@ -32,9 +33,8 @@ def definitions_fixture(tmp_path_factory):
             }
         )
     )
-    profile = root / "bidsify/main.yml"
-    value = yaml.safe_load(profile.read_text())
-    value["servers"] = {
+    settings, bidsify = read_site_definition(root)
+    bidsify["servers"] = {
         "cni": {
             "host": "cni.example.org",
             "credential_env": "TEST_CNI_KEY",
@@ -46,7 +46,7 @@ def definitions_fixture(tmp_path_factory):
             "projects": ["test/demo"],
         },
     }
-    profile.write_text(yaml.safe_dump(value))
+    write_site_definition(root, settings, bidsify=bidsify)
     return root
 
 

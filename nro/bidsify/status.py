@@ -13,6 +13,7 @@ def filter_records(records, selection) -> list[dict]:
     if (
         selection.modules
         or selection.workflows
+        or selection.lineages
         or selection.models
         or selection.model_sets
         or selection.spaces

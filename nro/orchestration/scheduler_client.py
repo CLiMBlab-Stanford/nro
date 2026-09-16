@@ -29,6 +29,23 @@ _CLEAR = "\r\x1b[2K"
 class SchedulerError(RuntimeError):
     """Report a scheduler transport or service failure."""
 
+    def __init__(self, message: str, *, error_type: str | None = None) -> None:
+        """Preserve the remote error category with its user-facing message."""
+        super().__init__(message)
+        self.error_type = error_type
+
+
+def _response_result(response: dict):
+    """Return a scheduler result or raise its typed service error."""
+    if "error" in response:
+        raise SchedulerError(
+            str(response["error"]),
+            error_type=response.get("error_type"),
+        )
+    if "result" not in response:
+        raise SchedulerError("Central scheduler returned a malformed response")
+    return response["result"]
+
 
 @dataclass(frozen=True)
 class SchedulerEndpoint:
@@ -220,7 +237,7 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
                 continue
             if payload.get("operation") == "purge":
                 count = len(payload.get("plan", ()))
-                suffix = f" for {count:,} instances" if count else ""
+                suffix = f" for {count:,} work items" if count else ""
                 notice_text = f"Applying a pending purge{suffix}..."
                 break
         started = time.monotonic()
@@ -344,11 +361,7 @@ def exchange(
             if notice:
                 sys.stderr.write(_CLEAR)
                 sys.stderr.flush()
-            if "error" in response:
-                raise SchedulerError(str(response["error"]))
-            if "result" not in response:
-                raise SchedulerError("Central scheduler returned a malformed response")
-            return response["result"]
+            return _response_result(response)
         now = time.monotonic()
         active = read_active(endpoint.control)
         if active is not None:
@@ -383,11 +396,7 @@ def exchange(
                     if notice:
                         sys.stderr.write(_CLEAR)
                         sys.stderr.flush()
-                    if "error" in response:
-                        raise SchedulerError(str(response["error"]))
-                    if "result" not in response:
-                        raise SchedulerError("Central scheduler returned a malformed response")
-                    return response["result"]
+                    return _response_result(response)
         elif active_token is not None:
             launch_token = str(launch.get("token") or "") if launch is not None else ""
             if launch_token and launch_token != active_token:
@@ -557,10 +566,10 @@ def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, select
 
 
 def logs(
-    control: Path, bids_root: Path, *, checkout: Path, selection: dict, instance_level: bool
+    control: Path, bids_root: Path, *, checkout: Path, selection: dict, worker_level: bool
 ) -> dict:
     """Resolve logs from the cached read model without starting a service."""
-    from nro.engine.cli import matches_instance_selectors
+    from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
     from nro.orchestration.control_paths import ControlPaths
 
     report = _cached_status(control, checkout)
@@ -576,17 +585,24 @@ def logs(
         and (not selection["projects"] or row["project"] in selection["projects"])
         and (not selection["participants"] or row["participant"] in selection["participants"])
         and (not scientific_modules or row["module"] in scientific_modules)
+        and matches_module_lineage(
+            row["module"], row.get("directory_label", ""), selection.get("lineages", ())
+        )
         and (
             not selection["workflows"]
             or set(selection["workflows"]).intersection(row["workflow_ids"].split(","))
         )
-        and matches_instance_selectors(json.loads(row["entities_json"]), selection["selectors"])
+        and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
     ]
-    if instance_level:
-        paths = [row["log_path"] for row in selected if row.get("log_path")]
-    else:
+    if worker_level:
         paths = [row["worker_log_path"] for row in selected if row.get("worker_log_path")]
-    if "bidsify" in requested_modules and not selection["workflows"]:
+    else:
+        paths = [row["log_path"] for row in selected if row.get("log_path")]
+    if (
+        "bidsify" in requested_modules
+        and not selection["workflows"]
+        and not selection.get("lineages")
+    ):
         sessions = selection["selectors"].get("ses", ())
         control_paths = ControlPaths(control)
         paths.extend(

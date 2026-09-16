@@ -114,7 +114,7 @@ def canonical_processing(processing: dict) -> dict:
 
 
 def model_contract(entities: dict) -> dict:
-    """Return the current scientific definition for one instance's contract."""
+    """Return the current scientific definition for one work item's contract."""
     identifier = f"{entities['task']}/{entities['model']}"
     try:
         path = model_path(identifier)

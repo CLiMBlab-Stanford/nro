@@ -7,9 +7,9 @@ or a second system of dependency tracking.
 
 ## Two dependency graphs
 
-The planner builds a graph of **instances**: one participant's anatomy, one
+The planner builds a graph of **work items**: one participant's anatomy, one
 functional run, or one subject-level connectivity result. Workers claim ready
-instances from the site-wide registry. Within each instance, a shared `Runner`
+work items from the site-wide registry. Within each work item, a shared `Runner`
 owns a graph of `Step` declarations and executes them in dependency order.
 
 ```text
@@ -20,13 +20,15 @@ anat ──► func ──┬─► clean ──┬─► dynconn
 ```
 
 The sequence is not a chain of monolithic cluster jobs. There are many run-wise
-`func` and `clean` instances, followed by subject-level aggregation. From
+`func` and `clean` work items, followed by subject-level aggregation. From
 `clean` onward, space and smoothing are independent scheduling entities.
-The module pages specify how `clean`, `networks`, and `firstlevels` use their
-direct anatomy dependencies.
+The module pages specify how `clean`, `microparcellation`, `networks`, and
+`firstlevels` use their direct anatomy dependencies. Microparcellation needs
+that dependency only for targets whose native geometry or mask comes from the
+participant anatomy.
 
 `firstlevels` follows a separate path from `func`, with a direct `anat`
-dependency for geometry. One participant/model/space/smoothing instance fits its
+dependency for geometry. One participant/model/space/smoothing work item fits its
 runs independently and follows its Stats Models graph to publish within-subject
 summaries. It does not consume `clean` or run population-level analyses.
 
@@ -39,7 +41,7 @@ Module constructors must not execute image processing while building the graph.
 
 Workflows select one configuration for each module. Every module publishes below
 `derivatives/nro/MODULE/MODULE_ID/`. Functional variants that select equivalent
-anatomy reuse the same anatomical instance and `anat` directory. Configuration
+anatomy reuse the same anatomical work item and `anat` directory. Configuration
 lineages include upstream choices, allowing equivalent workflows to share
 results. A numeric suffix distinguishes two lineages that select the same named
 configuration but have incompatible upstream inputs. Directory labels are not
@@ -63,7 +65,7 @@ The central scheduler registry stores demand, attempts, workers, and Slurm
 submissions. Each registered Git branch also has a scientific registry for its
 compiled contracts and artifact observations. The filesystem remains
 authoritative for output existence and validity. Several requests can share an
-instance; cancelling one request need not stop work still demanded by another.
+work item; cancelling one request need not stop work still demanded by another.
 Concurrency limits apply across projects and development branches.
 
 An installed `main` release runs the scheduler. Registered development
@@ -84,4 +86,4 @@ Do not infer metadata from a directory name when a manifest supplies it.
 The default deployment uses Slurm, Singularity or Apptainer, and shared storage.
 `run --local` executes a worker locally but still needs processing dependencies
 and the configured filesystem. [Core concepts](concepts.md) defines the terms;
-[instance lifecycle](instance-lifecycle.md) explains the typed records.
+[work-item lifecycle](work-item-lifecycle.md) explains the typed records.

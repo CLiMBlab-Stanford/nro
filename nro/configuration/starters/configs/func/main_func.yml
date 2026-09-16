@@ -1,4 +1,5 @@
 markup: main
+gradient_unwarping: auto
 container:
   image: site:qunex
   engine: site:runtime
@@ -47,7 +48,7 @@ marss_min_multiband_factor: 6
 sdc_from_sbref_pair: false
 debug_first_nvols: 0
 io_chunk_vols: 64
-force: false
+overwrite: false
 verbose: false
 confounds:
   aseg_in_epi: null

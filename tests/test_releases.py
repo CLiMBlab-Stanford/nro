@@ -98,7 +98,7 @@ def test_attestation_does_not_tag_deploy_or_change_science(release):
     assert store.history() == (row,)
     assert git(root, "tag") == ""
     assert git(root, "rev-parse", "HEAD") == before
-    assert store.branches.registry("main").instances() == ()
+    assert store.branches.registry("main").work_items() == ()
 
 
 def test_recorded_release_check_rejects_a_changed_head(release):
@@ -277,7 +277,7 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     )
     registry.initialize()
     scientific = store.branches.registry("dev")
-    scientific.record_instance("example", {"module": "anat"}, expected_revision=None)
+    scientific.record_work_item("example", {"module": "anat"}, expected_revision=None)
     runtime = scientific.root / "workflows" / "example.yml"
     runtime.parent.mkdir(parents=True, exist_ok=True)
     runtime.write_text("retained runtime")
@@ -293,7 +293,7 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     assert runtime.read_text() == "retained runtime"
     assert scientific.database.is_file()
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
-    assert [(item.key, item.revision) for item in scientific.instances()] == [("example", 1)]
+    assert scientific.work_items() == ()
     assert not certificate.exists()
     from pathlib import Path
 

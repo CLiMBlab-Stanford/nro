@@ -10,24 +10,129 @@ otherwise `~/nro/definitions`. An explicit site setting takes precedence.
 
 ```text
 DEFINITIONS/
+├── site/site.yml
 ├── configs/CLASS/ID_CLASS.yml
 ├── workflows/ID_workflow.yml
 ├── models/TASK/VARIANT.yml
 ├── markup/ID_markup.yml
+├── hardware/gradient_unwarping.yml
 ├── events/TASK/index.yml
 ├── events/TASK/*.tsv
 ├── bidsify/PROFILE.yml
 └── scanplans/parser.py
 ```
 
-Configurations and workflows control processing; [task models](task-models.md)
+The protected `site/site.yml` document defines shared storage, execution
+resources, and ingestion sources. Configurations and workflows control
+processing; [task models](task-models.md)
 define predictors and contrasts. Source markup selects manual anatomical inputs
 and excludes known-bad BIDS paths. [Event tables](event-files.md) supply stimulus
 timing during bidsification. [Ingestion profiles](commands/bidsify.md) describe
-Flywheel servers, acquisition rules, and conversion resources. A
+conversion rules and worker resources. A
 [site scan-plan parser](commands/scanplans.md) may connect those profiles to a
-local or Google Drive source. Credentials,
-registry databases, imaging data, and generated outputs belong elsewhere.
+local or Google Drive source. Credentials, registry databases, imaging data,
+and generated outputs belong elsewhere.
+
+## Protected site settings
+
+The shared definitions repository is the only authority for `site/site.yml`.
+This file records facts that every checkout connected to the scheduler must
+share:
+
+- storage roots for BIDS, work, development outputs, and private control state;
+- external software and resource locations;
+- the container runtime, Slurm partitions, account, and bind paths; and
+- Flywheel servers, destination-to-source project mappings, scan-plan sources,
+  credential variable names, and existing-session rules.
+
+The document stores credential variable names, never credential values. Keep it
+under version control with the rest of the shared definitions repository.
+`nro paths set` edits this document after installation. Review and commit that
+change through the site's normal definitions process.
+
+Each checkout retains a generated TOML file containing only the absolute path
+to the shared definitions repository. It is disposable installation state;
+`./install` can recreate it. Submitted attempts still receive a full, immutable
+TOML snapshot, so later site edits cannot change running work.
+
+Development branches may select private definitions repositories for
+configurations, workflows, models, markup, events, hardware policy, conversion
+profiles, and scan-plan parser code. A private repository must omit
+`site/site.yml` and inherits the shared document. Branch selection rejects a
+private site document, and central admission rejects a request prepared against
+a different protected site.
+
+The document has five top-level fields:
+
+```yaml
+version: 1
+storage:
+  bids: /data/BIDS
+  work: /scratch/nro
+  development: /data/NRO_DEV
+  registry: /data/.nro
+resources:
+  images: /opt/nro/images
+  gradient_coefficients: /opt/nro/gradient-coefficients
+  templates: /opt/nro/templateflow
+  workbench: /opt/workbench/bin_linux64/wb_command
+  oslom: /opt/oslom/oslom_undir
+  license: /opt/freesurfer/license.txt
+execution:
+  runtime: apptainer
+  partition: compute
+  viewing_partition: interactive
+  account: ''
+  binds: []
+bidsify:
+  default_server: null
+  default_project: null
+  servers: {}
+  project_sources: {}
+  scanplans: {location: null, credential_env: null}
+  session_rules: []
+  event_rules: []
+```
+
+`qunex`, `synthstrip`, `synbold`, `gradient_unwarp`, and `mni_template` are
+optional resource overrides. When omitted, nro derives them from `images` or
+`templates`. An empty account is valid for Slurm sites that do not use one.
+
+## Gradient-unwarping hardware
+
+`hardware/gradient_unwarping.yml` maps inherited BIDS acquisition metadata to
+site policy. It is optional. With no matching profile, `gradient_unwarping: auto`
+leaves the acquisition unchanged. A private branch definitions store that omits
+this file inherits it from the shared site store. If neither store defines it,
+nro uses an empty packaged catalog.
+
+```yaml
+version: 1
+profiles:
+  impulse_7t_head_coil:
+    match:
+      Manufacturer: Siemens
+      ManufacturersModelName: MAGNETOM Terra.X Impulse Edition
+      ReceiveCoilName: Neurocam_7T
+      MagneticFieldStrength:
+        minimum: 6.5
+        maximum: 7.5
+    action: unwarp
+    coefficients: coeff_IMPULSE.grad
+```
+
+String and list matches are exact. Numeric ranges may define inclusive
+`minimum` and `maximum` values. Each acquisition may match at most one profile.
+`action: unwarp` requires a coefficient filename relative to the site's
+`gradient_coefficients` directory. `action: already_corrected` declares that the
+matched hardware needs no nro correction and cannot name coefficients.
+
+An `unwarp` profile normally respects `NonlinearGradientCorrection: true` and
+does not repeat correction. Set `override_existing_correction: true` only when
+the site knows that field is incorrect for the matched hardware. The artifact
+contract records the profile, matched metadata, decision, method, and coefficient
+SHA-256 digest. The absolute coefficient path is execution metadata and does not
+define scientific identity.
 
 ## Source markup
 
@@ -85,8 +190,10 @@ nro paths set definitions=/data/lab/nro-definitions
 ```
 
 Creation copies packaged workflows, named configuration examples, and an empty
-`main` markup document. It creates empty model and event catalogs and adds an
-ingestion profile with no configured servers. Packaged `main` configurations
+`main` markup document. It creates empty model and event catalogs and adds a
+conversion profile. A shared or personal store also gets a complete protected
+site document. A store created from a development installation omits that
+document and inherits the shared site. Packaged `main` configurations
 remain in the nro installation and are inherited rather than copied. Creation
 validates the staged files before
 publication and refuses an existing destination, even an empty directory. It
@@ -98,10 +205,10 @@ store if missing and validates it if present. Installation never merges new
 named examples into an existing store. Package upgrades supply new defaults
 automatically unless the store deliberately overrides them.
 
-On shared installations, changing the selected path requires
+On shared installations, changing the authoritative path requires
 `nro paths set definitions=PATH --maintain` and an inactive worker pool. Selecting
 a path does not move files. Copy and validate the destination before switching.
-Shared registry users should select the same definitions store.
+Every checkout connected to one scheduler inherits the same site document.
 
 Publication uses a non-replacing rename when supported. On shared filesystems
 without that operation, nro reserves the destination and marks it incomplete
@@ -120,9 +227,12 @@ Omitting the path checks the selected store. Validation reads all definitions,
 including unused variants, and reports malformed filenames, missing packaged
 defaults, invalid configuration keys, broken workflow references, invalid task
 models, invalid source markup, bad event tables, unindexed TSVs, invalid
-ingestion profiles, and an invalid scan-plan parser interface. It rejects
+ingestion profiles, an invalid protected site document when present, and an
+invalid scan-plan parser interface. It rejects
 symlinks in definition directories and cross-task event references. Empty model
 and event catalogs and empty Flywheel server mappings are valid starting points.
+Installation requires `site/site.yml` in the authoritative store. Branch
+selection requires it to be absent from a private store.
 
 Validation does not contact Flywheel, load imaging data, check credentials,
 submit jobs, or change registry state. It cannot establish scientific suitability
@@ -135,7 +245,8 @@ workflows, task models, and source markup. These commands target the external
 store. Their
 existing staged validation, writer locks, and concurrent-edit checks still
 apply. Edit event catalogs and ingestion profiles directly, then validate the
-store. Keep unrelated notes outside the structured definition directories.
+store. Use `nro paths set` for protected site values. Keep unrelated notes
+outside the structured definition directories.
 
 Every configuration class inherits its packaged `main` definition. A store may
 omit `main_CLASS.yml`; if present, that file is a partial site override. Named

@@ -8,14 +8,15 @@ import pytest
 import yaml
 
 import nro.modules.func.planning as func_planning
+from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.store import ConfigStore
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.networks.contract import networks_output_contract
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planner import Planner, build_subject_instances
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planner import Planner, RegisteredTarget, build_subject_work_items
 from nro.orchestration.registry import Registry
 from nro.orchestration.worker import _runner_graph_signature
 
@@ -67,10 +68,10 @@ def test_request_pins_execution_without_changing_scientific_contract(branch_regi
     plan = _plan_modules(branch_registry, tmp_path, ("anat",))
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")
     planner.register_requests(plan, selectors={}, concurrency=50, partition=None)
-    for row in branch_registry.instance_rows():
-        spec = plan.instances[row["instance_key"]]
+    for row in branch_registry.work_item_rows():
+        spec = plan.work_items[row["work_item_key"]]
         assert row["artifact_fingerprint"] == spec.contract_fingerprint
-        assert json.loads(row["artifact_contract_json"]) == spec.instance_contract
+        assert json.loads(row["artifact_contract_json"]) == spec.work_item_contract
         command = json.loads(row["command_json"])
         assert Path(command[1]).name == "source_launcher.py"
         assert command[2] == plan.source_digest
@@ -119,23 +120,52 @@ def test_branch_planning_does_not_open_or_register_with_the_scheduler(
         max_memory_gb=256,
     )
     assert len(plan.requests) == 1
-    instances = tuple(plan.instances.values())
-    science.record_graph(instances, expected_revisions={spec.key: None for spec in instances})
-    assert len(science.instances()) == 1
-    assert instances[0].runtime_config.is_relative_to(science.root)
+    work_items = tuple(plan.work_items.values())
+    science.record_work_item_graph(
+        work_items, expected_revisions={spec.key: None for spec in work_items}
+    )
+    assert len(science.work_items()) == 1
+    assert work_items[0].runtime_config.is_relative_to(science.root)
     with pytest.raises(ValueError, match="submission is not enabled"):
         planner.register_requests(plan, selectors={}, concurrency=10, partition=None)
     assert not ControlPaths(store.control).database.exists()
+
+
+def test_planner_filters_terminal_routes_by_work_item_id(branch_registry, tmp_path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registered = branch_registry.register_workflow(workflow)
+    planner = Planner(branch_registry, bids_root=tmp_path / "bids")
+    arguments = dict(
+        projects=("demo",),
+        requested_participants=("01",),
+        modules=("networks",),
+        workflows={"main": workflow},
+        registered_workflows={"main": registered},
+        selectors={},
+        spaces=("fsnative",),
+        smoothing_levels=(2,),
+        memory_gb=32,
+        max_memory_gb=256,
+    )
+
+    absent = planner.plan(**arguments, lineage_ids=("networks/absent",))
+    selected = planner.plan(
+        **arguments,
+        lineage_ids=(f"networks/{registered.directory_for('networks')}",),
+    )
+
+    assert absent.requests == ()
+    assert selected.requests
 
 
 def test_all_planned_manifests_use_the_selected_bids_root(branch_registry, tmp_path):
     from nro.orchestration.artifact_resolution import scientific_contracts
 
     plan = _plan_modules(branch_registry, tmp_path, ("networks", "firstlevels"))
-    instances = tuple(plan.instances.values())
-    for spec in instances:
+    work_items = tuple(plan.work_items.values())
+    for spec in work_items:
         assert all(path.is_relative_to(spec.output_root) for path in spec.expected_outputs)
-    assert len(scientific_contracts(instances)) == len(instances)
+    assert len(scientific_contracts(work_items)) == len(work_items)
 
 
 @pytest.mark.parametrize(
@@ -149,18 +179,18 @@ def test_all_planned_manifests_use_the_selected_bids_root(branch_registry, tmp_p
 def test_upstream_targets_collapse_to_endpoint(branch_registry, tmp_path, modules):
     expected = _plan_modules(branch_registry, tmp_path, ("networks",))
     actual = _plan_modules(branch_registry, tmp_path, modules)
-    assert actual.instances == expected.instances
+    assert actual.work_items == expected.work_items
     assert actual.matched_participants == expected.matched_participants
     assert len(actual.requests) == 1
     request = actual.requests[0]
     assert request.module == "networks"
     assert request.terminal_keys == expected.requests[0].terminal_keys
-    assert request.instances == expected.requests[0].instances
+    assert request.work_items == expected.requests[0].work_items
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")
     planner.register_requests(actual, selectors={}, concurrency=50, partition=None)
     assert len(branch_registry.request_rows()) == 1
     branch_registry.request_cancellation(modules=("networks",))
-    assert not any(row["demanded"] for row in branch_registry.instance_rows())
+    assert not any(row["demanded"] for row in branch_registry.work_item_rows())
 
 
 def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_path):
@@ -168,32 +198,80 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
     target = next(
         key
         for key in complete.requests[0].terminal_keys
-        if complete.instances[key].participant == "01"
-        and complete.instances[key].entities["space"] == "T1w"
-        and complete.instances[key].entities["smoothing"] == "2"
-        and complete.instances[key].entities["task"] == "rest"
+        if complete.work_items[key].participant == "01"
+        and complete.work_items[key].entities["space"] == "T1w"
+        and complete.work_items[key].entities["smoothing"] == "2"
+        and complete.work_items[key].entities["task"] == "rest"
     )
     workflow = ConfigStore().resolve("main")
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")
-    exact = planner.plan(
-        projects=("demo",),
-        requested_participants=(),
-        modules=("clean",),
+    exact = planner.plan_registered_targets(
+        (
+            RegisteredTarget(
+                project="demo",
+                participant="01",
+                module="clean",
+                workflow_id="main",
+                work_item_key=target,
+                entities=complete.work_items[target].entities,
+            ),
+        ),
         workflows={"main": workflow},
         registered_workflows={"main": branch_registry.register_workflow(workflow)},
-        selectors={},
-        spaces=("fsnative", "T1w"),
-        smoothing_levels=(0, 2),
         memory_gb=32,
         max_memory_gb=256,
-        target_instance_keys=frozenset({target}),
     )
 
     assert len(exact.requests) == 1
     assert exact.requests[0].terminal_keys == (target,)
     assert exact.requests[0].participants == ("01",)
-    assert target in exact.instances
-    assert all(instance.participant == "01" for instance in exact.instances.values())
+    assert target in exact.work_items
+    assert all(work_item.participant == "01" for work_item in exact.work_items.values())
+    assert {
+        (work_item.entities.get("space"), work_item.entities.get("smoothing"))
+        for work_item in exact.work_items.values()
+        if work_item.module == "clean"
+    } == {("T1w", "2")}
+
+
+def test_registered_targets_preserve_workflow_associations(branch_registry, tmp_path):
+    workflows = {name: ConfigStore().resolve(name) for name in ("main", "oslom")}
+    registered = {
+        name: branch_registry.register_workflow(workflow) for name, workflow in workflows.items()
+    }
+    complete = Planner(branch_registry, bids_root=tmp_path / "bids").plan(
+        projects=("demo",),
+        requested_participants=("01",),
+        modules=("anat",),
+        workflows=workflows,
+        registered_workflows=registered,
+        selectors={},
+        spaces=("fsnative",),
+        smoothing_levels=(2,),
+        memory_gb=32,
+        max_memory_gb=256,
+    )
+    targets = tuple(
+        RegisteredTarget(
+            project=request.project,
+            participant="01",
+            module="anat",
+            workflow_id=request.workflow_id,
+            work_item_key=request.terminal_keys[0],
+            entities=complete.work_items[request.terminal_keys[0]].entities,
+        )
+        for request in complete.requests
+    )
+
+    exact = Planner(branch_registry, bids_root=tmp_path / "bids").plan_registered_targets(
+        targets,
+        workflows=workflows,
+        registered_workflows=registered,
+        memory_gb=32,
+        max_memory_gb=256,
+    )
+
+    assert {request.workflow_id for request in exact.requests} == {"main", "oslom"}
 
 
 @pytest.mark.parametrize("modules", [("func", "firstlevels"), ("firstlevels", "func")])
@@ -208,15 +286,15 @@ def test_partial_upstream_coverage_keeps_only_uncovered_runs(
     func = requests["func"]
     assert func.participants == ("01", "02")
     assert len(func.terminal_keys) == 2
-    assert {plan.instances[key].entities["task"] for key in func.terminal_keys} == {"rest"}
-    assert {item.participant for item in func.instances} == {"01", "02"}
-    assert all(item.entities.get("task") != "langlocSN" for item in func.instances)
+    assert {plan.work_items[key].entities["task"] for key in func.terminal_keys} == {"rest"}
+    assert {item.participant for item in func.work_items} == {"01", "02"}
+    assert all(item.entities.get("task") != "langlocSN" for item in func.work_items)
     fits = requests["firstlevels"]
     assert fits.participants == ("01", "03")
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")
     planner.register_requests(plan, selectors={}, concurrency=50, partition=None)
     branch_registry.request_cancellation(modules=("firstlevels",))
-    demanded = [row for row in branch_registry.instance_rows() if row["demanded"]]
+    demanded = [row for row in branch_registry.work_item_rows() if row["demanded"]]
     assert {row["participant"] for row in demanded} == {"01", "02"}
     assert all(json.loads(row["entities_json"]).get("task") != "langlocSN" for row in demanded)
 
@@ -236,16 +314,16 @@ def test_independent_endpoints_cover_upstream_without_merging_workflows(
     assert len(plan.requests) == 4
 
 
-def test_func_instance_contract_tracks_final_resampling_policy(tmp_path: Path) -> None:
+def test_func_work_item_contract_tracks_final_resampling_policy(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
-    instance = InstanceSpec.create(
+    work_item = WorkItemSpec.create(
         key="func:" + "a" * 64,
         module="func",
         project="demo",
         participant="01",
         entities={},
         scope="run",
-        configuration_lineage_id=1,
+        module_lineage_id=1,
         config_fingerprint=workflow.configuration("func").fingerprint,
         directory_label="main",
         runtime_config=tmp_path / "main_preprocess.yml",
@@ -258,7 +336,7 @@ def test_func_instance_contract_tracks_final_resampling_policy(tmp_path: Path) -
         processing={"final_resampling": final_resampling_contract()},
     )
 
-    assert instance.instance_contract["processing"] == {
+    assert work_item.work_item_contract["processing"] == {
         "final_resampling": final_resampling_contract(),
     }
 
@@ -271,14 +349,14 @@ def test_runner_graph_signature_tracks_bids_state_but_not_command_spelling(
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(workflow)
-    instance = InstanceSpec.create(
+    work_item = WorkItemSpec.create(
         key="anat:" + "b" * 64,
         module="anat",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -290,20 +368,20 @@ def test_runner_graph_signature_tracks_bids_state_but_not_command_spelling(
         resource_class="large",
         expected_outputs=(tmp_path / "output" / "manifest.json",),
     )
-    registry.register_instances((instance,))
-    row = registry.instance_rows()[0]
+    registry.register_work_items((work_item,))
+    row = registry.work_item_rows()[0]
     before = _runner_graph_signature(registry, row["id"])
-    registry.register_instances(
-        (instance.evolve(command=("python", "-m", "nro.modules.anat", "--verbose")),)
+    registry.register_work_items(
+        (work_item.evolve(command=("python", "-m", "nro.modules.anat", "--verbose")),)
     )
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert _runner_graph_signature(registry, row["id"]) == before
     source.write_text("second-state")
     after = _runner_graph_signature(registry, row["id"])
     assert after != before
 
 
-def test_existing_instance_adopts_execution_recipe_and_output_contract(
+def test_existing_work_item_adopts_execution_recipe_and_output_contract(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.nii.gz"
@@ -312,14 +390,14 @@ def test_existing_instance_adopts_execution_recipe_and_output_contract(
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(workflow)
     original_output = tmp_path / "derivatives" / "manifest.json"
-    instance = InstanceSpec.create(
+    work_item = WorkItemSpec.create(
         key="anat:" + "c" * 64,
         module="anat",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -331,22 +409,22 @@ def test_existing_instance_adopts_execution_recipe_and_output_contract(
         resource_class="large",
         expected_outputs=(original_output,),
     )
-    registry.register_instances((instance,))
+    registry.register_work_items((work_item,))
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh', artifact_reason='Current' "
-            "WHERE instance_key=?",
-            (instance.key,),
+            "UPDATE work_items SET artifact_state='fresh', artifact_reason='Current' "
+            "WHERE work_item_key=?",
+            (work_item.key,),
         )
 
-    changed_command = instance.evolve(command=("python", "-m", "nro.modules.anat", "--verbose"))
-    registry.register_instances((changed_command,))
-    row = registry.instance_rows()[0]
+    changed_command = work_item.evolve(command=("python", "-m", "nro.modules.anat", "--verbose"))
+    registry.register_work_items((changed_command,))
+    row = registry.work_item_rows()[0]
     assert tuple(json.loads(row["command_json"])) == changed_command.command
     assert row["artifact_state"] == "fresh"
 
     changed_output = tmp_path / "changed" / "different.json"
-    registry.register_instances(
+    registry.register_work_items(
         (
             changed_command.evolve(
                 output_root=changed_output.parent,
@@ -354,11 +432,11 @@ def test_existing_instance_adopts_execution_recipe_and_output_contract(
             ),
         )
     )
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     assert tuple(json.loads(row["expected_outputs_json"])) == (str(changed_output.resolve()),)
     assert row["output_root"] == str(changed_output.parent.resolve())
     assert row["artifact_state"] == "stale"
-    assert row["artifact_reason"] == "Instance contract changed"
+    assert row["artifact_reason"] == "Work-item contract changed"
 
 
 def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
@@ -367,14 +445,14 @@ def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(workflow)
-    instance = InstanceSpec.create(
+    work_item = WorkItemSpec.create(
         key="anat:" + "f" * 64,
         module="anat",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -390,32 +468,32 @@ def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
         registered=registered,
         target_module="anat",
         selectors={},
-        instances=(instance,),
-        terminal_instance_keys=(instance.key,),
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
         concurrency=1,
         partition=None,
     )
 
-    registry.register_instances((instance.evolve(command=(*instance.command, "--verbose")),))
+    registry.register_work_items((work_item.evolve(command=(*work_item.command, "--verbose")),))
 
-    row = registry.instance_rows()[0]
-    assert tuple(json.loads(row["command_json"])) == (*instance.command, "--verbose")
+    row = registry.work_item_rows()[0]
+    assert tuple(json.loads(row["command_json"])) == (*work_item.command, "--verbose")
 
 
-def test_existing_instance_adopts_changed_dependency_topology(tmp_path: Path) -> None:
+def test_existing_work_item_adopts_changed_dependency_topology(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     _write(source)
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(workflow)
-    base = InstanceSpec.create(
+    base = WorkItemSpec.create(
         key="anat:" + "d" * 64,
         module="anat",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         directory_label="main",
         runtime_config=registry.runtime_config_path(registered, "anat"),
@@ -432,28 +510,28 @@ def test_existing_instance_adopts_changed_dependency_topology(tmp_path: Path) ->
         output_root=tmp_path / "upstream",
         expected_outputs=(tmp_path / "upstream" / "manifest.json",),
     )
-    registry.register_instances((base, upstream))
+    registry.register_work_items((base, upstream))
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh', artifact_reason='Current' "
-            "WHERE instance_key=?",
+            "UPDATE work_items SET artifact_state='fresh', artifact_reason='Current' "
+            "WHERE work_item_key=?",
             (base.key,),
         )
 
-    registry.register_instances((base.evolve(dependencies=(upstream.key,)), upstream))
+    registry.register_work_items((base.evolve(dependencies=(upstream.key,)), upstream))
 
-    row = next(item for item in registry.instance_rows() if item["instance_key"] == base.key)
+    row = next(item for item in registry.work_item_rows() if item["work_item_key"] == base.key)
     assert row["artifact_state"] == "stale"
-    assert row["artifact_reason"] == "Instance contract changed"
+    assert row["artifact_reason"] == "Work-item contract changed"
     with registry.connection() as db:
         dependencies = db.execute(
-            """SELECT upstream.instance_key
-               FROM instance_dependencies dependency
-               JOIN instances upstream ON upstream.id=dependency.upstream_instance_id
-               WHERE dependency.instance_id=?""",
+            """SELECT upstream.work_item_key
+               FROM work_item_dependencies dependency
+               JOIN work_items upstream ON upstream.id=dependency.upstream_work_item_id
+               WHERE dependency.work_item_id=?""",
             (row["id"],),
         ).fetchall()
-    assert [item["instance_key"] for item in dependencies] == [upstream.key]
+    assert [item["work_item_key"] for item in dependencies] == [upstream.key]
 
 
 def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatch) -> None:
@@ -490,7 +568,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(func_planning, "load_session_inventory", counted_inventory)
 
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="networks",
@@ -500,8 +578,8 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         bids_root=bids,
     )
     by_module = {}
-    for instance in instances:
-        by_module.setdefault(instance.module, []).append(instance)
+    for work_item in work_items:
+        by_module.setdefault(work_item.module, []).append(work_item)
 
     assert len(by_module["anat"]) == 1
     assert len(by_module["func"]) == 1
@@ -516,12 +594,25 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "T2w": [],
         "exclude": [],
     }
-    assert by_module["anat"][0].instance_contract["processing"] == {
+    no_gradient_match = resolve_gradient_unwarping({}, mode="auto").scientific_record()
+    assert by_module["anat"][0].work_item_contract["processing"] == {
+        "gradient_unwarping": [
+            {
+                "source": str(subject / "anat" / "sub-01_T1w.nii.gz"),
+                **no_gradient_match,
+            }
+        ],
         "output_metadata": anatomical_output_contract(),
         "source_markup": source_markup,
     }
-    assert by_module["func"][0].instance_contract["processing"] == {
-        "final_resampling": final_resampling_contract(),
+    assert by_module["func"][0].work_item_contract["processing"] == {
+        "final_resampling": final_resampling_contract(gradient_unwarping=False),
+        "gradient_unwarping": [
+            {
+                "source": str(subject / "func" / "sub-01_task-rest_dir-LR_run-1_bold.nii.gz"),
+                **no_gradient_match,
+            }
+        ],
         "output_metadata": functional_output_contract(),
         "source_markup": source_markup,
     }
@@ -533,7 +624,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "space": "fsnative",
         "smoothing": "2",
     }
-    assert by_module["clean"][0].instance_contract["processing"] == {
+    assert by_module["clean"][0].work_item_contract["processing"] == {
         "output_metadata": clean_output_contract(),
         "source_markup": source_markup,
     }
@@ -550,7 +641,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         path.name == "sub-01_desc-preprocessAnat_manifest.json"
         for path in by_module["microparcellation"][0].input_paths
     )
-    assert by_module["microparcellation"][0].instance_contract["processing"] == {
+    assert by_module["microparcellation"][0].work_item_contract["processing"] == {
         "output_metadata": microparcellation_output_contract(),
         "source_markup": source_markup,
     }
@@ -562,7 +653,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         by_module["microparcellation"][0].key,
         by_module["anat"][0].key,
     )
-    assert by_module["networks"][0].instance_contract["processing"] == {
+    assert by_module["networks"][0].work_item_contract["processing"] == {
         "output_metadata": networks_output_contract(),
         "source_markup": source_markup,
     }
@@ -590,7 +681,7 @@ def test_run_discovery_uses_source_bids_not_derivatives(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="clean",
@@ -600,10 +691,10 @@ def test_run_discovery_uses_source_bids_not_derivatives(tmp_path: Path) -> None:
         bids_root=bids,
     )
 
-    assert [instance.entities for instance in instances if instance.module == "func"] == [
+    assert [work_item.entities for work_item in work_items if work_item.module == "func"] == [
         {"task": "rest", "run": "1"}
     ]
-    assert [instance.entities for instance in instances if instance.module == "clean"] == [
+    assert [work_item.entities for work_item in work_items if work_item.module == "clean"] == [
         {"task": "rest", "run": "1", "space": "fsnative", "smoothing": "2"}
     ]
 
@@ -630,7 +721,7 @@ def test_functional_contract_tracks_inherited_bids_metadata(tmp_path: Path) -> N
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
 
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="func",
@@ -639,7 +730,7 @@ def test_functional_contract_tracks_inherited_bids_metadata(tmp_path: Path) -> N
         registry=registry,
         bids_root=bids,
     )
-    functional = next(instance for instance in instances if instance.module == "func")
+    functional = next(work_item for work_item in work_items if work_item.module == "func")
 
     assert inherited in functional.input_paths
     assert subject / "func" / "sub-01_task-story_bold.json" not in functional.input_paths
@@ -657,7 +748,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
 
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="networks",
@@ -669,7 +760,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         smoothing_levels=(0, 2),
     )
     by_module = {
-        name: [instance for instance in instances if instance.module == name]
+        name: [work_item for work_item in work_items if work_item.module == name]
         for name in ("anat", "func", "clean", "microparcellation", "networks")
     }
     expected_pairs = {
@@ -714,7 +805,7 @@ def test_template_microparcellation_does_not_add_an_unused_anatomy_edge(
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
 
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="microparcellation",
@@ -725,9 +816,9 @@ def test_template_microparcellation_does_not_add_an_unused_anatomy_edge(
         spaces=(space,),
         smoothing_levels=(2,),
     )
-    anatomy = next(item for item in instances if item.module == "anat")
-    clean = next(item for item in instances if item.module == "clean")
-    micro = next(item for item in instances if item.module == "microparcellation")
+    anatomy = next(item for item in work_items if item.module == "anat")
+    clean = next(item for item in work_items if item.module == "clean")
+    micro = next(item for item in work_items if item.module == "microparcellation")
 
     assert micro.dependencies == (clean.key,)
     assert anatomy.key not in micro.dependencies

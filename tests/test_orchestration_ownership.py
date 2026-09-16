@@ -6,15 +6,15 @@ from pathlib import Path
 
 import yaml
 
-from nro.bin.purge import _purge_instances
+from nro.bin.purge import _purge_work_items
 from nro.configuration.store import ConfigStore
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.ownership import (
-    instance_record_path,
     lineage_record_path,
-    write_instance_ownership,
+    work_item_record_path,
+    write_work_item_ownership,
 )
-from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.planner import build_subject_work_items
 from nro.orchestration.registry import Registry
 
 
@@ -35,7 +35,7 @@ def _historical_store(tmp_path: Path) -> ConfigStore:
     return store
 
 
-def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
+def test_work_item_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
@@ -45,7 +45,7 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     workflow = store.resolve("retired")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="clean",
@@ -54,13 +54,13 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
         registry=registry,
         bids_root=bids,
     )
-    instance_ids = registry.register_instances(instances)
-    for instance in instances:
-        write_instance_ownership(registry, instance_ids[instance.key])
+    work_item_ids = registry.register_work_items(work_items)
+    for work_item in work_items:
+        write_work_item_ownership(registry, work_item_ids[work_item.key])
 
-    clean = next(instance for instance in instances if instance.module == "clean")
+    clean = next(work_item for work_item in work_items if work_item.module == "clean")
     marker = lineage_record_path(bids / "demo", "clean", registered.directories["clean"])
-    receipt = instance_record_path(
+    receipt = work_item_record_path(
         bids / "demo",
         "clean",
         registered.directories["clean"],
@@ -84,17 +84,17 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
         store=store,
     )
 
-    rows = {row["instance_key"]: row for row in registry.instance_rows()}
+    rows = {row["work_item_key"]: row for row in registry.work_item_rows()}
     assert clean.key in rows
     assert rows[clean.key]["directory_label"] == "retired"
     assert rows[clean.key]["workflow_ids"] is None
-    status = {row["instance_key"]: row for row in registry.instance_status_snapshot()}
+    status = {row["work_item_key"]: row for row in registry.work_item_status_snapshot()}
     assert status[clean.key]["status"] == "Unavailable"
     assert not status[clean.key]["recomputable"]
-    assert result.artifacts == len(instances)
+    assert result.artifacts == len(work_items)
     assert result.unavailable == ()
 
-    _purge_instances(
+    _purge_work_items(
         [(registry, [rows[clean.key]])],
         work_root=tmp_path / "work",
         dry_run=False,
@@ -103,14 +103,14 @@ def test_instance_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
-def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) -> None:
+def test_planned_work_item_key_uses_stable_lineage_fingerprint(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
     workflow = ConfigStore().resolve("main")
     first = Registry.for_project("demo", bids_root=bids, registry_path=tmp_path / "first" / ".nro")
     first_registered = first.register_workflow(workflow)
-    first_instance = build_subject_instances(
+    first_work_item = build_subject_work_items(
         project="demo",
         participant="01",
         module="anat",
@@ -125,13 +125,13 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
     )
     with second.connection(write=True) as db:
         db.execute(
-            """INSERT INTO configuration_lineages(
+            """INSERT INTO module_lineages(
                    configuration_class, config_id, config_fingerprint,
                    lineage_fingerprint, resolved_yaml, directory_label, created_at
                ) VALUES ('clean', 'other', 'other', 'other', '{}', 'other', 'now')"""
         )
     second_registered = second.register_workflow(workflow)
-    second_instance = build_subject_instances(
+    second_work_item = build_subject_work_items(
         project="demo",
         participant="01",
         module="anat",
@@ -142,4 +142,4 @@ def test_planned_instance_key_uses_stable_lineage_fingerprint(tmp_path: Path) ->
     )[0]
 
     assert first_registered.lineages["anat"] != second_registered.lineages["anat"]
-    assert first_instance.key == second_instance.key
+    assert first_work_item.key == second_work_item.key

@@ -1,7 +1,7 @@
 # Running derivative workflows
 
 The orchestration layer turns user selections into scientific work, reuses
-compatible artifacts, and runs ready instances through one shared worker pool.
+compatible artifacts, and runs ready work items through one shared worker pool.
 It supports `anat`, `func`, `clean`, `dynconn`, `microparcellation`, `networks`,
 and `firstlevels`.
 
@@ -35,25 +35,30 @@ usually mean all applicable values. For example:
 nro run -p t20 -P nptl -m networks -w main -s fsnative -S 2
 ```
 
-The planner compiles the requested terminal instances and their dependency
+The planner compiles the requested terminal work items and their dependency
 closure. Selecting an endpoint together with an upstream dependency does not
 duplicate demand. A bare invocation selects every endpoint of the default
 workflow, currently `dynconn`, `networks`, and `firstlevels`; firstlevels uses
 model set `main` unless the request selects another model or set.
 
-From `clean` onward, space and smoothing are independent instance entities.
+From `clean` onward, space and smoothing are independent work item entities.
 Multiple values request their cross-product. The planner does not register
 unused combinations in advance. Exact run selectors use
 `--run ENTITY=VALUE[,VALUE...]`; alternatives for one entity are OR choices,
 while different entities are combined with AND.
+
+Commands that operate on registered state do not repeat this expansion.
+`run --resume` and `status --update` preserve each work item's recorded workflow
+and entity values. Registry repair works backward from derivatives that exist.
+These operations never combine selector values collected from different rows.
 
 See [work commands](commands/work.md) for every selector, execution resource,
 status mode, cancellation rule, and repair boundary.
 
 ## Planning and execution
 
-The planner registers complete instance specifications before submitting work.
-Workers request ready instances from the controller and run each one in a
+The planner registers complete work item specifications before submitting work.
+Workers request ready work items from the controller and run each one in a
 separate subprocess. A module constructs its complete runner graph before
 freshness is checked. The shared runner then executes or skips each declared
 step and writes the completion record.
@@ -73,7 +78,7 @@ Workflows select one configuration ID per configuration class from the external
 configuration and a separate execution snapshot. Equivalent compiled
 definitions share work even when their source YAML differs in formatting.
 
-Instance contracts record substantive configuration, direct inputs, dependency
+Work item contracts record substantive configuration, direct inputs, dependency
 topology and generations, processing policy, and required outputs. Command
 formatting, scheduler resources, Git identity, and source-capture paths are not
 freshness inputs. The filesystem remains authoritative for whether outputs
@@ -82,8 +87,8 @@ exist and satisfy their contracts.
 By default, `nro status` reports saved state without checking files.
 `nro status --update` performs the authoritative assessment and updates the
 registry; it may cancel an active attempt whose contract is obsolete. See
-[instance planning and
-execution](instance-lifecycle.md) for the complete state model.
+[work item planning and
+execution](work-item-lifecycle.md) for the complete state model.
 
 ## Direct module execution
 

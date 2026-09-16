@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.bin.run import _resumable_rows, _write_worker_script, build_parser
+from nro.bin.run import _resumable_rows, _resume_workflows, _write_worker_script, build_parser
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
 from nro.bin.status import _render_report
@@ -393,6 +393,13 @@ def test_resume_suppresses_new_request_defaults() -> None:
     assert selection.smoothing == ()
 
 
+def test_resume_uses_active_or_latest_workflow_unless_user_selects_one() -> None:
+    row = {"workflow_ids": "main,oslom", "resume_workflow_ids": "oslom"}
+
+    assert _resume_workflows(row) == ("oslom",)
+    assert _resume_workflows(row, requested={"main"}) == ("main",)
+
+
 def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
     selection = CoreSelection((), (), (), (), {}, (), ())
     rows = [
@@ -471,6 +478,8 @@ def test_shared_selection_options_accept_multiple_values() -> None:
             "-w",
             "main",
             "experiment",
+            "-i",
+            "networks/main-2",
             "-r",
             "task=language,spatial",
             "dir=LR",
@@ -488,6 +497,7 @@ def test_shared_selection_options_accept_multiple_values() -> None:
     assert selection.projects == ("alpha", "beta")
     assert selection.modules == ("clean", "networks")
     assert selection.workflows == ("main", "experiment")
+    assert selection.lineages == ("networks/main-2",)
     assert selection.runs == {"task": ("language", "spatial"), "dir": ("LR",)}
     assert selection.spaces == ("fsnative", "T1w")
     assert selection.smoothing == (0, 2)
@@ -517,7 +527,8 @@ def test_stop_workers_short_flag_and_long_workflow_option() -> None:
 def test_status_report_pages_only_interactive_output(monkeypatch, capsys) -> None:
     report = _render_report([])
     assert report == (
-        f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} {'STATUS':12} {'MEM':8} ENTITIES\n"
+        f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} {'LINEAGE':20} "
+        f"{'STATUS':12} {'MEM':8} ENTITIES\n"
     )
     page_text(report, use_pager=False)
     assert capsys.readouterr().out == report
@@ -596,6 +607,9 @@ def test_status_report_colors_statuses_without_changing_column_width() -> None:
                 "project": "demo",
                 "participant": "01",
                 "module": "anat",
+                "lineage": "main",
+                "route": [{"module": "anat", "config": "main"}],
+                "workflows": ["main"],
                 "status": "Success",
                 "memory_gb": 32,
                 "entities": {},
@@ -604,18 +618,41 @@ def test_status_report_colors_statuses_without_changing_column_width() -> None:
                 "project": "demo",
                 "participant": "02",
                 "module": "func",
+                "lineage": "main",
                 "status": "Error",
                 "memory_gb": 32,
                 "entities": {"task": "rest"},
             },
         ],
         color=True,
+        show_lineages=True,
     )
 
     assert "\x1b[1m\x1b[96mPROJECT" in report
     assert "\x1b[92mSuccess     \x1b[0m" in report
     assert "\x1b[91m\x1b[1mError       \x1b[0m" in report
     assert "\x1b[2mtask=rest\x1b[0m" in report
+    assert "Route: anat=main" in report
+    assert "Workflows: main" in report
+
+
+def test_status_work_item_details_are_opt_in() -> None:
+    rows = [
+        {
+            "project": "demo",
+            "participant": "01",
+            "module": "anat",
+            "lineage": "main",
+            "route": [{"module": "anat", "config": "main"}],
+            "workflows": ["main"],
+            "status": "Success",
+            "memory_gb": 32,
+            "entities": {},
+        }
+    ]
+
+    assert "\nModule lineages\n" not in _render_report(rows)
+    assert "\nModule lineages\n" in _render_report(rows, show_lineages=True)
 
 
 def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> None:
@@ -625,6 +662,7 @@ def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> Non
                 "project": "demo",
                 "participant": "01",
                 "module": "clean",
+                "lineage": "main",
                 "status": "Blocked",
                 "memory_gb": 32,
                 "entities": {},
@@ -639,11 +677,11 @@ def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> Non
                 "entities": "run=01",
                 "step": "Registration",
                 "message": "bad transform",
-                "log": "/tmp/instance.log",
-                "blocked_instances": ["demo sub-01 clean"],
+                "log": "/tmp/work-item.log",
+                "blocked_work_items": ["demo sub-01 clean"],
             }
         ],
-        blocked_instances=[
+        blocked_work_items=[
             {
                 "project": "demo",
                 "participant": "01",
@@ -654,7 +692,7 @@ def test_status_marks_downstream_failure_as_blocked_and_summarizes_root() -> Non
         ],
     )
     assert "Errors" in report
-    assert "Blocked instances" in report
+    assert "Blocked work items" in report
     assert "Failed step: Registration" in report
 
 
@@ -727,7 +765,7 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
 
     report = json.loads(capsys.readouterr().out)
     assert calls == ["cached"]
-    assert [item["project"] for item in report["instances"]] == ["demo", "demo"]
+    assert [item["project"] for item in report["work_items"]] == ["demo", "demo"]
     assert [item["message"] for item in report["errors"]] == [
         "direct failure",
         "second direct failure",
@@ -756,11 +794,11 @@ def test_run_repair_rebuilds_registry_and_discovers_source_tree(
     assert result["repaired"] is True
     assert result["projects"] == ["demo"]
     assert result["participants"] == 1
-    assert result["instances"] == 0
+    assert result["work_items"] == 0
     assert result["requests"] == []
     assert result["submitted_workers"] == []
     assert not obsolete.exists()
-    assert registry.instance_rows() == []
+    assert registry.work_item_rows() == []
     assert registry.request_rows() == []
     with registry.connection() as connection:
         assert tuple(
@@ -806,7 +844,7 @@ def test_main_repair_uses_lab_wide_scheduler_during_release_transition(
                 "repaired": True,
                 "registry": str(registry.paths.database),
                 "backup": str(tmp_path / "backup"),
-                "instances": 0,
+                "work_items": 0,
                 "unavailable": [],
                 "schema": SCHEMA_VERSION,
             }
@@ -846,6 +884,7 @@ def test_run_repair_registers_existing_artifacts_without_demand(
         json.dumps(
             {
                 "complete": True,
+                "gradient_unwarping": {},
                 "output_metadata_contract": module_descriptor("anat").processing_contract()[
                     "output_metadata"
                 ],
@@ -856,10 +895,10 @@ def test_run_repair_registers_existing_artifacts_without_demand(
     run_main(["--repair", "--json"])
     result = json.loads(capsys.readouterr().out)
     registry = Registry.for_project("demo", bids_root=bids)
-    rows = registry.instance_rows()
+    rows = registry.work_item_rows()
 
     assert result["artifacts"] == 1
-    assert result["instances"] == 1
+    assert result["work_items"] == 1
     assert [(row["module"], row["participant"]) for row in rows] == [("anat", "01")]
     assert rows[0]["artifact_state"] == "fresh"
     assert rows[0]["demanded"] == 0
@@ -892,8 +931,8 @@ def test_repair_registers_only_existing_artifacts_and_their_dependencies(
     registry = Registry.for_project("demo", bids_root=bids)
 
     assert result["artifacts"] == 1
-    assert result["instances"] == 3
-    assert {row["module"] for row in registry.instance_rows()} == {
+    assert result["work_items"] == 3
+    assert {row["module"] for row in registry.work_item_rows()} == {
         "anat",
         "func",
         "clean",
@@ -976,9 +1015,9 @@ def test_run_repair_discovers_participant_without_planning_anatomy(
     assert result["repaired"] is True
     assert result["projects"] == ["demo"]
     assert result["participants"] == 1
-    assert result["instances"] == 0
+    assert result["work_items"] == 0
     assert registry.paths.database.is_file()
-    assert registry.instance_rows() == []
+    assert registry.work_item_rows() == []
 
 
 def test_run_repair_rejects_derivative_selection(tmp_path: Path) -> None:
@@ -1038,7 +1077,7 @@ def test_run_continues_past_unavailable_participant(
     result = json.loads(capsys.readouterr().out)
 
     assert result["participants"] == {"demo": ["01"]}
-    assert result["instances"] == 6
+    assert result["work_items"] == 6
     assert {
         "project": "demo",
         "participant": "01",
@@ -1074,11 +1113,35 @@ def test_run_resume_recreates_only_matching_registered_demand(
 
     assert result["resumed"] == 2
     assert result["participants"] == {"demo": ["01"]}
-    assert result["instances"] == 2
+    assert result["work_items"] == 2
     registry = Registry.for_project("demo", bids_root=bids)
     requests = registry.request_rows()
     assert len(requests) == 2
     assert json.loads(requests[-1]["selectors_json"])["participants"] == ["01"]
+
+
+def test_run_resume_does_not_plan_cartesian_product_of_registered_work(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    first = bids / "demo" / "sub-01"
+    _write(first / "anat" / "sub-01_T1w.nii.gz")
+    _write(first / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(first / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    second = bids / "demo" / "sub-02"
+    _write(second / "anat" / "sub-02_T1w.nii.gz")
+
+    run_main(["-P", "demo", "-p", "01", "-m", "networks", "--no-submit", "--json"])
+    capsys.readouterr()
+    run_main(["-P", "demo", "-p", "02", "-m", "anat", "--no-submit", "--json"])
+    capsys.readouterr()
+
+    run_main(["--resume", "-P", "demo", "--no-submit", "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["unavailable"] == []
+    assert set(result["participants"]["demo"]) == {"01", "02"}
 
 
 def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None:
@@ -1093,7 +1156,7 @@ def test_clean_request_expands_all_matching_runs(tmp_path: Path, capsys) -> None
     run_main(["-p", "20", "-P", "demo", "-m", "clean", "--no-submit", "--json"])
     request = json.loads(capsys.readouterr().out)
     assert request["modules"] == ["clean"]
-    assert request["instances"] == 5  # one anat plus func and clean for both runs
+    assert request["work_items"] == 5  # one anat plus func and clean for both runs
     assert request["concurrency"] == 50
 
 
@@ -1115,7 +1178,7 @@ def test_bare_request_keeps_networks_when_no_task_models_match(
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
     assert request["modules"] == ["dynconn", "networks", "firstlevels"]
-    assert request["instances"] == 12
+    assert request["work_items"] == 12
     assert request["concurrency"] == 50
 
 
@@ -1153,12 +1216,12 @@ def test_run_requests_each_selected_branch_across_projects(
     selected = modules or ("dynconn", "networks", "firstlevels")
     assert result["modules"] == list(selected)
     registry = Registry.for_project("alpha", bids_root=bids)
-    rows = registry.instance_rows()
+    rows = registry.work_item_rows()
     assert {row["project"] for row in rows} == {"alpha", "beta"}
     assert all(row["demanded"] for row in rows)
     for project in ("alpha", "beta"):
         project_rows = [row for row in rows if row["project"] == project]
-        # Shared anatomy and functional instances must not be registered twice.
+        # Shared anatomy and functional work_items must not be registered twice.
         subjects = 2 if "networks" in selected else 1
         for module in ("anat", "func"):
             assert sum(row["module"] == module for row in project_rows) == subjects
@@ -1202,7 +1265,7 @@ def test_participant_selection_spans_every_matching_project(
     assert result["participants"] == {"alpha": ["01"], "beta": ["01"]}
     assert len(result["requests"]) == 2
     assert {row["project"] for row in registry.request_rows()} == {"alpha", "beta"}
-    assert {row["project"] for row in registry.instance_rows()} == {"alpha", "beta"}
+    assert {row["project"] for row in registry.work_item_rows()} == {"alpha", "beta"}
 
 
 def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) -> None:
@@ -1214,15 +1277,15 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
 
     run_main(["-p", "01", "-P", "demo", "-m", "func", "--no-submit", "--json"])
     request = json.loads(capsys.readouterr().out)
-    assert request["instances"] == 2
+    assert request["work_items"] == 2
     assert request["submitted_workers"] == []
 
     status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
-    assert set(report) == {"instances", "errors", "blocked_instances", "bidsification"}
-    assert {row["status"] for row in report["instances"]} == {"Queued"}
+    assert set(report) == {"work_items", "errors", "blocked_work_items", "bidsification"}
+    assert {row["status"] for row in report["work_items"]} == {"Queued"}
     assert report["errors"] == []
-    assert report["blocked_instances"] == []
+    assert report["blocked_work_items"] == []
 
     status_main(
         [
@@ -1239,9 +1302,9 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
         ]
     )
     selected = json.loads(capsys.readouterr().out)
-    assert len(selected["instances"]) == 1
-    assert selected["instances"][0]["module"] == "func"
-    assert selected["instances"][0]["workflows"] == ["main"]
+    assert len(selected["work_items"]) == 1
+    assert selected["work_items"][0]["module"] == "func"
+    assert selected["work_items"][0]["workflows"] == ["main"]
 
     stop_main(
         [
@@ -1256,7 +1319,7 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
     assert "Cancelled" in capsys.readouterr().out
     for mode in ([], ["--update"], []):
         status_main(["-p", "01", "-P", "demo", "--json", *mode])
-        rows = json.loads(capsys.readouterr().out)["instances"]
+        rows = json.loads(capsys.readouterr().out)["work_items"]
         assert {row["status"] for row in rows} == {"Missing", "Stale"}
         assert all(row["reason"] for row in rows)
 
@@ -1318,7 +1381,7 @@ def test_set_ignores_invocation_with_only_unsupported_settings(capsys) -> None:
     assert "unsupported registry setting: future-setting" in captured.err
 
 
-def test_status_reports_blocked_instances_and_their_root_errors(
+def test_status_reports_blocked_work_items_and_their_root_errors(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -1343,7 +1406,7 @@ def test_status_reports_blocked_instances_and_their_root_errors(
 
     registry = Registry.for_project("demo", bids_root=bids)
     registry.register_worker("failed-worker", resource_class="large")
-    claimed = registry.claim_ready_instance("failed-worker", ("large",))
+    claimed = registry.claim_ready_work_item("failed-worker", ("large",))
     assert claimed is not None
     assert claimed.module == "anat"
     registry.finish_attempt(
@@ -1355,13 +1418,13 @@ def test_status_reports_blocked_instances_and_their_root_errors(
 
     status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
-    statuses = {row["module"]: row["status"] for row in report["instances"]}
+    statuses = {row["module"]: row["status"] for row in report["work_items"]}
 
     assert statuses == {"anat": "Error", "func": "Blocked"}
     assert len(report["errors"]) == 1
-    assert report["errors"][0]["blocked_instances"] == ["demo sub-01 func (run=1 task=rest)"]
-    assert len(report["blocked_instances"]) == 1
-    assert report["blocked_instances"][0]["upstream_errors"] == ["demo sub-01 anat"]
+    assert report["errors"][0]["blocked_work_items"] == ["demo sub-01 func/main (run=1 task=rest)"]
+    assert len(report["blocked_work_items"]) == 1
+    assert report["blocked_work_items"][0]["upstream_errors"] == ["demo sub-01 anat/main"]
 
 
 def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
@@ -1404,22 +1467,22 @@ def test_status_default_is_cached_and_update_persists_assessment(
     )
     capsys.readouterr()
     registry = Registry.for_project("demo", bids_root=bids)
-    row = registry.instance_rows()[0]
+    row = registry.work_item_rows()[0]
     with registry.connection(write=True) as db:
         db.execute(
-            "UPDATE instances SET artifact_state='fresh', artifact_reason='Cached success' "
+            "UPDATE work_items SET artifact_state='fresh', artifact_reason='Cached success' "
             "WHERE id=?",
             (row["id"],),
         )
 
     status_main(["-P", "demo", "--json"])
-    cached = json.loads(capsys.readouterr().out)["instances"]
+    cached = json.loads(capsys.readouterr().out)["work_items"]
     assert cached[0]["status"] == "Success"
-    assert registry.instance_rows()[0]["artifact_state"] == "fresh"
+    assert registry.work_item_rows()[0]["artifact_state"] == "fresh"
 
     status_main(["-P", "demo", "--update", "--json"])
     capsys.readouterr()
-    assert registry.instance_rows()[0]["artifact_state"] == "missing"
+    assert registry.work_item_rows()[0]["artifact_state"] == "missing"
 
 
 def test_worker_script_records_memory_tier(tmp_path: Path) -> None:

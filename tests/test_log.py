@@ -8,7 +8,7 @@ from nro.bidsify.store import IngestionStore
 from nro.configuration.store import ConfigStore
 from nro.engine.cli import core_selection
 from nro.orchestration.branch_store import BranchStore
-from nro.orchestration.planner import build_subject_instances
+from nro.orchestration.planner import build_subject_work_items
 from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.scheduler_service import logs as scheduler_logs
 
@@ -29,7 +29,7 @@ def _registry_with_logs(tmp_path: Path) -> tuple[Path, Registry, Path, Path, Pat
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
-    instances = build_subject_instances(
+    work_items = build_subject_work_items(
         project="demo",
         participant="01",
         module="func",
@@ -42,30 +42,30 @@ def _registry_with_logs(tmp_path: Path) -> tuple[Path, Registry, Path, Path, Pat
         registered=registered,
         target_module="func",
         selectors={},
-        instances=instances,
-        terminal_instance_keys=[
-            instance.key for instance in instances if instance.module == "func"
+        work_items=work_items,
+        terminal_work_item_keys=[
+            work_item.key for work_item in work_items if work_item.module == "func"
         ],
         concurrency=2,
         partition=None,
     )
-    rows = {str(row["module"]): row for row in registry.instance_rows()}
+    rows = {str(row["module"]): row for row in registry.work_item_rows()}
     now = utcnow()
-    anat_instance_log = _write(registry.paths.events / "anat-attempt.log", "anat instance\n")
-    func_instance_log = _write(registry.paths.events / "func-attempt.log", "func instance\n")
+    anat_work_item_log = _write(registry.paths.events / "anat-attempt.log", "anat work_item\n")
+    func_work_item_log = _write(registry.paths.events / "func-attempt.log", "func work_item\n")
     anat_worker_log = _write(registry.paths.workers / "slurm-101.log", "anat worker\n")
     func_worker_log = _write(registry.paths.workers / "slurm-202.log", "func worker\n")
     registry.register_worker("anat-worker", resource_class="large", slurm_job_id="101")
     registry.register_worker("func-worker", resource_class="large", slurm_job_id="202")
     with registry.connection(write=True) as db:
         for module, worker, path in (
-            ("anat", "anat-worker", anat_instance_log),
-            ("func", "func-worker", func_instance_log),
+            ("anat", "anat-worker", anat_work_item_log),
+            ("func", "func-worker", func_work_item_log),
         ):
             row = rows[module]
             db.execute(
                 """INSERT INTO attempts(
-                       instance_id, worker_id, state, revision_fingerprint, memory_gb,
+                       work_item_id, worker_id, state, revision_fingerprint, memory_gb,
                        started_at, completed_at, log_path, created_at
                    ) VALUES (?, ?, 'success', ?, 32, ?, ?, ?, ?)""",
                 (
@@ -78,14 +78,14 @@ def _registry_with_logs(tmp_path: Path) -> tuple[Path, Registry, Path, Path, Pat
                     now,
                 ),
             )
-    return bids, registry, anat_instance_log, func_instance_log, anat_worker_log, func_worker_log
+    return bids, registry, anat_work_item_log, func_work_item_log, anat_worker_log, func_worker_log
 
 
-def test_collects_only_workers_that_attempted_matching_instances(tmp_path: Path) -> None:
-    _bids, registry, _anat_instance, _func_instance, anat_worker, func_worker = _registry_with_logs(
-        tmp_path
+def test_collects_only_workers_that_attempted_matching_work_items(tmp_path: Path) -> None:
+    _bids, registry, _anat_work_item, _func_work_item, anat_worker, func_worker = (
+        _registry_with_logs(tmp_path)
     )
-    instance_ids = log_cli._matching_instance_ids(
+    work_item_ids = log_cli._matching_work_item_ids(
         registry,
         projects={"demo"},
         participants=["01"],
@@ -95,21 +95,31 @@ def test_collects_only_workers_that_attempted_matching_instances(tmp_path: Path)
     )
 
     filtered = log_cli.collect_log_paths(
-        registry, instance_ids=instance_ids, instance_level=False, instance_filtered=True
+        registry, work_item_ids=work_item_ids, worker_level=True, work_item_filtered=True
     )
     unfiltered = log_cli.collect_log_paths(
-        registry, instance_ids=set(), instance_level=False, instance_filtered=False
+        registry, work_item_ids=set(), worker_level=True, work_item_filtered=False
     )
 
     assert filtered == [func_worker.resolve()]
     assert set(unfiltered) == {anat_worker.resolve(), func_worker.resolve()}
 
 
-def test_instance_level_collects_attempt_logs_for_matching_instances(tmp_path: Path) -> None:
-    _bids, registry, anat_instance, func_instance, _anat_worker, _func_worker = _registry_with_logs(
-        tmp_path
+def test_work_item_rows_expose_the_readable_configuration_route(tmp_path: Path) -> None:
+    _bids, registry, *_logs = _registry_with_logs(tmp_path)
+    func = next(row for row in registry.work_item_rows() if row["module"] == "func")
+
+    assert json.loads(func["configuration_route_json"]) == [
+        {"config": "main", "module": "anat"},
+        {"config": "main", "module": "func"},
+    ]
+
+
+def test_default_level_collects_attempt_logs_for_matching_work_items(tmp_path: Path) -> None:
+    _bids, registry, anat_work_item, func_work_item, _anat_worker, _func_worker = (
+        _registry_with_logs(tmp_path)
     )
-    instance_ids = log_cli._matching_instance_ids(
+    work_item_ids = log_cli._matching_work_item_ids(
         registry,
         projects={"demo"},
         participants=[],
@@ -119,18 +129,18 @@ def test_instance_level_collects_attempt_logs_for_matching_instances(tmp_path: P
     )
 
     filtered = log_cli.collect_log_paths(
-        registry, instance_ids=instance_ids, instance_level=True, instance_filtered=True
+        registry, work_item_ids=work_item_ids, worker_level=False, work_item_filtered=True
     )
     unfiltered = log_cli.collect_log_paths(
-        registry, instance_ids=set(), instance_level=True, instance_filtered=False
+        registry, work_item_ids=set(), worker_level=False, work_item_filtered=False
     )
 
-    assert filtered == [func_instance.resolve()]
-    assert set(unfiltered) == {anat_instance.resolve(), func_instance.resolve()}
+    assert filtered == [func_work_item.resolve()]
+    assert set(unfiltered) == {anat_work_item.resolve(), func_work_item.resolve()}
 
 
 def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkeypatch) -> None:
-    bids, _registry, _anat_instance, func_instance, _anat_worker, _func_worker = (
+    bids, _registry, _anat_work_item, func_work_item, _anat_worker, _func_worker = (
         _registry_with_logs(tmp_path)
     )
     commands: list[list[str]] = []
@@ -153,11 +163,27 @@ def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkey
             "main",
             "-r",
             "run=1",
-            "-i",
         ]
     )
 
-    assert commands == [["/usr/bin/less", "-R", "--", str(func_instance.resolve())]]
+    assert commands == [["/usr/bin/less", "-R", "--", str(func_work_item.resolve())]]
+
+
+def test_worker_option_opens_matching_worker_logs(tmp_path: Path, monkeypatch) -> None:
+    bids, _registry, _anat_work_item, _func_work_item, _anat_worker, func_worker = (
+        _registry_with_logs(tmp_path)
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(log_cli.shutil, "which", lambda _command: "/usr/bin/less")
+    monkeypatch.setattr(
+        log_cli.subprocess,
+        "run",
+        lambda command, *, check: commands.append(command),
+    )
+
+    log_cli.main(["-P", "demo", "-m", "func", "-i", "func/main", "--worker"])
+
+    assert commands == [["/usr/bin/less", "-R", "--", str(func_worker.resolve())]]
 
 
 def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, monkeypatch) -> None:
@@ -231,7 +257,7 @@ def test_scheduler_resolves_branch_bidsification_logs(tmp_path: Path, monkeypatc
             "workflows": [],
             "selectors": {"ses": ("visit1",)},
         },
-        instance_level=False,
+        worker_level=False,
     )
 
     assert result == {"paths": [str(request_log)]}

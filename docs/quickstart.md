@@ -44,7 +44,8 @@ every setting. In particular:
 - `bids` contains project directories with source BIDS data.
 - `work` contains temporary and resumable processing files.
 - `registry` contains private scheduler state, logs, and source snapshots.
-- `definitions` contains workflows, configurations, models, and event files.
+- `definitions` selects the version-controlled site repository containing
+  protected site settings, workflows, configurations, models, and event files.
 - `images`, `templates`, `workbench`, and `oslom` contain processing resources.
 - `license` must name an existing FreeSurfer license.
 - `runtime` selects Singularity or Apptainer.
@@ -53,7 +54,9 @@ every setting. In particular:
 - `flywheel_server` and `flywheel_project` may select the usual ingestion
   source. Enter `-` to leave either value unset.
 
-The Slurm fields are unused with `--local`. Review the linked QuNex terms before
+The path editor writes durable settings to `site/site.yml` in that repository.
+The small local TOML file is only a generated locator. The Slurm fields are
+unused with `--local`. Review the linked QuNex terms before
 approving downloads. Setup creates an editable `.nro-env`, obtains missing
 resources, checks them, and installs `~/.local/bin/nro`. Repeat the same command
 after correcting any reported failure.
@@ -113,7 +116,7 @@ Inspect progress and logs:
 
 ```bash
 nro status -P example -p 01
-nro log -P example -p 01 -m anat -i
+nro log -P example -p 01 -m anat
 ```
 
 By default, `nro status` quickly reports the registry's saved state. Run

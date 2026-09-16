@@ -53,7 +53,7 @@ class InclusionConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    """Public and private destinations for one module instance."""
+    """Public and private destinations for one module work item."""
 
     directory: Path
     work_directory: Path

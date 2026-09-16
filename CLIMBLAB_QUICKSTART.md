@@ -51,7 +51,9 @@ nro paths show
 The first path reported by `type -a nro` should be
 `~/.local/bin/nro`. `nro doctor` should report `OK` for every required check.
 The paths command should show the shared CLIMBLAB data, work, definitions,
-TemplateFlow, and registry locations.
+TemplateFlow, and registry locations. Durable site settings live in the
+version-controlled `nro-definitions/site/site.yml`; the checkout's site TOML is
+only a generated locator.
 
 If another `nro` command appears first, an activated environment, shell alias,
 or shell function may be taking precedence. Deactivate the environment or
@@ -107,10 +109,10 @@ Check status or inspect logs for the selected work:
 
 ```bash
 nro status -P nptl -p t20
-nro log -P nptl -p t20 -m func -i
+nro log -P nptl -p t20 -m func
 ```
 
-The `-i` log view groups output by processing instance. Status reports blocked
+Log output is grouped by processing work item. Status reports blocked
 work and shows which upstream error caused the block.
 
 To withdraw your matching request without deleting completed derivatives:

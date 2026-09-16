@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from typing import Any, Sequence
 
 from nro.orchestration.contracts import ExecutionEnvelope
-from nro.orchestration.scheduler_client import SchedulerEndpoint, exchange
+from nro.orchestration.dependency_state import AttemptInvalidated
+from nro.orchestration.scheduler_client import SchedulerEndpoint, SchedulerError, exchange
 from nro.orchestration.source_snapshots import SourceSnapshot
 
 
@@ -92,7 +93,7 @@ class WorkerSchedulerClient:
         """Ask the controller to recover work owned by confirmed-dead workers."""
         return int(self._call("recover_orphans"))
 
-    def claim_ready_instance(
+    def claim_ready_work_item(
         self, worker_id: str, resource_classes: Sequence[str], *, memory_gb: int = 32
     ) -> ExecutionEnvelope | None:
         """Claim one compatible derivative assignment, if any is ready."""
@@ -130,27 +131,47 @@ class WorkerSchedulerClient:
         value = self._call("record_oom", attempt_id=attempt_id, message=message)
         return None if value is None else int(value)
 
-    def cancel_attempts_downstream_of_failure(self, instance_id: int) -> list[dict]:
-        """Cancel active consumers of a failed instance."""
-        return self._call("cancel_failed_descendants", instance_id=instance_id)
+    def cancel_attempts_downstream_of_failure(self, work_item_id: int) -> list[dict]:
+        """Cancel active consumers of a failed work item."""
+        return self._call("cancel_failed_descendants", work_item_id=work_item_id)
 
-    def runner_graph_signature(self, instance_id: int) -> str:
-        """Return the current transitive graph signature for an instance."""
-        return str(self._call("runner_graph_signature", instance_id=instance_id, durable=False))
+    def runner_graph_signature(self, work_item_id: int) -> str:
+        """Return the current transitive graph signature for an work item."""
+        return str(self._call("runner_graph_signature", work_item_id=work_item_id, durable=False))
 
     def attempt_summary(self, attempt_id: int) -> str:
         """Return a concise summary of an attempt's saved state."""
         return str(self._call("attempt_summary", attempt_id=attempt_id, durable=False))
 
     def record_completion(
-        self, *, instance_id: int, attempt_id: int, outputs: Sequence[Path]
+        self, *, work_item_id: int, attempt_id: int, outputs: Sequence[Path]
     ) -> dict:
         """Validate outputs and publish the completion manifest."""
-        return self._call(
-            "record_completion",
-            instance_id=instance_id,
-            attempt_id=attempt_id,
-            outputs=[str(path) for path in outputs],
+        try:
+            return self._call(
+                "record_completion",
+                work_item_id=work_item_id,
+                attempt_id=attempt_id,
+                outputs=[str(path) for path in outputs],
+            )
+        except SchedulerError as error:
+            if error.error_type == "AttemptInvalidated":
+                raise AttemptInvalidated(str(error)) from error
+            raise
+
+    def outputs_visible(self, outputs: Sequence[Path]) -> bool:
+        """Return whether the scheduler host can see every published output."""
+        return bool(
+            exchange(
+                self.endpoint,
+                {
+                    "operation": "output_visibility",
+                    "paths": [str(path) for path in outputs],
+                },
+                timeout=60.0,
+                require_service=True,
+                durable=False,
+            )
         )
 
     def refresh_scheduler_state(self) -> int:

@@ -50,28 +50,28 @@ def update(
                         (now, *requests),
                     )
                     db.execute(
-                        f"UPDATE request_instances SET demand_state='cancelled' "
+                        f"UPDATE request_work_items SET demand_state='cancelled' "
                         f"WHERE request_id IN ({placeholders})",
                         requests,
                     )
-                instances = tuple(
+                work_items = tuple(
                     row[0]
                     for row in db.execute(
-                        "SELECT instance_id FROM branch_instances WHERE registry_id=?", (owner,)
+                        "SELECT work_item_id FROM branch_work_items WHERE registry_id=?", (owner,)
                     )
                 )
-                if instances:
-                    placeholders = ",".join("?" for _ in instances)
+                if work_items:
+                    placeholders = ",".join("?" for _ in work_items)
                     result = db.execute(
                         f"UPDATE attempts SET state='cancel_requested',error_type='BranchRetired',"
                         f"error_message='Owning branch retired',completed_at=NULL "
-                        f"WHERE instance_id IN ({placeholders}) AND state IN ('queued','running')",
-                        instances,
+                        f"WHERE work_item_id IN ({placeholders}) AND state IN ('queued','running')",
+                        work_items,
                     )
                     own_cancelled = result.rowcount
                     dependency_state.invalidate(
                         db,
-                        instances,
+                        work_items,
                         now=now,
                         reason=f"Upstream branch {branch} retired",
                     )

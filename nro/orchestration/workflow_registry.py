@@ -27,7 +27,7 @@ CREATE TABLE workflow_revisions (
     UNIQUE(workflow_id, definition_fingerprint)
 );
 
-CREATE TABLE configuration_lineages (
+CREATE TABLE module_lineages (
     id INTEGER PRIMARY KEY,
     configuration_class TEXT NOT NULL,
     config_id TEXT NOT NULL,
@@ -39,17 +39,17 @@ CREATE TABLE configuration_lineages (
     UNIQUE(configuration_class, lineage_fingerprint)
 );
 
-CREATE TABLE configuration_lineage_dependencies (
-    configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
-    upstream_configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
+CREATE TABLE module_lineage_dependencies (
+    module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
+    upstream_module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
     role TEXT NOT NULL,
-    PRIMARY KEY(configuration_lineage_id, upstream_configuration_lineage_id, role)
+    PRIMARY KEY(module_lineage_id, upstream_module_lineage_id, role)
 );
 
 CREATE TABLE workflow_bindings (
     workflow_revision_id INTEGER NOT NULL REFERENCES workflow_revisions(id),
     configuration_class TEXT NOT NULL,
-    configuration_lineage_id INTEGER NOT NULL REFERENCES configuration_lineages(id),
+    module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
     PRIMARY KEY(workflow_revision_id, configuration_class)
 );
 
@@ -58,7 +58,7 @@ CREATE TABLE workflow_bindings (
 
 @dataclass(frozen=True)
 class RegisteredWorkflow:
-    """Registered revision, configuration lineages, and assigned output directories."""
+    """Registered revision, module lineages, and assigned output directories."""
 
     workflow_id: str
     revision: int
@@ -91,7 +91,7 @@ CONFIGURATION_FILE_SUFFIX = {
 
 
 class WorkflowRegistry:
-    """Register scientific configuration lineages through a supplied database connection.
+    """Register scientific module lineages through a supplied database connection.
 
     Hosts supply connection(write=...), and paths.workflows for execution snapshots.
     This component creates no worker pool and does not submit demand.
@@ -210,17 +210,17 @@ class WorkflowRegistry:
 
             existing_bindings = db.execute(
                 """
-                SELECT wb.configuration_class, wb.configuration_lineage_id,
+                SELECT wb.configuration_class, wb.module_lineage_id,
                        ci.lineage_fingerprint, ci.directory_label
                 FROM workflow_bindings wb
-                JOIN configuration_lineages ci ON ci.id=wb.configuration_lineage_id
+                JOIN module_lineages ci ON ci.id=wb.module_lineage_id
                 WHERE wb.workflow_revision_id=?
                 """,
                 (revision_id,),
             ).fetchall()
             if existing_bindings:
                 lineages = {
-                    str(item["configuration_class"]): int(item["configuration_lineage_id"])
+                    str(item["configuration_class"]): int(item["module_lineage_id"])
                     for item in existing_bindings
                 }
                 directories = {
@@ -239,7 +239,7 @@ class WorkflowRegistry:
                 for configuration_class, lineage_id in lineages.items():
                     resolved = workflow.configurations[configuration_class]
                     db.execute(
-                        """UPDATE configuration_lineages
+                        """UPDATE module_lineages
                            SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
                         (
                             resolved.fingerprint,
@@ -258,7 +258,7 @@ class WorkflowRegistry:
                     while True:
                         candidate = config_id if number is None else f"{config_id}-{number}"
                         occupied = db.execute(
-                            """SELECT 1 FROM configuration_lineages
+                            """SELECT 1 FROM module_lineages
                                WHERE configuration_class=? AND directory_label=? LIMIT 1""",
                             (module, candidate),
                         ).fetchone()
@@ -287,14 +287,14 @@ class WorkflowRegistry:
                         }
                     )
                     existing_lineage = db.execute(
-                        "SELECT id, directory_label FROM configuration_lineages WHERE configuration_class=? AND lineage_fingerprint=?",
+                        "SELECT id, directory_label FROM module_lineages WHERE configuration_class=? AND lineage_fingerprint=?",
                         (configuration_class, lineage),
                     ).fetchone()
                     if existing_lineage:
                         lineage_id = int(existing_lineage["id"])
                         directory = str(existing_lineage["directory_label"])
                         db.execute(
-                            """UPDATE configuration_lineages
+                            """UPDATE module_lineages
                                SET config_fingerprint=?, resolved_yaml=? WHERE id=?""",
                             (
                                 resolved.fingerprint,
@@ -306,7 +306,7 @@ class WorkflowRegistry:
                         directory = allocate_directory(configuration_class, resolved.config_id)
                         cursor = db.execute(
                             """
-                            INSERT INTO configuration_lineages(
+                            INSERT INTO module_lineages(
                                 configuration_class, config_id, config_fingerprint, lineage_fingerprint,
                                 resolved_yaml, directory_label, created_at
                             ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -324,8 +324,8 @@ class WorkflowRegistry:
                         lineage_id = int(cursor.lastrowid)
                         if upstream_id is not None:
                             db.execute(
-                                "INSERT INTO configuration_lineage_dependencies("
-                                "configuration_lineage_id, upstream_configuration_lineage_id, role"
+                                "INSERT INTO module_lineage_dependencies("
+                                "module_lineage_id, upstream_module_lineage_id, role"
                                 ") VALUES (?, ?, ?)",
                                 (lineage_id, upstream_id, upstream_class),
                             )
@@ -333,7 +333,7 @@ class WorkflowRegistry:
                     directories[configuration_class] = directory
                     lineage_fingerprints[configuration_class] = lineage
                     db.execute(
-                        "INSERT INTO workflow_bindings(workflow_revision_id, configuration_class, configuration_lineage_id) VALUES (?, ?, ?)",
+                        "INSERT INTO workflow_bindings(workflow_revision_id, configuration_class, module_lineage_id) VALUES (?, ?, ?)",
                         (revision_id, configuration_class, lineage_id),
                     )
 

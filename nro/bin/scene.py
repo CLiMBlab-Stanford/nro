@@ -11,7 +11,7 @@ from pathlib import Path
 
 from nro.configuration.paths import WB_COMMAND_PATH
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
-from nro.engine.cli import add_core_selection_arguments, core_selection
+from nro.engine.cli import add_core_selection_arguments, core_selection, matches_module_lineage
 from nro.engine.scenes import (
     SceneSource,
     build_scene_bundle,
@@ -82,12 +82,16 @@ def _row_matches(row: dict, selection, *, match_module: bool = True) -> bool:
         return False
     if match_module and selection.modules and row.get("module") not in selection.modules:
         return False
+    if not matches_module_lineage(
+        str(row.get("module")), str(row.get("directory_label")), selection.lineages
+    ):
+        return False
     if selection.workflows and not set(selection.workflows).intersection(
         _values(row.get("workflow_ids"))
     ):
         return False
     entities = _mapping(row.get("entities_json"))
-    for key, accepted in selection.instance_entities.items():
+    for key, accepted in selection.work_item_entities.items():
         if key in entities and accepted is not None and entities[key] not in accepted:
             return False
     return True
@@ -210,6 +214,7 @@ def scene_id(participant: str, space: str, smoothing: int, group: dict[str, str]
     qualifiers = {
         "modules": selection.modules,
         "workflows": selection.workflows,
+        "lineages": selection.lineages,
         "models": selection.models,
         "model_sets": selection.model_sets,
     }

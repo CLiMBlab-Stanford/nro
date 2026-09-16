@@ -21,7 +21,7 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
         "-W",
         "--workers",
         action="store_true",
-        help="Shut down the current user's lab-wide worker pool without cancelling instance demand",
+        help="Shut down the current user's lab-wide worker pool without cancelling work item demand",
     )
     parser.add_argument(
         "-f",
@@ -55,8 +55,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
 
     bids_root = site.bids_root()
     modules = list(selection.modules)
-    selectors = selection.instance_entities
-    total = {"instances": 0, "requests": 0, "attempts": 0}
+    selectors = selection.work_item_entities
+    total = {"work_items": 0, "requests": 0, "attempts": 0}
     from nro.orchestration.scheduler_implementation import implementation_path
 
     values = site.settings()[0]
@@ -77,6 +77,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
                     participants=selection.participants,
                     modules=modules,
                     workflows=selection.workflows,
+                    lineages=selection.lineages,
                     selectors=selectors,
                     include_dependents=not args.only,
                     force=args.force,
@@ -85,7 +86,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             for key, value in result.items():
                 total[key] += value
         print(
-            f"Cancelled {total['instances']} instance demand(s) across {total['requests']} request(s); "
+            f"Cancelled {total['work_items']} work-item demand(s) across {total['requests']} request(s); "
             f"signalled {total['attempts']} running attempt(s)."
         )
         return
@@ -95,6 +96,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             or selection.participants
             or selection.modules
             or selection.workflows
+            or selection.lineages
             or selection.runs
             or selection.spaces
             or selection.smoothing
@@ -124,7 +126,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             stopped_jobs, failures = cancel_worker_allocations(registry, shutdown)
         print(
             f"Requested shutdown of {shutdown['workers']} worker(s); interrupted "
-            f"{shutdown['attempts']} active instance attempt(s); cancelled "
+            f"{shutdown['attempts']} active work-item attempt(s); cancelled "
             f"{shutdown['submission_count']} pending/active "
             f"worker submission(s), including {stopped_jobs} Slurm job(s)."
         )
@@ -141,6 +143,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             participants=selection.participants,
             modules=modules,
             workflows=selection.workflows,
+            lineages=selection.lineages,
             selectors=selectors,
             include_dependents=not args.only,
             force=args.force,
@@ -153,7 +156,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             submission_id, state="cancelled" if result.returncode == 0 else "error"
         )
     print(
-        f"{'Force-cancelled' if args.force else 'Cancelled'} {total['instances']} instance demand(s) "
+        f"{'Force-cancelled' if args.force else 'Cancelled'} {total['work_items']} work-item demand(s) "
         f"across {total['requests']} request(s); "
         f"signalled {total['attempts']} running attempt(s)."
     )

@@ -10,13 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.site import settings
+from nro.configuration.site import protected_site_fingerprint, settings
 from nro.configuration.store import ConfigStore
 from nro.orchestration import scheduler_client
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.compiled_request import encode_spec, export_workflow
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.execution_pins import capture_site
@@ -95,14 +95,14 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         "feature", Path(values["bids"]), Path(values["work"]), Path(values["development"])
     )
     output = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
-    spec = InstanceSpec.create(
+    spec = WorkItemSpec.create(
         key="extension",
         module="probe_extension",
         project="demo",
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint="science",
         directory_label="main",
         runtime_config=science.runtime_config_path(registered, "anat"),
@@ -116,8 +116,8 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         output_format="probe-v1",
         processing={},
     )
-    science.record_graph((spec,), expected_revisions={spec.key: None})
-    contract = science.instances()[0].contract
+    science.record_work_item_graph((spec,), expected_revisions={spec.key: None})
+    contract = science.work_items()[0].contract
     source = SourceStore(tmp_path / "source").capture(feature)
     payload = dict(
         protocol=1,
@@ -133,6 +133,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         workflow=export_workflow(science, registered),
         source=dict(root=str(source.root), digest=source.digest),
         site=str(site),
+        site_fingerprint=protected_site_fingerprint(Path(values["definitions"])),
         python=sys.executable,
         selectors={},
         concurrency=1,
@@ -192,7 +193,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         text=True,
         capture_output=True,
     )
-    assert json.loads(result.stdout)["instances"][0]["status"] == "Success"
+    assert json.loads(result.stdout)["work_items"][0]["status"] == "Success"
     output.parent.mkdir(parents=True)
     output.write_text("main result")
     command = [sys.executable, "-m", "nro.bin.purge", "--force", "--json"]
@@ -204,7 +205,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         text=True,
         capture_output=True,
     )
-    assert json.loads(result.stdout)["instances"] == 1
+    assert json.loads(result.stdout)["work_items"] == 1
     assert output.read_text() == "main result"
     assert not (
         paths.output_project("demo") / output.relative_to(paths.source_project("demo"))
@@ -221,7 +222,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         capture_output=True,
     )
     assert json.loads(result.stdout)["repaired"]
-    assert science.instances() == ()
+    assert science.work_items() == ()
     assert (science.root / "registry-before-repair.sqlite3").is_file()
     from nro.bidsify.config import load_config
     from nro.bidsify.store import IngestionStore
@@ -242,6 +243,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         source_root=str(ingestion_source.root),
         source_digest=ingestion_source.digest,
         site=str(site),
+        site_fingerprint=protected_site_fingerprint(Path(values["definitions"])),
         python=sys.executable,
         release=None,
         command_prefix=list(

@@ -11,6 +11,7 @@ ANATOMICAL_MANIFEST_FIELDS = {
     "fs_subject": "string",
     "fsaverage_template": "string",
     "selection_strategy": "string",
+    "gradient_unwarping": "mapping",
     "inputs": "mapping",
     "inputs.t1w": "string_list",
     "inputs.t2w": "string_list",

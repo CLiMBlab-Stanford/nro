@@ -22,6 +22,11 @@ import pandas as pd
 from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import replace_bids_entity_token
+from nro.engine.container import (
+    ContainerSettings,
+    add_container_arguments,
+    build_container,
+)
 from nro.engine.images import (
     sidecar_json_path,
 )
@@ -36,7 +41,6 @@ from nro.engine.paths import (
     functional_manifest_path,
     is_bids_session_id,
     project_data_root,
-    resolve_cwd_path,
 )
 from nro.engine.targets import add_smoothing_entity
 from nro.modules.clean.contract import (
@@ -45,11 +49,7 @@ from nro.modules.clean.contract import (
     validate_clean_sidecar,
 )
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.runner import (
-    ContainerSpec,
-    Runner,
-    write_completion_breadcrumb,
-)
+from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
 
@@ -66,7 +66,6 @@ from .cleaning import (
     _space_name,
     _volume_gm_mask_path,
     _write_volume_gm_mask,
-    next_step,
 )
 
 LOG = logging.getLogger("clean")
@@ -135,19 +134,9 @@ def build_module(
         type=float,
         default=None if cfg.high_pass is None else float(cfg.high_pass),
     )
-    ap.add_argument("--force", action="store_true", default=bool(cfg.force))
+    ap.add_argument("--overwrite", action="store_true", default=bool(cfg.overwrite))
     ap.add_argument("--verbose", action="store_true", default=bool(cfg.verbose))
-    ap.add_argument("--container", type=Path, default=Path(str(cfg.container)))
-    ap.add_argument("--no-container", action="store_true", default=bool(cfg.no_container))
-    ap.add_argument("--container-engine", default=str(cfg.container_engine))
-    ap.add_argument(
-        "--container-no-cleanenv",
-        action="store_true",
-        default=not bool(cfg.container_cleanenv),
-    )
-    ap.add_argument("--container-bind", action="append", default=list(cfg.container_bind))
-    ap.add_argument("--container-home", type=Path, default=cfg.container_home)
-    ap.add_argument("--container-inner-setup", default=str(cfg.container_inner_setup))
+    add_container_arguments(ap, cfg.container)
     args = ap.parse_args(argv)
     if execution_context is not None and execution_context.project != args.project:
         raise ValueError("Cleaning project differs from its execution context")
@@ -400,31 +389,17 @@ def build_module(
         "configuration_fingerprint": selected_configuration_fingerprint(),
     }
 
-    container_home = (
-        resolve_cwd_path(args.container_home)
-        if args.container_home is not None
-        else work_dir / SETTINGS.common.qunex_home_dirname
+    container = build_container(
+        ContainerSettings.from_args(args),
+        work_directory=work_dir,
+        execution_context=execution_context,
     )
-    if execution_context is not None and container_home is not None:
-        container_home = execution_context.output_path(container_home, private=True)
-    container = (
-        None
-        if args.no_container
-        else ContainerSpec(
-            image=Path(resolve_cwd_path(args.container) or args.container),
-            engine=str(args.container_engine),
-            cleanenv=not bool(args.container_no_cleanenv),
-            extra_binds=tuple(str(value) for value in (args.container_bind or [])),
-            home_dir=container_home,
-            inner_setup=str(args.container_inner_setup or ""),
-        )
-    )
+    container_home = None if container is None else container.home_dir
     runner = Runner(
         module_name="Cleaning Module",
         container=container,
         binds=(),
         logger=LOG,
-        next_step=next_step,
         execution_context=execution_context,
     )
     initialized = work_dir / "initialized.complete"
@@ -460,7 +435,7 @@ def build_module(
             name="Write Cleaning Configuration",
             outputs=(configuration_snapshot,),
             inputs=(initialized,),
-            force=bool(args.force),
+            force=bool(args.overwrite),
             action=lambda: write_json(configuration_snapshot, configuration),
             validate=validate_configuration,
         )
@@ -512,7 +487,7 @@ def build_module(
                     initialized,
                     *((events_path,) if events_available else ()),
                 ),
-                force=bool(args.force),
+                force=bool(args.overwrite),
                 action=prepare_confounds,
             )
         )
@@ -653,7 +628,7 @@ def build_module(
                             name=f"Prepare Gray Matter Mask: {_space_name(volume)}",
                             outputs=(gm_mask,),
                             inputs=(gm_source, volume, initialized),
-                            force=bool(args.force),
+                            force=bool(args.overwrite),
                             action=lambda source=gm_source, target=volume, output=gm_mask: (
                                 _write_volume_gm_mask(
                                     source_mask=source,
@@ -692,7 +667,7 @@ def build_module(
                             name=f"Smooth Volume: {_space_name(volume)}",
                             outputs=(clean_input,),
                             inputs=(volume, gm_mask),
-                            force=bool(args.force),
+                            force=bool(args.overwrite),
                             prepare=lambda path=clean_input: path.parent.mkdir(
                                 parents=True, exist_ok=True
                             ),
@@ -712,7 +687,7 @@ def build_module(
                             quality_path,
                         ),
                         inputs=(clean_input, gm_mask, *projection_inputs),
-                        force=bool(args.force),
+                        force=bool(args.overwrite),
                         action=lambda source=clean_input, output=out_path, mask_path=gm_mask, quality=quality_path: (
                             _clean_volume_data(
                                 in_img=source,
@@ -739,7 +714,7 @@ def build_module(
                             *projection_inputs,
                             *((events_path,) if events_available else ()),
                         ),
-                        force=bool(args.force),
+                        force=bool(args.overwrite),
                         action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask, quality=quality_path: (
                             write_json(
                                 path,
@@ -799,7 +774,7 @@ def build_module(
                                 name=f"Smooth Surface: {_space_name(surface)}",
                                 outputs=(clean_input,),
                                 inputs=(surface, geometry),
-                                force=bool(args.force),
+                                force=bool(args.overwrite),
                                 prepare=lambda path=clean_input: path.parent.mkdir(
                                     parents=True, exist_ok=True
                                 ),
@@ -824,7 +799,7 @@ def build_module(
                                 quality_path,
                             ),
                             inputs=(clean_input, *projection_inputs),
-                            force=bool(args.force),
+                            force=bool(args.overwrite),
                             action=lambda source=clean_input, output=out_path, scans=counts[surface], quality=quality_path: (
                                 _clean_surface_data(
                                     in_img=source,
@@ -851,7 +826,7 @@ def build_module(
                                 *projection_inputs,
                                 *((events_path,) if events_available else ()),
                             ),
-                            force=bool(args.force),
+                            force=bool(args.overwrite),
                             action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc, quality=quality_path: (
                                 write_json(
                                     path,
@@ -901,7 +876,7 @@ def build_module(
                     selected_confounds_json,
                     outlier_confounds_path,
                 ),
-                force=bool(args.force),
+                force=bool(args.overwrite),
                 action=finalize_confounds,
             )
         )
@@ -999,7 +974,7 @@ def build_module(
                 name="Write Cleaning Publication Manifest",
                 outputs=(publication_manifest,),
                 inputs=tuple(expected_outputs) + tuple(source_inputs),
-                force=bool(args.force),
+                force=bool(args.overwrite),
                 action=publish_clean_manifest,
                 validate=validate_publication,
                 completion_boundary=True,

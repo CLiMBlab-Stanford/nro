@@ -159,7 +159,7 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
             None
             if db is None
             else db.execute(
-                "SELECT 1 FROM attempts a JOIN instances i ON i.id=a.instance_id WHERE i.project=? AND a.state IN ('queued','running','cancel_requested') LIMIT 1",
+                "SELECT 1 FROM attempts a JOIN work_items i ON i.id=a.work_item_id WHERE i.project=? AND a.state IN ('queued','running','cancel_requested') LIMIT 1",
                 (record["project"],),
             ).fetchone()
         )

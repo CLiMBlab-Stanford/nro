@@ -47,7 +47,7 @@ methods/software
 :caption: Development
 
 branching-tutorial
-instance-lifecycle
+work-item-lifecycle
 orchestration-design
 api
 development

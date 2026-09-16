@@ -203,7 +203,7 @@ def test_worker_import_does_not_load_scientific_modules():
     code = (
         "import sys; import nro.orchestration.worker; "
         'prefixes=tuple("nro.modules."+n+"." for n in '
-        '("anat","func","clean","dynconn","microparcellation","networks"))+("nro.modules.firstlevels.",); '
+        '("anat","func","clean","dynconn","microparcellation","networks","firstlevels")); '
         "assert not any(m.startswith(prefixes) for m in sys.modules)"
     )
     env = {key: value for key, value in os.environ.items() if key != "NRO_SITE_CONFIG"}

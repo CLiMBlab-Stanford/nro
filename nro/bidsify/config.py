@@ -1,12 +1,16 @@
-"""Validated ingestion profiles without stored credentials."""
+"""Combine protected ingestion sources with branchable conversion profiles."""
 
 import re
 from copy import deepcopy
 from pathlib import Path
 
 from nro.configuration.parsing import parse_mapping
-from nro.configuration.paths import WORK_PATH
-from nro.configuration.site import definitions_root
+from nro.configuration.site import (
+    definitions_root,
+    read_site_definition,
+    settings,
+    site_definition_path,
+)
 
 
 def identifier(value: str) -> str:
@@ -23,7 +27,9 @@ def bids_label(value: str) -> str:
     return value
 
 
-def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
+def load_config(
+    path: Path | None = None, *, root: Path | None = None, site_root: Path | None = None
+) -> dict:
     """Validate an ingestion profile and resolve runtime paths from the selected store.
 
     An explicit root supports validating a store before selecting it. Empty
@@ -33,7 +39,6 @@ def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
     source = path or root / "bidsify/main.yml"
     value = parse_mapping(source.read_text(), source=str(source))
     expected = {
-        "servers",
         "staging",
         "dcm2niix",
         "synthstrip",
@@ -43,22 +48,37 @@ def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
         "hours",
         "concurrency",
         "protocols",
-        "event_rules",
-        "session_rules",
     }
-    optional = {"project_sources", "scanplans"}
+    optional = {"scanplans"}
     if not expected <= set(value) or set(value) - expected - optional:
         raise ValueError(
             f"Bidsification configuration requires: {sorted(expected)}; optional: {sorted(optional)}"
         )
     value = deepcopy(value)
-    value.setdefault("project_sources", {})
-    value.setdefault(
-        "scanplans",
-        {"location": None, "parser": None, "credential_env": None},
+    if site_definition_path(root).is_file():
+        protected_root = root
+    elif site_root is not None:
+        protected_root = Path(site_root)
+    else:
+        protected_root = Path(settings()[0]["definitions"])
+    site_settings, site = read_site_definition(protected_root)
+    value.update(
+        servers=deepcopy(site["servers"]),
+        project_sources=deepcopy(site["project_sources"]),
+        session_rules=deepcopy(site["session_rules"]),
+        event_rules=deepcopy(site["event_rules"]),
     )
+    scanplan_policy = deepcopy(site["scanplans"])
+    profile_scanplans = value.setdefault("scanplans", {"parser": None})
+    if not isinstance(profile_scanplans, dict) or set(profile_scanplans) != {"parser"}:
+        raise ValueError("bidsify profile scanplans requires only parser")
+    value["scanplans"] = {**scanplan_policy, **profile_scanplans}
     value["event_store"] = str(root / "events")
-    value["staging"] = str(WORK_PATH / "bidsify") if value["staging"] is None else value["staging"]
+    value["staging"] = (
+        str(Path(site_settings["work"]) / "bidsify")
+        if value["staging"] is None
+        else value["staging"]
+    )
     if not Path(value["staging"]).is_absolute():
         raise ValueError("staging must be an absolute shared path")
     for key in ("memory_gb", "cpus", "hours", "concurrency"):
@@ -99,12 +119,20 @@ def load_config(path: Path | None = None, *, root: Path | None = None) -> dict:
         raise ValueError("scanplans.credential_env must name an environment variable or be null")
     for key in ("dcm2niix", "synthstrip", "validator"):
         if key != "validator" and value[key] is None:
-            from nro.configuration.site import settings
-
-            site, _ = settings()
+            resolved_site = dict(site_settings)
+            images = Path(resolved_site["images"])
+            resolved_site.setdefault("qunex", str(images / "qunex_suite-1.5.1.sif"))
+            resolved_site.setdefault("synthstrip", str(images / "synthstrip_1.7.sif"))
             operation = "exec" if key == "dcm2niix" else "run"
-            image = site["qunex" if key == "dcm2niix" else "synthstrip"]
-            value[key] = [site["runtime"], operation, "--cleanenv", "--bind", "{staging}", image]
+            image = resolved_site["qunex" if key == "dcm2niix" else "synthstrip"]
+            value[key] = [
+                resolved_site["runtime"],
+                operation,
+                "--cleanenv",
+                "--bind",
+                "{staging}",
+                image,
+            ]
             if key == "dcm2niix":
                 value[key].append("dcm2niix")
         if (

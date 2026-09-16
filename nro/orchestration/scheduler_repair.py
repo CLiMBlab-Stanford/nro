@@ -50,7 +50,7 @@ def _rebuild(registry) -> dict:
         repaired=True,
         registry=str(registry.paths.database),
         backup=str(backup),
-        instances=found.instances,
+        work_items=found.work_items,
         unavailable=list(found.unavailable),
         schema=SCHEMA_VERSION,
         scientific=scientific,
@@ -93,8 +93,8 @@ def repair(registry, *, checkout: Path, confirm, allow_release_transition: bool 
     """Stop the whole pool and rebuild shared and incompatible scientific state.
 
     Requests and attempt history are removed from active state. Backups retain
-    replaced databases and private certificates. Public artifacts, instance
-    contracts, and contract revisions remain in place.
+    replaced databases and private certificates. Public artifacts remain in
+    place and current work-item contracts are rediscovered or registered on demand.
     """
     checkout = checkout.resolve()
     if checkout != CHECKOUT:

@@ -40,6 +40,22 @@ def _disjoint(left: Path, right: Path) -> bool:
     return not (left.is_relative_to(right) or right.is_relative_to(left))
 
 
+def require_protected_site(shared: Path, selected: Path) -> None:
+    """Reject a branch store that attempts to define protected site settings."""
+    from nro.configuration.site import site_definition_path
+
+    # Installation migrates the authoritative store before declaring the new
+    # layout active. This guard lets that maintenance operation begin from the
+    # previous layout without weakening enforcement afterward.
+    if not site_definition_path(shared).is_file():
+        return
+    if site_definition_path(selected).exists():
+        raise ValueError(
+            "Development definitions cannot contain site/site.yml; site settings are "
+            "inherited from the shared definitions repository"
+        )
+
+
 def selected_definitions(control: Path, installation: dict, shared: Path) -> Path | None:
     """Read a branch's explicit selection after checking its checkout binding.
 
@@ -62,6 +78,8 @@ def selected_definitions(control: Path, installation: dict, shared: Path) -> Pat
     selected = read_selection(control, name, record["registry_id"])
     if selected is not None and not _disjoint(selected, shared.resolve()):
         raise ValueError("Development definitions must not overlap the shared definitions store")
+    if selected is not None:
+        require_protected_site(shared.resolve(), selected)
     return selected
 
 
@@ -106,7 +124,8 @@ def select_definitions(store, checkout: Path, shared: Path, destination: Path | 
             return shared.resolve()
         destination = destination.expanduser().absolute()
         require_private_store(store.control, shared, destination, owner=name)
-        validate_store(destination)
+        validate_store(destination, inherited_site=shared)
+        require_protected_site(shared.resolve(), destination)
         atomic_write_json(
             path,
             {"registry_id": record.registry_id, "definitions": str(destination)},

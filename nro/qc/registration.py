@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import re
 import shutil
 from pathlib import Path
@@ -15,6 +14,7 @@ from nibabel.processing import resample_from_to
 
 from nro.configuration.paths import BIDS_PATH
 from nro.configuration.runtime import load_runtime_configuration
+from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import anat_subject_dir, module_derivatives_root
 from nro.orchestration.runtime import resolve_workflow_runtime
 
@@ -165,10 +165,10 @@ def _write_spec(
         '   <DataFile Structure="Invalid" DataFileType="VOLUME" Selected="true">'
         f"\n      {volume.name}\n   </DataFile>"
     )
-    path.write_text(
+    atomic_write_text(
+        path,
         '<?xml version="1.0" encoding="UTF-8"?>\n<CaretSpecFile Version="1.0">\n'
         "   <MetaData>\n   </MetaData>\n" + "\n".join(entries) + "\n</CaretSpecFile>\n",
-        encoding="utf-8",
     )
 
 
@@ -206,7 +206,7 @@ def _write_scene(
     # The template's preview depicts its original example subject, not this audit.
     text = re.sub(r'<Image Encoding="Base64" Format="png">.*?</Image>', "", text, flags=re.DOTALL)
     text = text.replace("New Scene 1", "Functional registration audit")
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
 
 
 def create_registration_audit(
@@ -309,7 +309,7 @@ def create_registration_audit(
             f"{hemi}.{surface}": path.name for (hemi, surface), path in packaged_surfaces.items()
         },
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(metadata_path, metadata)
     return {
         "scene": scene_path,
         "spec": spec_path,
@@ -394,14 +394,14 @@ def main(
         functionals = [row for row in selected if row["module"] == "func"]
         if len(anatomicals) != 1:
             raise SystemExit(
-                "Registration QC requires one registered anatomical instance for the selected workflow"
+                "Registration QC requires one registered anatomical work item for the selected workflow"
             )
         paths = BranchPaths(name, *(Path(values[key]) for key in ("bids", "work", "development")))
         anatomical = anatomicals[0]
         subject_dir = Path(anatomical["output_root"]).parent
         if not functionals:
             raise SystemExit(
-                "Registration QC requires registered functional instances for the selected workflow"
+                "Registration QC requires registered functional work items for the selected workflow"
             )
         derivative_root = (
             paths.output_project(args.project)

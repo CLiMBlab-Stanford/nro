@@ -6,7 +6,6 @@ import os
 import re
 import shlex
 from collections.abc import Iterable
-from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -45,11 +44,6 @@ def thread_environment(cpus: int | None = None) -> dict[str, str]:
     """Limit common numerical libraries to the worker's CPU allocation."""
     thread_count = str(allocated_cpus() if cpus is None else max(1, int(cpus)))
     return {variable: thread_count for variable in _THREAD_ENVIRONMENT_VARIABLES}
-
-
-def new_step_counter(start: int = 1) -> Callable[[], int]:
-    """Return an independent monotonically increasing step-number source."""
-    return count(start).__next__
 
 
 def create_copy_file_step(

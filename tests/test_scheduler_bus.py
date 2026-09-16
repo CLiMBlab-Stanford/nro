@@ -1,6 +1,7 @@
 """Test scheduler transport, recovery records, and launch election."""
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from nro.engine.io import atomic_write_json
 from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.registry import Registry
 from nro.orchestration.worker_client import WorkerSchedulerClient
 
@@ -113,6 +115,66 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][0]["action"] == "heartbeat"
     assert calls[0][1]["durable"] is False
     assert calls[0][1]["require_service"] is True
+
+
+def test_worker_output_visibility_uses_direct_only_rpc(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client.endpoint = SimpleNamespace()
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.worker_client.exchange",
+        lambda _endpoint, message, **options: calls.append((message, options)) or True,
+    )
+
+    assert client.outputs_visible((Path("/tmp/output"),))
+    assert calls == [
+        (
+            {"operation": "output_visibility", "paths": ["/tmp/output"]},
+            {"timeout": 60.0, "require_service": True, "durable": False},
+        )
+    ]
+
+
+def test_worker_preserves_completion_invalidation_across_scheduler_rpc(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+
+    def invalidated(*_args, **_kwargs):
+        raise scheduler_client.SchedulerError(
+            "Attempt changed before completion",
+            error_type="AttemptInvalidated",
+        )
+
+    monkeypatch.setattr(client, "_call", invalidated)
+
+    with pytest.raises(AttemptInvalidated, match="Attempt changed before completion"):
+        client.record_completion(work_item_id=1, attempt_id=2, outputs=(Path("output"),))
+
+
+def test_scheduler_response_preserves_service_error_type() -> None:
+    with pytest.raises(scheduler_client.SchedulerError) as raised:
+        scheduler_client._response_result(
+            {"error": "Attempt changed before completion", "error_type": "AttemptInvalidated"}
+        )
+
+    assert raised.value.error_type == "AttemptInvalidated"
+
+
+def test_scheduler_checks_output_visibility_without_registry(tmp_path) -> None:
+    output = tmp_path / "output"
+    output.write_text("complete")
+
+    assert scheduler_service.dispatch(
+        None,
+        {"operation": "output_visibility", "paths": [str(output)]},
+        values={},
+        message_id="probe",
+    )
+    assert not scheduler_service.dispatch(
+        None,
+        {"operation": "output_visibility", "paths": [str(tmp_path / "missing")]},
+        values={},
+        message_id="probe",
+    )
 
 
 def test_controller_startup_error_is_scoped_to_launch_token(tmp_path):

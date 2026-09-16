@@ -27,9 +27,9 @@ nro run -P example -p 01 -m firstlevels -s fsnative -S 2
 A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including
 GLMs for matching tasks in model set `main`. Use `-m` to restrict the requested
 endpoints.
-Multiple spaces and smoothing values create independent instances.
-One instance covers a participant, model variant, space, and smoothing value.
-Its run fits are separate steps within that instance, not separate worker jobs.
+Multiple spaces and smoothing values create independent work items. One work
+item covers a participant, model variant, space, and smoothing value. Its run
+fits are separate steps within that work item, not separate worker jobs.
 
 Models live in `DEFINITIONS/models/TASK/VARIANT.yml` in the selected external store. They define
 event predictors and contrasts; the firstlevels configuration defines denoising,
@@ -44,10 +44,10 @@ nro run -m firstlevels --model-set development
 
 Task and model selection are independent of workflow configuration. A model
 variant can be fitted under different denoising configurations by selecting
-different workflows. Each instance includes all runs of its task for that
+different workflows. Each work item includes all runs of its task for that
 participant that match the configuration's `input_filter`. Partial CLI run
 selectors other than task are rejected because they would redefine the same
-subject-level artifact without changing its identity.
+subject-level artifact without changing the work item's identity.
 
 ## Processing and aggregation
 
@@ -78,7 +78,7 @@ subject-level artifact without changing its identity.
    subject summaries directly from runs, not from session summaries. Track
    each contribution back to its original run to retain covariance between
    effects sharing data. Never average t-values.
-7. Publish node inventories and the instance completion manifest. Missing
+7. Publish node inventories and the work-item completion manifest. Missing
    conditions and non-estimable contrasts have omission records, not zero
    effect maps. If censoring makes the temporal model unidentifiable or leaves
    no residual dimensions, omit the entire run's estimates with a reason.
@@ -140,20 +140,23 @@ describe that fit without producing a separate plot per group.
 
 Each fitted run also saves `_statsmodel.json` with its resolved event HRFs,
 selected nuisance columns, exact outlier columns, and estimator rules. The
-instance saves the scientific task YAML, resolved configuration, and compiled
+work item saves the scientific task YAML, resolved configuration, and compiled
 model template. Model-set membership is excluded from these scientific records.
 The numerical design and its metadata describe the realized PCA fit.
 
 Node manifests list maps, compact fits, design files, contributing records, and
 omissions. The fixed `_desc-firstlevels_manifest.json` under
 `task-TASK/node-run/`
-collects completion evidence for the instance. Deleting a declared output
+collects completion evidence for the work item. Deleting a declared output
 invalidates completion. Resumption checks the model/configuration and selected
 run set as well as file freshness. Artifacts from different variants or targets
 are isolated during purge by their complete entity-decorated filename prefix.
 These names are BIDS-like, not a claim of validator compliance.
 
 ## Configuration
+
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
 
 | Key | Effect |
 | --- | --- |

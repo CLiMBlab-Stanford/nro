@@ -15,8 +15,8 @@ dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
 The installer includes the pinned official MARSS package. Pass `--without-marss`
-to omit it. `diagnose` does not import MARSS, but the default `auto` mode and
-`force` need it whenever they apply a correction.
+to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
+it whenever the multiband-factor threshold calls for correction.
 Pass `--local` when setting up a host without Slurm.
 
 The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
@@ -158,9 +158,10 @@ feature work instead of editing the shared installation.
 An existing shared installation can remain in use while a separate shared
 checkout is prepared. Select the existing site with `--site` when installing
 the replacement; do not reset the registry or copy a virtual environment or
-`.nro-installation.json` between checkouts. If the site TOML lives inside the
-old development checkout, first copy those settings to a durable shared location
-or into the replacement shared checkout, keeping their values unchanged.
+`.nro-installation.json` between checkouts. If the generated definitions locator
+lives inside the old development checkout, recreate it from the protected
+definitions repository. Do not copy it as though it were authoritative
+configuration.
 
 After the replacement shared installation is ready, connect it as your default:
 
@@ -201,11 +202,20 @@ no derivatives.
 
 ## Site settings
 
-Personal settings default to `$XDG_CONFIG_HOME/nro/site.toml`, or
-`~/.config/nro/site.toml`. Shared settings default to `.nro-site.toml` beside
-the checkout. Choose a different file with `./install --site /absolute/site.toml`
-during first setup. `NRO_SITE_CONFIG` selects a site file for an unregistered
-or personal installation; shared installations enforce their recorded file.
+Durable site settings live in `site/site.yml` in the shared
+[definitions repository](definitions.md#protected-site-settings). Keep that
+repository under version control. The document covers storage roots, external
+resources, execution settings, and ingestion sources shared by every checkout
+connected to the scheduler.
+
+Each installation also has a generated TOML locator. Personal installations
+default to `$XDG_CONFIG_HOME/nro/site.toml`, or `~/.config/nro/site.toml`.
+Shared installations default to `.nro-site.toml` beside the checkout. The
+locator contains only the definitions repository path and is not the source of
+durable settings. Choose another locator with
+`./install --site /absolute/site.toml` during first setup.
+`NRO_SITE_CONFIG` selects one for an unregistered or personal installation;
+shared installations enforce their recorded path.
 
 The path editor displays all proposed paths before asking for changes. It
 offers lab defaults when `/juice6/u/nlp/climblab` is readable and traversable.
@@ -218,12 +228,15 @@ These are suggestions, not directories created by the editor. Previously
 configured paths and environment overrides are retained even if unavailable.
 Interactive and noninteractive setup use the same resolved defaults.
 
-The `definitions` path selects a separate, site-owned
-[definitions store](definitions.md). It defaults to
+The `definitions` locator selects the site-owned repository. It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic
 starters and validates an existing store without replacing its files. New stores
-have no task models, event tables, or configured Flywheel servers.
+have no task models, event tables, or configured Flywheel servers. During the
+first maintenance run after this layout is introduced, setup moves old TOML
+settings and protected ingestion fields into `site/site.yml`, then reduces the
+TOML file to its locator. Commit the migrated definitions repository after
+review.
 
 Accept all defaults to keep the displayed settings. If declined, the editor
 prompts for each setting independently. Enter keeps that value; Tab completes
@@ -237,8 +250,9 @@ nro paths set runtime=/usr/bin/apptainer
 ```
 
 Shared editing requires `--maintain`, write permission, and a stopped worker
-pool. Changes update settings for new commands; they do not relocate files or
-migrate a registry. Worker scripts carry the selected site filename explicitly.
+pool. The command updates `site/site.yml`; it does not relocate files or migrate
+a registry. Commit the result in the definitions repository. Worker attempts
+carry a resolved, immutable site snapshot rather than rereading mutable values.
 
 Private state uses the [shared/branch hierarchy](commands/branches.md#storage-and-safeguards).
 An existing flat-layout control store is rejected before any new scheduler is
@@ -246,12 +260,14 @@ created. Use the explicit [cutover command](commands/cutover.md) during a
 coordinated maintenance window; neither installation nor registry repair silently
 moves or adopts the old store.
 
-The site file accepts `definitions`, `bids`, `work`, `registry`, `images`, `templates`,
-`workbench`, `oslom`, `license`, `runtime`, `partition`, `viewing_partition`, `account`,
+The path editor accepts `definitions`, `bids`, `work`, `development`,
+`registry`, `images`, `templates`, `gradient_coefficients`, `workbench`,
+`oslom`, `license`, `runtime`, `partition`, `viewing_partition`, `account`,
 `flywheel_server`, `flywheel_project`, and `binds`.
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
-`synthstrip`, `synbold`, and `mni_template` can override individual resources
-otherwise derived from their parent directories. `binds` is a TOML list.
+`synthstrip`, `synbold`, `gradient_unwarp`, and `mni_template` can override
+individual resources otherwise derived from their parent directories. `binds`
+is a TOML list.
 Generic defaults omit CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
@@ -270,8 +286,8 @@ nro paths set flywheel_server=cni flywheel_project=cashain/climblab
 
 Personal installations also honor `NRO_WORK_PATH`, `NRO_WB_COMMAND`,
 `TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Every installation reads the BIDS root
-from its site file. Shared installations use the site file for all paths.
-`nro paths show` reports each value's source. The engine supplies the
+from the protected site document. `nro paths show` reports the locator,
+protected document, resolved values, and their sources. The engine supplies the
 FreeSurfer license and thread settings to processing commands.
 
 Scientific YAML uses explicit `site:KEY` resource references. Resolution with
@@ -287,10 +303,13 @@ Maintainers regenerate the lock when changing dependencies. Normal setup uses
 the existing lock and does not upgrade dependencies implicitly.
 
 Setup obtains QuNex 1.5.1, SynthStrip 1.7, and SynBOLD-DISCO 1.4 from pinned
-OCI digests. Existing configured images are reused and tested. Downloads use
-temporary paths and resource locks, then publish completed files atomically.
-Image receipts record the source and the generated SIF's SHA-256. A receipt
-documents acquisition, not historical provenance for pre-existing resources.
+OCI digests. A site with an active gradient-unwarping profile also gets the
+pinned HCP base image that provides the correction tools. Sites without such a
+profile do not download or require that image. Existing configured images are
+reused and tested. Downloads use temporary paths and resource locks, then
+publish completed files atomically. Image receipts record the source and the
+generated SIF's SHA-256. A receipt documents acquisition, not historical
+provenance for pre-existing resources.
 
 Workbench 2.2.1 is installed from its official Linux archive when absent;
 the archive is checked against a pinned SHA-256 before extraction.

@@ -1,10 +1,9 @@
-"""Select inputs and run one microparcellation module instance."""
+"""Select inputs and run one microparcellation module work item."""
 
 import argparse
 import json
 import logging
 import time
-from itertools import count
 from pathlib import Path
 
 from nro.configuration.markup import load_source_markup
@@ -154,7 +153,7 @@ def make_target_config(
         surfaces = ()
         mask = infer_gray_matter_mask(
             target.functional,
-            config.get("mask"),
+            config["mask"],
             project=project,
             participant=participant,
             anat_directory=config["anat_directory"],
@@ -171,8 +170,8 @@ def make_target_config(
             smoothing_mm=target.smoothing_mm,
             surface=surfaces,
             mask=mask,
-            mask_threshold=float(config.get("mask_threshold", 0.5)),
-            volume_connectivity=int(config.get("volume_connectivity", 6)),
+            mask_threshold=float(config["mask_threshold"]),
+            volume_connectivity=int(config["volume_connectivity"]),
         ),
         output=OutputConfig(
             directory=output_base / sub_id,
@@ -228,10 +227,10 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         / args.project
         / participant_id
     )
-    load_source_markup(config.get("markup"), args.project, source_subject)
+    load_source_markup(config["markup"], args.project, source_subject)
     source_runs = discover_raw_runs(source_subject)
     selected_runs = tuple(
-        run for run in source_runs if matches_filter(run.entities, config.get("input_filter"))
+        run for run in source_runs if matches_filter(run.entities, config["input_filter"])
     )
     output_spaces = supported_output_spaces(
         str(snapshot["configurations"]["anat"]["resolved"]["fsaverage_template"])
@@ -267,7 +266,6 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         container=None,
         binds=(),
         logger=logging.getLogger("microparcellation"),
-        next_step=count(1).__next__,
         execution_context=execution_context,
     )
     result = build_module(cfg, runner, completion_boundary=False)

@@ -75,6 +75,8 @@ connectivity maps from T1w coordinates; see the
 
 ## Configuration
 
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
 `input_filter` restricts selected cleaned inputs; `surface`, `mask`,
 `mask_threshold`, and `volume_connectivity` define spatial support. nro fixes
 the output root and filename prefix from the project, module ID, participant,

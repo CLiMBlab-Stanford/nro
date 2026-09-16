@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 
 
-def encode_spec(spec: InstanceSpec) -> dict:
+def encode_spec(spec: WorkItemSpec) -> dict:
     """Retain a complete recipe so unavailable inherited work can be computed locally."""
     return dict(
         key=spec.key,
@@ -14,7 +14,7 @@ def encode_spec(spec: InstanceSpec) -> dict:
         participant=spec.participant,
         entities=dict(spec.entities),
         scope=spec.scope,
-        configuration_lineage_id=spec.configuration_lineage_id,
+        module_lineage_id=spec.module_lineage_id,
         directory_label=spec.directory_label,
         config_fingerprint=spec.config_fingerprint,
         runtime_config=str(spec.runtime_config),
@@ -32,7 +32,7 @@ def encode_spec(spec: InstanceSpec) -> dict:
     )
 
 
-def decode_spec(value: dict) -> InstanceSpec:
+def decode_spec(value: dict) -> WorkItemSpec:
     """Decode explicit output and processing contracts without scientific defaults."""
     if not isinstance(value, dict) or not value.get("output_format") or "processing" not in value:
         raise ValueError(
@@ -43,11 +43,11 @@ def decode_spec(value: dict) -> InstanceSpec:
         fields[key] = Path(fields[key])
     for key in ("input_paths", "expected_outputs"):
         fields[key] = tuple(Path(path) for path in fields[key])
-    return InstanceSpec.create(**fields)
+    return WorkItemSpec.create(**fields)
 
 
 def export_workflow(scientific, registered) -> dict:
-    """Detach the workflow and configuration lineage data needed for admission."""
+    """Detach the workflow and module-lineage data needed for admission."""
     with scientific.connection() as db:
         bindings = [
             dict(row)
@@ -62,9 +62,9 @@ def export_workflow(scientific, registered) -> dict:
                     "SELECT * FROM workflow_revisions WHERE id=?", (registered.revision_id,)
                 ).fetchone()
             ),
-            lineages=[dict(row) for row in db.execute("SELECT * FROM configuration_lineages")],
+            lineages=[dict(row) for row in db.execute("SELECT * FROM module_lineages")],
             bindings=bindings,
             dependencies=[
-                dict(row) for row in db.execute("SELECT * FROM configuration_lineage_dependencies")
+                dict(row) for row in db.execute("SELECT * FROM module_lineage_dependencies")
             ],
         )

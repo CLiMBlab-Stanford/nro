@@ -93,6 +93,8 @@ def functional_case(tmp_path, monkeypatch):
         synbold_disco_engine="singularity",
         sdc_method="syn",
         output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
+        gradient_unwarp_image=tmp_path / "gradient.sif",
+        gradient_unwarp_runtime="singularity",
     )
     values["synbold_disco_image"].write_bytes(b"test image")
     monkeypatch.setattr(

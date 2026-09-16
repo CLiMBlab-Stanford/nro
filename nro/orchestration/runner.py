@@ -13,11 +13,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from itertools import count
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Sequence
 
 from nro.engine.execution import collect_bind_directories, strip_ansi
-from nro.engine.io import atomic_write_json, atomic_write_text
+from nro.engine.io import atomic_write_json
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner_graph import (
     NodeState,
@@ -26,51 +27,12 @@ from nro.orchestration.runner_graph import (
     StepKind,
     artifact_decision,
 )
-
-
-def shlex_quote(s: str) -> str:
-    """Quote one shell token for readable command logging."""
-    if not s:
-        return "''"
-    if all(ch.isalnum() or ch in "._/+-=:" for ch in s):
-        return s
-    return "'" + s.replace("'", "'\"'\"'") + "'"
-
-
-def _parse_bind_spec(bind_spec: str) -> tuple[Path, str, str | None] | None:
-    """Parse a container bind into its host source, target, and options."""
-    fields = bind_spec.split(":")
-    if len(fields) == 1:
-        source = destination = fields[0]
-        options = None
-    elif len(fields) in {2, 3}:
-        source, destination = fields[:2]
-        options = fields[2] if len(fields) == 3 else None
-    else:
-        return None
-    if not source or not destination:
-        return None
-    source_path = Path(source).expanduser().resolve()
-    destination_path = Path(destination).expanduser()
-    if not destination_path.is_absolute():
-        return None
-    return source_path, str(destination_path), options
-
-
-@dataclass(frozen=True)
-class ContainerSpec:
-    """Container image and execution policy for one runner.
-
-    The image is a host path; bind mappings, clean environment, container home,
-    and inner setup determine how host commands execute inside it.
-    """
-
-    image: Path
-    engine: str = "singularity"
-    cleanenv: bool = True
-    extra_binds: Tuple[str, ...] = ()
-    home_dir: Optional[Path] = None
-    inner_setup: str = ""
+from nro.orchestration.runner_support import (
+    ContainerSpec,
+    parse_bind_spec,
+    shlex_quote,
+    write_completion_breadcrumb,
+)
 
 
 @dataclass
@@ -90,12 +52,6 @@ _RUNNER_EXECUTION: ContextVar[Optional[_RunnerExecutionState]] = ContextVar(
 )
 
 
-def write_completion_breadcrumb(path: Path, text: str = "complete\n") -> Path:
-    """Atomically mark a directory-producing or compound step complete."""
-    atomic_write_text(path, text)
-    return path
-
-
 class Runner:
     """The sole execution boundary for every nro module step.
 
@@ -113,15 +69,16 @@ class Runner:
         container: Optional[ContainerSpec],
         binds: Sequence[str],
         logger: logging.Logger,
-        next_step: Callable[[], int],
+        next_step: Callable[[], int] | None = None,
         step_log_separator: str = "=" * 50,
         execution_context: ExecutionContext | None = None,
     ) -> None:
         """Create an empty owned graph and validate container availability.
 
-        The logger receives execution events; next_step supplies display numbers.
-        No scientific step runs during construction. Missing container resources
-        raise SystemExit before execution.
+        The logger receives execution events. Each runner owns its display-step
+        counter unless a caller injects one for testing. No scientific step runs
+        during construction. Missing container resources raise SystemExit before
+        execution.
 
         An authorized execution context restricts declared destinations to its
         public and private derivative roots. Factories must resolve paths before
@@ -137,7 +94,7 @@ class Runner:
         self._declared_paths: list[Path] = []
         self._container_mount_cache: tuple[list[str], tuple[tuple[str, str], ...]] | None = None
         self._logger = logger
-        self._next_step = next_step
+        self._next_step = next_step or count(1).__next__
         self._graph = RunnerGraph(module_name)
         self._step_log_separator = step_log_separator
         if self._container is None:
@@ -394,7 +351,7 @@ class Runner:
         used_targets = {
             parsed[1]
             for bind_spec in extra_binds
-            if (parsed := _parse_bind_spec(bind_spec)) is not None
+            if (parsed := parse_bind_spec(bind_spec)) is not None
         }
         generated_binds: list[str] = []
         mappings: list[tuple[str, str]] = []
@@ -416,7 +373,7 @@ class Runner:
             mappings.append((str(source), target))
 
         for bind_spec in extra_binds:
-            parsed = _parse_bind_spec(bind_spec)
+            parsed = parse_bind_spec(bind_spec)
             if parsed is not None:
                 source, target, _options = parsed
                 mappings.append((str(source), target))
@@ -728,7 +685,7 @@ class Runner:
             "newer than outputs" in text
             or text.startswith("forced re-run")
             or text.startswith("re-running")
-            or text.startswith("instance completion certificate")
+            or text.startswith("work item completion certificate")
         ):
             return "Rerunning"
         return "Running"

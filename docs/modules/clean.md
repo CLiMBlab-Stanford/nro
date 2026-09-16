@@ -58,17 +58,19 @@ and types are defined in the [clean contract](../autoapi/nro/modules/clean/contr
 
 ## Configuration
 
+`markup` selects the source-markup document described in
+[definitions stores](../definitions.md#source-markup); `null` ignores markup.
 `confounds_regex` controls continuous nuisance selection; `temporal_mask_regex`
 controls censoring. `nuisance_variance_explained` is a fraction, not a percentage.
 `minimum_temporal_rank` and `minimum_temporal_rank_fraction` constrain nuisance
 PCA; they are not connectivity admission thresholds. `min_trs` rejects inputs
 with too few original frames before graph construction. `gm_mask_threshold`
 selects gray-matter support. `regress_out_task`, `detrend`, `standardize`, and
-passband bounds alter the model. Smoothing is an instance selector, not a clean
+passband bounds alter the model. Smoothing is a work-item selector, not a clean
 configuration key.
 
 Container settings select Workbench and other external execution resources;
-`force` and `verbose` control execution and reporting. `wb_command` is the tool
+`overwrite` and `verbose` control execution and reporting. `wb_command` is the tool
 command used inside the configured execution environment.
 
 ```{literalinclude} ../../nro/configuration/starters/configs/clean/main_clean.yml

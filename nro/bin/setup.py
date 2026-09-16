@@ -19,7 +19,7 @@ from nro.engine.dependencies import (
     install_templates,
     install_workbench,
 )
-from nro.engine.site_setup import edit_settings, save_settings
+from nro.engine.site_setup import edit_settings, migrate_site_configuration, save_settings
 
 
 def _main(argv=None, *, prog="nro setup"):
@@ -75,9 +75,15 @@ def _main(argv=None, *, prog="nro setup"):
                 if not path.exists():
                     raise RuntimeError("Path setup was cancelled")
         site, _ = settings()
-        from nro.configuration.definitions import ensure_store
+        from nro.configuration.definitions import ensure_store, validate_store
 
-        definitions = ensure_store(Path(site["definitions"]))
+        definitions_path = Path(site["definitions"])
+        if definitions_path.exists():
+            migrate_site_configuration(path)
+        definitions = ensure_store(definitions_path)
+        migrate_site_configuration(path)
+        validate_store(definitions, require_site=True)
+        site, _ = settings()
         print(f"Definitions: {definitions}", flush=True)
         print(f"Using {path}\nQuNex terms: {QUNEX_TERMS}", flush=True)
         if not Path(site["license"]).is_file():

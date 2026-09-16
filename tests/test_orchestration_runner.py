@@ -12,6 +12,25 @@ from nro.orchestration.runner import ContainerSpec, Runner
 from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
 
 
+def test_each_runner_owns_an_independent_step_counter() -> None:
+    first = Runner(
+        module_name="first",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.first-counter"),
+    )
+    second = Runner(
+        module_name="second",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.second-counter"),
+    )
+
+    assert first.log_python_step(step_name="one", running=False) == 1
+    assert first.log_python_step(step_name="two", running=False) == 2
+    assert second.log_python_step(step_name="one", running=False) == 1
+
+
 def test_allocated_cpus_prefers_explicit_worker_allocation(monkeypatch) -> None:
     monkeypatch.setenv("NRO_ALLOCATED_CPUS", "3")
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "5")
@@ -266,7 +285,7 @@ def test_melodic_command_inference_never_tracks_only_a_directory(tmp_path: Path)
 def test_completion_manifest_rejects_directory_artifacts(tmp_path: Path) -> None:
     directory = tmp_path / "compound-output"
     directory.mkdir()
-    with pytest.raises(ValueError, match="must expose a final completion breadcrumb"):
+    with pytest.raises(ValueError, match="not a regular file"):
         file_record(directory)
 
 
@@ -742,6 +761,117 @@ def test_module_dag_contract_rejects_topology_change_for_same_signature(
     changed.freeze()
     with pytest.raises(RuntimeError, match="topology changed"):
         changed.reconcile_contract(contract, signature="source-and-workflow")
+
+
+def test_module_dag_contract_ignores_source_capture_relocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = tmp_path / "runner-contract.json"
+    captures = tmp_path / "implementations"
+    old_source = captures / ("a" * 64)
+    new_source = captures / ("b" * 64)
+    relative = Path("nro/modules/networks/resources/reference.nii.gz")
+    output = tmp_path / "output.txt"
+
+    first = RunnerGraph("Relocatable resources")
+    first.add(
+        Step.python(
+            name="Use reference",
+            inputs=(old_source / relative,),
+            outputs=(output,),
+            action=lambda: None,
+        )
+    )
+    first.freeze()
+    # Emulate a version 3 contract written before captured source paths were
+    # normalized. The old capture need not remain on disk for comparison.
+    monkeypatch.delenv("NRO_EXECUTION_SOURCE_ROOT", raising=False)
+    first.reconcile_contract(contract, signature="source-and-workflow")
+
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(new_source))
+    relocated = RunnerGraph("Relocatable resources")
+    relocated.add(
+        Step.python(
+            name="Use reference",
+            inputs=(new_source / relative,),
+            outputs=(output,),
+            action=lambda: None,
+        )
+    )
+    relocated.freeze()
+
+    relocated.bind_contract(contract, signature="source-and-workflow")
+    assert relocated.changed_steps(contract, signature="source-and-workflow") == frozenset()
+
+
+def test_module_dag_contract_rejects_different_captured_resource(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = tmp_path / "runner-contract.json"
+    captures = tmp_path / "implementations"
+    source = captures / ("a" * 64)
+    output = tmp_path / "output.txt"
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(source))
+
+    first = RunnerGraph("Relocatable resources")
+    first.add(
+        Step.python(
+            name="Use reference",
+            inputs=(source / "nro/resources/first.nii.gz",),
+            outputs=(output,),
+            action=lambda: None,
+        )
+    )
+    first.freeze()
+    first.reconcile_contract(contract, signature="source-and-workflow")
+
+    changed = RunnerGraph("Relocatable resources")
+    changed.add(
+        Step.python(
+            name="Use reference",
+            inputs=(source / "nro/resources/second.nii.gz",),
+            outputs=(output,),
+            action=lambda: None,
+        )
+    )
+    changed.freeze()
+    with pytest.raises(RuntimeError, match="topology changed"):
+        changed.bind_contract(contract, signature="source-and-workflow")
+
+
+def test_command_signature_ignores_source_capture_relocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captures = tmp_path / "implementations"
+    old_source = captures / ("a" * 64)
+    new_source = captures / ("b" * 64)
+    relative = Path("nro/resources/reference.nii.gz")
+    output = tmp_path / "output.txt"
+
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(old_source))
+    old = RunnerGraph("Relocatable command")
+    old.add(
+        Step.command_step(
+            ("tool", "--reference", str(old_source / relative)),
+            outputs=(output,),
+        )
+    )
+    old.freeze()
+
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(new_source))
+    new = RunnerGraph("Relocatable command")
+    new.add(
+        Step.command_step(
+            ("tool", "--reference", str(new_source / relative)),
+            outputs=(output,),
+        )
+    )
+    new.freeze()
+
+    assert (
+        old.contract_payload(signature="contract")["nodes"][0]["command_signature"]
+        == new.contract_payload(signature="contract")["nodes"][0]["command_signature"]
+    )
 
 
 def test_scientific_change_reruns_only_step_and_descendants(

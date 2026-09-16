@@ -45,7 +45,7 @@ class ExecutionContext:
 
     paths: BranchPaths
     project: str
-    instance_key: str
+    work_item_key: str
     inputs: tuple[InputBinding, ...]
 
     def require_output(self, path: Path) -> Path:
@@ -114,7 +114,7 @@ class ExecutionContext:
             "work": str(self.paths.work),
             "development": str(self.paths.development),
             "project": self.project,
-            "instance_key": self.instance_key,
+            "work_item_key": self.work_item_key,
             "inputs": [
                 dict(
                     branch=value.branch,
@@ -137,13 +137,13 @@ class ExecutionContext:
             "work",
             "development",
             "project",
-            "instance_key",
+            "work_item_key",
             "inputs",
         }:
             raise ValueError("Invalid execution context fields")
         if any(
             not isinstance(value[key], str) or not value[key]
-            for key in ("branch", "bids", "work", "development", "project", "instance_key")
+            for key in ("branch", "bids", "work", "development", "project", "work_item_key")
         ):
             raise ValueError("Invalid execution context identity")
         if not isinstance(value["inputs"], list):
@@ -179,7 +179,7 @@ class ExecutionContext:
                 Path(value["development"]),
             ),
             str(value["project"]),
-            str(value["instance_key"]),
+            str(value["work_item_key"]),
             tuple(
                 InputBinding(
                     str(item["branch"]),

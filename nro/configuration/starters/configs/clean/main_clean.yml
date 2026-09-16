@@ -11,17 +11,18 @@ detrend: true
 regress_out_task: true
 low_pass: 0.1
 high_pass: 0.01
-force: false
+overwrite: false
 verbose: false
-container: site:qunex
-no_container: false
-container_engine: site:runtime
-container_cleanenv: true
-container_bind: site:binds
-container_home: null
-container_inner_setup: >-
-  set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;
-  qx_setup_rc=$?; set -e; if [ "$qx_setup_rc" -ne 0 ]; then
-  echo "QuNex environment setup failed with status $qx_setup_rc" >&2;
-  exit "$qx_setup_rc"; fi
+container:
+  image: site:qunex
+  engine: site:runtime
+  cleanenv: true
+  bind: site:binds
+  home: null
+  inner_setup: >-
+    set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;
+    qx_setup_rc=$?; set -e; if [ "$qx_setup_rc" -ne 0 ]; then
+    echo "QuNex environment setup failed with status $qx_setup_rc" >&2;
+    exit "$qx_setup_rc"; fi
+  no_container: false
 wb_command: wb_command

@@ -5,7 +5,7 @@ layout. It is a one-off maintenance operation for the currently supported
 registry schema, not a schema migration or an alternate registry reader.
 
 The command does not stop workers, cancel requests, move derivatives, or modify
-source BIDS. Instance identities, generations, scientific contracts, and producer
+source BIDS. Work item identities, generations, scientific contracts, and producer
 metadata are preserved. It updates operational references to relocated private
 files, including manifest locations and execution configuration paths.
 

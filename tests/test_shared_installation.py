@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from nro.engine import shared_installation
-from nro.orchestration import scheduler_service, worker_control
+from nro.orchestration import scheduler_operations, scheduler_service, worker_control
 from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
@@ -87,7 +87,7 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
     branches = BranchStore(registry.paths.control)
     branches.initialize()
     scientific = branches.registry("main")
-    scientific.record_instance("example", {"module": "anat"}, expected_revision=None)
+    scientific.record_work_item("example", {"module": "anat"}, expected_revision=None)
     with sqlite3.connect(scientific.database) as db:
         db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
 
@@ -122,7 +122,7 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
         }
     ]
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
-    assert [(item.key, item.revision) for item in scientific.instances()] == [("example", 1)]
+    assert scientific.work_items() == ()
 
 
 def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(
@@ -350,7 +350,7 @@ def test_installation_stop_waits_for_confirmed_allocation_exit(tmp_path, monkeyp
 
     topology = SimpleNamespace(registered_checkout=lambda _checkout: "main")
     monkeypatch.setattr(
-        scheduler_service,
+        scheduler_operations,
         "BranchStore",
         lambda _control: SimpleNamespace(read=lambda: SimpleNamespace(topology=topology)),
     )

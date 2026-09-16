@@ -10,7 +10,7 @@ from nro.orchestration.registry import utcnow
 
 
 def _has_public_evidence(row) -> bool:
-    """Return whether a registered instance still has a declared public file."""
+    """Return whether a registered work item still has a declared public file."""
     paths = [Path(row["manifest_path"])] if row["manifest_path"] else []
     paths.extend(Path(value) for value in json.loads(row["expected_outputs_json"]))
     return any(path.is_file() for path in paths)
@@ -21,26 +21,26 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
     mappings = [
         dict(row)
         for row in db.execute(
-            """SELECT b.logical_key,b.scientific_contract_json,b.instance_id,
+            """SELECT b.logical_key,b.scientific_contract_json,b.work_item_id,
                       i.manifest_path,i.expected_outputs_json,
                       COALESCE(r.revision,1) AS revision
-               FROM branch_instances b
-               JOIN instances i ON i.id=b.instance_id
+               FROM branch_work_items b
+               JOIN work_items i ON i.id=b.work_item_id
                LEFT JOIN compiled_revisions r
                  ON r.registry_id=b.registry_id AND r.logical_key=b.logical_key
                WHERE b.registry_id=?""",
             (registry_id,),
         )
     ]
-    candidates = {int(row["instance_id"]) for row in mappings}
+    candidates = {int(row["work_item_id"]) for row in mappings}
     unowned_main: set[int] = set()
     if branch == "main":
         unowned_main.update(
             int(row["id"])
             for row in db.execute(
-                """SELECT i.id FROM instances i
-                   LEFT JOIN instance_execution e ON e.instance_id=i.id
-                   WHERE e.instance_id IS NULL"""
+                """SELECT i.id FROM work_items i
+                   LEFT JOIN work_item_execution e ON e.work_item_id=i.id
+                   WHERE e.work_item_id IS NULL"""
             )
         )
         candidates.update(unowned_main)
@@ -50,19 +50,19 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
     rows = {
         int(row["id"]): dict(row)
         for row in db.execute(
-            f"SELECT id,manifest_path,expected_outputs_json FROM instances WHERE id IN ({placeholders})",
+            f"SELECT id,manifest_path,expected_outputs_json FROM work_items WHERE id IN ({placeholders})",
             tuple(sorted(candidates)),
         )
     }
-    retained = {instance_id for instance_id, row in rows.items() if _has_public_evidence(row)}
+    retained = {work_item_id for work_item_id, row in rows.items() if _has_public_evidence(row)}
     dependencies: dict[int, set[int]] = {}
     for row in db.execute(
-        f"""SELECT instance_id,upstream_instance_id FROM instance_dependencies
-            WHERE instance_id IN ({placeholders})""",
+        f"""SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies
+            WHERE work_item_id IN ({placeholders})""",
         tuple(sorted(candidates)),
     ):
-        dependencies.setdefault(int(row["instance_id"]), set()).add(
-            int(row["upstream_instance_id"])
+        dependencies.setdefault(int(row["work_item_id"]), set()).add(
+            int(row["upstream_work_item_id"])
         )
     pending = list(retained)
     while pending:
@@ -71,10 +71,10 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
                 retained.add(upstream)
                 pending.append(upstream)
 
-    removed = [row["logical_key"] for row in mappings if int(row["instance_id"]) not in retained]
+    removed = [row["logical_key"] for row in mappings if int(row["work_item_id"]) not in retained]
     if removed:
         db.executemany(
-            "DELETE FROM branch_instances WHERE registry_id=? AND logical_key=?",
+            "DELETE FROM branch_work_items WHERE registry_id=? AND logical_key=?",
             [(registry_id, key) for key in removed],
         )
         db.executemany(
@@ -89,7 +89,7 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
             "contract": json.loads(row["scientific_contract_json"]),
         }
         for row in mappings
-        if int(row["instance_id"]) in retained
+        if int(row["work_item_id"]) in retained
     }
     if branch == "main" and retained:
         from nro.orchestration.branch_reconciliation import candidates_locked
@@ -97,23 +97,23 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         projects = [
             row[0]
             for row in db.execute(
-                f"SELECT DISTINCT project FROM instances WHERE id IN ({placeholders})",
+                f"SELECT DISTINCT project FROM work_items WHERE id IN ({placeholders})",
                 tuple(sorted(candidates)),
             )
         ]
         for project in projects:
             for item in candidates_locked(db, project, fresh_only=False):
-                instance_id = int(item.evidence["instance_id"])
+                work_item_id = int(item.evidence["work_item_id"])
                 if (
                     item.branch == "main"
-                    and instance_id in retained
-                    and instance_id in unowned_main
+                    and work_item_id in retained
+                    and work_item_id in unowned_main
                 ):
                     contract = dict(item.contract)
                     records.setdefault(item.key, dict(key=item.key, revision=1, contract=contract))
                     db.execute(
-                        "INSERT OR IGNORE INTO branch_instances VALUES (?,?,?,?)",
-                        (registry_id, item.key, instance_id, json.dumps(contract)),
+                        "INSERT OR IGNORE INTO branch_work_items VALUES (?,?,?,?)",
+                        (registry_id, item.key, work_item_id, json.dumps(contract)),
                     )
                     db.execute(
                         "INSERT OR IGNORE INTO compiled_revisions VALUES (?,?,?,?)",
@@ -132,7 +132,7 @@ def prepare(
     key = "branch_maintenance:" + owner
     with registry.connection(write=reservation is not None) as db:
         active = db.execute(
-            """SELECT COUNT(*) FROM attempts a JOIN instance_execution e ON e.instance_id=a.instance_id
+            """SELECT COUNT(*) FROM attempts a JOIN work_item_execution e ON e.work_item_id=a.work_item_id
             WHERE e.registry_id=? AND a.state IN ('queued','running','cancel_requested')""",
             (owner,),
         ).fetchone()[0]
@@ -153,21 +153,21 @@ def prepare(
             (utcnow(), owner),
         )
         db.execute(
-            "UPDATE request_instances SET demand_state='cancelled' WHERE request_id IN (SELECT request_id FROM request_owners WHERE registry_id=?)",
+            "UPDATE request_work_items SET demand_state='cancelled' WHERE request_id IN (SELECT request_id FROM request_owners WHERE registry_id=?)",
             (owner,),
         )
         db.execute(
             """UPDATE attempts SET state='cancel_requested',error_type='BranchRepair',
             error_message='Branch scientific registry repair requested'
-            WHERE state IN ('queued','running') AND instance_id IN
-            (SELECT instance_id FROM instance_execution WHERE registry_id=?)""",
+            WHERE state IN ('queued','running') AND work_item_id IN
+            (SELECT work_item_id FROM work_item_execution WHERE registry_id=?)""",
             (owner,),
         )
     deadline = time.monotonic() + 30
     while True:
         with registry.connection() as db:
             active = db.execute(
-                """SELECT 1 FROM attempts a JOIN instance_execution e ON e.instance_id=a.instance_id
+                """SELECT 1 FROM attempts a JOIN work_item_execution e ON e.work_item_id=a.work_item_id
                 WHERE e.registry_id=? AND a.state IN ('queued','running','cancel_requested') LIMIT 1""",
                 (owner,),
             ).fetchone()
@@ -192,7 +192,7 @@ def prepare(
         for payload in payloads:
             workflows.append(payload["workflow"])
         records = _repair_records_locked(db, branch=name, registry_id=owner)
-    return dict(branch=name, workflows=workflows, instances=records, reservation=reservation)
+    return dict(branch=name, workflows=workflows, work_items=records, reservation=reservation)
 
 
 def finish(registry, *, checkout: Path, reservation: str) -> dict:
@@ -234,7 +234,7 @@ def repair_checkout(control: Path, bids_root: Path, checkout: Path, *, confirm) 
             reservation=reservation,
             allow_stop=allowed,
         )
-        scientific.rebuild(data["workflows"], data["instances"])
+        scientific.rebuild(data["workflows"], data["work_items"])
         result = maintenance(
             control,
             bids_root,
@@ -244,7 +244,7 @@ def repair_checkout(control: Path, bids_root: Path, checkout: Path, *, confirm) 
         )
         return dict(
             result,
-            instances=len(data["instances"]),
+            work_items=len(data["work_items"]),
             requests=[],
             submitted_workers=[],
             registry=str(scientific.database),

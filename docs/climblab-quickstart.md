@@ -69,12 +69,12 @@ nro run -P nptl -p t20 -m networks -s fsnative T1w -S 0 2
 
 ```bash
 nro status -P nptl -p t20
-nro log -P nptl -p t20 -m func -i
+nro log -P nptl -p t20 -m func
 nro stop -P nptl -p t20
 ```
 
-Status reports upstream errors that block downstream work. The `-i` log view
-groups output by processing instance. Stop withdraws your matching demand
+Status reports upstream errors that block downstream work. The default log view
+groups output by processing work item. Stop withdraws your matching demand
 without deleting completed derivatives or another user's demand.
 
 Read the [maintenance command guide](commands/maintenance.md) before using

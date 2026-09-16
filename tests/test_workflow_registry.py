@@ -234,7 +234,7 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     assert second.directories["networks"] == "main-2"
 
 
-def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
+def test_func_variants_share_one_anatomical_work_item(tmp_path: Path) -> None:
     configs = tmp_path / "configs"
     configs.mkdir()
     bids = tmp_path / "bids"
@@ -287,7 +287,7 @@ def test_func_variants_share_one_anatomical_instance(tmp_path: Path) -> None:
     exported = export_workflow(registry, variant)
     assert any(
         binding["configuration_class"] == "anat"
-        and binding["configuration_lineage_id"] == variant.lineages["anat"]
+        and binding["module_lineage_id"] == variant.lineages["anat"]
         for binding in exported["bindings"]
     )
     with central.connection(write=True) as db:

@@ -1,4 +1,4 @@
-"""Planner-facing construction of microparcellation instances."""
+"""Planner-facing construction of microparcellation work items."""
 
 from __future__ import annotations
 
@@ -8,19 +8,19 @@ from typing import TYPE_CHECKING, Mapping
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
 from nro.engine.targets import is_fsaverage_space, smoothing_entity_value
 from nro.modules.microparcellation.paths import output_paths
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, instance_key
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
 
 
-def plan_instances(
+def plan_work_items(
     context: SubjectPlanningContext,
-    upstream: Mapping[str, tuple[InstanceSpec, ...]],
+    upstream: Mapping[str, tuple[WorkItemSpec, ...]],
     descriptor: ModuleDescriptor,
-) -> tuple[InstanceSpec, ...]:
-    """Construct one participant instance for each requested target pair."""
+) -> tuple[WorkItemSpec, ...]:
+    """Construct one participant work item for each requested target pair."""
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     output_base = module_derivatives_root(
@@ -32,16 +32,16 @@ def plan_instances(
     base_prefix = context.sub_id
     anat = upstream["anat"][0]
     anat_label = context.registered.directories["anat"]
-    result: list[InstanceSpec] = []
+    result: list[WorkItemSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
         output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
         clean_dependencies = tuple(
-            instance.key
-            for instance in upstream["clean"]
-            if instance.entities.get("space") == space
-            and instance.entities.get("smoothing") == str(smoothing)
+            work_item.key
+            for work_item in upstream["clean"]
+            if work_item.entities.get("space") == space
+            and work_item.entities.get("smoothing") == str(smoothing)
         )
         needs_anatomy = not space.startswith("MNI") and not is_fsaverage_space(space)
         dependencies = (*clean_dependencies, *((anat.key,) if needs_anatomy else ()))
@@ -56,8 +56,8 @@ def plan_instances(
                 )
             )
         result.append(
-            InstanceSpec.create(
-                key=instance_key(
+            WorkItemSpec.create(
+                key=work_item_key(
                     context.project,
                     descriptor.name,
                     context.registered.lineage_fingerprints[descriptor.configuration_class],
@@ -69,7 +69,7 @@ def plan_instances(
                 participant=context.participant,
                 entities=entities,
                 scope=descriptor.scope,
-                configuration_lineage_id=lineage,
+                module_lineage_id=lineage,
                 config_fingerprint=context.workflow.configuration(
                     descriptor.configuration_class
                 ).scientific_fingerprint,
@@ -78,7 +78,7 @@ def plan_instances(
                 command=(
                     sys.executable,
                     "-m",
-                    "nro.modules.microparcellation",
+                    descriptor.execution_module,
                     "--participant",
                     context.participant,
                     "--project",

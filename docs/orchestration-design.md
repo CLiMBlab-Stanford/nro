@@ -5,11 +5,11 @@
 The normative vocabulary and its relationships are defined in
 [Core concepts](concepts.md). The planner-facing record hierarchy and execution
 lifecycle are defined in
-[Instance planning and execution](instance-lifecycle.md).
+[Work-item planning and execution](work-item-lifecycle.md).
 
 The scientific surface includes `anat`, `func`, `clean`, `dynconn`,
 `microparcellation`, `networks`, and `firstlevels`. Their planner-facing metadata is assembled
-in one closed built-in catalog. Module-specific instance construction lives in
+in one closed built-in catalog. Module-specific work-item construction lives in
 each scientific package; the central planner owns cross-module traversal.
 
 Reusable implementation primitives live in `nro/engine`, grouped by their
@@ -34,8 +34,8 @@ No Python configuration-default map exists. The registry snapshots both the
 workflow and fully resolved class values; module processes read the immutable
 runtime values without a second merge or another configuration source.
 
-Configuration lineages form a DAG independent of participant instances.
-Equivalent lineages reuse a derivative directory. A changed definition creates
+Module lineages form a DAG independent of participant work items. Equivalent
+lineages reuse a derivative directory. A changed definition creates
 a workflow revision. Each module writes below
 `derivatives/nro/MODULE/MODULE_ID/`. A lineage first receives its selected
 configuration ID as the directory label. If that label already belongs to an
@@ -43,17 +43,18 @@ incompatible upstream lineage, nro appends a numeric suffix. Separate `anat`
 and `func` lineages let functional variants reuse identical anatomy without
 mixing their files.
 
-## Instance specifications and contracts
+## Work-item specifications and contracts
 
-Instance identity contains project, module, configuration-lineage ID,
+Work-item identity contains project, module, module-lineage ID,
 participant, and applicable BIDS entities. Starting at `clean`, those entities
 include one space and one smoothing value. Space and smoothing are request
 entities, not configuration or directory identities. Revision fingerprints contain the
 module, configuration fingerprint, entities, and the explicit contract
 version. Source-code hashes are not identity or freshness inputs.
 
-An `InstanceSpec` contains an `InstanceIdentity`, `InstanceContract`,
-`ExecutionRecipe`, and `ResourceRequest`. The instance contract records output
+The implementation represents this identity with `WorkItemIdentity`. An
+`WorkItemSpec` contains an `WorkItemIdentity`, `WorkItemContract`,
+`ExecutionRecipe`, and `ResourceRequest`. The work-item contract records output
 topology, dependency topology, entities, configuration, substantive direct
 inputs, and explicit processing policy. Its normalized storage representation
 is currently recorded in the registry and completion manifest under the field
@@ -126,8 +127,8 @@ Registry state separates:
   `blocked`.
 
 Historical attempt failure does not override a later fresh artifact
-assessment. Cancellation applies to demand and attempts, not permanently to an
-instance.
+assessment. Cancellation applies to demand and attempts, not permanently to a
+work item.
 
 ## Freshness
 
@@ -135,7 +136,7 @@ The filesystem is authoritative for current artifacts; the database is
 authoritative for orchestration history. A successful attempt remains
 historically successful even if its output later becomes stale.
 
-Every completed instance receives a private manifest containing:
+Every completed work item receives a private manifest containing:
 
 - exact resolved configuration and lineage;
 - direct source inputs;
@@ -143,8 +144,8 @@ Every completed instance receives a private manifest containing:
 - public output inventory and integrity records;
 - runtime configuration, command, interpreter, attempt, and completion data.
 
-Manifest version 3 has one public-output field, `public_outputs`, and no
-source-implementation sentinel.
+Manifest version 5 uses one public-output field, `public_outputs`; it does not
+use a source-implementation sentinel.
 
 Each module creates one `Runner`, which creates and owns that module's
 `RunnerGraph`. Step factories remain outside `Runner`: they receive the inputs
@@ -161,9 +162,9 @@ check. Artifact state can make a declared step run or skip, but can never add,
 remove, or redirect a step. Each resumable step declares nonempty exact inputs
 and outputs. Several child commands may live in one step only when they form a
 single atomic artifact operation with one freshness and recovery boundary.
-Variable directory producers use a shared directory-artifact lifecycle. A
+Variable directory producers use a shared atomic-directory-product lifecycle. A
 module may clear a directory it owns exclusively; when several space/smoothing
-instances share a subject directory, it clears and validates only files owned
+work items share a subject directory, it clears and validates only files owned
 by the target prefix before writing a target-specific breadcrumb.
 
 The persisted runner contract is loaded before execution. Nodes and edges
@@ -181,30 +182,31 @@ declared outputs are absent. Modules must declare scientific parameters on the
 steps that use them. The runner has no facility for silently adding one
 configuration file as an input to every node.
 
-Missing private `WORK` intermediates do not stale an intact public boundary;
+Missing private `WORK` intermediates do not stale an intact artifact;
 the module recreates them if it later needs to run. Changed existing private
-artifacts, changed direct inputs, changed upstream generations, and missing or
-changed public artifacts are freshness evidence.
+intermediates, changed direct inputs, changed upstream generations, and missing
+or changed products are freshness evidence.
 
-## Multirun instances
+## Multirun work items
 
 `input_filter` belongs to the microparcellation configuration. The planner
 discovers the raw BOLD universe, applies the filter, builds all required
-run-level preprocessing and cleaning instances, and makes the participant-level
-instance depend on the complete selected set. Adding or removing a matching run
+run-level preprocessing and cleaning work items, and makes the participant-level
+work items, and makes the participant-level work item depend on the complete
+selected set. Adding or removing a matching run
 changes that dependency set and requires replanning.
 
 Space and smoothing are demand-driven. The planner does not enumerate every
 possible pair. A request creates only its requested cross-product (default:
 `fsnative` and `2mm`); a later request can add another pair without changing or
-rerunning unrelated pairs. `func` remains shared because one run instance
+rerunning unrelated pairs. `func` remains shared because one run work item
 publishes every supported space. Each `clean`, `dynconn`, `microparcellation`,
-and `networks` instance represents exactly one pair.
+and `networks` work item represents exactly one pair.
 
 ## Workers and Slurm
 
 Slurm jobs are reusable foreground workers, not one-job-per-module wrappers.
-Workers request compatible ready instances through ordered scheduler events and
+Workers request compatible ready work items through ordered scheduler events and
 supervise one module subprocess at a time. A claim returns a typed
 `ExecutionEnvelope`; an `ExecutionLauncher` owns subprocess creation and
 supervision. Workers renew leases and check cancellation through direct scheduler
@@ -214,8 +216,8 @@ worker nor its scientific subprocess can open the scheduler database.
 
 Workers drain before wall-time and request successor capacity from the
 controller. The registry, not queued Slurm count, enforces shared concurrency.
-Confirmed OOMs increase the instance memory tier geometrically up to the request
-ceiling; higher-tier workers may accept lower-tier instances.
+Confirmed OOMs increase the work-item memory tier geometrically up to the
+request ceiling; higher-tier workers may accept lower-tier work items.
 
 ## Observation and mutation
 
@@ -250,8 +252,8 @@ Tests enforce these boundaries:
 - no outputless resumable steps;
 - no derivative-member discovery by globs in downstream scientific modules;
 - no public configuration paths or alternate stores;
-- a closed explicit catalog with module-local instance planning;
-- typed instance specifications and worker execution envelopes;
+- a closed explicit catalog with module-local work-item planning;
+- typed work-item specifications and worker execution envelopes;
 - immutable execution recipes for claimed attempts, with current recipes used
   by later attempts;
 - one schema with no implicit migration;

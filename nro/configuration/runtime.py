@@ -82,22 +82,8 @@ def load_runtime_configuration(
     return resolved_path.name[: -len(suffix)], values
 
 
-def _container_arguments(values: dict[str, Any]) -> dict[str, Any]:
-    """Translate a resolved container block to the module CLI field names."""
-    container = values["container"]
-    return {
-        "no_container": container["no_container"],
-        "container_engine": container["engine"],
-        "container_cleanenv": container["cleanenv"],
-        "container_bind": container["bind"],
-        "container_home": container["home"],
-        "container_inner_setup": container["inner_setup"],
-    }
-
-
 def configure_anat(project: str, anat_id: str, values: dict[str, Any]) -> None:
     """Adapt a resolved anatomical configuration to module settings."""
-    container_args = _container_arguments(values)
     configure(
         {
             "common": {
@@ -113,7 +99,7 @@ def configure_anat(project: str, anat_id: str, values: dict[str, Any]) -> None:
                     if key not in {"container", "fsaverage_template"}
                 },
                 "fsaverage_template": values["fsaverage_template"],
-                **container_args,
+                "container": values["container"],
                 "out_dir": None,
                 "work_dir": None,
             },
@@ -123,7 +109,6 @@ def configure_anat(project: str, anat_id: str, values: dict[str, Any]) -> None:
 
 def configure_func(project: str, func_id: str, values: dict[str, Any]) -> None:
     """Adapt a resolved functional configuration to module settings."""
-    container_args = _container_arguments(values)
     configure(
         {
             "common": {
@@ -144,7 +129,7 @@ def configure_func(project: str, func_id: str, values: dict[str, Any]) -> None:
                         "container",
                     }
                 },
-                **container_args,
+                "container": values["container"],
                 "work_dir": None,
             },
             "func_confounds": values["confounds"],
@@ -161,9 +146,6 @@ def configure_clean(project: str, clean_id: str, values: dict[str, Any]) -> None
                 "func_id": values["func_directory"],
                 "anat_id": values["anat_directory"],
                 "clean_id": clean_id,
-                "qunex_container": values["container"],
-                "default_container_engine": values["container_engine"],
-                "default_bind": values["container_bind"][0],
                 "qunex_home_dirname": "_qunex_home",
                 "wb_command": values["wb_command"],
             },

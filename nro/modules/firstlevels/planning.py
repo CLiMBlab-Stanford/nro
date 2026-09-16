@@ -1,14 +1,14 @@
-"""Demand-driven instance construction for participant/task/model GLMs."""
+"""Demand-driven work-item construction for participant/task/model GLMs."""
 
 import json
 import sys
 from pathlib import Path
 
 from nro.engine.bids import matches_filter, resolve_bids_table
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planning_context import instance_key
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import work_item_key
 
-from .paths import artifact_root, completion_path, instance_prefix
+from .paths import artifact_root, completion_path, work_item_prefix
 from .task_models import scientific_model
 
 
@@ -37,9 +37,9 @@ def selected_runs(runs, model_id: str, participant: str, input_filter: dict | No
 def select_model_runs(
     runs, config: dict, participant: str, *, entities: dict | None = None
 ) -> tuple:
-    """Rediscover one registered instance's runs independently of model sets."""
+    """Rediscover one registered work item's runs independently of model sets."""
     identifier = f"{entities['task']}/{entities['model']}"
-    return selected_runs(runs, identifier, participant, config.get("input_filter"))
+    return selected_runs(runs, identifier, participant, config["input_filter"])
 
 
 def direct_inputs(
@@ -50,17 +50,15 @@ def direct_inputs(
     return tuple(resolve_bids_table(run.path, suffix="events", markup=markup) for run in selected)
 
 
-def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
-    """Construct each selected model/space/smoothing instance and its func dependencies."""
+def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
+    """Construct each selected model/space/smoothing work item and its func dependencies."""
     values = context.workflow.configuration("firstlevels").values
-    func = {instance.output_prefix: instance for instance in upstream["func"]}
+    func = {work_item.output_prefix: work_item for work_item in upstream["func"]}
     directory = context.registered.directories["firstlevels"]
     result = []
     for model_id, document in context.task_models.items():
         source = scientific_model(document)
-        runs = selected_runs(
-            context.runs, model_id, context.participant, values.get("input_filter")
-        )
+        runs = selected_runs(context.runs, model_id, context.participant, values["input_filter"])
         if not runs:
             continue
         for space, smoothing in context.target_pairs:
@@ -69,7 +67,7 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                 directory,
                 context.participant,
             )
-            prefix = instance_prefix(context.participant, model_id, space, smoothing)
+            prefix = work_item_prefix(context.participant, model_id, space, smoothing)
             entities = {
                 "task": model_id.split("/")[0],
                 "model": model_id.split("/")[1],
@@ -77,8 +75,8 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                 "smoothing": str(smoothing),
             }
             result.append(
-                InstanceSpec.create(
-                    key=instance_key(
+                WorkItemSpec.create(
+                    key=work_item_key(
                         context.project,
                         descriptor.name,
                         context.registered.lineage_fingerprints["firstlevels"],
@@ -90,7 +88,7 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                     participant=context.participant,
                     entities=entities,
                     scope=descriptor.scope,
-                    configuration_lineage_id=context.registered.lineages["firstlevels"],
+                    module_lineage_id=context.registered.lineages["firstlevels"],
                     config_fingerprint=context.workflow.configuration(
                         "firstlevels"
                     ).scientific_fingerprint,
@@ -99,7 +97,7 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                     command=(
                         sys.executable,
                         "-m",
-                        "nro.modules.firstlevels",
+                        descriptor.execution_module,
                         "-p",
                         context.participant,
                         "-P",
@@ -116,7 +114,7 @@ def plan_instances(context, upstream, descriptor) -> tuple[InstanceSpec, ...]:
                     dependencies=tuple(
                         dict.fromkeys(
                             [
-                                *(instance.key for instance in upstream["anat"]),
+                                *(work_item.key for work_item in upstream["anat"]),
                                 *(func[run.stem].key for run in runs),
                             ]
                         )

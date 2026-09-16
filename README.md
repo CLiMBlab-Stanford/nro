@@ -41,7 +41,7 @@ The arrows show dependencies:
                     │              └──► [microparcellation] ──► [networks]
                     └──► [firstlevels]
 
-[anat] ── "direct anatomical inputs" ──► {clean, networks, firstlevels}
+[anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, firstlevels}
 ```
 
 nro follows
@@ -135,7 +135,7 @@ Check progress and inspect a failed task:
 
 ```bash
 nro status -P example
-nro log -p 01 -P example -m func -i
+nro log -p 01 -P example -m func
 ```
 
 Create one Workbench scene from matching completed derivatives:
@@ -187,8 +187,8 @@ The equivalent engine entry point is
 `.nro-env/bin/python -m nro.qc registration 01 -p example`.
 
 Workflow settings are selected with `-w`; the default is `main`. Configuration,
-model, and optional source-markup files live in a separate
-[definitions store](docs/definitions.md). Use
+model, optional source-markup, and protected site settings live in a separate,
+version-controlled [definitions store](docs/definitions.md). Use
 `nro paths show` to find it and `nro definitions validate` to check its contents.
 
 ## Documentation
@@ -199,7 +199,7 @@ Sphinx site compatible with Read the Docs.
 | Topic | Guide |
 | --- | --- |
 | First use | [New installation quickstart](QUICKSTART.md), [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md), [installation](docs/installation.md) |
-| Work structure | [Design](docs/design.md), [concepts](docs/concepts.md), [instance lifecycle](docs/instance-lifecycle.md) |
+| Work structure | [Design](docs/design.md), [concepts](docs/concepts.md), [work-item lifecycle](docs/work-item-lifecycle.md) |
 | Scientific processing | [Module guides](docs/modules/index.md), [denoising](docs/methods/denoising.md), [software and methods sources](docs/methods/software.md) |
 | Configuration | [Workflows and parameters](docs/configuration.md) |
 | Command-line interface | [Command reference](docs/commands/index.md) |

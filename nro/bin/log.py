@@ -1,4 +1,4 @@
-"""Browse matching nro worker or current derivative-instance logs with less."""
+"""Browse matching nro work-item logs or, on request, worker logs with less."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
-from nro.engine.cli import add_core_selection_arguments, core_selection
-from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.cli import add_core_selection_arguments, core_selection, matches_module_lineage
+from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
@@ -18,7 +18,7 @@ from nro.orchestration.selection import selected_projects
 LOG_MODULES = (*MODULES, "bidsify")
 
 
-def _matching_instance_ids(
+def _matching_work_item_ids(
     registry: Registry,
     *,
     projects: set[str] | None = None,
@@ -26,11 +26,12 @@ def _matching_instance_ids(
     modules: set[str],
     workflows: set[str],
     selectors: dict[str, tuple[str, ...] | None],
+    lineages: set[str] | None = None,
 ) -> set[int]:
     participant_set = {value.removeprefix("sub-") for value in participants}
     project_set = projects or {registry.paths.project}
     result: set[int] = set()
-    for row in registry.instance_rows(read_only=True):
+    for row in registry.work_item_rows(read_only=True):
         if str(row["project"]) not in project_set:
             continue
         if participant_set and str(row["participant"]) not in participant_set:
@@ -38,6 +39,10 @@ def _matching_instance_ids(
         if modules and str(row["module"]) not in modules:
             continue
         if workflows and not workflows.intersection(str(row.get("workflow_ids") or "").split(",")):
+            continue
+        if not matches_module_lineage(
+            str(row["module"]), str(row["directory_label"]), lineages or ()
+        ):
             continue
         entities = json.loads(row["entities_json"])
         if selectors and not matches_selectors(entities, selectors):
@@ -58,27 +63,27 @@ def _existing(paths: Iterable[Path]) -> list[Path]:
 def collect_log_paths(
     registry: Registry,
     *,
-    instance_ids: set[int],
-    instance_level: bool,
-    instance_filtered: bool,
+    work_item_ids: set[int],
+    worker_level: bool,
+    work_item_filtered: bool,
 ) -> list[Path]:
     """Resolve matching logs, newest first, without invoking a pager."""
-    if instance_filtered and not instance_ids:
+    if work_item_filtered and not work_item_ids:
         return []
-    if instance_level:
-        # ``instance_rows`` exposes only the current attempt log, matching the
-        # instance-level view's current-state semantics.
-        rows = registry.instance_rows(read_only=True)
+    if not worker_level:
+        # ``work_item_rows`` exposes only the current attempt log, matching the
+        # default view's current-state semantics.
+        rows = registry.work_item_rows(read_only=True)
         return _existing(
             Path(str(row["log_path"]))
             for row in rows
-            if row.get("log_path") and (not instance_filtered or int(row["id"]) in instance_ids)
+            if row.get("log_path") and (not work_item_filtered or int(row["id"]) in work_item_ids)
         )
 
-    if not instance_filtered:
+    if not work_item_filtered:
         return _existing(registry.paths.workers.glob("slurm-*.log"))
 
-    placeholders = ",".join("?" for _ in instance_ids)
+    placeholders = ",".join("?" for _ in work_item_ids)
     job_ids: set[str] = set()
     with registry.read_connection() as db:
         job_ids.update(
@@ -86,8 +91,8 @@ def collect_log_paths(
             for row in db.execute(
                 f"""SELECT DISTINCT w.slurm_job_id
                     FROM attempts a JOIN workers w ON w.id=a.worker_id
-                    WHERE a.instance_id IN ({placeholders}) AND w.slurm_job_id IS NOT NULL""",
-                tuple(sorted(instance_ids)),
+                    WHERE a.work_item_id IN ({placeholders}) AND w.slurm_job_id IS NOT NULL""",
+                tuple(sorted(work_item_ids)),
             )
         )
     return _existing(registry.paths.workers / f"slurm-{job_id}.log" for job_id in job_ids)
@@ -97,6 +102,7 @@ def collect_bidsify_log_paths(registry: Registry, selection, *, branch: str = "m
     """Resolve dedicated ingestion logs using the selectors that apply to BIDS sessions."""
     if (
         selection.workflows
+        or selection.lineages
         or selection.spaces
         or selection.smoothing
         or selection.models
@@ -126,16 +132,15 @@ def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
         module_help="Select scientific module logs, or bidsify ingestion logs",
     )
     parser.add_argument(
-        "-i",
-        "--instance-level",
+        "--worker",
         action="store_true",
-        help="Browse current derivative-instance logs instead of Slurm worker logs",
+        help="Browse Slurm worker logs instead of current work-item logs",
     )
     return parser
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
-    """Open matching worker or instance logs in the configured pager.
+    """Open matching work item or worker logs in the configured pager.
 
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
@@ -148,7 +153,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
     from nro.configuration import site
 
     bids_root = site.bids_root()
-    selectors = selection.instance_entities
+    selectors = selection.work_item_entities
     modules = set(selection.modules)
     bidsify_selected = "bidsify" in modules
     scientific_modules = modules - {"bidsify"}
@@ -180,35 +185,38 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
                 participants=selection.participants,
                 modules=selection.modules,
                 workflows=selection.workflows,
+                lineages=selection.lineages,
                 selectors=selectors,
             ),
-            instance_level=args.instance_level,
+            worker_level=args.worker,
         )
-        _page_logs([Path(path) for path in result["paths"]], instance_level=args.instance_level)
+        _page_logs([Path(path) for path in result["paths"]], worker_level=args.worker)
         return
     registry = Registry.for_project(projects[0] if projects else "", bids_root=bids_root)
     if not registry.existing_database_path().is_file():
         raise SystemExit("No central nro registry found")
-    instance_filtered = bool(
+    work_item_filtered = bool(
         selection.projects
         or selection.participants
         or selection.modules
         or selection.workflows
+        or selection.lineages
         or selectors
     )
     paths = (
         collect_log_paths(
             registry,
-            instance_ids=_matching_instance_ids(
+            work_item_ids=_matching_work_item_ids(
                 registry,
                 projects=set(projects),
                 participants=selection.participants,
                 modules=scientific_modules,
                 workflows=set(selection.workflows),
+                lineages=set(selection.lineages),
                 selectors=selectors,
             ),
-            instance_level=args.instance_level,
-            instance_filtered=instance_filtered,
+            worker_level=args.worker,
+            work_item_filtered=work_item_filtered,
         )
         if scientific_selected
         else []
@@ -217,17 +225,17 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         paths.extend(collect_bidsify_log_paths(registry, selection))
     _page_logs(
         paths,
-        instance_level=args.instance_level,
+        worker_level=args.worker,
         empty_label="bidsification" if bidsify_selected and not scientific_selected else None,
     )
 
 
 def _page_logs(
-    paths: Iterable[Path], *, instance_level: bool, empty_label: str | None = None
+    paths: Iterable[Path], *, worker_level: bool, empty_label: str | None = None
 ) -> None:
     paths = _existing(paths)
     if not paths:
-        level = empty_label or ("instance" if instance_level else "worker")
+        level = empty_label or ("worker" if worker_level else "work-item")
         print(f"No matching {level}-level logs.")
         return
     less = shutil.which("less")

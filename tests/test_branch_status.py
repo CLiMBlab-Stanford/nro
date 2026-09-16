@@ -2,13 +2,15 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from nro.engine.cli import CoreSelection
 from nro.orchestration import branch_status
 
 
 def test_verify_compiles_current_checkout_without_creating_demand(tmp_path, monkeypatch):
     registration = SimpleNamespace(directory_for=lambda _: "main")
-    scientific = SimpleNamespace(instances=lambda: (), register_workflow=lambda _: registration)
+    scientific = SimpleNamespace(work_items=lambda: (), register_workflow=lambda _: registration)
     monkeypatch.setattr(
         branch_status,
         "BranchStore",
@@ -19,16 +21,16 @@ def test_verify_compiles_current_checkout_without_creating_demand(tmp_path, monk
         "settings",
         lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, {}),
     )
-    monkeypatch.setattr(branch_status, "source_fingerprint", lambda _: "captured-source")
-    spec = SimpleNamespace(key="subject", module="anat", participant="01", dependencies=())
     compiled = []
 
-    def plan_subject(**kwargs):
-        compiled.append(kwargs)
-        return (spec,)
+    def plan_registered_targets(targets, **kwargs):
+        compiled.extend(targets)
+        return SimpleNamespace(requests=(object(),), source_digest="captured-source")
 
     monkeypatch.setattr(
-        branch_status, "Planner", lambda *a, **k: SimpleNamespace(plan_subject=plan_subject)
+        branch_status,
+        "Planner",
+        lambda *a, **k: SimpleNamespace(plan_registered_targets=plan_registered_targets),
     )
     submitted = []
     monkeypatch.setattr(
@@ -39,6 +41,7 @@ def test_verify_compiles_current_checkout_without_creating_demand(tmp_path, monk
             module="anat",
             project="demo",
             participant="01",
+            work_item_key="subject",
             entities_json="{}",
             workflow_ids="main",
             directory_label="main",
@@ -49,9 +52,48 @@ def test_verify_compiles_current_checkout_without_creating_demand(tmp_path, monk
     selection = CoreSelection((), (), (), (), {}, (), ())
     branch_status.refresh(rows, selection)
     assert len(compiled) == len(submitted) == 1
-    assert compiled[0]["selectors"] is None
+    assert compiled[0].work_item_key == "subject"
     assert submitted[0][1]["demand"] is False
     assert submitted[0][0][1].source_digest == "captured-source"
+
+
+def test_verify_does_not_guess_workflows_for_unassociated_rows(tmp_path, monkeypatch):
+    scientific = SimpleNamespace(work_items=lambda: ())
+    monkeypatch.setattr(
+        branch_status,
+        "BranchStore",
+        lambda _: SimpleNamespace(registry_for_checkout=lambda _: scientific),
+    )
+    monkeypatch.setattr(
+        branch_status,
+        "settings",
+        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, {}),
+    )
+    monkeypatch.setattr(
+        branch_status,
+        "Planner",
+        lambda *a, **k: SimpleNamespace(
+            plan_registered_targets=lambda *args, **kwargs: pytest.fail(
+                "Unassociated work was sent to the planner"
+            )
+        ),
+    )
+    branch_status.refresh(
+        [
+            dict(
+                module="anat",
+                project="demo",
+                participant="01",
+                work_item_key="subject",
+                entities_json="{}",
+                workflow_ids="",
+                directory_label="main",
+                memory_gb=8,
+                max_memory_gb=32,
+            )
+        ],
+        CoreSelection((), (), (), (), {}, (), ()),
+    )
 
 
 def test_preview_propagates_current_policy_changes_without_mutation(monkeypatch):

@@ -8,26 +8,26 @@ from typing import Callable, Mapping, Sequence
 
 from nro.configuration.store import fingerprint
 from nro.orchestration.branches import BranchTopology
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 
 
-def scientific_contracts(instances: Sequence[InstanceSpec]) -> dict[str, dict]:
-    """Compile location-independent contracts for a complete instance graph.
+def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
+    """Compile location-independent contracts for a complete work-item graph.
 
     Output members retain their relative paths. Direct source/resource paths
     remain exact. Paths inside a declared upstream artifact become references
     to that producer's scientific contract and relative member. No arbitrary
     path prefix, processing field, or dependency is discarded.
     """
-    by_key = {item.key: item for item in instances}
-    if len(by_key) != len(instances):
-        raise ValueError("Instance graph contains duplicate keys")
+    by_key = {item.key: item for item in work_items}
+    if len(by_key) != len(work_items):
+        raise ValueError("Work-item graph contains duplicate keys")
     result: dict[str, dict] = {}
     pending = set(by_key)
     while pending:
         ready = sorted(key for key in pending if set(by_key[key].dependencies) <= result.keys())
         if not ready:
-            raise ValueError("Instance graph is cyclic or lacks a required dependency")
+            raise ValueError("Work-item graph is cyclic or lacks a required dependency")
         for key in ready:
             spec = by_key[key]
             parents = [by_key[parent] for parent in sorted(set(spec.dependencies))]

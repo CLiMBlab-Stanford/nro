@@ -15,6 +15,7 @@ from nro.modules.func.resampling import (
     world_warp_to_afni,
     write_afni_motion_affines,
 )
+from nro.modules.func.resampling_steps import _afni_bold_warp_chain
 
 
 def _oblique_affine() -> np.ndarray:
@@ -134,3 +135,14 @@ def test_resampled_bold_validation_requires_reference_geometry(tmp_path: Path) -
     )
     assert not valid
     assert "affine" in reason
+
+
+def test_gradient_warp_follows_spatial_and_motion_pull_transforms() -> None:
+    assert (
+        _afni_bold_warp_chain(
+            spatial_warp=Path("spatial.nii.gz"),
+            motion_affines=Path("motion.aff12.1D"),
+            gradient_warp=Path("gradient.nii.gz"),
+        )
+        == "spatial.nii.gz motion.aff12.1D gradient.nii.gz"
+    )

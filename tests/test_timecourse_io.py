@@ -32,7 +32,7 @@ configure(
 )
 
 from nro.modules.func import confounds as get_confounds_module
-from nro.modules.func import steps as func_steps
+from nro.modules.func import resampling_steps as func_steps
 from nro.orchestration.runner import Runner
 
 

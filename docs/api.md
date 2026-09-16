@@ -50,10 +50,11 @@ in a helper whose return value merely describes outputs.
 
 ## Planning and execution records
 
-`InstanceIdentity` identifies work. `InstanceContract` captures substantive
-configuration, dependencies, inputs, processing, and `OutputContract`.
+`WorkItemIdentity` identifies one work item. `WorkItemContract` captures
+substantive configuration, dependencies, inputs, processing, and
+`OutputContract`.
 `ExecutionRecipe` supplies the command/runtime config; `ResourceRequest`
-supplies worker resources. `InstanceSpec` combines them for registration.
+supplies worker resources. `WorkItemSpec` combines them for registration.
 `ExecutionEnvelope` is the immutable worker-facing execution record.
 
 `Planner` uses module descriptors and subject planning contexts to build these
@@ -71,7 +72,7 @@ See [contracts](autoapi/nro/orchestration/contracts/index.rst),
 ## Artifacts and new modules
 
 New modules need configuration validation, a deterministic constructor,
-planner-facing instance construction, public output contracts, and completion
+planner-facing work-item construction, public output contracts, and completion
 metadata validation. Register them in the explicit module catalog. Add tests
 for topology, selectors, public output signatures, freshness, and interrupted
 resumption. Use shared engine helpers for paths, BIDS metadata, atomic I/O,
@@ -79,7 +80,7 @@ container execution, and cleaned-data admission.
 
 Methods that change output meaning must update the substantive contract.
 Docstring changes alone should not change the declared processing signature.
-The [instance lifecycle](instance-lifecycle.md) explains how output contracts,
+The [work-item lifecycle](work-item-lifecycle.md) explains how output contracts,
 completion generations, and ownership receipts interact.
 
 ## Ingestion
@@ -91,5 +92,5 @@ The scheduler controller claims stages and accounts for their worker capacity.
 noninteractive stage; the `nro.bin.bidsify` wizard owns all user decisions.
 Workers supervise ingestion with the existing execution launcher and include
 it in shared concurrency accounting. Do not represent ingestion as a synthetic
-derivative instance. See [bidsification](commands/bidsify.md) for the privacy
+derivative work item. See [bidsification](commands/bidsify.md) for the privacy
 boundary and publication protocol.

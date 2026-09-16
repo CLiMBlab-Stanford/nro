@@ -7,7 +7,6 @@ import logging
 import time
 from dataclasses import asdict
 from functools import partial
-from itertools import count
 from pathlib import Path
 
 import numpy as np
@@ -866,7 +865,6 @@ def run(
         container=None,
         binds=(),
         logger=LOG,
-        next_step=count(1).__next__,
     )
     outputs = build_module(cfg, active_runner)
     with active_runner.run_context(started_at=runner_started):

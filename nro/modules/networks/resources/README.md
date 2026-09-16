@@ -11,4 +11,4 @@ implementation in `climbprep.parcellate`:
 `nro.modules.networks.labeling` projects each map into the target CIFTI space and ranks
 the top configured number of individualized networks independently for each
 reference. These resources are scientific inputs and must not be modified or
-silently replaced; changing one changes the networks instance inputs.
+silently replaced; changing one changes the networks work item inputs.

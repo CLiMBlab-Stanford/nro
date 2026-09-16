@@ -57,7 +57,7 @@ def token(row: dict, context_json: str | None) -> str:
 
 
 def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
-    """Return only owned instances; inherited selections are not deletion targets."""
+    """Return only owned work items; inherited selections are not deletion targets."""
     from nro.orchestration.scheduler_service import status
 
     topology = BranchStore(registry.paths.control).read().topology
@@ -69,7 +69,8 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
         return {"rows": [], "branch": name}
     with registry.connection() as db:
         metadata = {
-            row["instance_id"]: dict(row) for row in db.execute("SELECT * FROM instance_execution")
+            row["work_item_id"]: dict(row)
+            for row in db.execute("SELECT * FROM work_item_execution")
         }
     rows = []
     for row in report["rows"]:
@@ -80,7 +81,7 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
         context = (
             ExecutionContext.from_dict(json.loads(encoded))
             if encoded
-            else ExecutionContext(paths, row["project"], row["instance_key"], ())
+            else ExecutionContext(paths, row["project"], row["work_item_key"], ())
         )
         rows.append(dict(row, execution_context=context.as_dict(), purge_token=token(row, encoded)))
     return {"rows": rows, "branch": name}
@@ -106,7 +107,7 @@ def purge(
     owned = {row["id"]: row for row in view["rows"]}
     ids = {item["id"] for item in plan}
     if len(ids) != len(plan) or not ids <= owned.keys():
-        raise ValueError("Purge includes duplicate, inherited, or foreign instances")
+        raise ValueError("Purge includes duplicate, inherited, or foreign work items")
     for item in plan:
         if item["token"] != owned[item["id"]]["purge_token"]:
             raise ValueError("Purge targets changed; generate and confirm a new report")
@@ -121,20 +122,20 @@ def purge(
         report(phase, 0, len(plan))
         rows = {
             row["id"]: dict(row)
-            for row in db.execute("SELECT * FROM instances")
+            for row in db.execute("SELECT * FROM work_items")
             if row["id"] in ids
         }
         executions = {
-            row["instance_id"]: row["context_json"]
-            for row in db.execute("SELECT instance_id,context_json FROM instance_execution")
-            if row["instance_id"] in ids
+            row["work_item_id"]: row["context_json"]
+            for row in db.execute("SELECT work_item_id,context_json FROM work_item_execution")
+            if row["work_item_id"] in ids
         }
         if rows.keys() != ids:
             raise ValueError("Purge targets changed; generate and confirm a new report")
         protected = (
             _protected_output_index(
                 path
-                for row in db.execute("SELECT id,expected_outputs_json FROM instances")
+                for row in db.execute("SELECT id,expected_outputs_json FROM work_items")
                 if row["id"] not in ids
                 for path in json.loads(row["expected_outputs_json"])
             )
@@ -156,14 +157,14 @@ def purge(
                     raise ValueError("Manifest path is redirected")
                 if _contains_protected_output(path, protected):
                     raise ValueError(
-                        "Purge would remove another registered instance; narrow the paths or expand the selection"
+                        "Purge would remove another registered work item; narrow the paths or expand the selection"
                     )
             if position % 100 == 0 or position == len(plan):
                 report(phase, position, len(plan))
 
     with registry.connection() as db:
         validate(db, phase="Validating purge selection")
-    counts = {"instances": len(ids), "derivative_paths": 0, "work_paths": 0}
+    counts = {"work_items": len(ids), "derivative_paths": 0, "work_paths": 0}
     if not logs_only:
         from contextlib import nullcontext
 
@@ -209,8 +210,8 @@ def purge(
                             report("Removing artifact paths", completed_paths, total_paths)
                 if not dry_run:
                     db.executemany(
-                        "UPDATE instances SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
-                        [(utcnow(), instance_id) for instance_id in ids],
+                        "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
+                        [(utcnow(), work_item_id) for work_item_id in ids],
                     )
     from nro.orchestration.control_paths import ControlPaths
 
@@ -221,7 +222,7 @@ def purge(
         )
     )
     report("Removing logs", 0, 1)
-    counts["attempt_logs"] = _purge_attempt_logs(scoped, instance_ids=ids, dry_run=dry_run)
+    counts["attempt_logs"] = _purge_attempt_logs(scoped, work_item_ids=ids, dry_run=dry_run)
     counts["worker_logs"] = _purge_inactive_worker_logs(registry, dry_run=dry_run)
     report("Removing logs", 1, 1)
     return counts

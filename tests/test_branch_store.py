@@ -77,7 +77,7 @@ def test_registry_repair_preserves_branch_authority_and_execution_sources(
     initial = store.initialize()
     before = store.register("experiment", "dev", revision=initial.revision)
     science = store.registry("experiment")
-    instance = science.record_instance("demo", {"module": "anat"}, expected_revision=None)
+    work_item = science.record_work_item("demo", {"module": "anat"}, expected_revision=None)
     source, site = capture_execution(registry.paths.control, registry.paths.bids_root)
     site_text = site.read_text()
     if fail:
@@ -91,7 +91,7 @@ def test_registry_repair_preserves_branch_authority_and_execution_sources(
     else:
         registry.reinitialize()
     assert store.read().revision == before.revision
-    assert store.registry("experiment").instances() == (instance,)
+    assert store.registry("experiment").work_items() == (work_item,)
     source.verify()
     assert site.read_text() == site_text
 

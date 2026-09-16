@@ -1,4 +1,4 @@
-"""Command-line entry point for one dynamic-connectivity module instance."""
+"""Command-line entry point for one dynamic-connectivity module work item."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import argparse
 import json
 import logging
 import time
-from itertools import count
 from pathlib import Path
 
 from nro.configuration.markup import load_source_markup
@@ -116,7 +115,7 @@ def main(
     *,
     execution_context: ExecutionContext | None = None,
 ) -> None:
-    """Select cleaned runs and execute one dynamic-connectivity instance."""
+    """Select cleaned runs and execute one dynamic-connectivity work item."""
 
     args = build_parser().parse_args(argv)
     if args.smoothing < 0:
@@ -136,11 +135,11 @@ def main(
         / args.project
         / f"sub-{participant}"
     )
-    load_source_markup(config.get("markup"), args.project, source_subject)
+    load_source_markup(config["markup"], args.project, source_subject)
     runs = tuple(
         run
         for run in discover_raw_runs(source_subject)
-        if matches_filter(run.entities, config.get("input_filter"))
+        if matches_filter(run.entities, config["input_filter"])
     )
     spaces = supported_output_spaces(
         str(snapshot["configurations"]["anat"]["resolved"]["fsaverage_template"])
@@ -175,7 +174,6 @@ def main(
         container=None,
         binds=(),
         logger=logging.getLogger("dynconn"),
-        next_step=count(1).__next__,
         execution_context=execution_context,
     )
     result = build_module(cfg, runner, completion_boundary=False)

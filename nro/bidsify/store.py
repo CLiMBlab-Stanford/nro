@@ -580,7 +580,7 @@ class IngestionStore:
                 barrier_key = f"bids_publication:{row['project']}"
                 if row["stage"] == "publish" and self.branch == "main":
                     busy = db.execute(
-                        """SELECT 1 FROM attempts a JOIN instances i ON i.id=a.instance_id
+                        """SELECT 1 FROM attempts a JOIN work_items i ON i.id=a.work_item_id
                            WHERE i.project=? AND a.state IN ('queued','running','cancel_requested')
                            LIMIT 1""",
                         (row["project"],),

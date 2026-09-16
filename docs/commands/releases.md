@@ -96,8 +96,9 @@ because their registry IDs belong to the old database.
 
 Repair also rebuilds any branch scientific database whose schema is incompatible with
 the installed release. It retains the previous database as
-`registry-before-repair.sqlite3`. Stable scientific contracts and their revisions are
-copied into the replacement; cached observations are discarded for reassessment.
+`registry-before-repair.sqlite3`. It does not migrate records from the incompatible
+schema. Current artifacts are rediscovered, and later requests register current
+scientific contracts on demand.
 
 Main artifacts are rediscovered from disk without creating demand. Other branches
 register their outputs against current compiled contracts when work is next

@@ -22,7 +22,7 @@ from .task_models import load_task_model, model_path, validate_task_model
 def main(
     argv: list[str] | None = None, *, execution_context: ExecutionContext | None = None
 ) -> None:
-    """Resolve a workflow snapshot and execute one complete firstlevels instance."""
+    """Resolve a workflow snapshot and execute one complete firstlevels work item."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--participant", required=True)
     parser.add_argument("-P", "--project", required=True)
@@ -55,12 +55,12 @@ def main(
         Path(BIDS_PATH if execution_context is None else execution_context.paths.bids)
         / args.project
     )
-    load_source_markup(config.get("markup"), args.project, project_root / f"sub-{participant}")
+    load_source_markup(config["markup"], args.project, project_root / f"sub-{participant}")
     runs = selected_runs(
         discover_raw_runs(project_root / f"sub-{participant}"),
         args.model,
         participant,
-        config.get("input_filter"),
+        config["input_filter"],
     )
     run_module(
         runs=runs,

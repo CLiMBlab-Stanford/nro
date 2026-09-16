@@ -4,7 +4,6 @@ import json
 import logging
 from copy import deepcopy
 from functools import partial
-from itertools import count
 from pathlib import Path
 
 import nibabel as nib
@@ -30,12 +29,43 @@ from .design import build_design
 from .estimation import evaluate_maps, meta_records, run_records
 from .io import read_timeseries, save_fit, write_statmaps
 from .models import validate_run_groups
-from .paths import artifact_root, completion_path, instance_prefix, node_prefix
+from .paths import artifact_root, completion_path, node_prefix, work_item_prefix
 from .report import write_design
 from .statistics import RunFit, UnidentifiableDesignError, fit_glm
 from .task_models import scientific_model
 
 LOG = logging.getLogger(__name__)
+
+_DENOISING_POLICY_FIELDS = ("applied", "method", "mode")
+
+
+def _input_denoising(run: str, metadata: dict) -> dict:
+    """Separate the shared denoising policy from one run's observed outcome."""
+    if not isinstance(metadata, dict):
+        raise ValueError("Functional denoising metadata must be an object")
+    return {
+        "policy": {field: metadata.get(field) for field in _DENOISING_POLICY_FIELDS},
+        "runs": {run: metadata},
+    }
+
+
+def _merge_input_denoising(documents: list[dict]) -> dict:
+    """Merge per-run denoising provenance while requiring a common policy."""
+    if not documents:
+        raise ValueError("Firstlevels aggregation requires at least one input")
+    policy = documents[0]["input_denoising"]["policy"]
+    runs = {}
+    for document in documents:
+        value = document["input_denoising"]
+        if value["policy"] != policy:
+            raise ValueError("Functional denoising policies differ within one firstlevels target")
+        for run, metadata in value["runs"].items():
+            if run in runs and json.dumps(runs[run], sort_keys=True) != json.dumps(
+                metadata, sort_keys=True
+            ):
+                raise ValueError(f"Functional denoising metadata conflict for {run}")
+            runs[run] = metadata
+    return {"policy": policy, "runs": runs}
 
 
 def functional_paths(
@@ -158,7 +188,10 @@ def create_fit_step(
         confounds = pd.read_csv(confounds_path, sep="\t")
         events = pd.read_csv(events_path, sep="\t")
         metadata = json.loads(sidecar_json_path(original_images[0]).read_text())
-        fit_base = {**base, "input_denoising": metadata["Denoising"]}
+        fit_base = {
+            **base,
+            "input_denoising": _input_denoising(run.stem, metadata["Denoising"]),
+        }
         tr = float(metadata["RepetitionTime"])
         events["onset"] -= float(metadata.get("StartTime", 0))
         compiled_path = prefix.with_name(prefix.name + "_statsmodel.json")
@@ -260,8 +293,12 @@ def create_fit_step(
         validate=partial(
             validate_completion,
             manifest,
-            definition={"model": base["model_document"], "config": config},
+            definition={
+                "model": base["model_document"],
+                "config": scientific_values("firstlevels", config),
+            },
         ),
+        force=bool(config["overwrite"]),
     )
 
 
@@ -273,10 +310,8 @@ def create_meta_step(
 
     def action() -> None:
         parents = [json.loads(path.read_text()) for path in inputs]
-        input_denoising = [parent["input_denoising"] for parent in parents]
-        if any(value != input_denoising[0] for value in input_denoising[1:]):
-            raise ValueError("Run-level functional denoising metadata differ within one target")
-        meta_base = {**base, "input_denoising": input_denoising[0]}
+        input_denoising = _merge_input_denoising(parents)
+        meta_base = {**base, "input_denoising": input_denoising}
         records, omissions = meta_records(
             node,
             [r for p in parents for r in p["records"]],
@@ -319,8 +354,13 @@ def create_meta_step(
         validate=partial(
             validate_completion,
             manifest,
-            definition={"model": base["model_document"], "config": config, "runs": base["runs"]},
+            definition={
+                "model": base["model_document"],
+                "config": scientific_values("firstlevels", config),
+                "runs": base["runs"],
+            },
         ),
+        force=bool(config["overwrite"]),
     )
 
 
@@ -332,6 +372,7 @@ def create_smoothing_step(
     surface: Path | None,
     wb_command: str,
     run_command,
+    overwrite: bool,
 ) -> Step:
     """Declare Euclidean volume or Workbench geodesic surface smoothing."""
 
@@ -366,6 +407,7 @@ def create_smoothing_step(
         inputs=(source, *((surface,) if surface else ())),
         outputs=(output,),
         action=action,
+        force=overwrite,
     )
 
 
@@ -409,22 +451,22 @@ def build_module(
             raise ValueError("Firstlevels project differs from its execution context")
         root = execution_context.output_path(root)
         work_root = execution_context.output_path(work_root, private=True)
-    prefix = instance_prefix(participant, model_id, space, smoothing)
+    prefix = work_item_prefix(participant, model_id, space, smoothing)
     runner = Runner(
         module_name="firstlevels",
         container=None,
         binds=(),
         logger=LOG,
-        next_step=count(1).__next__,
         execution_context=execution_context,
     )
-    definition = {"model": model, "config": config}
+    scientific_config = scientific_values("firstlevels", config)
+    definition = {"model": model, "config": scientific_config}
     base = {
         "model": model_id,
         "participant": participant,
         "space": space,
         "smoothing": smoothing,
-        "configuration": config,
+        "configuration": scientific_config,
         "model_document": model,
         "task_model": task_definition,
         "prefix": prefix,
@@ -477,6 +519,7 @@ def build_module(
                         surface=surface,
                         wb_command=config["wb_command"],
                         run_command=runner.run_child,
+                        overwrite=bool(config["overwrite"]),
                     )
                 )
                 smoothed.append(output)
@@ -527,9 +570,7 @@ def build_module(
 
     def finalize() -> None:
         documents = [json.loads(path.read_text()) for path in inputs]
-        input_denoising = [document["input_denoising"] for document in documents]
-        if any(value != input_denoising[0] for value in input_denoising[1:]):
-            raise ValueError("Firstlevels node denoising metadata differ within one module")
+        input_denoising = _merge_input_denoising(documents)
         outputs = list(inputs) + [
             Path(p) for document in documents for p in document["public_outputs"]
         ]
@@ -542,7 +583,7 @@ def build_module(
         outputs.extend((source_path, config_path, compiled_path))
         _write_manifest(
             completion,
-            {**base, "node": "module", "input_denoising": input_denoising[0]},
+            {**base, "node": "module", "input_denoising": input_denoising},
             outputs=outputs,
             records=[r for d in documents for r in d["records"]],
             omissions=[o for d in documents for o in d["omissions"]],
@@ -557,6 +598,7 @@ def build_module(
             action=finalize,
             validate=partial(validate_completion, completion, definition=definition),
             completion_boundary=True,
+            force=bool(config["overwrite"]),
         )
     )
     return runner, completion

@@ -52,7 +52,7 @@ def _run_with_error_logging(run_func: Callable[[Sequence[str]], object], argv: l
 
 
 def main(argv: list[str] | None = None, *, execution_context=None) -> None:
-    """Resolve one functional instance and execute its runner graph."""
+    """Resolve one functional work item and execute its runner graph."""
     args = build_parser().parse_args(argv)
     if execution_context is not None and execution_context.project != args.project:
         raise ValueError("Execution context project differs from the requested project")
@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         / args.project
         / sub_id
     )
-    load_source_markup(cfg.get("markup"), args.project, subject_dir)
+    load_source_markup(cfg["markup"], args.project, subject_dir)
     try:
         selectors = parse_selectors(args.run)
         selected = resolve_run(

@@ -14,8 +14,9 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.engine.io import write_json
 from nro.engine.neuroimaging import create_copy_nifti_step
-from nro.modules.func import steps as func_steps
+from nro.modules.func import denoising_steps as func_steps
 from nro.modules.func.ica_aroma import denoising, make_dilated_anatomical_epi_mask
+from nro.modules.func.resampling_steps import _create_temporal_mean_step
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import artifact_decision
 
@@ -369,12 +370,8 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
         output = kwargs["out_dir"] / "denoised_func_data_aggr.nii.gz"
         nib.save(nib.Nifti1Image(data, np.eye(4)), output)
 
-    def fake_copy(source: Path, destination: Path) -> None:
-        destination.write_bytes(source.read_bytes())
-
     monkeypatch.setattr(func_steps, "make_dilated_anatomical_epi_mask", fake_mask)
     monkeypatch.setattr(func_steps, "run_ica_aroma_denoising", fake_denoising)
-    monkeypatch.setattr(func_steps, "copy_or_convert_nifti", fake_copy)
     monkeypatch.setattr(
         func_steps,
         "_resolve_container_command_for_wrapper",
@@ -412,7 +409,7 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
         )
     )
     runner.add_step(
-        func_steps._create_temporal_mean_step(
+        _create_temporal_mean_step(
             in_4d=out_4d,
             out_3d=out_mean,
             env={},

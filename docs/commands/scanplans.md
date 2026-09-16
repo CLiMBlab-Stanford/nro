@@ -5,21 +5,33 @@ may be local or stored in Google Drive. Each site supplies a parser because
 scan-plan formats are not standardized. nro defines the parser output and
 handles source selection, validation, and reconciliation.
 
-This setup belongs in the site definitions store. Parser code is trusted code:
+This setup belongs in the definitions system. Parser code is trusted code:
 `nro definitions validate` imports it, and `nro bidsify` runs it as the current
 user. Review parser changes through the definitions store's normal version
 control process.
 
 ## Configure the source
 
-Add a `scanplans` block to `bidsify/main.yml`:
+Set the source and optional credential variable in the protected
+`site/site.yml` document:
+
+```yaml
+bidsify:
+  scanplans:
+    location: /data/lab/scanplans
+    credential_env: null
+```
+
+Select the parser in `bidsify/main.yml`:
 
 ```yaml
 scanplans:
-  location: /data/lab/scanplans
   parser: scanplans/parser.py
-  credential_env: null
 ```
+
+The source is site-wide. Development branches may change parser code or select
+another parser, but they cannot redirect the shared scan-plan source or its
+authentication setting.
 
 `location` accepts an absolute directory, a path relative to the definitions
 store, or a Google Drive folder URL. A local source includes every regular file

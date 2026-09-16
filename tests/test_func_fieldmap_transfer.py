@@ -11,20 +11,24 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.engine.execution import resolve_runner_command
 from nro.engine.neuroimaging import create_copy_nifti_step
-from nro.modules.func.steps import (
-    _canonical_fieldmap_order,
+from nro.engine.registration import rigid_transform_metrics
+from nro.modules.func.registration_steps import (
     _create_ants_registration_step,
     _create_bold_ref_to_topup_transform_step,
     _create_t1_epi_vox_target_step,
     _create_target_readout_warp_step,
     _create_target_shift_step,
+)
+from nro.modules.func.sdc_steps import (
+    _canonical_fieldmap_order,
     _create_topup_dfout_step,
     _normalized_topup_matrix,
     _pe_to_fsl_shift_direction,
+    _write_topup_datain,
+)
+from nro.modules.func.step_support import (
     _resolve_fieldmapless_sdc_method,
     _resolve_sdc_reference_policy,
-    _write_topup_datain,
-    rigid_transform_metrics,
 )
 from nro.orchestration.runner import Runner
 

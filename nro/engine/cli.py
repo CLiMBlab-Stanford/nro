@@ -24,10 +24,11 @@ class CoreSelection:
     smoothing: tuple[int, ...]
     models: tuple[str, ...] = ()
     model_sets: tuple[str, ...] | None = None
+    lineages: tuple[str, ...] = ()
 
     @property
-    def instance_entities(self) -> dict[str, tuple[str, ...] | None]:
-        """Return the run and target entity filters used to match instances."""
+    def work_item_entities(self) -> dict[str, tuple[str, ...] | None]:
+        """Return run and target entity filters used to match work items."""
         entities = dict(self.runs)
         if self.spaces:
             entities["space"] = self.spaces
@@ -42,14 +43,19 @@ class CoreSelection:
         return entities
 
 
-def matches_instance_selectors(entities: dict, selectors: dict) -> bool:
-    """Match instance entities, including qualified models resolved from sets."""
+def matches_work_item_selectors(entities: dict, selectors: dict) -> bool:
+    """Match work-item entities, including qualified models resolved from sets."""
     selectors = dict(selectors)
     identifier = f"{entities.get('task', '')}/{entities.get('model', '')}"
     models = selectors.pop("model", ())
     if models and entities.get("model") not in models and identifier not in models:
         return False
     return matches_selectors({**entities, "model_id": identifier}, selectors)
+
+
+def matches_module_lineage(module: str, lineage_id: str, selected: Sequence[str]) -> bool:
+    """Match a module-lineage label in bare or module-qualified form."""
+    return not selected or lineage_id in selected or f"{module}/{lineage_id}" in selected
 
 
 def add_core_selection_arguments(
@@ -102,6 +108,15 @@ def add_core_selection_arguments(
         default=None,
         metavar="WORKFLOW",
         help="Select one or more workflow IDs",
+    )
+    parser.add_argument(
+        "-i",
+        "--lineage",
+        nargs="+",
+        action="extend",
+        default=None,
+        metavar="ID",
+        help="Select module-lineage IDs, optionally as MODULE/ID",
     )
     parser.add_argument(
         "-r",
@@ -196,6 +211,7 @@ def core_selection(
         model_sets=tuple(dict.fromkeys(args.model_set))
         if getattr(args, "model_set", None)
         else None,
+        lineages=tuple(dict.fromkeys(args.lineage or ())),
     )
 
 

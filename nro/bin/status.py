@@ -9,8 +9,13 @@ import sys
 from collections import deque
 from pathlib import Path
 
-from nro.engine.cli import add_core_selection_arguments, core_selection, page_text
-from nro.engine.cli import matches_instance_selectors as matches_selectors
+from nro.engine.cli import (
+    add_core_selection_arguments,
+    core_selection,
+    matches_module_lineage,
+    page_text,
+)
+from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry
@@ -50,11 +55,13 @@ def _terminal_colors_enabled() -> bool:
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
-def _instance_identifier(item: dict) -> str:
+def _work_item_identifier(item: dict) -> str:
     entities = item.get("entities", "")
     if isinstance(entities, dict):
         entities = " ".join(f"{key}={value}" for key, value in sorted(entities.items()))
-    return f"{item['project']} sub-{item['participant']} {item['module']}" + (
+    lineage = item.get("lineage") or item.get("directory_label")
+    label = f"{item['module']}/{lineage}" if lineage else item["module"]
+    return f"{item['project']} sub-{item['participant']} {label}" + (
         f" ({entities})" if entities else ""
     )
 
@@ -63,12 +70,16 @@ def _render_report(
     output: list[dict],
     *,
     errors: list[dict] | None = None,
-    blocked_instances: list[dict] | None = None,
+    blocked_work_items: list[dict] | None = None,
+    show_lineages: bool = False,
     color: bool = False,
 ) -> str:
+    lineage_width = max([20, *(len(str(row.get("lineage") or "-")) for row in output)])
     lines = [
         _paint(
-            f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} {'STATUS':12} {'MEM':8} ENTITIES",
+            f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} "
+            f"{'LINEAGE':{lineage_width}} "
+            f"{'STATUS':12} {'MEM':8} ENTITIES",
             _BOLD + _CYAN,
             color=color,
         )
@@ -83,12 +94,30 @@ def _render_report(
             _STATUS_COLORS.get(status, _MAGENTA),
             color=color,
         )
+        lineage = str(row.get("lineage") or "-")
         lines.append(
             f"{row['project'][:14]:14} {row['participant'][:14]:14} "
-            f"{row['module'][:20]:20} {status_column} "
+            f"{row['module'][:20]:20} {lineage:{lineage_width}} {status_column} "
             f"{str(row['memory_gb']) + 'G':8} "
             f"{_paint(entities, _DIM, color=color)}"
         )
+    variants: dict[tuple[str, str], dict] = {}
+    for row in output:
+        lineage = str(row.get("lineage") or "-")
+        key = row["module"], lineage
+        detail = variants.setdefault(
+            key,
+            {"route": row.get("route", []), "workflows": set()},
+        )
+        detail["workflows"].update(row.get("workflows", ()))
+    if variants and show_lineages:
+        lines.extend(("", _paint("Module lineages", _BOLD + _CYAN, color=color)))
+        for (module, lineage), detail in sorted(variants.items()):
+            lines.append(f"- {module}/{lineage}")
+            route = " -> ".join(f"{item['module']}={item['config']}" for item in detail["route"])
+            lines.append(f"  Route: {route or '-'}")
+            workflows = ", ".join(sorted(detail["workflows"])) or "-"
+            lines.append(f"  Workflows: {workflows}")
     if errors:
         lines.extend(
             (
@@ -98,7 +127,7 @@ def _render_report(
             )
         )
         for error in errors:
-            lines.append(f"- {_instance_identifier(error)}")
+            lines.append(f"- {_work_item_identifier(error)}")
             if error.get("step"):
                 lines.append(
                     "  " + _paint("Failed step:", _YELLOW, color=color) + f" {error['step']}"
@@ -111,21 +140,21 @@ def _render_report(
                     + _paint("Log:", _CYAN, color=color)
                     + f" {_paint(str(error['log']), _DIM, color=color)}"
                 )
-            if error.get("blocked_instances"):
+            if error.get("blocked_work_items"):
                 lines.append("  " + _paint("Blocks:", _YELLOW, color=color))
-                lines.extend(f"  - {item}" for item in error["blocked_instances"])
-    if blocked_instances:
+                lines.extend(f"  - {item}" for item in error["blocked_work_items"])
+    if blocked_work_items:
         lines.extend(
             (
                 "",
                 _paint("=" * 50, _DIM + _YELLOW, color=color),
-                _paint("Blocked instances", _BOLD + _YELLOW, color=color),
+                _paint("Blocked work items", _BOLD + _YELLOW, color=color),
             )
         )
-        for instance in blocked_instances:
-            lines.append(f"- {_instance_identifier(instance)}")
+        for work_item in blocked_work_items:
+            lines.append(f"- {_work_item_identifier(work_item)}")
             lines.append("  " + _paint("Blocked by:", _YELLOW, color=color))
-            lines.extend(f"  - {item}" for item in instance["upstream_errors"])
+            lines.extend(f"  - {item}" for item in work_item["upstream_errors"])
     return "\n".join(lines) + "\n"
 
 
@@ -162,10 +191,11 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         f"{key}={value}" for key, value in sorted(json.loads(row["entities_json"]).items())
     )
     return {
-        "instance_id": int(row["id"]),
+        "work_item_id": int(row["id"]),
         "project": project,
         "participant": row["participant"],
         "module": row["module"],
+        "lineage": row.get("directory_label") or row.get("config_id"),
         "entities": entities,
         "step": step,
         "message": message,
@@ -179,6 +209,7 @@ def _matches_request(
     participants: set[str],
     modules: set[str],
     workflows: set[str],
+    lineages: set[str],
     selectors: dict[str, tuple[str, ...] | None],
 ) -> bool:
     if participants and row["participant"] not in participants:
@@ -186,6 +217,10 @@ def _matches_request(
     if modules and row["module"] not in modules:
         return False
     if workflows and not workflows.intersection((row.get("workflow_ids") or "").split(",")):
+        return False
+    if not matches_module_lineage(
+        str(row["module"]), str(row.get("directory_label") or ""), lineages
+    ):
         return False
     return not selectors or matches_selectors(json.loads(row["entities_json"]), selectors)
 
@@ -201,6 +236,11 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
+        "--show-lineages",
+        action="store_true",
+        help="Append configured routes and their workflow associations",
+    )
+    parser.add_argument(
         "--no-pager",
         action="store_true",
         help="Print the human-readable report directly instead of opening less",
@@ -209,7 +249,7 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None:
-    """Report saved or reassessed instance status for the selected scope.
+    """Report saved or reassessed work-item status for the selected scope.
 
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
@@ -223,9 +263,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
 
     bids_root = site.bids_root()
     participants = set(selection.participants)
-    selectors = selection.instance_entities
+    selectors = selection.work_item_entities
     modules = set(selection.modules)
     workflows = set(selection.workflows)
+    lineages = set(selection.lineages)
     output: list[dict] = []
     critical_errors: dict[tuple[str, int], dict] = {}
     from nro.bidsify.status import render as render_ingestion
@@ -300,9 +341,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             raise SystemExit(
                 "Registry kept changing during the update; retry nro status --update."
             ) from error
-        rows = registry.instance_status_snapshot(read_only=True)
+        rows = registry.work_item_status_snapshot(read_only=True)
     elif not branch_execution and registry.existing_database_path().is_file():
-        rows = registry.instance_status_snapshot(read_only=True)
+        rows = registry.work_item_status_snapshot(read_only=True)
     by_id = {int(row["id"]): row for row in rows}
     for row in rows:
         if visible_ids is not None and row["id"] not in visible_ids:
@@ -313,6 +354,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             participants=participants,
             modules=modules,
             workflows=workflows,
+            lineages=lineages,
             selectors=selectors,
         ):
             continue
@@ -327,19 +369,21 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 "project": project,
                 "participant": row["participant"],
                 "module": row["module"],
+                "lineage": row.get("directory_label") or row.get("config_id") or "-",
+                "route": json.loads(row.get("configuration_route_json") or "[]"),
                 "entities": entities,
                 "workflows": (row.get("workflow_ids") or "").split(",")
                 if row.get("workflow_ids")
                 else [],
                 "status": row["status"],
                 "reason": (
-                    "No current workflow selects this configuration lineage"
+                    "No current workflow selects this module lineage"
                     if row["status"] == "Unavailable"
                     else row.get("error_message") or row.get("artifact_reason")
                 ),
                 "recomputable": bool(row.get("recomputable")),
                 "root_ids": root_ids,
-                "instance_id": row["id"],
+                "work_item_id": row["id"],
                 "generation": row["current_generation"],
                 "log": row.get("log_path"),
                 "memory_gb": row.get("memory_gb"),
@@ -348,12 +392,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             }
         )
     error_details = list(critical_errors.values())
-    error_labels = {detail["instance_id"]: _instance_identifier(detail) for detail in error_details}
+    error_labels = {
+        detail["work_item_id"]: _work_item_identifier(detail) for detail in error_details
+    }
     for detail in error_details:
-        detail["blocked_instances"] = [
-            _instance_identifier(row)
+        detail["blocked_work_items"] = [
+            _work_item_identifier(row)
             for row in output
-            if row["status"] == "Blocked" and detail["instance_id"] in row.get("root_ids", ())
+            if row["status"] == "Blocked" and detail["work_item_id"] in row.get("root_ids", ())
         ]
     blocked_details = [
         {
@@ -367,9 +413,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         print(
             json.dumps(
                 {
-                    "instances": output,
+                    "work_items": output,
                     "errors": error_details,
-                    "blocked_instances": blocked_details,
+                    "blocked_work_items": blocked_details,
                     "bidsification": ingestion,
                 },
                 indent=2,
@@ -381,7 +427,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         _render_report(
             output,
             errors=error_details,
-            blocked_instances=blocked_details,
+            blocked_work_items=blocked_details,
+            show_lineages=args.show_lineages,
             color=_terminal_colors_enabled(),
         )
         + render_ingestion(ingestion, color=_terminal_colors_enabled()),

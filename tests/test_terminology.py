@@ -19,10 +19,10 @@ from nro.orchestration.catalog import BUILTIN_MODULES, MODULES
 from nro.orchestration.contracts import (
     ExecutionEnvelope,
     ExecutionRecipe,
-    InstanceContract,
-    InstanceIdentity,
-    InstanceSpec,
     ResourceRequest,
+    WorkItemContract,
+    WorkItemIdentity,
+    WorkItemSpec,
 )
 from nro.orchestration.registry import Registry
 
@@ -51,28 +51,28 @@ def test_module_artifact_roots_reject_unknown_or_unsafe_components(tmp_path: Pat
             module_artifact_root(tmp_path, module, module_id)
 
 
-def test_instance_spec_has_the_documented_contract_hierarchy() -> None:
-    annotations = InstanceSpec.__annotations__
-    assert annotations["identity"] == "InstanceIdentity"
-    assert annotations["contract"] == "InstanceContract"
+def test_work_item_spec_has_the_documented_contract_hierarchy() -> None:
+    annotations = WorkItemSpec.__annotations__
+    assert annotations["identity"] == "WorkItemIdentity"
+    assert annotations["contract"] == "WorkItemContract"
     assert annotations["execution"] == "ExecutionRecipe"
     assert annotations["resources"] == "ResourceRequest"
     assert ExecutionEnvelope.from_registry_row
     assert all(
         value.__doc__
         for value in (
-            InstanceIdentity,
-            InstanceContract,
+            WorkItemIdentity,
+            WorkItemContract,
             ExecutionRecipe,
             ResourceRequest,
-            InstanceSpec,
+            WorkItemSpec,
             ExecutionEnvelope,
         )
     )
 
 
 def test_module_specific_planning_lives_with_each_scientific_module() -> None:
-    assert not (ROOT / "nro" / "orchestration" / "instances.py").exists()
+    assert not (ROOT / "nro" / "orchestration" / "work_items.py").exists()
     for module in MODULES:
         root = ROOT / "nro" / "modules" / module
         assert (root / "planning.py").is_file()
@@ -103,6 +103,7 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
         "project": ["-P", "--project"],
         "module": ["-m", "--module"],
         "workflow": ["-w", "--workflow"],
+        "lineage": ["-i", "--lineage"],
         "run": ["-r", "--run"],
         "space": ["-s", "--space"],
         "smoothing": ["-S", "--smoothing"],
@@ -111,8 +112,8 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
         actions = {action.dest: action.option_strings for action in parser_factory()._actions}
         assert {name: actions[name] for name in expected} == expected
 
-    assert "instance_level" in {action.dest for action in log_parser()._actions}
-    assert "instance_level" not in {action.dest for action in status_parser()._actions}
+    assert "worker" in {action.dest for action in log_parser()._actions}
+    assert "worker" not in {action.dest for action in status_parser()._actions}
     purge_actions = {action.dest: action for action in purge_parser()._actions}
     assert purge_actions["logs"].option_strings == ["-l", "--logs"]
     assert purge_actions["force"].option_strings == ["-f", "--force"]
@@ -149,6 +150,14 @@ def test_primary_user_commands_live_in_bin() -> None:
     assert not (ROOT / "nro" / "registration_qc").exists()
 
 
+def test_module_catalog_owns_canonical_execution_entrypoints() -> None:
+    from nro.orchestration.catalog import MODULES, module_descriptor
+
+    assert {module_descriptor(name).execution_module for name in MODULES} == {
+        f"nro.modules.{name}" for name in MODULES
+    }
+
+
 def test_default_registry_is_lab_wide(monkeypatch) -> None:
     from nro.orchestration.control_paths import ControlPaths
 
@@ -175,11 +184,30 @@ def test_fresh_registry_uses_class_and_module_columns(tmp_path: Path) -> None:
     with sqlite3.connect(registry.paths.database) as connection:
         columns = {
             table: {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
-            for table in ("configuration_lineages", "workflow_bindings", "requests", "instances")
+            for table in ("module_lineages", "workflow_bindings", "requests", "work_items")
         }
 
-    assert "configuration_class" in columns["configuration_lineages"]
+    assert "configuration_class" in columns["module_lineages"]
     assert "configuration_class" in columns["workflow_bindings"]
     assert "target_module" in columns["requests"]
-    assert "module" in columns["instances"]
+    assert "module" in columns["work_items"]
     assert all("stage" not in table_columns for table_columns in columns.values())
+
+    with sqlite3.connect(registry.paths.database) as connection:
+        schema = "\n".join(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name"
+            )
+        ).lower()
+    assert "instance" not in schema
+    assert "configuration_lineage" not in schema
+
+
+def test_branch_registry_schema_uses_work_item_vocabulary() -> None:
+    from nro.orchestration.branch_registry import SCHEMA
+
+    assert "work_items" in SCHEMA
+    assert "module_lineages" in SCHEMA
+    assert "instance" not in SCHEMA.lower()
+    assert "configuration_lineage" not in SCHEMA.lower()

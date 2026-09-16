@@ -66,7 +66,7 @@ and `firstlevels`, using model set `main` for matching tasks. Use `-m firstlevel
 to request only the modeling module and its upstream dependencies. Existing
 registered work remains independent of later changes to model-set membership.
 
-Model sets are execution metadata. Membership changes do not alter instance
+Model sets are execution metadata. Membership changes do not alter work item
 identity, scientific fingerprints, or completion checks. Model file timestamps,
 comments, and `description` do not affect freshness either. Changing predictors,
 contrasts, transforms, or HRFs invalidates the corresponding model's artifacts,
@@ -180,7 +180,7 @@ contrast inventory, not the execution graph.
 The compiler creates the Stats Models document used by the estimator. At run
 time it resolves selected nuisance/outlier columns and event HRFs. The saved
 run document records those choices; numerical design files record the fitted
-PCs, retained rows, parameter mapping, and rank budget. The instance also saves
+PCs, retained rows, parameter mapping, and rank budget. The work item also saves
 its scientific task YAML, resolved firstlevels configuration, and compiled
 template. Execution-only set membership is excluded.
 

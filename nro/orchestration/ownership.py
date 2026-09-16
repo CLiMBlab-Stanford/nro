@@ -12,43 +12,43 @@ import yaml
 from nro.configuration.store import CONFIGURATION_CLASSES, UPSTREAM_CLASS, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root, module_namespace_root
-from nro.orchestration.contracts import InstanceSpec
-from nro.orchestration.planning_context import instance_key
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import work_item_key
 
 if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
 
 
-OWNERSHIP_VERSION = 2
+OWNERSHIP_VERSION = 3
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
 
 
 def lineage_root(project_root: Path, configuration_class: str, directory_label: str) -> Path:
-    """Return the public root assigned to one configuration lineage."""
+    """Return the public root assigned to one module lineage."""
     return module_artifact_root(project_root, configuration_class, directory_label)
 
 
 def lineage_record_path(project_root: Path, configuration_class: str, directory_label: str) -> Path:
-    """Return the ownership record for one configuration lineage."""
+    """Return the ownership record for one module lineage."""
     return lineage_root(project_root, configuration_class, directory_label) / (
         f"{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
     )
 
 
-def instance_record_path(
+def work_item_record_path(
     project_root: Path,
     configuration_class: str,
     directory_label: str,
     module: str,
     key: str,
 ) -> Path:
-    """Return the ownership receipt path for one module instance."""
+    """Return the ownership receipt path for one work item."""
     digest = key.split(":", 1)[-1]
     return (
         lineage_root(project_root, configuration_class, directory_label)
         / OWNERSHIP_DIRECTORY
-        / "instances"
+        / "work_items"
         / module
         / f"{digest}.json"
     )
@@ -57,21 +57,21 @@ def instance_record_path(
 def remove_empty_ownership_root(
     project_root: Path, configuration_class: str, directory_label: str
 ) -> None:
-    """Remove a lineage marker after its final instance receipt is purged."""
+    """Remove a lineage marker after its final work-item receipt is purged."""
     control = lineage_root(project_root, configuration_class, directory_label) / OWNERSHIP_DIRECTORY
-    instances = control / "instances"
-    if instances.is_dir():
-        for module_directory in instances.iterdir():
+    work_items = control / "work_items"
+    if work_items.is_dir():
+        for module_directory in work_items.iterdir():
             if module_directory.is_dir():
                 try:
                     module_directory.rmdir()
                 except OSError:
                     pass
         try:
-            instances.rmdir()
+            work_items.rmdir()
         except OSError:
             return
-    elif any((control / "instances").glob("*")):
+    elif any((control / "work_items").glob("*")):
         return
     (control / LINEAGE_RECORD_NAME).unlink(missing_ok=True)
     try:
@@ -83,7 +83,7 @@ def remove_empty_ownership_root(
 def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dict]]:
     with registry.connection() as db:
         lineage = dict(
-            db.execute("SELECT * FROM configuration_lineages WHERE id=?", (lineage_id,)).fetchone()
+            db.execute("SELECT * FROM module_lineages WHERE id=?", (lineage_id,)).fetchone()
         )
         upstream = [
             dict(row)
@@ -92,10 +92,10 @@ def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dic
                 SELECT dependency.role, parent.configuration_class,
                        parent.config_id, parent.lineage_fingerprint,
                        parent.directory_label
-                FROM configuration_lineage_dependencies dependency
-                JOIN configuration_lineages parent
-                  ON parent.id=dependency.upstream_configuration_lineage_id
-                WHERE dependency.configuration_lineage_id=?
+                FROM module_lineage_dependencies dependency
+                JOIN module_lineages parent
+                  ON parent.id=dependency.upstream_module_lineage_id
+                WHERE dependency.module_lineage_id=?
                 ORDER BY dependency.role, parent.configuration_class
                 """,
                 (lineage_id,),
@@ -104,46 +104,46 @@ def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dic
     return lineage, upstream
 
 
-def write_instance_ownership(
-    registry: "Registry", instance_id: int, *, attempt_id: int | None = None
+def write_work_item_ownership(
+    registry: "Registry", work_item_id: int, *, attempt_id: int | None = None
 ) -> Path:
-    """Store enough public metadata to recover an instance after registry repair."""
+    """Store enough public metadata to recover a work item after registry repair."""
     with registry.connection() as db:
-        instance = dict(
+        work_item = dict(
             db.execute(
                 """
                 SELECT item.*, lineage.configuration_class, lineage.config_id,
                        lineage.config_fingerprint, lineage.lineage_fingerprint,
                        lineage.resolved_yaml, lineage.directory_label
-                FROM instances item
-                JOIN configuration_lineages lineage
-                  ON lineage.id=item.configuration_lineage_id
+                FROM work_items item
+                JOIN module_lineages lineage
+                  ON lineage.id=item.module_lineage_id
                 WHERE item.id=?
                 """,
-                (instance_id,),
+                (work_item_id,),
             ).fetchone()
         )
-    lineage, upstream = _lineage_rows(registry, int(instance["configuration_lineage_id"]))
-    project_root = registry.paths.bids_root / str(instance["project"])
+    lineage, upstream = _lineage_rows(registry, int(work_item["module_lineage_id"]))
+    project_root = registry.paths.bids_root / str(work_item["project"])
     provenance = None
     with registry.connection() as db:
         if attempt_id is None:
             execution = db.execute(
-                "SELECT context_json, provenance_json FROM instance_execution WHERE instance_id=?",
-                (instance_id,),
+                "SELECT context_json, provenance_json FROM work_item_execution WHERE work_item_id=?",
+                (work_item_id,),
             ).fetchone()
         else:
             execution = db.execute(
                 """SELECT e.context_json,e.provenance_json FROM attempt_execution e
-                JOIN attempts a ON a.id=e.attempt_id WHERE e.attempt_id=? AND a.instance_id=?""",
-                (attempt_id, instance_id),
+                JOIN attempts a ON a.id=e.attempt_id WHERE e.attempt_id=? AND a.work_item_id=?""",
+                (attempt_id, work_item_id),
             ).fetchone()
     if execution is not None:
         from nro.orchestration.execution_context import ExecutionContext
 
         context = ExecutionContext.from_dict(json.loads(execution["context_json"]))
-        project_root = context.paths.output_project(str(instance["project"]))
-        context.require_output(Path(instance["output_root"]))
+        project_root = context.paths.output_project(str(work_item["project"]))
+        context.require_output(Path(work_item["output_root"]))
         provenance = json.loads(execution["provenance_json"])
     now = datetime.now(timezone.utc).isoformat()
     root_record = {
@@ -170,50 +170,50 @@ def write_instance_ownership(
     root_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(root_path, root_record, sort_keys=True, mode=0o664, durable=True)
 
-    runtime_path = Path(instance["runtime_config_path"])
+    runtime_path = Path(work_item["runtime_config_path"])
     runtime_configuration = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
     receipt = {
         "record_version": OWNERSHIP_VERSION,
         "owner": "nro",
-        "instance_key": instance["instance_key"],
-        "module": instance["module"],
-        "project": instance["project"],
-        "participant": instance["participant"],
-        "entities": json.loads(instance["entities_json"]),
-        "scope": instance["scope"],
+        "work_item_key": work_item["work_item_key"],
+        "module": work_item["module"],
+        "project": work_item["project"],
+        "participant": work_item["participant"],
+        "entities": json.loads(work_item["entities_json"]),
+        "scope": work_item["scope"],
         "lineage_fingerprint": lineage["lineage_fingerprint"],
         "directory_label": lineage["directory_label"],
-        "artifact_contract": json.loads(instance["artifact_contract_json"]),
+        "artifact_contract": json.loads(work_item["artifact_contract_json"]),
         "execution": {
-            "command": json.loads(instance["command_json"]),
+            "command": json.loads(work_item["command_json"]),
             "runtime_configuration": runtime_configuration,
         },
         "resources": {
-            "resource_class": instance["resource_class"],
-            "memory_gb": int(instance["memory_gb"]),
-            "max_memory_gb": int(instance["max_memory_gb"]),
+            "resource_class": work_item["resource_class"],
+            "memory_gb": int(work_item["memory_gb"]),
+            "max_memory_gb": int(work_item["max_memory_gb"]),
         },
         "recorded_at": now,
     }
     if provenance is not None:
         receipt["implementation"] = provenance
-    receipt_path = instance_record_path(
+    receipt_path = work_item_record_path(
         project_root,
         str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
-        str(instance["module"]),
-        str(instance["instance_key"]),
+        str(work_item["module"]),
+        str(work_item["work_item_key"]),
     )
     receipt_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(receipt_path, receipt, sort_keys=True, mode=0o664, durable=True)
     return receipt_path
 
 
-def missing_instance_ownership(
-    registry: "Registry", instance_ids: Iterable[int]
+def missing_work_item_ownership(
+    registry: "Registry", work_item_ids: Iterable[int]
 ) -> tuple[int, ...]:
-    """Return fresh instances whose public recovery records are incomplete."""
-    selected = tuple(sorted(set(instance_ids)))
+    """Return fresh work items whose public recovery records are incomplete."""
+    selected = tuple(sorted(set(work_item_ids)))
     if not selected:
         return ()
     rows = []
@@ -224,11 +224,11 @@ def missing_instance_ownership(
             rows.extend(
                 dict(row)
                 for row in db.execute(
-                    f"""SELECT i.id,i.instance_key,i.module,i.project,
+                    f"""SELECT i.id,i.work_item_key,i.module,i.project,
                                c.configuration_class,c.directory_label,e.context_json
-                        FROM instances i
-                        JOIN configuration_lineages c ON c.id=i.configuration_lineage_id
-                        LEFT JOIN instance_execution e ON e.instance_id=i.id
+                        FROM work_items i
+                        JOIN module_lineages c ON c.id=i.module_lineage_id
+                        LEFT JOIN work_item_execution e ON e.work_item_id=i.id
                         WHERE i.id IN ({placeholders})""",
                     batch,
                 )
@@ -245,12 +245,12 @@ def missing_instance_ownership(
         lineage = lineage_record_path(
             project_root, row["configuration_class"], row["directory_label"]
         )
-        receipt = instance_record_path(
+        receipt = work_item_record_path(
             project_root,
             row["configuration_class"],
             row["directory_label"],
             row["module"],
-            row["instance_key"],
+            row["work_item_key"],
         )
         lineage_exists = lineages.get(lineage)
         if lineage_exists is None:
@@ -266,7 +266,7 @@ def read_ownership_records(
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
     """Read current-format ownership records from the selected projects."""
     lineages: dict[tuple[str, str], dict] = {}
-    instances: list[tuple[dict, Path]] = []
+    work_items: list[tuple[dict, Path]] = []
     errors: list[str] = []
     for project in projects:
         project_root = Path(bids_root) / project
@@ -285,11 +285,11 @@ def read_ownership_records(
                 previous = lineages.get(identity)
                 if previous is None or str(marker["updated_at"]) > str(previous["updated_at"]):
                     lineages[identity] = marker
-                instance_root = marker_path.parent / "instances"
-                for receipt_path in sorted(instance_root.glob("*/*.json")):
+                work_item_root = marker_path.parent / "work_items"
+                for receipt_path in sorted(work_item_root.glob("*/*.json")):
                     try:
                         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-                        _validate_instance_record(
+                        _validate_work_item_record(
                             receipt,
                             receipt_path,
                             project=project,
@@ -299,8 +299,8 @@ def read_ownership_records(
                     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                         errors.append(f"{receipt_path}: {error}")
                         continue
-                    instances.append((receipt, receipt_path))
-    return list(lineages.values()), instances, errors
+                    work_items.append((receipt, receipt_path))
+    return list(lineages.values()), work_items, errors
 
 
 def _validate_lineage_record(
@@ -356,7 +356,7 @@ def _validate_lineage_record(
         raise ValueError("lineage fingerprint does not match its semantic identity")
 
 
-def _validate_instance_record(
+def _validate_work_item_record(
     record: Mapping[str, object],
     path: Path,
     *,
@@ -365,7 +365,7 @@ def _validate_instance_record(
     marker: Mapping[str, object],
 ) -> None:
     if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
-        raise ValueError("unsupported instance ownership record")
+        raise ValueError("unsupported work-item ownership record")
     if record.get("project") != project:
         raise ValueError("project does not match its derivative tree")
     module = str(record.get("module"))
@@ -374,29 +374,29 @@ def _validate_instance_record(
     if module_descriptor(module).configuration_class != configuration_class:
         raise ValueError("module does not match the recorded configuration class")
     if record.get("lineage_fingerprint") != marker.get("lineage_fingerprint"):
-        raise ValueError("instance and root lineage fingerprints differ")
+        raise ValueError("work-item and root lineage fingerprints differ")
     entities = record.get("entities")
     if not isinstance(entities, Mapping):
-        raise ValueError("instance entities are missing")
+        raise ValueError("work-item entities are missing")
     contract = record.get("artifact_contract")
     if not isinstance(contract, Mapping):
         raise ValueError("artifact contract is missing")
     identity_fingerprint = str(record["lineage_fingerprint"])
-    expected_key = instance_key(
+    expected_key = work_item_key(
         project,
         module,
         identity_fingerprint,
         str(record.get("participant")),
         {str(key): str(value) for key, value in entities.items()},
     )
-    if record.get("instance_key") != expected_key:
-        raise ValueError("instance key does not match its semantic identity")
+    if record.get("work_item_key") != expected_key:
+        raise ValueError("work-item key does not match its semantic identity")
     if path.stem != expected_key.split(":", 1)[-1]:
-        raise ValueError("instance record filename does not match its key")
+        raise ValueError("work-item record filename does not match its key")
     if contract.get("module") != module or contract.get("entities") != dict(
         sorted(entities.items())
     ):
-        raise ValueError("artifact contract does not match the instance identity")
+        raise ValueError("artifact contract does not match the work-item identity")
     output = contract.get("output")
     if not isinstance(output, Mapping):
         raise ValueError("artifact output contract is missing")
@@ -412,13 +412,13 @@ def _validate_instance_record(
         raise ValueError("resource request is missing")
 
 
-def materialize_instance_specs(
+def materialize_work_item_specs(
     registry: "Registry",
     records: Iterable[tuple[dict, Path]],
     lineage_ids: Mapping[str, int],
-) -> tuple[list[InstanceSpec], list[str]]:
-    """Recreate planner records without requiring the originating workflow."""
-    specs: list[InstanceSpec] = []
+) -> tuple[list[WorkItemSpec], list[str]]:
+    """Recreate work-item specifications without the originating workflow."""
+    specs: list[WorkItemSpec] = []
     errors: list[str] = []
     for record, source in records:
         try:
@@ -442,14 +442,14 @@ def materialize_instance_specs(
                 durable=True,
             )
             specs.append(
-                InstanceSpec.create(
-                    key=str(record["instance_key"]),
+                WorkItemSpec.create(
+                    key=str(record["work_item_key"]),
                     module=str(record["module"]),
                     project=str(record["project"]),
                     participant=str(record["participant"]),
                     entities={str(key): str(value) for key, value in record["entities"].items()},
                     scope=str(record["scope"]),
-                    configuration_lineage_id=lineage_id,
+                    module_lineage_id=lineage_id,
                     config_fingerprint=str(contract["configuration"]),
                     directory_label=str(record["directory_label"]),
                     runtime_config=runtime_path,

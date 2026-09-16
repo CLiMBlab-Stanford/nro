@@ -4,8 +4,8 @@
 
 ## `nro run`
 
-Plan requested terminal instances, register upstream demand, assess outputs,
-and supply workers. Fresh intermediates can be skipped even when the instance
+Plan requested terminal work items, register upstream demand, assess outputs,
+and supply workers. Fresh intermediates can be skipped even when the work item
 needs execution. No upfront catalog of all space/smoothing combinations is needed.
 The command admits demand without starting a persistent service. If ready work
 needs worker capacity, it starts the ephemeral scheduler controller and sends
@@ -20,7 +20,7 @@ matching task model can still run the connectivity paths. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
 
 Selecting an endpoint together with its dependencies creates no extra upstream
-demand when the endpoint covers those same instances. For example,
+demand when the endpoint covers those same work items. For example,
 `-m microparcellation networks` is equivalent to `-m networks`. If an endpoint
 uses only some upstream runs, an explicit upstream selection keeps demand for
 the remaining runs. This reduction applies within each project and workflow
@@ -74,7 +74,7 @@ that still has demand. Those three states do not create demand on their own.
 The shared selectors narrow the selection; omitted selectors mean all existing
 resumable work rather than the usual workflow endpoints and default target.
 
-Resume replans only the selected instance identities against the current BIDS
+Resume replans only the selected work item identities against the current BIDS
 data and definitions, then captures the current execution source. It does not
 request work that has never carried demand. If an old identity no longer exists
 under the current scientific definitions, the command reports that it cannot
@@ -100,16 +100,16 @@ ingestion records are retained. Do not use repair as routine error recovery or
 in unattended scripts.
 
 That pre-activation recovery starts from derivatives on disk. Ownership records restore their
-instances directly, including instances whose original workflow no longer exists.
+work items directly, including work items whose original workflow no longer exists.
 For unrecorded files in a current workflow's output directories, repair plans only
 the matching module, participant, run, model, space, and smoothing, plus required
-upstream instances. It does not plan unrelated source participants or unused
+upstream work items. It does not plan unrelated source participants or unused
 combinations of spaces and smoothing levels. Source discovery still catalogs all
 projects and participants; it does not create demand.
 
 ## `nro status`
 
-Report registered instances, including errors and blocked-dependency summaries.
+Report registered work items, including errors and blocked-dependency summaries.
 Source discovery alone does not create status rows; existing owned artifacts
 can be adopted without demand. An empty registry prints headers without rows.
 
@@ -144,17 +144,23 @@ queue.
 Inspect the reason field and upstream/downstream error summaries rather than
 inferring filesystem state from submission state alone.
 
+The `LINEAGE` column identifies the complete configured route to a module.
+Pass `--show-lineages` to append the route and registered workflow associations
+for each displayed work item. Use `-i`/`--lineage` to select an exact route.
+Qualify a repeated ID as `MODULE/ID`. A workflow can reach a work item, but it
+does not own that work item.
+
 ## `nro log`
 
-Browse matching worker logs in `less`. `-i`/`--instance-level` instead selects
-the current attempt's instance logs. Logs separate command stdout and stderr;
-a message on stderr is not by itself a failed command. Worker logs are not
-one-to-one with derivatives because workers execute multiple instances.
+Browse the current attempt logs for matching work items in `less`. Pass
+`--worker` to browse the Slurm worker logs instead. Logs separate command stdout
+and stderr; a message on stderr is not by itself a failed command. Worker logs
+are not one-to-one with derivatives because workers execute multiple work items.
 
 Use `nro log -m bidsify` to browse the dedicated logs for matching bidsification
 requests. In this command, `bidsify` is a logging selector, not a scientific
 module. Project and participant selectors apply, and `-r ses=LABEL` selects a
-BIDS session. `-i` does not change bidsification log selection.
+BIDS session. `--worker` does not change bidsification log selection.
 
 ## `nro stop`
 
@@ -164,7 +170,7 @@ derivative. `-f`/`--force` cancels matching demand from all users and stops the
 shared attempt; it does not delete outputs or history.
 
 `-W`/`--workers` shuts down the current user's site-wide worker pool without
-cancelling instance demand. Worker shutdown and demand cancellation are distinct
+cancelling work item demand. Worker shutdown and demand cancellation are distinct
 operations. Coordinate with other users before installation maintenance.
 
 ## `nro set`

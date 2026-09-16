@@ -12,7 +12,7 @@ from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_admission import admit_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceStore
 from nro.orchestration.worker import Worker
@@ -82,14 +82,14 @@ def setup(tmp_path, monkeypatch):
         registered = science.register_workflow(ConfigStore().resolve("main"))
         paths = BranchPaths(name, registry.paths.bids_root, tmp_path / "WORK", tmp_path / "DEV")
         out = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
-        spec = InstanceSpec.create(
+        spec = WorkItemSpec.create(
             key="same-logical-key",
             module="probe_" + name,
             project="demo",
             participant="01",
             entities={},
             scope="subject",
-            configuration_lineage_id=registered.lineages["anat"],
+            module_lineage_id=registered.lineages["anat"],
             config_fingerprint="test-science",
             directory_label="main",
             runtime_config=science.runtime_config_path(registered, "anat"),
@@ -133,17 +133,17 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
     workers = [Worker(registry, resource_class="large", poll_interval=0.01) for _ in range(2)]
     for worker in workers:
         registry.register_worker(worker.worker_id, resource_class="large")
-    first = registry.claim_ready_instance(workers[0].worker_id, ("small",))
+    first = registry.claim_ready_work_item(workers[0].worker_id, ("small",))
     assert first is not None
-    assert registry.claim_ready_instance(workers[1].worker_id, ("small",)) is None
+    assert registry.claim_ready_work_item(workers[1].worker_id, ("small",)) is None
     workers[0]._execute(first)
     with registry.connection() as db:
         attempt = dict(
             db.execute("SELECT * FROM attempts WHERE id=?", (first.attempt_id,)).fetchone()
         )
     assert attempt["state"] == "success", attempt["error_message"]
-    second = registry.claim_ready_instance(workers[0].worker_id, ("small",))
-    assert second is not None and second.instance_id != first.instance_id
+    second = registry.claim_ready_work_item(workers[0].worker_id, ("small",))
+    assert second is not None and second.work_item_id != first.work_item_id
     workers[0]._execute(second)
     with registry.connection() as db:
         assert all(row["state"] == "success" for row in db.execute("SELECT state FROM attempts"))
@@ -152,13 +152,13 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
         output = paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
         assert output.read_text() == name
         assert not spec.expected_outputs[0].exists()
-        row = next(row for row in registry.instance_rows() if row["module"] == "probe_" + name)
+        row = next(row for row in registry.work_item_rows() if row["module"] == "probe_" + name)
         completion = json.loads(Path(row["manifest_path"]).read_text())
         assert completion["implementation"]["branch"] == name
         assert completion["implementation"]["source_digest"] == prepared[5].digest
         assert "nro.orchestration.attempt_entry" in completion["software"]["command"]
     assert first.log_path != second.log_path
-    assert {row["instance_key"] for row in registry.instance_rows()} == {
+    assert {row["work_item_key"] for row in registry.work_item_rows()} == {
         branches.registry(name).record.registry_id + ":same-logical-key" for name in ("one", "two")
     }
     for prepared in (one, two):
@@ -182,7 +182,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     child = prepare("child", parent="parent", demand=False)
     root, paths, _, _, registered, source, _ = child
     spec = parent[2].evolve(
-        configuration_lineage_id=registered.lineages["anat"],
+        module_lineage_id=registered.lineages["anat"],
         runtime_config=branches.registry("child").runtime_config_path(registered, "anat"),
     )
     plan = branches.resolve_plan(root, paths, (spec,), (spec.key,), (), validate=lambda _: True)
@@ -203,7 +203,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
         db.execute("UPDATE requests SET state='registered' WHERE id=?", (parent[-1],))
     worker = Worker(registry, resource_class="large", poll_interval=0.01)
     registry.register_worker(worker.worker_id, resource_class="large")
-    claimed = registry.claim_ready_instance(worker.worker_id, ("small",))
+    claimed = registry.claim_ready_work_item(worker.worker_id, ("small",))
     worker._execute(claimed)
     output = parent[1].output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
     if conflict:
@@ -211,10 +211,10 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
         output.write_text("incompatible target")
         with registry.connection(write=True) as db:
             target_id = db.execute(
-                "SELECT instance_id FROM request_artifacts WHERE request_id=?", (parent[-1],)
+                "SELECT work_item_id FROM request_artifacts WHERE request_id=?", (parent[-1],)
             ).fetchone()[0]
             manifest = db.execute(
-                "SELECT manifest_path FROM instances WHERE id=?", (target_id,)
+                "SELECT manifest_path FROM work_items WHERE id=?", (target_id,)
             ).fetchone()[0]
         Path(manifest).parent.mkdir(parents=True, exist_ok=True)
         Path(manifest).write_text(json.dumps({"manifest_version": -1}))
@@ -251,7 +251,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     else:
         import nro.orchestration.ownership as ownership
 
-        write = ownership.write_instance_ownership
+        write = ownership.write_work_item_ownership
         failed = False
 
         def interrupt_ownership(*args, **kwargs):
@@ -261,10 +261,10 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
                 raise OSError("interrupted ownership publication")
             return write(*args, **kwargs)
 
-        monkeypatch.setattr(ownership, "write_instance_ownership", interrupt_ownership)
+        monkeypatch.setattr(ownership, "write_work_item_ownership", interrupt_ownership)
         with pytest.raises(OSError, match="interrupted ownership publication"):
             publish(registry, checkout=parent[0], report=report, replace=False, attest=True)
-        monkeypatch.setattr(ownership, "write_instance_ownership", write)
+        monkeypatch.setattr(ownership, "write_work_item_ownership", write)
     result = publish(registry, checkout=parent[0], report=report, replace=conflict, attest=True)
     assert result["promoted"] == 1
     assert (
@@ -286,7 +286,7 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
         publish(registry, checkout=parent[0], report=report, replace=False, attest=True)["promoted"]
         == 0
     )
-    row = next(row for row in registry.instance_rows() if row["output_root"] == str(output.parent))
+    row = next(row for row in registry.work_item_rows() if row["output_root"] == str(output.parent))
     provenance = json.loads(Path(row["manifest_path"]).read_text())["implementation"]
     assert provenance["branch"] == "child"
     assert provenance["promotion"]["to_branch"] == "parent"
@@ -352,7 +352,7 @@ def test_retirement_immediately_cancels_owned_attempts(setup):
     checkout, request = prepared[0], prepared[-1]
     worker = Worker(registry, resource_class="large", poll_interval=0.01)
     registry.register_worker(worker.worker_id, resource_class="large")
-    claim = registry.claim_ready_instance(worker.worker_id, ("small",))
+    claim = registry.claim_ready_work_item(worker.worker_id, ("small",))
     assert claim is not None
     result = update(
         registry,
@@ -373,16 +373,16 @@ def test_retirement_immediately_cancels_owned_attempts(setup):
 
 def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup):
     from nro.orchestration import dependency_state
-    from nro.orchestration.manifests import record_completion
+    from nro.orchestration.completion import record_completion
 
     registry, branches, site, prepare = setup
     _, _, producer, producer_plan, *_ = prepare("parent")
     worker = Worker(registry, resource_class="large", poll_interval=0.01)
     registry.register_worker(worker.worker_id, resource_class="large")
-    built = registry.claim_ready_instance(worker.worker_id, ("small",))
+    built = registry.claim_ready_work_item(worker.worker_id, ("small",))
     worker._execute(built)
     registry.reconcile_requests()
-    original = next(row for row in registry.instance_rows() if row["id"] == built.instance_id)
+    original = next(row for row in registry.work_item_rows() if row["id"] == built.work_item_id)
     checkout, paths, base, _, registered, source, _ = prepare(
         "child", parent="parent", demand=False
     )
@@ -397,13 +397,13 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
     candidate = ArtifactCandidate(
         "parent",
         producer.key,
-        producer_plan.instances[0].contract,
+        producer_plan.work_items[0].contract,
         original["current_generation"],
         Path(original["output_root"]),
         {},
     )
     requested_parent = producer.evolve(
-        runtime_config=base.runtime_config, configuration_lineage_id=base.configuration_lineage_id
+        runtime_config=base.runtime_config, module_lineage_id=base.module_lineage_id
     )
     plan = branches.resolve_plan(
         checkout,
@@ -431,23 +431,24 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
         assert [
             row[0]
             for row in db.execute(
-                "SELECT instance_id FROM request_instances WHERE request_id=?", (request,)
+                "SELECT work_item_id FROM request_work_items WHERE request_id=?", (request,)
             )
-        ] != [built.instance_id]
+        ] != [built.work_item_id]
         assert not db.execute(
-            "SELECT 1 FROM request_instances WHERE request_id=? AND instance_id=?",
-            (request, built.instance_id),
+            "SELECT 1 FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, built.work_item_id),
         ).fetchone()
     assert (
-        next(row for row in registry.instance_rows() if row["id"] == built.instance_id) == original
+        next(row for row in registry.work_item_rows() if row["id"] == built.work_item_id)
+        == original
     )
-    claim = registry.claim_ready_instance(worker.worker_id, ("small",))
-    assert claim is not None and claim.instance_id != built.instance_id
+    claim = registry.claim_ready_work_item(worker.worker_id, ("small",))
+    assert claim is not None and claim.work_item_id != built.work_item_id
     with registry.connection() as db:
         assert (
             db.execute(
-                "SELECT generation FROM attempt_dependencies WHERE attempt_id=? AND upstream_instance_id=?",
-                (claim.attempt_id, built.instance_id),
+                "SELECT generation FROM attempt_dependencies WHERE attempt_id=? AND upstream_work_item_id=?",
+                (claim.attempt_id, built.work_item_id),
             ).fetchone()[0]
             == original["current_generation"]
         )
@@ -458,13 +459,13 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
         )
         assert context["inputs"][0]["generation"] == original["current_generation"]
     with registry.connection(write=True) as db:
-        db.execute("UPDATE instances SET artifact_state='stale' WHERE id=?", (built.instance_id,))
+        db.execute("UPDATE work_items SET artifact_state='stale' WHERE id=?", (built.work_item_id,))
     registry.cancel_attempts_with_stale_upstreams()
     assert registry.attempt_cancel_requested(claim.attempt_id)
     with pytest.raises(dependency_state.AttemptInvalidated):
         record_completion(
             registry,
-            instance_id=claim.instance_id,
+            work_item_id=claim.work_item_id,
             attempt_id=claim.attempt_id,
             outputs=(
                 paths.output_project("demo") / output.relative_to(paths.source_project("demo")),
@@ -474,12 +475,12 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
 
     assert reconcile_branch_requests(registry) == 1
     registry.finish_attempt(claim.attempt_id, state="cancelled")
-    local_parent = registry.claim_ready_instance(worker.worker_id, ("small",))
-    assert local_parent is not None and local_parent.instance_id != built.instance_id
+    local_parent = registry.claim_ready_work_item(worker.worker_id, ("small",))
+    assert local_parent is not None and local_parent.work_item_id != built.work_item_id
     assert str(paths.output_project("demo")) in str(local_parent.output_root)
     worker._execute(local_parent)
-    local_consumer = registry.claim_ready_instance(worker.worker_id, ("small",))
-    assert local_consumer.instance_id == claim.instance_id
+    local_consumer = registry.claim_ready_work_item(worker.worker_id, ("small",))
+    assert local_consumer.work_item_id == claim.work_item_id
     worker._execute(local_consumer)
     with registry.connection() as db:
         assert (
@@ -490,7 +491,7 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
         )
         assert (
             db.execute(
-                "SELECT COUNT(*) FROM attempts WHERE instance_id=?", (built.instance_id,)
+                "SELECT COUNT(*) FROM attempts WHERE work_item_id=?", (built.work_item_id,)
             ).fetchone()[0]
             == 1
         )
@@ -502,11 +503,11 @@ def test_equivalent_demand_updates_next_recipe_without_rewriting_attempt(setup, 
     checkout, _, _, plan, registered, source, _ = prepare("one")
     worker = Worker(registry, resource_class="large", poll_interval=0.01)
     registry.register_worker(worker.worker_id, resource_class="large")
-    attempt = registry.claim_ready_instance(worker.worker_id, ("small",))
+    attempt = registry.claim_ready_work_item(worker.worker_id, ("small",))
     assert attempt is not None
     with registry.connection() as db:
-        previous = dict(db.execute("SELECT * FROM instance_execution").fetchone())
-        command = db.execute("SELECT command_json FROM instances").fetchone()[0]
+        previous = dict(db.execute("SELECT * FROM work_item_execution").fetchone())
+        command = db.execute("SELECT command_json FROM work_items").fetchone()[0]
         captured_attempt = dict(
             db.execute(
                 "SELECT * FROM attempt_execution WHERE attempt_id=?", (attempt.attempt_id,)
@@ -529,8 +530,8 @@ def test_equivalent_demand_updates_next_recipe_without_rewriting_attempt(setup, 
         selectors={},
     )
     with registry.connection() as db:
-        current = dict(db.execute("SELECT * FROM instance_execution").fetchone())
-        current_command = db.execute("SELECT command_json FROM instances").fetchone()[0]
+        current = dict(db.execute("SELECT * FROM work_item_execution").fetchone())
+        current_command = db.execute("SELECT command_json FROM work_items").fetchone()[0]
         assert current != previous
         assert json.loads(current["provenance_json"])["source_digest"] == changed.digest
         assert current_command != command
@@ -559,10 +560,15 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
             ).fetchone()[0]
         )
     payload["revisions"] = {spec.key: 2}
-    values = {key: str(getattr(paths, key)) for key in ("bids", "work", "development")}
+    from nro.configuration.site import settings
+
+    values = {
+        **settings()[0],
+        **{key: str(getattr(paths, key)) for key in ("bids", "work", "development")},
+    }
     monkeypatch.setattr(
         BranchRegistry,
-        "instances",
+        "work_items",
         lambda *args: pytest.fail("Central service read branch science"),
     )
     monkeypatch.setattr(
@@ -582,6 +588,12 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
     )
     request_id = admit(registry, payload, checkout=checkout, site_values=values)
     assert request_id
+    payload["site_fingerprint"] = "0" * 64
+    with pytest.raises(ValueError, match="site definitions differ"):
+        admit(registry, payload, checkout=checkout, site_values=values)
+    payload["site_fingerprint"] = scheduler_service.protected_site_fingerprint(
+        Path(values["definitions"])
+    )
     payload["revisions"][spec.key] = 1
     with pytest.raises(ValueError, match="newer scientific request"):
         admit(registry, payload, checkout=checkout, site_values=values)
@@ -603,6 +615,10 @@ def test_central_status_and_stop_are_branch_scoped(setup):
     second = status(registry, checkout=two[0], mode="preview")
     assert len(first["visible_ids"]) == len(second["visible_ids"]) == 1
     assert set(first["visible_ids"]).isdisjoint(second["visible_ids"])
+    assert [row["id"] for row in first["rows"]] == first["visible_ids"]
+    assert [row["id"] for row in second["rows"]] == second["visible_ids"]
+    assert first["rows"][0]["resume_workflow_ids"] == "main"
+    assert second["rows"][0]["resume_workflow_ids"] == "main"
     result = stop(registry, checkout=one[0], selection={"force": True})
     assert result["requests"] == 1
     with registry.connection() as db:

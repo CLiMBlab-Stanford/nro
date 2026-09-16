@@ -141,13 +141,14 @@ CONTAINER = {
     "no_container": BOOL,
 }
 EXECUTION_CONTROLS = {
-    "force": EXEC_BOOL,
+    "overwrite": EXEC_BOOL,
     "verbose": EXEC_BOOL,
 }
 
 SCHEMAS = {
     "anat": {
         "markup": OPTIONAL_TEXT,
+        "gradient_unwarping": enum("auto", "off"),
         "fsaverage_template": enum("fsaverage", "fsaverage6"),
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
@@ -159,6 +160,7 @@ SCHEMAS = {
     },
     "func": {
         "markup": OPTIONAL_TEXT,
+        "gradient_unwarping": enum("auto", "off"),
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
         "sdc_method": enum("syn", "synbold_disco"),
@@ -217,15 +219,9 @@ SCHEMAS = {
         "regress_out_task": BOOL,
         "low_pass": Field("float", nullable=True, minimum=0, exclusive_minimum=True),
         "high_pass": Field("float", nullable=True, minimum=0),
-        "force": EXEC_BOOL,
+        "overwrite": EXEC_BOOL,
         "verbose": EXEC_BOOL,
-        "container": OPTIONAL_TEXT,
-        "no_container": BOOL,
-        "container_engine": TEXT,
-        "container_cleanenv": BOOL,
-        "container_bind": STRINGS,
-        "container_home": OPTIONAL_TEXT,
-        "container_inner_setup": SETUP,
+        "container": CONTAINER,
         "wb_command": TEXT,
     },
     "firstlevels": {
@@ -242,6 +238,7 @@ SCHEMAS = {
             nonempty=True,
         ),
         "spatial_block_size": EXEC_COUNT,
+        "overwrite": EXEC_BOOL,
         "wb_command": TEXT,
     },
     "microparcellation": {

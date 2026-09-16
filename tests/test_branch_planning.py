@@ -7,7 +7,7 @@ import pytest
 from nro.orchestration.artifact_resolution import ArtifactCandidate, scientific_contracts
 from nro.orchestration.branch_planning import resolve_branch_plan
 from nro.orchestration.branches import BranchPaths, BranchRecord, BranchTopology
-from nro.orchestration.contracts import InstanceSpec
+from nro.orchestration.contracts import WorkItemSpec
 
 
 def fixture(tmp_path):
@@ -20,7 +20,7 @@ def fixture(tmp_path):
         participant="01",
         entities={},
         scope="subject",
-        configuration_lineage_id=1,
+        module_lineage_id=1,
         config_fingerprint="same",
         directory_label="main",
         runtime_config=tmp_path / "runtime.yml",
@@ -29,7 +29,7 @@ def fixture(tmp_path):
         output_format="example-v1",
         output_prefix="sub-01",
     )
-    parent = InstanceSpec.create(
+    parent = WorkItemSpec.create(
         key="parent",
         module="extension_parent",
         dependencies=(),
@@ -38,7 +38,7 @@ def fixture(tmp_path):
         expected_outputs=(root / "parent/sub-01_result.nii",),
         **common,
     )
-    child = InstanceSpec.create(
+    child = WorkItemSpec.create(
         key="child",
         module="extension_child",
         dependencies=("parent",),
@@ -89,7 +89,7 @@ def test_reused_endpoint_prunes_upstream_work_and_redundant_targets(tmp_path):
     )
     assert plan.terminals == ("child",)
     assert plan.work == ()
-    assert len(plan.instances) == 1
+    assert len(plan.work_items) == 1
 
 
 def test_lost_inherited_artifact_replans_locally(tmp_path):
@@ -167,8 +167,8 @@ def test_authorized_planning_records_only_consumer_science(tmp_path, monkeypatch
     inherited = candidate(paths, graph)
     plan = store.resolve_plan(checkout, paths, graph, ("child",), (inherited,), validate=validated)
     assert len(plan.work) == 1
-    assert len(store.registry("feature").instances()) == 2
-    assert store.registry("main").instances() == ()
+    assert len(store.registry("feature").work_items()) == 2
+    assert store.registry("main").work_items() == ()
     with store.registry("feature").connection() as db:
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='workers'").fetchone()
 
@@ -184,7 +184,7 @@ def test_plan_rejects_concurrent_changes_without_overwriting_them(tmp_path, monk
         if change == "topology":
             store.register("other", "dev", revision=store.read().revision)
         elif change == "science":
-            store.registry("feature").record_instance(
+            store.registry("feature").record_work_item(
                 "child", {"new": "science"}, expected_revision=None
             )
         else:
@@ -193,7 +193,7 @@ def test_plan_rejects_concurrent_changes_without_overwriting_them(tmp_path, monk
 
     with pytest.raises(ValueError):
         store.resolve_plan(checkout, paths, graph, ("child",), (inherited,), validate=validate)
-    records = store.registry("feature").instances()
+    records = store.registry("feature").work_items()
     assert len(records) == (1 if change == "science" else 0)
     if records:
         assert records[0].contract == {"new": "science"}
@@ -205,4 +205,4 @@ def test_checkout_cannot_plan_as_main(tmp_path, monkeypatch):
         store.resolve_plan(
             checkout, replace(paths, branch="main"), graph, ("child",), (), validate=validated
         )
-    assert store.registry("main").instances() == ()
+    assert store.registry("main").work_items() == ()
