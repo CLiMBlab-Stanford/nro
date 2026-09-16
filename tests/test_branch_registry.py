@@ -276,9 +276,14 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
             {},
         ),
     )
-    monkeypatch.setattr("nro.orchestration.branch_repair.assess_registry", lambda *_a, **_k: None)
+    assessments = []
+    monkeypatch.setattr(
+        "nro.orchestration.branch_repair.assess_registry",
+        lambda *_args, **kwargs: assessments.append(kwargs),
+    )
 
     assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
+    assert assessments == [{"projects": ("demo",), "compiled": True}]
     with registry.connection() as db:
         mapping = db.execute(
             "SELECT logical_key,work_item_id FROM branch_work_items WHERE registry_id=?",

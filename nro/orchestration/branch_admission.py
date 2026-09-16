@@ -41,9 +41,12 @@ def _workflow(
             continue
         signature = fingerprint({"owner": owner, "lineage": row["lineage_fingerprint"]})
         db.execute(
-            """INSERT OR IGNORE INTO module_lineages
+            """INSERT INTO module_lineages
             (configuration_class,config_id,config_fingerprint,lineage_fingerprint,resolved_yaml,directory_label,created_at)
-            VALUES (?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(configuration_class,lineage_fingerprint) DO UPDATE SET
+            config_fingerprint=excluded.config_fingerprint,
+            resolved_yaml=excluded.resolved_yaml""",
             (
                 row["configuration_class"],
                 row["config_id"],
@@ -70,22 +73,35 @@ def _workflow(
                 ),
             )
     name = owner + ":" + revision["workflow_id"]
-    db.execute(
-        """INSERT OR IGNORE INTO workflow_revisions
-        (workflow_id,revision,definition_fingerprint,source_path,resolved_yaml,created_at) VALUES (?,?,?,?,?,?)""",
-        (
-            name,
-            revision["revision"],
-            revision["definition_fingerprint"],
-            revision["source_path"],
-            revision["resolved_yaml"],
-            revision["created_at"],
-        ),
-    )
-    revision_id = db.execute(
-        "SELECT id FROM workflow_revisions WHERE workflow_id=? AND revision=?",
-        (name, revision["revision"]),
-    ).fetchone()[0]
+    current = db.execute(
+        """SELECT id FROM workflow_revisions
+           WHERE workflow_id=? AND definition_fingerprint=?""",
+        (name, revision["definition_fingerprint"]),
+    ).fetchone()
+    if current is None:
+        central_revision = int(
+            db.execute(
+                "SELECT COALESCE(MAX(revision),0)+1 FROM workflow_revisions WHERE workflow_id=?",
+                (name,),
+            ).fetchone()[0]
+        )
+        revision_id = int(
+            db.execute(
+                """INSERT INTO workflow_revisions
+                (workflow_id,revision,definition_fingerprint,source_path,resolved_yaml,created_at)
+                VALUES (?,?,?,?,?,?)""",
+                (
+                    name,
+                    central_revision,
+                    revision["definition_fingerprint"],
+                    revision["source_path"],
+                    revision["resolved_yaml"],
+                    revision["created_at"],
+                ),
+            ).lastrowid
+        )
+    else:
+        revision_id = int(current["id"])
     for row in bindings:
         db.execute(
             "INSERT OR IGNORE INTO workflow_bindings VALUES (?,?,?)",

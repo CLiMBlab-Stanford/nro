@@ -153,7 +153,16 @@ def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> li
                    fingerprint=excluded.fingerprint""",
                 (registry_id, logical_key, 1, fingerprint(contract)),
             )
-    assess_registry(registry, projects=tuple(sorted({spec.project for spec in specs})))
+    # Ownership receipts preserve the contract that produced the public files.
+    # Current branch code is registered later, after its scientific registry has
+    # been rebuilt.  Validate the recovered files against their recorded contract
+    # here; assessing them against the scheduler's implementation would apply
+    # main-branch policy to development-branch artifacts.
+    assess_registry(
+        registry,
+        projects=tuple(sorted({spec.project for spec in specs})),
+        compiled=True,
+    )
     return errors
 
 

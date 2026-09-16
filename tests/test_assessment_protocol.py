@@ -89,6 +89,25 @@ def test_snapshot_is_consistent_detached_and_includes_ancestors(graph, monkeypat
     assert not any(registry.paths.manifests.rglob("completion.json"))
 
 
+def test_recovered_branch_artifact_uses_its_registered_contract(graph, monkeypatch):
+    registry, _, ids = graph
+    row = next(item for item in registry.work_item_rows() if item["id"] == ids["root"])
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO branch_work_items VALUES (?,?,?,?)",
+            ("branch-owner", "root", ids["root"], row["artifact_contract_json"]),
+        )
+    snapshot = capture_assessment(registry, work_item_ids=[ids["root"]])
+    assert snapshot.work_items[0]["branch_owned"] == 1
+    monkeypatch.setattr(
+        manifests,
+        "_current_contract",
+        lambda _row: pytest.fail("Recovered branch contract was recompiled centrally"),
+    )
+    report = manifests.evaluate_assessment(snapshot)
+    assert report.updates[0]["contract"] is None
+
+
 def test_global_registry_writes_receipts_inside_the_work_item_project(graph):
     from nro.orchestration.ownership import write_work_item_ownership
 

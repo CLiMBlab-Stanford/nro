@@ -148,6 +148,19 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
                 )
             )
         workflows = {}
+        # A repair deliberately removes request history.  Current workflow
+        # bindings still describe which workflows can reproduce each retained
+        # work item, so status verification must not depend on an old request.
+        for row in db.execute(
+            """SELECT DISTINCT b.work_item_id,w.workflow_id
+               FROM branch_work_items b
+               JOIN work_items i ON i.id=b.work_item_id
+               JOIN workflow_bindings wb ON wb.module_lineage_id=i.module_lineage_id
+               JOIN workflow_revisions w ON w.id=wb.workflow_revision_id
+               WHERE b.registry_id=? AND w.workflow_id LIKE ?""",
+            (owner, owner + ":%"),
+        ):
+            workflows.setdefault(row[0], set()).add(row[1].removeprefix(owner + ":"))
         for row in db.execute(
             """SELECT ri.work_item_id,w.workflow_id FROM request_artifacts ri
             JOIN requests r ON r.id=ri.request_id JOIN request_owners o ON o.request_id=r.id
