@@ -281,6 +281,11 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         "nro.orchestration.branch_repair.assess_registry",
         lambda *_args, **kwargs: assessments.append(kwargs),
     )
+    monkeypatch.setattr(
+        WorkItemSpec,
+        "work_item_contract",
+        property(lambda _spec: pytest.fail("Recovery recompiled a recorded artifact contract")),
+    )
 
     assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
     assert assessments == [{"projects": ("demo",), "compiled": True}]
