@@ -5,6 +5,7 @@ from pathlib import Path
 
 from nro.configuration.site import CHECKOUT
 from nro.orchestration import scheduler_implementation
+from nro.orchestration.branch_registry import SCHEMA_VERSION as BRANCH_SCHEMA_VERSION
 from nro.orchestration.branch_registry import BranchRegistry
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import SCHEMA_VERSION, RegistryLock
@@ -12,23 +13,63 @@ from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
 
-def repair_scientific_schemas(control: Path) -> list[dict]:
-    """Rebuild incompatible branch registries after site-wide work is quiescent."""
-    branches = BranchStore(control)
+def repair_scientific_schemas(registry) -> list[dict]:
+    """Recover branch mappings and rebuild incompatible scientific registries."""
+    from nro.orchestration.branch_repair import (
+        _recover_public_work_items,
+        _repair_records_locked,
+    )
+
+    branches = BranchStore(registry.paths.control)
     if not branches.path.is_file():
         return []
+    topology = branches.read().topology
     repaired = []
-    for record in branches.read().topology.records.values():
-        scientific = BranchRegistry(control, record)
+    records = sorted(
+        topology.records.values(),
+        key=lambda record: (len(topology.ancestors(record.name)), record.name),
+    )
+    for record in records:
+        scientific = BranchRegistry(registry.paths.control, record)
         stored = scientific.stored_schema_version()
-        backup = scientific.rebuild_schema()
-        if backup is not None:
+        unavailable = (
+            _recover_public_work_items(
+                registry,
+                branch=record.name,
+                registry_id=record.registry_id,
+            )
+            if record.name != "main"
+            else []
+        )
+        if stored != scientific.stored_schema_version():
+            raise RuntimeError("Scientific registry schema changed during repair")
+        if stored != BRANCH_SCHEMA_VERSION:
+            with registry.connection(write=True) as db:
+                work_items = _repair_records_locked(
+                    db,
+                    branch=record.name,
+                    registry_id=record.registry_id,
+                )
+            scientific.rebuild([], work_items)
             repaired.append(
                 {
                     "branch": record.name,
                     "stored_schema": stored,
                     "schema": scientific.stored_schema_version(),
-                    "backup": str(backup),
+                    "backup": str(scientific.root / "registry-before-repair.sqlite3"),
+                    "work_items": len(work_items),
+                    "unavailable": unavailable,
+                }
+            )
+        elif unavailable:
+            repaired.append(
+                {
+                    "branch": record.name,
+                    "stored_schema": stored,
+                    "schema": stored,
+                    "backup": None,
+                    "work_items": None,
+                    "unavailable": unavailable,
                 }
             )
     return repaired
@@ -45,13 +86,16 @@ def _rebuild(registry) -> dict:
     found = register_existing_artifacts(
         registry, bids_root=registry.paths.bids_root, inventory=inventory
     )
-    scientific = repair_scientific_schemas(registry.paths.control)
+    scientific = repair_scientific_schemas(registry)
+    branch_unavailable = [
+        f"{item['branch']}: {message}" for item in scientific for message in item["unavailable"]
+    ]
     return dict(
         repaired=True,
         registry=str(registry.paths.database),
         backup=str(backup),
         work_items=found.work_items,
-        unavailable=list(found.unavailable),
+        unavailable=[*found.unavailable, *branch_unavailable],
         schema=SCHEMA_VERSION,
         scientific=scientific,
     )

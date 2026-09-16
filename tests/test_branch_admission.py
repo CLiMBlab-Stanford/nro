@@ -13,6 +13,7 @@ from nro.orchestration.branch_admission import admit_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.ownership import lineage_record_path, work_item_record_path
 from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceStore
 from nro.orchestration.worker import Worker
@@ -148,7 +149,7 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
     with registry.connection() as db:
         assert all(row["state"] == "success" for row in db.execute("SELECT state FROM attempts"))
     for name, prepared in (("one", one), ("two", two)):
-        _, paths, spec, *_ = prepared
+        _, paths, spec, _, registered, *_ = prepared
         output = paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
         assert output.read_text() == name
         assert not spec.expected_outputs[0].exists()
@@ -157,6 +158,24 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
         assert completion["implementation"]["branch"] == name
         assert completion["implementation"]["source_digest"] == prepared[5].digest
         assert "nro.orchestration.attempt_entry" in completion["software"]["command"]
+        marker = json.loads(
+            lineage_record_path(
+                paths.output_project("demo"), "anat", spec.directory_label
+            ).read_text()
+        )
+        receipt = json.loads(
+            work_item_record_path(
+                paths.output_project("demo"),
+                "anat",
+                spec.directory_label,
+                spec.module,
+                spec.key,
+            ).read_text()
+        )
+        assert marker["lineage_fingerprint"] == registered.lineage_fingerprints["anat"]
+        assert receipt["lineage_fingerprint"] == registered.lineage_fingerprints["anat"]
+        assert receipt["work_item_key"] == spec.key
+        assert receipt["scientific_contract"]["project"] == "demo"
     assert first.log_path != second.log_path
     assert {row["work_item_key"] for row in registry.work_item_rows()} == {
         branches.registry(name).record.registry_id + ":same-logical-key" for name in ("one", "two")

@@ -15,6 +15,7 @@ from nro.orchestration.ownership import (
     write_work_item_ownership,
 )
 from nro.orchestration.planner import build_subject_work_items
+from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.registry import Registry
 
 
@@ -143,3 +144,9 @@ def test_planned_work_item_key_uses_stable_lineage_fingerprint(tmp_path: Path) -
 
     assert first_registered.lineages["anat"] != second_registered.lineages["anat"]
     assert first_work_item.key == second_work_item.key
+
+
+def test_work_item_key_retains_pre_terminology_identity() -> None:
+    assert work_item_key("demo", "clean", "lineage", "01", {"space": "T1w"}) == (
+        "clean:c18c0eeff956df04e4199b78d10fd2c356d919f7fcc58a6db5b994fdbf8e216a"
+    )

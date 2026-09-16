@@ -262,14 +262,18 @@ class BranchPaths:
         """Return shared raw data; development trees never supply source subjects."""
         return self.bids / self._project(project)
 
-    def output_project(self, project: str) -> Path:
-        """Return the owner-specific project root without creating directories."""
-        root = (
+    @property
+    def output_bids(self) -> Path:
+        """Return the branch-owned BIDS root without creating it."""
+        return (
             self.bids
             if self.branch == "main"
             else self.development / branch_id(self.branch) / "BIDS"
         )
-        return root / self._project(project)
+
+    def output_project(self, project: str) -> Path:
+        """Return the owner-specific project root without creating directories."""
+        return self.output_bids / self._project(project)
 
     def private_project(self, project: str) -> Path:
         """Return the owner-specific work root without creating directories."""

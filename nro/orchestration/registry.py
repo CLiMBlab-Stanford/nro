@@ -1200,8 +1200,18 @@ class Registry(WorkflowRegistry):
             self._normalize_active_request_graph_locked(db)
             return work_item_ids
 
-    def register_owned_lineages(self, records: Sequence[Mapping[str, object]]) -> dict[str, int]:
-        """Restore module lineages from derivative ownership records."""
+    def register_owned_lineages(
+        self,
+        records: Sequence[Mapping[str, object]],
+        *,
+        branch_registry_id: str | None = None,
+    ) -> dict[str, int]:
+        """Restore module lineages from derivative ownership records.
+
+        Development lineages receive the same central namespace used during
+        normal branch admission. Returned IDs remain keyed by the public,
+        branch-local lineage fingerprints.
+        """
         ordered = sorted(
             records,
             key=lambda item: (
@@ -1214,7 +1224,12 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             for record in ordered:
                 configuration_class = str(record["configuration_class"])
-                lineage_fingerprint = str(record["lineage_fingerprint"])
+                public_fingerprint = str(record["lineage_fingerprint"])
+                lineage_fingerprint = (
+                    fingerprint({"owner": branch_registry_id, "lineage": public_fingerprint})
+                    if branch_registry_id is not None
+                    else public_fingerprint
+                )
                 directory_label = str(record["directory_label"])
                 configuration = record["configuration"]
                 if not isinstance(configuration, Mapping):
@@ -1225,16 +1240,17 @@ class Registry(WorkflowRegistry):
                        WHERE configuration_class=? AND lineage_fingerprint=?""",
                     (configuration_class, lineage_fingerprint),
                 ).fetchone()
-                collision = db.execute(
-                    """SELECT lineage_fingerprint FROM module_lineages
-                       WHERE configuration_class=? AND directory_label=?""",
-                    (configuration_class, directory_label),
-                ).fetchone()
-                if collision and str(collision["lineage_fingerprint"]) != lineage_fingerprint:
-                    raise ValueError(
-                        f"Derivative directory {configuration_class}/{directory_label} "
-                        "declares conflicting module lineages"
-                    )
+                if branch_registry_id is None:
+                    collision = db.execute(
+                        """SELECT lineage_fingerprint FROM module_lineages
+                           WHERE configuration_class=? AND directory_label=?""",
+                        (configuration_class, directory_label),
+                    ).fetchone()
+                    if collision and str(collision["lineage_fingerprint"]) != lineage_fingerprint:
+                        raise ValueError(
+                            f"Derivative directory {configuration_class}/{directory_label} "
+                            "declares conflicting module lineages"
+                        )
                 if existing:
                     if (
                         str(existing["config_id"]) != str(configuration["id"])
@@ -1272,7 +1288,7 @@ class Registry(WorkflowRegistry):
                         ),
                     )
                     lineage_id = int(cursor.lastrowid)
-                lineage_ids[lineage_fingerprint] = lineage_id
+                lineage_ids[public_fingerprint] = lineage_id
 
             for record in ordered:
                 lineage_id = lineage_ids[str(record["lineage_fingerprint"])]

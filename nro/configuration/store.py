@@ -164,6 +164,14 @@ class ConfigStore:
         """Return the directory containing module configurations."""
         return self.root / "configs"
 
+    def workflow_ids(self) -> tuple[str, ...]:
+        """Return defined workflow IDs with ``main`` first when present."""
+        suffix = "_workflow.yml"
+        identifiers = sorted(
+            path.name[: -len(suffix)] for path in (self.root / "workflows").glob(f"*{suffix}")
+        )
+        return tuple(sorted(identifiers, key=lambda value: (value != "main", value)))
+
     def _find(self, filename: str, *, category: str) -> Path:
         organized = (self.root if category == "workflows" else self.configs) / category / filename
         if not organized.resolve().is_relative_to(self.root):

@@ -162,7 +162,10 @@ Shared worker logs remain with the scheduler; ingestion and caches are site-wide
 With central execution activated, `run --repair` rebuilds only the current
 branch's scientific database. It preserves the shared scheduler, other branches'
 demand, ingestion, and public outputs. The previous database is retained as
-`registry-before-repair.sqlite3`; admitted records supply the replacement.
+`registry-before-repair.sqlite3`. Current public ownership records restore work
+items whose artifacts still have declared files. On-disk workflow snapshots restore
+workflow history. Current definitions restore reproducibility bindings in both the
+branch registry and shared scheduler. Repair creates no demand.
 
 nro rejects the previous flat layout before creating another scheduler. No
 automatic relocation or alternate-path fallback exists; use
@@ -185,8 +188,9 @@ through central assessment and cannot be attached to a replacement contract.
 Production registry repair preserves the branch catalog and compatible databases. A
 branch's scientific schema is checked when reading its scientific records, not when
 inspecting its identity or registering another branch. Shared installation rebuilds
-incompatible branch databases after it quiesces the worker pool. Each replacement
-retains stable contracts and revisions from that branch alone.
+incompatible branch databases after it quiesces the worker pool. It first restores
+each development branch's scheduler mappings from that branch's public derivative
+tree. Each replacement contains only contracts recovered for that branch.
 
 These checks protect trusted developers against mistakes. They are not an
 access-control boundary against someone who can directly modify shared files.

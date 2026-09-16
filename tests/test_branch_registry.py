@@ -7,13 +7,24 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+import yaml
 
 from nro.configuration.store import ConfigStore
 from nro.orchestration import branches
 from nro.orchestration.branch_registry import SCHEMA_VERSION, BranchRegistry
-from nro.orchestration.branch_repair import _repair_records_locked
+from nro.orchestration.branch_repair import (
+    _recover_public_work_items,
+    _register_current_workflows,
+    _repair_records_locked,
+)
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.ownership import (
+    OWNERSHIP_VERSION,
+    lineage_record_path,
+    work_item_record_path,
+)
+from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.registry import Registry
 
 
@@ -149,6 +160,165 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
     assert {row["key"] for row in repaired} == {"legacy-parent", "legacy-downstream"}
     assert mapped == {"legacy-parent", "legacy-downstream"}
     assert set(legacy_ids) == mapped
+
+
+def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
+    from nro.configuration.site import settings
+
+    site_values = settings()[0]
+    bids = tmp_path / "BIDS"
+    development = tmp_path / "DEV"
+    registry = Registry.for_project("", bids_root=bids)
+    store = BranchStore(registry.paths.control)
+    topology = store.initialize().topology
+    owner = topology.records["dev"].registry_id
+    scientific = store.registry("dev")
+    workflow = ConfigStore().resolve("main")
+    registered = scientific.register_workflow(workflow)
+    output = development / "dev/BIDS/demo/derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+    output.parent.mkdir(parents=True)
+    output.write_text("complete")
+    runtime = scientific.runtime_config_path(registered, "anat")
+    logical_key = work_item_key(
+        "demo",
+        "anat",
+        registered.lineage_fingerprints["anat"],
+        "01",
+        {},
+    )
+    spec = WorkItemSpec.create(
+        key=logical_key,
+        module="anat",
+        project="demo",
+        participant="01",
+        entities={},
+        scope="subject",
+        module_lineage_id=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        directory_label=registered.directories["anat"],
+        runtime_config=runtime,
+        command=("python", "-m", "nro.modules.anat"),
+        dependencies=(),
+        input_paths=(),
+        output_root=output.parent,
+        output_prefix="sub-01",
+        expected_outputs=(output,),
+        output_format="test",
+        resource_class="small",
+    )
+    with scientific.connection() as db:
+        lineage = dict(
+            db.execute(
+                "SELECT * FROM module_lineages WHERE id=?",
+                (registered.lineages["anat"],),
+            ).fetchone()
+        )
+    project_root = development / "dev/BIDS/demo"
+    marker = {
+        "record_version": OWNERSHIP_VERSION,
+        "owner": "nro",
+        "configuration_class": "anat",
+        "directory_label": registered.directories["anat"],
+        "configuration": {
+            "id": lineage["config_id"],
+            "fingerprint": lineage["config_fingerprint"],
+            "resolved": yaml.safe_load(lineage["resolved_yaml"]),
+        },
+        "lineage_fingerprint": lineage["lineage_fingerprint"],
+        "upstream": [],
+        "updated_at": "now",
+    }
+    receipt = {
+        "record_version": OWNERSHIP_VERSION,
+        "owner": "nro",
+        "work_item_key": spec.key,
+        "module": spec.module,
+        "project": spec.project,
+        "participant": spec.participant,
+        "entities": dict(spec.entities),
+        "scope": spec.scope,
+        "lineage_fingerprint": lineage["lineage_fingerprint"],
+        "directory_label": spec.directory_label,
+        "artifact_contract": spec.contract.as_dict(spec.identity),
+        "scientific_contract": {
+            "project": spec.project,
+            "participant": spec.participant,
+            **spec.contract.as_dict(spec.identity),
+        },
+        "execution": {
+            "command": list(spec.command),
+            "runtime_configuration": yaml.safe_load(runtime.read_text()),
+        },
+        "resources": {
+            "resource_class": "small",
+            "memory_gb": 32,
+            "max_memory_gb": 256,
+        },
+        "recorded_at": "now",
+    }
+    marker_path = lineage_record_path(project_root, "anat", spec.directory_label)
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(json.dumps(marker))
+    receipt_path = work_item_record_path(
+        project_root, "anat", spec.directory_label, "anat", spec.key
+    )
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(
+        "nro.configuration.site.settings",
+        lambda: (
+            {
+                **site_values,
+                "bids": str(bids),
+                "work": str(tmp_path / "WORK"),
+                "development": str(development),
+            },
+            {},
+        ),
+    )
+    monkeypatch.setattr("nro.orchestration.branch_repair.assess_registry", lambda *_a, **_k: None)
+
+    assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
+    with registry.connection() as db:
+        mapping = db.execute(
+            "SELECT logical_key,work_item_id FROM branch_work_items WHERE registry_id=?",
+            (owner,),
+        ).fetchone()
+        row = db.execute(
+            "SELECT * FROM work_items WHERE id=?", (mapping["work_item_id"],)
+        ).fetchone()
+        recovered = _repair_records_locked(db, branch="dev", registry_id=owner)
+    assert mapping["logical_key"] == spec.key
+    assert row["work_item_key"] == f"{owner}:{spec.key}"
+    assert [item["key"] for item in recovered] == [spec.key]
+
+    with sqlite3.connect(scientific.database) as db:
+        db.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+    from nro.orchestration.scheduler_repair import repair_scientific_schemas
+
+    report = repair_scientific_schemas(registry)
+    assert report == [
+        {
+            "branch": "dev",
+            "stored_schema": SCHEMA_VERSION - 1,
+            "schema": SCHEMA_VERSION,
+            "backup": str(scientific.root / "registry-before-repair.sqlite3"),
+            "work_items": 1,
+            "unavailable": [],
+        }
+    ]
+    assert [item.key for item in scientific.work_items()] == [spec.key]
+
+    from nro.orchestration.branch_admission import _workflow
+
+    payloads = _register_current_workflows(scientific, store=ConfigStore(workflow.path.parents[1]))
+    with registry.connection(write=True) as db:
+        for payload in payloads:
+            _workflow(db, payload, owner)
+    row = next(
+        item for item in registry.work_item_rows() if item["work_item_key"].endswith(spec.key)
+    )
+    assert row["recomputable"] == 1
 
 
 def test_contract_revision_protects_edits_and_observations(tmp_path):

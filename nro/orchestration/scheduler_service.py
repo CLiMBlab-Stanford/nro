@@ -639,7 +639,10 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         from nro.orchestration.branch_repair import finish
 
         result = finish(
-            registry, checkout=Path(message["checkout"]), reservation=message["reservation"]
+            registry,
+            checkout=Path(message["checkout"]),
+            reservation=message["reservation"],
+            workflows=message["workflows"],
         )
     elif message["operation"] == "promotion_preview":
         from nro.orchestration.promotion import preview

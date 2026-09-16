@@ -27,9 +27,10 @@ def work_item_key(
     identity = {
         "project": project,
         "module": module,
-        # Retain the historical field label so a vocabulary-only change does
-        # not alter stable work-item keys.
-        "module_lineage": module_lineage_fingerprint,
+        # This serialized label predates the public term ``module lineage``.
+        # Keep it stable because vocabulary-only changes must not alter
+        # scientific work-item identities.
+        "configuration_lineage": module_lineage_fingerprint,
         "participant": participant,
         "entities": dict(sorted(entities.items())),
     }
