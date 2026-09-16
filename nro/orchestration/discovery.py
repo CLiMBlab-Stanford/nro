@@ -14,6 +14,7 @@ from nro.engine.paths import module_artifact_root
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.ownership import (
+    complete_ownership_records,
     materialize_work_item_specs,
     read_ownership_records,
     write_work_item_ownership,
@@ -33,14 +34,6 @@ class ArtifactDiscovery:
     artifacts: int
     work_items: int
     unavailable: tuple[str, ...]
-
-
-def _workflow_ids(store: ConfigStore) -> tuple[str, ...]:
-    suffix = "_workflow.yml"
-    identifiers = sorted(
-        path.name[: -len(suffix)] for path in (store.root / "workflows").glob(f"*{suffix}")
-    )
-    return tuple(sorted(identifiers, key=lambda value: (value != "main", value)))
 
 
 @dataclass(frozen=True, order=True)
@@ -160,48 +153,15 @@ def register_existing_artifacts(
     lineage_records, work_item_records, ownership_errors = read_ownership_records(
         bids_root, inventory
     )
-    known_lineages = {str(record["lineage_fingerprint"]) for record in lineage_records}
-    incomplete_lineages = {
-        str(record["lineage_fingerprint"])
-        for record in lineage_records
-        if any(
-            str(upstream["lineage_fingerprint"]) not in known_lineages
-            for upstream in record["upstream"]
-        )
-    }
-    while True:
-        downstream = {
-            str(record["lineage_fingerprint"])
-            for record in lineage_records
-            if str(record["lineage_fingerprint"]) not in incomplete_lineages
-            and any(
-                str(upstream["lineage_fingerprint"]) in incomplete_lineages
-                for upstream in record["upstream"]
-            )
-        }
-        if not downstream:
-            break
-        incomplete_lineages.update(downstream)
-    if incomplete_lineages:
-        ownership_errors.extend(
-            f"Stored lineage {value} lacks a complete upstream lineage chain"
-            for value in sorted(incomplete_lineages)
-        )
-        lineage_records = [
-            record
-            for record in lineage_records
-            if str(record["lineage_fingerprint"]) not in incomplete_lineages
-        ]
-        work_item_records = [
-            item
-            for item in work_item_records
-            if str(item[0]["lineage_fingerprint"]) not in incomplete_lineages
-        ]
+    lineage_records, work_item_records, incomplete_errors = complete_ownership_records(
+        lineage_records, work_item_records
+    )
+    ownership_errors.extend(incomplete_errors)
     lineage_ids = registry.register_owned_lineages(lineage_records) if lineage_records else {}
     owned_specs, materialization_errors = materialize_work_item_specs(
         registry, work_item_records, lineage_ids
     )
-    workflows = {workflow_id: store.resolve(workflow_id) for workflow_id in _workflow_ids(store)}
+    workflows = {workflow_id: store.resolve(workflow_id) for workflow_id in store.workflow_ids()}
     registered = {
         workflow_id: registry.register_workflow(workflow)
         for workflow_id, workflow in workflows.items()

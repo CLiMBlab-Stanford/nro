@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
 
 
-OWNERSHIP_VERSION = 3
+OWNERSHIP_VERSION = 4
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
 
@@ -123,21 +123,48 @@ def write_work_item_ownership(
                 (work_item_id,),
             ).fetchone()
         )
+        logical_dependencies = [
+            str(row[0])
+            for row in db.execute(
+                """SELECT COALESCE(execution.logical_key, upstream.work_item_key)
+                   FROM work_item_dependencies dependency
+                   JOIN work_items upstream ON upstream.id=dependency.upstream_work_item_id
+                   LEFT JOIN work_item_execution execution
+                     ON execution.work_item_id=upstream.id
+                   WHERE dependency.work_item_id=?
+                   ORDER BY COALESCE(execution.logical_key, upstream.work_item_key)""",
+                (work_item_id,),
+            )
+        ]
     lineage, upstream = _lineage_rows(registry, int(work_item["module_lineage_id"]))
     project_root = registry.paths.bids_root / str(work_item["project"])
     provenance = None
     with registry.connection() as db:
         if attempt_id is None:
             execution = db.execute(
-                "SELECT context_json, provenance_json FROM work_item_execution WHERE work_item_id=?",
+                """SELECT context_json, provenance_json, logical_key, branch,
+                          scientific_contract_json
+                   FROM work_item_execution WHERE work_item_id=?""",
                 (work_item_id,),
             ).fetchone()
         else:
             execution = db.execute(
-                """SELECT e.context_json,e.provenance_json FROM attempt_execution e
+                """SELECT e.context_json,e.provenance_json
+                   FROM attempt_execution e
                 JOIN attempts a ON a.id=e.attempt_id WHERE e.attempt_id=? AND a.work_item_id=?""",
                 (attempt_id, work_item_id),
             ).fetchone()
+            if execution is not None:
+                current = db.execute(
+                    """SELECT logical_key,scientific_contract_json,branch
+                       FROM work_item_execution WHERE work_item_id=?""",
+                    (work_item_id,),
+                ).fetchone()
+                execution = dict(execution)
+                if current is not None:
+                    execution.update(dict(current))
+    if execution is not None and not isinstance(execution, dict):
+        execution = dict(execution)
     if execution is not None:
         from nro.orchestration.execution_context import ExecutionContext
 
@@ -145,6 +172,18 @@ def write_work_item_ownership(
         project_root = context.paths.output_project(str(work_item["project"]))
         context.require_output(Path(work_item["output_root"]))
         provenance = json.loads(execution["provenance_json"])
+        from nro.orchestration.branch_store import BranchStore
+
+        scientific = BranchStore(registry.paths.control).registry(str(execution["branch"]))
+        with scientific.connection() as db:
+            local = db.execute(
+                """SELECT id FROM module_lineages
+                   WHERE configuration_class=? AND directory_label=?""",
+                (work_item["configuration_class"], work_item["directory_label"]),
+            ).fetchone()
+        if local is None:
+            raise ValueError("Branch scientific registry lacks the completed module lineage")
+        lineage, upstream = _lineage_rows(scientific, int(local["id"]))
     now = datetime.now(timezone.utc).isoformat()
     root_record = {
         "record_version": OWNERSHIP_VERSION,
@@ -172,10 +211,25 @@ def write_work_item_ownership(
 
     runtime_path = Path(work_item["runtime_config_path"])
     runtime_configuration = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
+    logical_key = str(
+        (execution.get("logical_key") if execution is not None else None)
+        or work_item["work_item_key"]
+    )
+    artifact_contract = json.loads(work_item["artifact_contract_json"])
+    artifact_contract["dependencies"] = logical_dependencies
+    scientific_contract = (
+        json.loads(execution["scientific_contract_json"])
+        if execution is not None and execution.get("scientific_contract_json") is not None
+        else {
+            "project": work_item["project"],
+            "participant": work_item["participant"],
+            **artifact_contract,
+        }
+    )
     receipt = {
         "record_version": OWNERSHIP_VERSION,
         "owner": "nro",
-        "work_item_key": work_item["work_item_key"],
+        "work_item_key": logical_key,
         "module": work_item["module"],
         "project": work_item["project"],
         "participant": work_item["participant"],
@@ -183,7 +237,8 @@ def write_work_item_ownership(
         "scope": work_item["scope"],
         "lineage_fingerprint": lineage["lineage_fingerprint"],
         "directory_label": lineage["directory_label"],
-        "artifact_contract": json.loads(work_item["artifact_contract_json"]),
+        "artifact_contract": artifact_contract,
+        "scientific_contract": scientific_contract,
         "execution": {
             "command": json.loads(work_item["command_json"]),
             "runtime_configuration": runtime_configuration,
@@ -202,7 +257,7 @@ def write_work_item_ownership(
         str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
         str(work_item["module"]),
-        str(work_item["work_item_key"]),
+        logical_key,
     )
     receipt_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(receipt_path, receipt, sort_keys=True, mode=0o664, durable=True)
@@ -225,7 +280,7 @@ def missing_work_item_ownership(
                 dict(row)
                 for row in db.execute(
                     f"""SELECT i.id,i.work_item_key,i.module,i.project,
-                               c.configuration_class,c.directory_label,e.context_json
+                               c.configuration_class,c.directory_label,e.context_json,e.logical_key
                         FROM work_items i
                         JOIN module_lineages c ON c.id=i.module_lineage_id
                         LEFT JOIN work_item_execution e ON e.work_item_id=i.id
@@ -245,12 +300,13 @@ def missing_work_item_ownership(
         lineage = lineage_record_path(
             project_root, row["configuration_class"], row["directory_label"]
         )
+        logical_key = str(row["logical_key"] or row["work_item_key"])
         receipt = work_item_record_path(
             project_root,
             row["configuration_class"],
             row["directory_label"],
             row["module"],
-            row["work_item_key"],
+            logical_key,
         )
         lineage_exists = lineages.get(lineage)
         if lineage_exists is None:
@@ -301,6 +357,48 @@ def read_ownership_records(
                         continue
                     work_items.append((receipt, receipt_path))
     return list(lineages.values()), work_items, errors
+
+
+def complete_ownership_records(
+    lineage_records: list[dict],
+    work_item_records: list[tuple[dict, Path]],
+) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
+    """Remove records whose declared module-lineage chain is incomplete."""
+    known = {str(record["lineage_fingerprint"]) for record in lineage_records}
+    incomplete = {
+        str(record["lineage_fingerprint"])
+        for record in lineage_records
+        if any(str(parent["lineage_fingerprint"]) not in known for parent in record["upstream"])
+    }
+    while True:
+        downstream = {
+            str(record["lineage_fingerprint"])
+            for record in lineage_records
+            if str(record["lineage_fingerprint"]) not in incomplete
+            and any(
+                str(parent["lineage_fingerprint"]) in incomplete for parent in record["upstream"]
+            )
+        }
+        if not downstream:
+            break
+        incomplete.update(downstream)
+    errors = [
+        f"Stored lineage {value} lacks a complete upstream lineage chain"
+        for value in sorted(incomplete)
+    ]
+    return (
+        [
+            record
+            for record in lineage_records
+            if str(record["lineage_fingerprint"]) not in incomplete
+        ],
+        [
+            record
+            for record in work_item_records
+            if str(record[0]["lineage_fingerprint"]) not in incomplete
+        ],
+        errors,
+    )
 
 
 def _validate_lineage_record(
@@ -381,6 +479,9 @@ def _validate_work_item_record(
     contract = record.get("artifact_contract")
     if not isinstance(contract, Mapping):
         raise ValueError("artifact contract is missing")
+    scientific_contract = record.get("scientific_contract")
+    if not isinstance(scientific_contract, Mapping):
+        raise ValueError("scientific contract is missing")
     identity_fingerprint = str(record["lineage_fingerprint"])
     expected_key = work_item_key(
         project,
@@ -397,6 +498,13 @@ def _validate_work_item_record(
         sorted(entities.items())
     ):
         raise ValueError("artifact contract does not match the work-item identity")
+    if (
+        scientific_contract.get("module") != module
+        or scientific_contract.get("project") != project
+        or scientific_contract.get("participant") != record.get("participant")
+        or scientific_contract.get("entities") != dict(sorted(entities.items()))
+    ):
+        raise ValueError("scientific contract does not match the work-item identity")
     output = contract.get("output")
     if not isinstance(output, Mapping):
         raise ValueError("artifact output contract is missing")
@@ -416,8 +524,15 @@ def materialize_work_item_specs(
     registry: "Registry",
     records: Iterable[tuple[dict, Path]],
     lineage_ids: Mapping[str, int],
+    *,
+    namespace: str | None = None,
 ) -> tuple[list[WorkItemSpec], list[str]]:
-    """Recreate work-item specifications without the originating workflow."""
+    """Recreate work-item specifications without the originating workflow.
+
+    Namespace recovered runtime snapshots when records belong to a development
+    branch. Module-lineage identity excludes mutable configuration content, so
+    separate branches cannot safely share that private execution path.
+    """
     specs: list[WorkItemSpec] = []
     errors: list[str] = []
     for record, source in records:
@@ -431,6 +546,7 @@ def materialize_work_item_specs(
             runtime_path = (
                 registry.paths.snapshots
                 / "owned-configurations"
+                / (namespace or "main")
                 / lineage_fingerprint[:16]
                 / f"{contract['configuration']}.yml"
             )

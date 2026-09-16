@@ -119,6 +119,8 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
             "stored_schema": SCIENTIFIC_SCHEMA_VERSION - 1,
             "schema": SCIENTIFIC_SCHEMA_VERSION,
             "backup": str(scientific.root / "registry-before-repair.sqlite3"),
+            "work_items": 0,
+            "unavailable": [],
         }
     ]
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION

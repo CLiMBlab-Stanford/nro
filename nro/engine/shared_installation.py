@@ -14,17 +14,21 @@ from nro.orchestration.scheduler_implementation import activate
 MaintenanceAction = Literal["drain", "stop"]
 
 
-def _repair_scientific_schemas(control: Path) -> list[dict]:
+def _repair_scientific_schemas(registry: Registry) -> list[dict]:
     """Rebuild incompatible branch storage and report each replacement."""
     from nro.orchestration.scheduler_repair import repair_scientific_schemas
 
-    repaired = repair_scientific_schemas(control)
+    repaired = repair_scientific_schemas(registry)
     for item in repaired:
-        print(
-            f"Rebuilt scientific schema {item['stored_schema']} as {item['schema']} "
-            f"for branch {item['branch']}; backup: {item['backup']}",
-            flush=True,
-        )
+        if item["backup"] is not None:
+            print(
+                f"Rebuilt scientific schema {item['stored_schema']} as {item['schema']} "
+                f"for branch {item['branch']} with {item['work_items']} recovered work item(s); "
+                f"backup: {item['backup']}",
+                flush=True,
+            )
+        for message in item["unavailable"]:
+            print(f"Could not recover branch {item['branch']}: {message}", flush=True)
     return repaired
 
 
@@ -60,7 +64,7 @@ def prepare_pool(
                     ("installation_action", "drain"),
                 ),
             )
-        scientific = _repair_scientific_schemas(registry.paths.control)
+        scientific = _repair_scientific_schemas(registry)
         return {
             "workers": 0,
             "submissions": 0,
@@ -176,7 +180,7 @@ def prepare_pool(
         if time.monotonic() >= deadline:
             raise RuntimeError("Scheduler did not release installation maintenance")
         time.sleep(0.1)
-    scientific = _repair_scientific_schemas(control)
+    scientific = _repair_scientific_schemas(registry)
     return {**summary, **progress, "scientific": scientific}
 
 

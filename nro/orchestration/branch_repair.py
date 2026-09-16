@@ -6,6 +6,13 @@ from pathlib import Path
 
 from nro.configuration.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.branches import BranchPaths
+from nro.orchestration.manifests import assess_registry
+from nro.orchestration.ownership import (
+    complete_ownership_records,
+    materialize_work_item_specs,
+    read_ownership_records,
+)
 from nro.orchestration.registry import utcnow
 
 
@@ -14,6 +21,140 @@ def _has_public_evidence(row) -> bool:
     paths = [Path(row["manifest_path"])] if row["manifest_path"] else []
     paths.extend(Path(value) for value in json.loads(row["expected_outputs_json"]))
     return any(path.is_file() for path in paths)
+
+
+def _ancestor_work_item(
+    db,
+    topology,
+    branch: str,
+    logical_key: str,
+) -> tuple[str, int] | None:
+    """Resolve one inherited logical key through nearest-first branch precedence."""
+    for ancestor in topology.ancestors(branch)[1:]:
+        owner = topology.records[ancestor].registry_id
+        row = db.execute(
+            """SELECT i.work_item_key,i.id FROM branch_work_items b
+               JOIN work_items i ON i.id=b.work_item_id
+               WHERE b.registry_id=? AND b.logical_key=?""",
+            (owner, logical_key),
+        ).fetchone()
+        if row is not None:
+            return str(row["work_item_key"]), int(row["id"])
+    return None
+
+
+def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> list[str]:
+    """Restore one branch's current ownership receipts to the shared scheduler."""
+    from nro.configuration.site import settings
+
+    values = settings()[0]
+    configured_bids = Path(values["bids"]).expanduser().resolve()
+    development = (
+        Path(values["development"])
+        if registry.paths.bids_root == configured_bids
+        else registry.paths.bids_root.parent / "NRO_DEV"
+    )
+    paths = BranchPaths(
+        branch,
+        registry.paths.bids_root,
+        Path(values["work"])
+        if registry.paths.bids_root == configured_bids
+        else registry.paths.bids_root.parent / "WORK",
+        development,
+    )
+    output_bids = paths.output_bids
+    if not output_bids.is_dir():
+        return []
+    projects = sorted(path.name for path in output_bids.iterdir() if path.is_dir())
+    lineages, records, errors = read_ownership_records(output_bids, projects)
+    lineages, records, incomplete = complete_ownership_records(lineages, records)
+    errors.extend(incomplete)
+    if not lineages or not records:
+        return errors
+
+    lineage_ids = registry.register_owned_lineages(lineages, branch_registry_id=registry_id)
+    specs, materialization_errors = materialize_work_item_specs(
+        registry,
+        records,
+        lineage_ids,
+        namespace=registry_id,
+    )
+    errors.extend(materialization_errors)
+    contracts = {
+        str(record["work_item_key"]): record["scientific_contract"] for record, _ in records
+    }
+    local = {spec.key for spec in specs}
+    topology = BranchStore(registry.paths.control).read().topology
+    external: dict[str, tuple[str, int]] = {}
+    unresolved: dict[str, set[str]] = {}
+    with registry.connection() as db:
+        for spec in specs:
+            for dependency in spec.dependencies:
+                if dependency in local or dependency in external:
+                    continue
+                inherited = _ancestor_work_item(db, topology, branch, dependency)
+                if inherited is None:
+                    unresolved.setdefault(spec.key, set()).add(dependency)
+                else:
+                    external[dependency] = inherited
+    while unresolved:
+        removed = set(unresolved)
+        next_unresolved = {
+            spec.key: {dependency for dependency in spec.dependencies if dependency in removed}
+            for spec in specs
+            if spec.key not in removed
+            and any(dependency in removed for dependency in spec.dependencies)
+        }
+        for key, dependencies in sorted(unresolved.items()):
+            errors.append(
+                f"Stored work item {key} lacks dependencies: {', '.join(sorted(dependencies))}"
+            )
+        specs = [spec for spec in specs if spec.key not in removed]
+        local.difference_update(removed)
+        unresolved = next_unresolved
+
+    if not specs:
+        return errors
+    logical_by_scheduler = {f"{registry_id}:{spec.key}": spec.key for spec in specs}
+    external_ids = {scheduler_key: item_id for scheduler_key, item_id in external.values()}
+    compiled = []
+    for spec in specs:
+        dependencies = tuple(
+            f"{registry_id}:{dependency}" if dependency in local else external[dependency][0]
+            for dependency in spec.dependencies
+        )
+        compiled.append(
+            spec.evolve(
+                key=f"{registry_id}:{spec.key}",
+                dependencies=dependencies,
+            )
+        )
+    with registry.connection(write=True) as db:
+        ids = registry._upsert_work_item_graph_locked(
+            db,
+            tuple((spec, spec.as_record()) for spec in compiled),
+            now=utcnow(),
+            external_ids=external_ids,
+            owner_branch=branch,
+        )
+        for scheduler_key, logical_key in logical_by_scheduler.items():
+            work_item_id = ids[scheduler_key]
+            contract = contracts[logical_key]
+            db.execute(
+                """INSERT INTO branch_work_items VALUES (?,?,?,?)
+                   ON CONFLICT(registry_id,logical_key) DO UPDATE SET
+                   work_item_id=excluded.work_item_id,
+                   scientific_contract_json=excluded.scientific_contract_json""",
+                (registry_id, logical_key, work_item_id, json.dumps(contract)),
+            )
+            db.execute(
+                """INSERT INTO compiled_revisions VALUES (?,?,?,?)
+                   ON CONFLICT(registry_id,logical_key) DO UPDATE SET
+                   fingerprint=excluded.fingerprint""",
+                (registry_id, logical_key, 1, fingerprint(contract)),
+            )
+    assess_registry(registry, projects=tuple(sorted({spec.project for spec in specs})))
+    return errors
 
 
 def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
@@ -179,34 +320,50 @@ def prepare(
             )
         registry.recover_orphaned_attempts()
         time.sleep(0.1)
-    workflows = []
+    recovery_errors = (
+        _recover_public_work_items(registry, branch=name, registry_id=owner)
+        if name != "main"
+        else []
+    )
     with registry.connection(write=True) as db:
-        payloads = [
-            json.loads(row[0])
-            for row in db.execute(
-                """SELECT p.payload_json FROM request_plans p
-            JOIN request_owners o ON o.request_id=p.request_id WHERE o.registry_id=?""",
-                (owner,),
-            )
-        ]
-        for payload in payloads:
-            workflows.append(payload["workflow"])
         records = _repair_records_locked(db, branch=name, registry_id=owner)
-    return dict(branch=name, workflows=workflows, work_items=records, reservation=reservation)
+    return dict(
+        branch=name,
+        work_items=records,
+        unavailable=recovery_errors,
+        reservation=reservation,
+    )
 
 
-def finish(registry, *, checkout: Path, reservation: str) -> dict:
-    """Release this repair reservation without creating demand or changing capacity."""
+def finish(registry, *, checkout: Path, reservation: str, workflows: list[dict]) -> dict:
+    """Restore current workflow bindings and release this repair reservation."""
+    from nro.orchestration.branch_admission import _workflow
+
     topology = BranchStore(registry.paths.control).read().topology
     name = topology.require_checkout(checkout)
+    owner = topology.records[name].registry_id
     with registry.connection(write=True) as db:
-        count = db.execute(
-            "DELETE FROM metadata WHERE key=? AND value=?",
-            ("branch_maintenance:" + topology.records[name].registry_id, reservation),
-        ).rowcount
-        if count != 1:
+        row = db.execute(
+            "SELECT value FROM metadata WHERE key=?", ("branch_maintenance:" + owner,)
+        ).fetchone()
+        if row is None or row[0] != reservation:
             raise ValueError("Branch maintenance reservation changed")
-    return {"repaired": True, "branch": name}
+        for payload in workflows:
+            _workflow(db, payload, owner)
+        db.execute("DELETE FROM metadata WHERE key=?", ("branch_maintenance:" + owner,))
+    return {"repaired": True, "branch": name, "workflows": len(workflows)}
+
+
+def _register_current_workflows(scientific, *, store=None) -> list[dict]:
+    """Compile current definitions and detach their scheduler-facing bindings."""
+    from nro.configuration.store import ConfigStore
+    from nro.orchestration.compiled_request import export_workflow
+
+    store = store or ConfigStore()
+    return [
+        export_workflow(scientific, scientific.register_workflow(store.resolve(workflow_id)))
+        for workflow_id in store.workflow_ids()
+    ]
 
 
 def repair_checkout(control: Path, bids_root: Path, checkout: Path, *, confirm) -> dict:
@@ -234,17 +391,22 @@ def repair_checkout(control: Path, bids_root: Path, checkout: Path, *, confirm) 
             reservation=reservation,
             allow_stop=allowed,
         )
-        scientific.rebuild(data["workflows"], data["work_items"])
+        # Historical workflow snapshots remain on disk for provenance. Only
+        # definitions that resolve now make a recovered lineage reproducible.
+        scientific.rebuild([], data["work_items"])
+        workflows = _register_current_workflows(scientific)
         result = maintenance(
             control,
             bids_root,
             checkout=checkout,
             operation="repair_finish",
             reservation=reservation,
+            workflows=workflows,
         )
         return dict(
             result,
             work_items=len(data["work_items"]),
+            unavailable=data.get("unavailable", []),
             requests=[],
             submitted_workers=[],
             registry=str(scientific.database),
