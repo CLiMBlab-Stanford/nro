@@ -132,7 +132,15 @@ def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> li
     with registry.connection(write=True) as db:
         ids = registry._upsert_work_item_graph_locked(
             db,
-            tuple((spec, spec.as_record()) for spec in compiled),
+            tuple(
+                (
+                    spec,
+                    spec.as_record(
+                        compiled_contract=spec.contract.as_dict(spec.identity),
+                    ),
+                )
+                for spec in compiled
+            ),
             now=utcnow(),
             external_ids=external_ids,
             owner_branch=branch,
