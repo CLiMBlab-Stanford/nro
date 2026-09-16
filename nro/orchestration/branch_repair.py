@@ -170,6 +170,7 @@ def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> li
         registry,
         projects=tuple(sorted({spec.project for spec in specs})),
         compiled=True,
+        recover_public=True,
     )
     return errors
 

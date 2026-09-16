@@ -452,11 +452,14 @@ def assess_registry(
     work_item_ids: Iterable[int] | None = None,
     projects: Iterable[str] | None = None,
     compiled: bool = False,
+    recover_public: bool = False,
 ) -> dict[int, tuple[str, str]]:
     """Assess a consistent graph outside the lock, then publish if it is unchanged.
 
     Set compiled=True in workers to check registered expectations without
     importing module code or recompiling scientific contracts.
+    Set recover_public=True only while rebuilding control state, when public
+    completion evidence must be allowed to restore a nonfresh registry record.
     Retry up to three times when concurrent planning or completion changes the
     captured state. Persistent contention raises AssessmentConflict rather than
     overwriting a newer result with an outdated assessment.
@@ -466,9 +469,9 @@ def assess_registry(
     for attempt in range(3):
         snapshot = capture_assessment(registry, work_item_ids=work_item_ids, projects=projects)
         report = (
-            evaluate_assessment(snapshot, compiled=True)
+            evaluate_assessment(snapshot, compiled=True, recover_public=recover_public)
             if compiled
-            else evaluate_assessment(snapshot)
+            else evaluate_assessment(snapshot, recover_public=recover_public)
         )
         try:
             states = apply_assessment(registry, snapshot, report)
@@ -483,7 +486,7 @@ def assess_registry(
 
 
 def evaluate_assessment(
-    snapshot: AssessmentSnapshot, *, compiled: bool = False
+    snapshot: AssessmentSnapshot, *, compiled: bool = False, recover_public: bool = False
 ) -> AssessmentReport:
     """Validate filesystem evidence against current or already compiled contracts.
 
@@ -758,7 +761,7 @@ def evaluate_assessment(
             if work_item_id in changed_contracts:
                 state = ("stale", "Current module processing contract changed")
             elif manifest is None:
-                if registered_only and row["artifact_state"] != "fresh":
+                if registered_only and not recover_public and row["artifact_state"] != "fresh":
                     state = (row["artifact_state"], row["artifact_reason"])
                 elif direct_universe_error:
                     state = ("stale", direct_universe_error)
