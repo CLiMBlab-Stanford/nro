@@ -49,7 +49,7 @@ def refresh(rows: list[dict], selection) -> None:
         entities = json.loads(row["entities_json"])
         if not matches_work_item_selectors(entities, selection.work_item_entities):
             continue
-        names = set(filter(None, row.get("workflow_ids", "").split(",")))
+        names = set(filter(None, str(row.get("workflow_ids") or "").split(",")))
         if selection.workflows:
             names &= set(selection.workflows)
         for name in sorted(names & workflows.keys()):

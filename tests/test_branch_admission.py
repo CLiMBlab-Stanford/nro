@@ -624,7 +624,7 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
         assert db.execute("SELECT COUNT(*) FROM request_plans").fetchone()[0] == 2
 
 
-def test_central_status_and_stop_are_branch_scoped(setup):
+def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
     from nro.orchestration.scheduler_service import status, stop
 
     registry, branches, site, prepare = setup
@@ -642,6 +642,18 @@ def test_central_status_and_stop_are_branch_scoped(setup):
         db.execute("DELETE FROM request_artifacts WHERE request_id=?", (one[-1],))
     repaired_view = status(registry, checkout=one[0], mode="cached")
     assert repaired_view["rows"][0]["workflow_ids"] == "main"
+    from nro.orchestration import manifests
+
+    assessments = []
+    assess_registry = manifests.assess_registry
+
+    def observe_assessment(*args, **kwargs):
+        assessments.append(kwargs)
+        return assess_registry(*args, **kwargs)
+
+    monkeypatch.setattr(manifests, "assess_registry", observe_assessment)
+    status(registry, checkout=one[0], mode="verify")
+    assert assessments == [{"compiled": True, "recover_public": True}]
     result = stop(registry, checkout=one[0], selection={"force": True})
     assert result["requests"] == 1
     with registry.connection() as db:

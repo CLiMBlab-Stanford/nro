@@ -96,6 +96,45 @@ def test_verify_does_not_guess_workflows_for_unassociated_rows(tmp_path, monkeyp
     )
 
 
+def test_verify_accepts_null_workflow_ids_for_recovered_rows(tmp_path, monkeypatch):
+    scientific = SimpleNamespace(work_items=lambda: ())
+    monkeypatch.setattr(
+        branch_status,
+        "BranchStore",
+        lambda _: SimpleNamespace(registry_for_checkout=lambda _: scientific),
+    )
+    monkeypatch.setattr(
+        branch_status,
+        "settings",
+        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, {}),
+    )
+    monkeypatch.setattr(
+        branch_status,
+        "Planner",
+        lambda *a, **k: SimpleNamespace(
+            plan_registered_targets=lambda *args, **kwargs: pytest.fail(
+                "Recovered work without a workflow was sent to the planner"
+            )
+        ),
+    )
+    branch_status.refresh(
+        [
+            dict(
+                module="anat",
+                project="demo",
+                participant="01",
+                work_item_key="subject",
+                entities_json="{}",
+                workflow_ids=None,
+                directory_label="main",
+                memory_gb=8,
+                max_memory_gb=32,
+            )
+        ],
+        CoreSelection((), (), (), (), {}, (), ()),
+    )
+
+
 def test_preview_propagates_current_policy_changes_without_mutation(monkeypatch):
     monkeypatch.setattr(
         "nro.orchestration.manifests._current_contract", lambda row: ({}, "", row["id"] == 1)
