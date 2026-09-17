@@ -23,6 +23,11 @@ bbregister_dof: 6
 output_grid: t1_epi_vox
 topup_config: auto
 ica_aroma_cmd: null
+cicada_cmd: site:pycicada
+ica_classifier: ica_aroma
+ica_regression: aggressive
+cicada_tolerance: 5
+cicada_smoothing_retention_mode: revised
 use_jacobian: false
 fieldmap_syn_refine: false
 synbold_overlap_erosion_voxels: 2
@@ -41,8 +46,6 @@ syn_refine_transform: SyN[0.05,3,1]
 syn_refine_convergence: '[40x20x10,1e-7,8]'
 syn_refine_shrink_factors: 4x2x1
 syn_refine_smoothing_sigmas: 2x1x0vox
-clean_ica_aroma: true
-ica_aroma_denoise_type: aggr
 marss_mode: auto
 marss_min_multiband_factor: 6
 sdc_from_sbref_pair: false

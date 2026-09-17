@@ -95,8 +95,10 @@ def functional_case(tmp_path, monkeypatch):
         output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
         gradient_unwarp_image=tmp_path / "gradient.sif",
         gradient_unwarp_runtime="singularity",
+        cicada_cmd=tmp_path / "cicada-python",
     )
     values["synbold_disco_image"].write_bytes(b"test image")
+    values["cicada_cmd"].write_text("#!/bin/sh\n")
     monkeypatch.setattr(
         func,
         "find_fsaverage_template_surface",
@@ -133,7 +135,9 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
         )
     before = {p: p.read_bytes() for p in manifest.parent.rglob("*") if p.is_file()}
     job = func.build_module(
-        inputs, replace(options, clean_ica_aroma=aroma), execution_context=context
+        inputs,
+        replace(options, ica_classifier="ica_aroma" if aroma else "none"),
+        execution_context=context,
     )
     assert job._container is not None
     assert job._container.home_dir.is_relative_to(context.paths.development)
@@ -162,6 +166,20 @@ def test_functional_graph_reads_selected_anatomy_and_owns_writes(functional_case
     )
     assert {p: p.read_bytes() for p in manifest.parent.rglob("*") if p.is_file()} == before
     assert not (context.paths.source_project("demo") / "derivatives").exists()
+
+
+def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
+    inputs, options, context, _manifest, _image = functional_case
+    job = func.build_module(
+        inputs,
+        replace(options, ica_classifier="cicada"),
+        execution_context=context,
+    )
+    names = [step.name for step in job._graph.freeze().steps]
+    assert "Estimate MELODIC Decomposition for CICADA" in names
+    assert "Run CICADA Component Classification" in names
+    assert "Regress Shared CICADA Components in T1w" in names
+    assert "Run ICA-AROMA Classification and Denoising" not in names
 
 
 def test_functional_graph_rejects_unselected_anatomy(functional_case):

@@ -38,6 +38,7 @@ DESCRIPTIONS = {
     "license": "Existing FreeSurfer license",
     "runtime": "Singularity or Apptainer executable",
     "oslom": "oslom_undir executable",
+    "pycicada": "pycicada executable",
     "partition": "Slurm partition",
     "viewing_partition": "Slurm partition for interactive scene viewing",
     "account": "Slurm account (- for none)",

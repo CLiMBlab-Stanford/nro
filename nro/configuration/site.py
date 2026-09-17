@@ -30,6 +30,7 @@ DEFAULTS = {
     "templates": str(LAB / "templateflow"),
     "workbench": str(LAB / "shared/workbench/bin_linux64/wb_command"),
     "oslom": str(LAB / "shared/oslom/oslom_undir"),
+    "pycicada": str(LAB / "shared/pycicada/bin/cicada-python"),
     "license": str(LAB / "freesurfer/license.txt"),
     "runtime": "singularity",
     "partition": "sphinx",
@@ -76,6 +77,7 @@ SITE_SECTIONS = {
         "templates",
         "workbench",
         "oslom",
+        "pycicada",
         "license",
         "qunex",
         "synthstrip",
@@ -118,6 +120,7 @@ def generic_defaults() -> dict:
                 "templates": "templateflow",
                 "workbench": "workbench/bin_linux64/wb_command",
                 "oslom": "oslom/oslom_undir",
+                "pycicada": "pycicada/bin/cicada-python",
                 "license": "freesurfer/license.txt",
             }.items()
         },

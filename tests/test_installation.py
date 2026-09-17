@@ -99,6 +99,16 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
     assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
 
 
+def test_pycicada_executable_resolves_from_site_settings(isolated_site, tmp_path):
+    executable = tmp_path / "pycicada/bin/cicada-python"
+    save_settings(isolated_site, {"pycicada": str(executable)})
+
+    values, _sources = site.settings()
+
+    assert values["pycicada"] == str(executable)
+    assert site.resolve_resources("site:pycicada") == str(executable)
+
+
 def test_invalid_path_update_is_atomic(isolated_site):
     original = isolated_site.read_bytes()
     with pytest.raises(ValueError):

@@ -172,6 +172,11 @@ SCHEMAS = {
         "output_grid": enum("t1_native", "t1_epi_vox"),
         "topup_config": TEXT,
         "ica_aroma_cmd": OPTIONAL_TEXT,
+        "cicada_cmd": TEXT,
+        "ica_classifier": enum("none", "ica_aroma", "cicada"),
+        "ica_regression": enum("aggressive", "nonaggressive"),
+        "cicada_tolerance": NONNEGATIVE_INT,
+        "cicada_smoothing_retention_mode": enum("revised", "historical"),
         "use_jacobian": BOOL,
         "fieldmap_syn_refine": BOOL,
         "synbold_overlap_erosion_voxels": NONNEGATIVE_INT,
@@ -187,8 +192,6 @@ SCHEMAS = {
             for stage in ("base", "refine")
             for key in ("transform", "convergence", "shrink_factors", "smoothing_sigmas")
         },
-        "clean_ica_aroma": BOOL,
-        "ica_aroma_denoise_type": enum("nonaggr", "aggr", "both"),
         "marss_mode": enum("off", "diagnose", "auto"),
         "marss_min_multiband_factor": Field("int", minimum=2),
         "sdc_from_sbref_pair": BOOL,
@@ -480,6 +483,27 @@ def scientific_values(kind: str, values: dict) -> dict:
         }
     result = select(schema, values)
     if kind == "func":
+        # Keep the established AROMA/no-ICA scientific identity while exposing
+        # one classifier vocabulary to new configurations. This is semantic
+        # compilation, not a runtime compatibility path.
+        if "ica_classifier" in result:
+            classifier = result.pop("ica_classifier")
+            regression = result.pop("ica_regression")
+            if classifier in {"none", "ica_aroma"}:
+                result["clean_ica_aroma"] = classifier == "ica_aroma"
+                result["ica_aroma_denoise_type"] = {
+                    "aggressive": "aggr",
+                    "nonaggressive": "nonaggr",
+                }[regression if classifier == "ica_aroma" else "aggressive"]
+                if classifier == "none":
+                    result["ica_aroma_cmd"] = None
+                result.pop("cicada_cmd", None)
+                result.pop("cicada_tolerance", None)
+                result.pop("cicada_smoothing_retention_mode", None)
+            else:
+                result["ica_classifier"] = classifier
+                result["ica_regression"] = regression
+                result.pop("ica_aroma_cmd", None)
         if result.get("marss_mode") == "off":
             result.pop("marss_mode", None)
         if result.get("marss_mode") != "auto":
