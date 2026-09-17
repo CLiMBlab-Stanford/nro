@@ -550,7 +550,9 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
             or selection.modules
             and row["module"] not in selection.modules
             or selection.workflows
-            and not set(selection.workflows).intersection(row["workflow_ids"].split(","))
+            and not set(selection.workflows).intersection(
+                str(row.get("workflow_ids") or "").split(",")
+            )
             or not matches_module_lineage(
                 str(row["module"]), str(row["directory_label"]), selection.lineages
             )

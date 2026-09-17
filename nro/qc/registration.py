@@ -388,7 +388,7 @@ def main(
             for row in rows
             if row["project"] == args.project
             and row["participant"] == subject.removeprefix("sub-")
-            and args.workflow in row.get("workflow_ids", "").split(",")
+            and args.workflow in str(row.get("workflow_ids") or "").split(",")
         ]
         anatomicals = [row for row in selected if row["module"] == "anat"]
         functionals = [row for row in selected if row["module"] == "func"]

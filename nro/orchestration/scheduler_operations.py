@@ -116,7 +116,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
     from nro.orchestration.manifests import assess_registry, preview_registry
 
     if mode == "verify":
-        assess_registry(registry, compiled=True)
+        assess_registry(registry, compiled=True, recover_public=True)
     elif mode not in {"cached", "preview"}:
         raise ValueError("Unknown status mode")
     states = preview_registry(registry, compiled=True) if mode == "preview" else None
@@ -266,7 +266,9 @@ def logs(registry, *, checkout: Path, selection: dict, worker_level: bool) -> di
         )
         and (
             not selection["workflows"]
-            or set(selection["workflows"]).intersection(row["workflow_ids"].split(","))
+            or set(selection["workflows"]).intersection(
+                str(row.get("workflow_ids") or "").split(",")
+            )
         )
         and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
     ]

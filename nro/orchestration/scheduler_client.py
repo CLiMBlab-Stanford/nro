@@ -590,7 +590,9 @@ def logs(
         )
         and (
             not selection["workflows"]
-            or set(selection["workflows"]).intersection(row["workflow_ids"].split(","))
+            or set(selection["workflows"]).intersection(
+                str(row.get("workflow_ids") or "").split(",")
+            )
         )
         and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
     ]
