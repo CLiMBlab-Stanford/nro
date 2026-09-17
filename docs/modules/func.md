@@ -2,7 +2,7 @@
 
 `func` prepares one BOLD run using the subject's completed anatomy. It has its
 own configuration and output directory. Computation across spaces shares motion
-estimation, distortion correction, and ICA-AROMA; spaces are not separate
+estimation, distortion correction, and ICA classification; spaces are not separate
 functional work items.
 
 ## Inputs and processing choices
@@ -65,17 +65,21 @@ every run used the default path.
    anatomy resolution or anatomy orientation at EPI voxel size. `use_jacobian`
    controls intensity modulation. Warp interpolation is linear; signal
    interpolation uses AFNI's `wsinc5`.
-7. Generate confounds from motion, anatomical segmentations, and BOLD signals.
-   These include motion parameters, their derivatives and squares, global/CSF/WM
-   signals and expansions, framewise displacement, aCompCor, DVARS, and numbered
-   outlier families. See [denoising](../methods/denoising.md).
-8. When `clean_ica_aroma` is enabled, estimate a shared MELODIC/ICA-AROMA model
-   and noise classification. The estimation input is spatially smoothed; shared
-   components are then regressed from each output-space time course. Spatial
-   classification uses the 2 mm reference in the configured MNI space. The
-   `ica_aroma_denoise_type` selects aggressive or nonaggressive regression.
-   `ica_aroma_cmd` can replace the bundled implementation with an external command.
-   Classification and estimation policies are recorded with the outputs.
+7. When `ica_classifier` selects `ica_aroma` or `cicada`, estimate one shared
+   MELODIC decomposition from the spatially smoothed T1w series. Transform the
+   component maps needed for classification to the 2 mm MNI reference. The
+   selected classifier labels noise components, which are then regressed from
+   every output-space time course. `ica_regression` selects aggressive or
+   nonaggressive regression. CICADA runs through the site-managed executable in
+   `cicada_cmd`; `cicada_tolerance` and
+   `cicada_smoothing_retention_mode` control its classification. A private
+   pre-denoising FD/DVARS table supplies CICADA's motion features. The manifest
+   records the classifier, labels, regression policy, and warnings.
+8. Generate the published confounds from motion, anatomical segmentations, and
+   the final BOLD series. These include motion parameters, their derivatives and
+   squares, global/CSF/WM signals and expansions, framewise displacement,
+   aCompCor, DVARS, and numbered outlier families. See
+   [denoising](../methods/denoising.md).
 9. Produce T1w/MNI volumes and left/right fsnative/template GIFTI time courses.
    The selected `anat` configuration defines the fsaverage target; the packaged
    target is `fsaverage6`. Filenames record each exact space. Native surfaces
@@ -98,9 +102,10 @@ run's BIDS entities and add space, hemisphere, and processing descriptions.
 Products include preprocessed BOLD images, their JSON sidecars, brain masks,
 registration transforms/QC images, and `desc-confounds_timeseries.tsv` with
 column metadata. Each workflow publishes one canonical `desc-preproc` series;
-its sidecar records whether ICA-AROMA was applied. Use a separate workflow when
-both denoising choices are needed. ICA-AROMA classification records are retained
-when the method runs. Fieldmap-derived products exist only when used.
+its sidecar records whether ICA component regression was applied and which
+classifier supplied the labels. Use a separate workflow for each classifier or
+regression choice. Classification records are retained in private work storage.
+Fieldmap-derived products exist only when used.
 MARSS-enabled runs also contain native artifact loadings, artifact
 timecourses, a mean-absolute artifact map, slice-correlation tables and heatmap,
 and decision metadata. Pass-through runs use zero-valued artifact placeholders
@@ -142,6 +147,12 @@ values below six are experimental because the correction estimate averages
 fewer simultaneously acquired slices. The installer includes the MARSS
 dependency by default. Pass `--without-marss` only when all functional
 configurations use `marss_mode: off` or `diagnose`.
+
+`ica_classifier` accepts `none`, `ica_aroma`, or `cicada`; the default is
+`ica_aroma`. CICADA reuses nro's MELODIC decomposition and requires the MNI
+functional output while this integration is under evaluation. The site setting
+`resources.pycicada` supplies its external executable. CICADA-specific settings
+do not affect AROMA or no-classifier artifact identity.
 
 `confounds.aseg_in_epi` and `brain_mask_in_epi` override confound extraction
 masks. `n_acompcor` and `acompcor_max_voxels` bound aCompCor extraction.

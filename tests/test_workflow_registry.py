@@ -249,7 +249,7 @@ def test_func_variants_share_one_anatomical_work_item(tmp_path: Path) -> None:
         '{"RepetitionTime": 2.0}', encoding="utf-8"
     )
     _write_yaml(configs / "workflows" / "variant_workflow.yml", {"func": "variant"})
-    _write_yaml(configs / "configs" / "func" / "variant_func.yml", {"clean_ica_aroma": False})
+    _write_yaml(configs / "configs" / "func" / "variant_func.yml", {"ica_classifier": "none"})
 
     store = _test_store(configs)
     registry = Registry.for_project("demo", bids_root=bids)

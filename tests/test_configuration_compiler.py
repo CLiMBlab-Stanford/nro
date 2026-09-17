@@ -154,6 +154,39 @@ def test_content_cache_detects_edits_without_timestamp_changes(store):
     )
 
 
+def test_func_classifier_vocabulary_preserves_established_aroma_identity(store):
+    values = store.load_configuration("func", "main").values
+    current = scientific_values("func", values)
+    legacy = {
+        key: value
+        for key, value in values.items()
+        if key
+        not in {
+            "cicada_cmd",
+            "ica_classifier",
+            "ica_regression",
+            "cicada_tolerance",
+            "cicada_smoothing_retention_mode",
+        }
+    }
+    legacy.update(clean_ica_aroma=True, ica_aroma_denoise_type="aggr")
+    assert current == scientific_values("func", legacy)
+
+    cicada = scientific_values("func", {**values, "ica_classifier": "cicada"})
+    assert cicada["ica_classifier"] == "cicada"
+    assert cicada["ica_regression"] == "aggressive"
+    assert "ica_aroma_cmd" not in cicada
+    no_classifier = {**values, "ica_classifier": "none"}
+    assert scientific_values("func", no_classifier) == scientific_values(
+        "func",
+        {
+            **no_classifier,
+            "ica_regression": "nonaggressive",
+            "ica_aroma_cmd": "/unused/ICA_AROMA.py",
+        },
+    )
+
+
 def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     original = store.load_configuration("networks", "main")
     updated = store.load_configuration(

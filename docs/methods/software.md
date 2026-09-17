@@ -22,6 +22,7 @@ the model format. FitLins is not a dependency.
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
 | HCP Pipelines | Hardware-specific gradient-distortion estimation and correction. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
 | ICA-AROMA | Motion-component classification and denoising. | [Upstream implementation](https://github.com/maartenmennes/ICA-AROMA) |
+| CICADA | Alternative ICA component classification. | [Method paper](https://direct.mit.edu/imag/article/doi/10.1162/IMAG.a.114/132108/CICADA-An-automated-and-flexible-tool-for) |
 | MARSS 1.0.2 | Native-space estimation and removal of signal shared by simultaneous slices. | [Official implementation](https://github.com/CNaP-Lab/MARSS) |
 | Workbench | Smoothing, surfaces, CIFTI, scenes. | [Workbench](https://www.humanconnectome.org/software/connectome-workbench) |
 | TemplateFlow | Local MNI references and fsaverage geometry. | [TemplateFlow](https://www.templateflow.org/) |
@@ -48,6 +49,12 @@ Williams, and Van Snellenberg (2024),
 The official package estimates and subtracts the artifact. nro validates its
 outputs and replaces the full 4D artifact file with a slice-wise rank-one
 factorization whose reconstruction error is checked and recorded.
+
+CICADA is also invoked through a process boundary. The site installs its
+executable separately; nro supplies prepared images and an adapted MELODIC
+directory, then reads its one-based signal and noise labels. nro applies the
+configured component regression itself so AROMA and CICADA comparisons share
+the same MELODIC estimation policy and regression implementation.
 
 ## Methods
 

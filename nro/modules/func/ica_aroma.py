@@ -625,3 +625,54 @@ def run_ica_aroma_workflow(
             denoise_type=denoise_type,
             denoise_indices=motion_ics,
         )
+
+
+def run_melodic_decomposition(
+    *,
+    run_cmd: RunCommand,
+    run_out: RunOutCommand,
+    fsl_cmds: Mapping[str, str],
+    in_file: Path,
+    out_dir: Path,
+    mask: Path,
+    tr: float,
+    mni_ref: Path,
+    affmat: Path,
+    warp: Path,
+    overwrite: bool = False,
+) -> None:
+    """Estimate MELODIC once and prepare the MNI component map CICADA needs."""
+    if tr <= 0:
+        raise RuntimeError(f"MELODIC requires a positive TR, got {tr!r}")
+    if out_dir.exists():
+        if not overwrite:
+            raise RuntimeError(f"MELODIC output directory already exists: {out_dir}")
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    mask_out = out_dir / "mask.nii.gz"
+    shutil.copyfile(mask, mask_out)
+    _run_melodic_and_merge_thresholded_maps(
+        run_cmd=run_cmd,
+        run_out=run_out,
+        fsl_cmds=fsl_cmds,
+        in_file=in_file,
+        out_dir=out_dir,
+        mask=mask_out,
+        dim=0,
+        tr=tr,
+        melodic_dir=None,
+    )
+    _register_to_mni(
+        run_cmd=run_cmd,
+        run_out=run_out,
+        fsl_cmds=fsl_cmds,
+        in_file=out_dir / "melodic_IC_thr.nii.gz",
+        out_file=out_dir / "melodic_IC_thr_MNI2mm.nii.gz",
+        ref=mni_ref,
+        affmat=affmat,
+        warp=warp,
+    )
+    write_completion_breadcrumb(
+        out_dir / "melodic.complete",
+        "MELODIC decomposition and MNI component preparation complete\n",
+    )

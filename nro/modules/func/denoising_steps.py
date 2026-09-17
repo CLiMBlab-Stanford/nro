@@ -12,9 +12,19 @@ from nro.engine.execution import (
 from nro.engine.execution import (
     strip_ansi as _strip_ansi,
 )
+from nro.modules.func.cicada import (
+    prepare_melodic_adapter,
+    reset_directory,
+    write_motion_metrics,
+    write_result_manifest,
+)
 from nro.modules.func.confounds import get_confounds
 from nro.modules.func.ica_aroma import denoising as run_ica_aroma_denoising
-from nro.modules.func.ica_aroma import make_dilated_anatomical_epi_mask, run_ica_aroma_workflow
+from nro.modules.func.ica_aroma import (
+    make_dilated_anatomical_epi_mask,
+    run_ica_aroma_workflow,
+    run_melodic_decomposition,
+)
 from nro.orchestration.runner import (
     Runner,
     shlex_quote,
@@ -285,6 +295,219 @@ def _create_melodic_smoothing_step(
     )
 
 
+def _create_cicada_motion_metrics_step(
+    *,
+    epi: Path,
+    mask: Path,
+    motion_parameters: Path,
+    output: Path,
+    fd_radius_mm: float,
+    dvars_statistical_alpha: float,
+    dvars_practical_threshold_percent: float,
+    dvars_power: float,
+    force: bool,
+) -> Step:
+    def calculate() -> None:
+        write_motion_metrics(
+            bold=epi,
+            mask=mask,
+            motion_parameters=motion_parameters,
+            output=output,
+            fd_radius_mm=fd_radius_mm,
+            dvars_statistical_alpha=dvars_statistical_alpha,
+            dvars_practical_threshold_percent=dvars_practical_threshold_percent,
+            dvars_power=dvars_power,
+        )
+
+    return Step.python(
+        name="Compute CICADA Motion Metrics",
+        inputs=(epi, mask, motion_parameters),
+        outputs=(output,),
+        force=force,
+        action=calculate,
+        parameters={
+            "fd_radius_mm": fd_radius_mm,
+            "dvars_statistical_alpha": dvars_statistical_alpha,
+            "dvars_practical_threshold_percent": dvars_practical_threshold_percent,
+            "dvars_power": dvars_power,
+        },
+    )
+
+
+def _create_cicada_melodic_step(
+    *,
+    runner: Runner,
+    melodic_input: Path,
+    melodic_mask: Path,
+    output_directory: Path,
+    outputs: tuple[Path, ...],
+    identity_transform: Path,
+    t1_to_mni_warp: Path,
+    mni_reference: Path,
+    repetition_time: float,
+    env: dict[str, str],
+    force: bool,
+) -> Step:
+    def execute() -> None:
+        fsl_commands = _resolve_ica_aroma_fsl_commands(runner, env)
+        run_melodic_decomposition(
+            run_cmd=lambda command: runner.run_child(list(command), env=env),
+            run_out=lambda command: (
+                runner.run_child(list(command), env=env, capture_stdout=True) or ""
+            ),
+            fsl_cmds=fsl_commands,
+            in_file=melodic_input,
+            out_dir=output_directory,
+            mask=melodic_mask,
+            tr=repetition_time,
+            mni_ref=mni_reference,
+            affmat=identity_transform,
+            warp=t1_to_mni_warp,
+            overwrite=True,
+        )
+
+    def validate() -> tuple[bool, str]:
+        missing = [str(path) for path in outputs if not path.is_file() or path.stat().st_size == 0]
+        return (
+            not missing,
+            "MELODIC directory contains all CICADA inputs."
+            if not missing
+            else "MELODIC directory is incomplete: " + ", ".join(missing),
+        )
+
+    return Step.directory_step(
+        name="Estimate MELODIC Decomposition for CICADA",
+        directory=output_directory,
+        breadcrumb=output_directory / ".nro_complete",
+        outputs=outputs,
+        inputs=(
+            melodic_input,
+            melodic_mask,
+            identity_transform,
+            t1_to_mni_warp,
+            mni_reference,
+        ),
+        force=force,
+        action=execute,
+        validate=validate,
+        breadcrumb_text="CICADA MELODIC preparation complete\n",
+    )
+
+
+def _create_cicada_classification_step(
+    *,
+    runner: Runner,
+    executable: Path,
+    epi_mni: Path,
+    mask_mni: Path,
+    confounds: Path,
+    source_melodic: Path,
+    melodic_complete: Path,
+    thresholded_components_mni: Path,
+    t1_to_mni_warp: Path,
+    identity_transform: Path,
+    task_directory: Path,
+    adapter_directory: Path,
+    result_manifest: Path,
+    tolerance: int,
+    smoothing_retention_mode: str,
+    repetition_time: float,
+    fsl_image: Path,
+    fsl_runtime: str,
+    fsl_binds: tuple[str, ...],
+    fsl_setup: str,
+    env: dict[str, str],
+    force: bool,
+) -> Step:
+    classification = task_directory / "cicada_python"
+    outputs = (
+        classification / "noise_components.txt",
+        classification / "signal_components.txt",
+        classification / "component_labels.tsv",
+        classification / "provenance.json",
+        result_manifest,
+    )
+
+    def execute() -> None:
+        if not executable.is_file():
+            raise SystemExit(f"Configured CICADA executable does not exist: {executable}")
+        reset_directory(adapter_directory)
+        prepare_melodic_adapter(
+            run_command=lambda command: runner.run_child(list(command), env=env),
+            source_directory=source_melodic,
+            output_directory=adapter_directory,
+            reference=mask_mni,
+            warp=t1_to_mni_warp,
+            premat=identity_transform,
+        )
+        threshold_target = adapter_directory / "ICthresh_zstat.nii.gz"
+        threshold_target.symlink_to(thresholded_components_mni)
+        reset_directory(task_directory)
+        command = [
+            str(executable),
+            "run",
+            "--output-dir",
+            str(task_directory),
+            "--bold",
+            str(epi_mni),
+            "--mask",
+            str(mask_mni),
+            "--confounds",
+            str(confounds),
+            "--melodic-dir",
+            str(adapter_directory),
+            "--smoothing-retention-mode",
+            smoothing_retention_mode,
+            "--repetition-time",
+            f"{repetition_time:.8g}",
+            "--tolerance",
+            str(tolerance),
+            "--no-denoise",
+            "--fsl-image",
+            str(fsl_image),
+            "--runtime",
+            fsl_runtime,
+            "--fsl-setup",
+            fsl_setup,
+        ]
+        for bind in fsl_binds:
+            command.extend(("--bind", bind))
+        runner.run_direct(command, env=env)
+        write_result_manifest(
+            output=result_manifest,
+            executable=executable,
+            classification_directory=classification,
+            tolerance=tolerance,
+            smoothing_retention_mode=smoothing_retention_mode,
+            mixing_matrix=source_melodic / "melodic_mix",
+        )
+
+    return Step.python(
+        name="Run CICADA Component Classification",
+        inputs=(
+            executable,
+            epi_mni,
+            mask_mni,
+            confounds,
+            source_melodic / "melodic_IC.nii.gz",
+            source_melodic / "melodic_mix",
+            source_melodic / "melodic_FTmix",
+            melodic_complete,
+            thresholded_components_mni,
+            t1_to_mni_warp,
+            identity_transform,
+        ),
+        outputs=outputs,
+        force=force,
+        action=execute,
+        parameters={
+            "classifier": "cicada",
+            "tolerance": tolerance,
+            "smoothing_retention_mode": smoothing_retention_mode,
+        },
+    )
+
+
 def _create_ica_aroma_workflow_step(
     *,
     runner: Runner,
@@ -413,6 +636,7 @@ def _create_shared_aroma_regression_step(
     aroma_dir: Path,
     outputs: tuple[Path, ...],
     denoise_type: str,
+    classifier_name: str = "ICA-AROMA",
     env: dict[str, str],
     force: bool,
 ) -> Step:
@@ -424,7 +648,7 @@ def _create_shared_aroma_regression_step(
         mixing = np.loadtxt(mixing_matrix, ndmin=2)
         if int(mixing.shape[0]) != n_timepoints:
             raise SystemExit(
-                "Shared T1w ICA-AROMA mixing matrix does not match registered "
+                f"Shared T1w {classifier_name} mixing matrix does not match registered "
                 f"BOLD length: {mixing.shape[0]} != {n_timepoints}"
             )
         indices = [
@@ -438,11 +662,12 @@ def _create_shared_aroma_regression_step(
         )
         if fsl_regfilt is None:
             raise SystemExit(
-                "Missing required FSL command for shared ICA-AROMA regression: fsl_regfilt"
+                f"Missing required FSL command for shared {classifier_name} regression: fsl_regfilt"
             )
         LOG.info(
-            "Applying %d T1w-classified ICA-AROMA noise components to %s registered BOLD",
+            "Applying %d T1w-classified %s noise components to %s registered BOLD",
             len(indices),
+            classifier_name,
             input_space,
         )
         aroma_dir.mkdir(parents=True, exist_ok=True)
@@ -458,7 +683,7 @@ def _create_shared_aroma_regression_step(
         )
 
     return Step.python(
-        name=f"Regress Shared ICA-AROMA Components in {input_space}",
+        name=f"Regress Shared {classifier_name} Components in {input_space}",
         outputs=outputs,
         inputs=(
             epi,

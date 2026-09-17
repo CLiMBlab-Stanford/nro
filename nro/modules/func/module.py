@@ -15,7 +15,8 @@
 - Final ANTs SyN refinement is always estimated before the final BOLD-to-T1 resampling.
 - Single-interpolation 4D resampling with the complete spatial warp and one
   MCFLIRT transform per volume using AFNI 3dNwarpApply.
-- Optional ICA-AROMA denoising of the registered BOLD (enabled by default).
+- Optional ICA component classification with ICA-AROMA or CICADA, followed by
+  matched component regression (ICA-AROMA by default).
 - Confounds TSV/JSON generation from the registered or ICA-AROMA-cleaned BOLD.
 
 Requirements:
@@ -117,6 +118,9 @@ from .constants import (
     _ICA_AROMA_REGRESSION_MASK_DILATION_MM,
 )
 from .denoising_steps import (
+    _create_cicada_classification_step,
+    _create_cicada_melodic_step,
+    _create_cicada_motion_metrics_step,
     _create_confounds_step,
     _create_dilated_anatomical_mask_step,
     _create_epi_support_step,
@@ -226,6 +230,11 @@ class Options:
     output_grid: str
     topup_config: str
     ica_aroma_cmd: Optional[Path]
+    cicada_cmd: Path
+    ica_classifier: str
+    ica_regression: str
+    cicada_tolerance: int
+    cicada_smoothing_retention_mode: str
     use_jacobian: bool
     fieldmap_syn_refine: bool
     syn_base_transform: str
@@ -236,8 +245,6 @@ class Options:
     syn_refine_convergence: str
     syn_refine_shrink_factors: str
     syn_refine_smoothing_sigmas: str
-    clean_ica_aroma: bool
-    ica_aroma_denoise_type: str
     marss_mode: str
     marss_min_multiband_factor: int
     gradient_unwarping: str
@@ -276,6 +283,11 @@ def _functional_config_payload(
         "output_grid": opts.output_grid,
         "topup_config": opts.topup_config,
         "ica_aroma_cmd": str(opts.ica_aroma_cmd) if opts.ica_aroma_cmd else None,
+        "cicada_cmd": str(opts.cicada_cmd),
+        "ica_classifier": opts.ica_classifier,
+        "ica_regression": opts.ica_regression,
+        "cicada_tolerance": int(opts.cicada_tolerance),
+        "cicada_smoothing_retention_mode": opts.cicada_smoothing_retention_mode,
         "use_jacobian": bool(opts.use_jacobian),
         "fieldmap_syn_refine": bool(opts.fieldmap_syn_refine),
         "syn_base_transform": opts.syn_base_transform,
@@ -286,8 +298,6 @@ def _functional_config_payload(
         "syn_refine_convergence": opts.syn_refine_convergence,
         "syn_refine_shrink_factors": opts.syn_refine_shrink_factors,
         "syn_refine_smoothing_sigmas": opts.syn_refine_smoothing_sigmas,
-        "clean_ica_aroma": bool(opts.clean_ica_aroma),
-        "ica_aroma_denoise_type": opts.ica_aroma_denoise_type,
         "bbregister_surf": opts.bbregister_surf,
         "bbregister_init": opts.bbregister_init,
         "bbregister_dof": int(opts.bbregister_dof),
@@ -366,6 +376,16 @@ def build_module(
             out_dir=execution_context.output_path(opts.out_dir),
             work_dir=execution_context.output_path(opts.work_dir, private=True),
         )
+    classifier = str(opts.ica_classifier).strip().lower()
+    if classifier not in {"none", "ica_aroma", "cicada"}:
+        raise SystemExit(f"Unsupported ICA classifier: {classifier!r}")
+    denoise_type = {
+        "aggressive": "aggr",
+        "nonaggressive": "nonaggr",
+    }.get(str(opts.ica_regression).strip().lower())
+    if denoise_type is None:
+        raise SystemExit(f"Unsupported ICA regression policy: {opts.ica_regression!r}")
+    ica_enabled = classifier != "none"
     require_existing_path(inputs.epi, "epi")
     require_existing_path(inputs.epi_json, "epi-json")
     assert inputs.epi_json is not None
@@ -504,6 +524,7 @@ def build_module(
             anat_t1,
             anat_brain_mask,
             opts.ica_aroma_cmd,
+            opts.cicada_cmd if classifier == "cicada" else None,
             (subjects_dir if subjects_dir.exists() else None),
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             opts.out_dir,
@@ -624,7 +645,7 @@ def build_module(
         "3dNwarpApply",
         "fslcpgeom",
     ]
-    if opts.clean_ica_aroma:
+    if ica_enabled:
         base_cmds.extend(("bet", "fsl_regfilt", "fslinfo", "fslstats", "melodic"))
     dependency_check = opts.work_dir / "dependencies.complete"
 
@@ -836,6 +857,10 @@ def build_module(
     requested_spaces = set(opts.output_spaces)
     want_t1 = "T1w" in requested_spaces
     want_mni = "MNI152NLin2009cAsym" in requested_spaces
+    if classifier == "cicada" and not want_mni:
+        raise SystemExit(
+            "CICADA classification currently requires MNI152NLin2009cAsym among func output spaces."
+        )
     want_fsnative = "fsnative" in requested_spaces
     requested_fsaverage = sorted(
         space for space in requested_spaces if space.startswith("fsaverage")
@@ -951,8 +976,12 @@ def build_module(
     anat_brain_mask_in_mni = qc_dir / _with_suffix(
         f"{run_base}_space-MNI152NLin2009cAsym", "_desc-brain_mask.nii.gz"
     )
-    aroma_dir = opts.work_dir / "ica_aroma"
-    aroma_label = _ica_aroma_output_label(opts.ica_aroma_denoise_type)
+    aroma_dir = opts.work_dir / ("ica_cicada" if classifier == "cicada" else "ica_aroma")
+    aroma_label = (
+        ("cicadaAgg" if denoise_type == "aggr" else "cicadaNonAgg")
+        if classifier == "cicada"
+        else _ica_aroma_output_label(denoise_type)
+    )
     aroma_t1_dir = aroma_dir / "space-T1w"
     aroma_mni_dir = aroma_dir / "space-MNI152NLin2009cAsym"
     aroma_clean = uncompressed_nifti_path(
@@ -2437,14 +2466,11 @@ def build_module(
 
         final_4d = raw_4d
         final_mean = mean_3d
-        if opts.clean_ica_aroma:
-            denoise_type = str(opts.ica_aroma_denoise_type).strip().lower()
-            if denoise_type not in {"nonaggr", "aggr", "both"}:
-                raise SystemExit(f"Unsupported ICA-AROMA denoise type: {denoise_type!r}")
+        if ica_enabled:
             support_brain = aroma_work / "epi_support_bet.nii.gz"
             support_mask = aroma_work / "epi_support_bet_mask.nii.gz"
             regression_mask = aroma_work / "regression_mask.nii.gz"
-            policy_path = aroma_work / "ica_aroma_policy.json"
+            policy_path = aroma_work / f"{classifier}_policy.json"
             runner.add_step(
                 _create_epi_support_step(
                     epi_mean=mean_3d,
@@ -2517,34 +2543,143 @@ def build_module(
                     melodic_dir / "melodic_FTmix",
                     aroma_dir / "melodic.complete",
                 )
-                aroma_outputs: list[Path] = [aroma_dir / "classification_overview.txt"]
-                if denoise_type in {"nonaggr", "both"}:
-                    aroma_outputs.append(aroma_dir / "denoised_func_data_nonaggr.nii.gz")
-                if denoise_type in {"aggr", "both"}:
-                    aroma_outputs.append(aroma_dir / "denoised_func_data_aggr.nii.gz")
-                runner.add_step(
-                    _create_ica_aroma_workflow_step(
-                        runner=runner,
-                        epi=raw_4d,
-                        melodic_input=melodic_input,
-                        motion_parameters=mc_dir / "motion.par",
-                        melodic_mask=melodic_mask,
-                        regression_mask=regression_mask,
-                        aroma_dir=aroma_dir,
-                        outputs=tuple((*aroma_outputs, *melodic_products)),
-                        melodic_products=melodic_products,
-                        input_is_mni=False,
-                        identity_transform=identity_transform,
-                        t1_to_mni_warp=t1_to_mni_warp,
-                        mni_reference=mni_ref,
-                        configured_command=opts.ica_aroma_cmd,
-                        repetition_time=repetition_time,
-                        denoise_type=denoise_type,
-                        env=env,
-                        force=opts.overwrite,
+                if classifier == "ica_aroma":
+                    aroma_outputs: list[Path] = [aroma_dir / "classification_overview.txt"]
+                    aroma_outputs.append(
+                        aroma_dir
+                        / (
+                            "denoised_func_data_aggr.nii.gz"
+                            if denoise_type == "aggr"
+                            else "denoised_func_data_nonaggr.nii.gz"
+                        )
                     )
-                )
-                cleaned_epi = aroma_dir / (
+                    runner.add_step(
+                        _create_ica_aroma_workflow_step(
+                            runner=runner,
+                            epi=raw_4d,
+                            melodic_input=melodic_input,
+                            motion_parameters=mc_dir / "motion.par",
+                            melodic_mask=melodic_mask,
+                            regression_mask=regression_mask,
+                            aroma_dir=aroma_dir,
+                            outputs=tuple((*aroma_outputs, *melodic_products)),
+                            melodic_products=melodic_products,
+                            input_is_mni=False,
+                            identity_transform=identity_transform,
+                            t1_to_mni_warp=t1_to_mni_warp,
+                            mni_reference=mni_ref,
+                            configured_command=opts.ica_aroma_cmd,
+                            repetition_time=repetition_time,
+                            denoise_type=denoise_type,
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                else:
+                    if repetition_time is None or repetition_time <= 0:
+                        raise SystemExit("CICADA requires a positive RepetitionTime.")
+                    runner.add_step(
+                        _create_cicada_melodic_step(
+                            runner=runner,
+                            melodic_input=melodic_input,
+                            melodic_mask=melodic_mask,
+                            output_directory=aroma_dir,
+                            outputs=(
+                                *melodic_products,
+                                aroma_dir / "melodic_IC_thr_MNI2mm.nii.gz",
+                            ),
+                            identity_transform=identity_transform,
+                            t1_to_mni_warp=t1_to_mni_warp,
+                            mni_reference=mni_ref,
+                            repetition_time=float(repetition_time),
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                classified_components = aroma_dir / "classified_motion_ICs.txt"
+                classifier_policy = policy_path
+                if classifier == "cicada":
+                    if opts.container is None:
+                        raise SystemExit("CICADA requires the configured FSL container.")
+                    cicada_root = aroma_work / "cicada"
+                    cicada_metrics = cicada_root / "motion_metrics.tsv"
+                    cicada_task = cicada_root / "classification"
+                    cicada_adapter = cicada_root / "melodic_mni"
+                    cicada_manifest = cicada_root / "classification.json"
+                    runner.add_step(
+                        _create_cicada_motion_metrics_step(
+                            epi=epi_mni,
+                            mask=anat_brain_mask_in_mni,
+                            motion_parameters=mc_dir / "motion.par",
+                            output=cicada_metrics,
+                            fd_radius_mm=float(SETTINGS.func_confounds.fd_radius_mm),
+                            dvars_statistical_alpha=float(
+                                SETTINGS.func_confounds.dvars_statistical_alpha
+                            ),
+                            dvars_practical_threshold_percent=float(
+                                SETTINGS.func_confounds.dvars_practical_threshold_percent
+                            ),
+                            dvars_power=float(SETTINGS.func_confounds.dvars_power),
+                            force=opts.overwrite,
+                        )
+                    )
+                    runner.add_step(
+                        _create_cicada_classification_step(
+                            runner=runner,
+                            executable=opts.cicada_cmd,
+                            epi_mni=epi_mni,
+                            mask_mni=anat_brain_mask_in_mni,
+                            confounds=cicada_metrics,
+                            source_melodic=melodic_dir,
+                            melodic_complete=aroma_dir / "melodic.complete",
+                            thresholded_components_mni=aroma_dir / "melodic_IC_thr_MNI2mm.nii.gz",
+                            t1_to_mni_warp=t1_to_mni_warp,
+                            identity_transform=identity_transform,
+                            task_directory=cicada_task,
+                            adapter_directory=cicada_adapter,
+                            result_manifest=cicada_manifest,
+                            tolerance=opts.cicada_tolerance,
+                            smoothing_retention_mode=opts.cicada_smoothing_retention_mode,
+                            repetition_time=repetition_time,
+                            fsl_image=opts.container.image,
+                            fsl_runtime=opts.container.engine,
+                            fsl_binds=opts.container.extra_binds,
+                            fsl_setup=opts.container.inner_setup,
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                    classified_components = cicada_task / "cicada_python/noise_components.txt"
+                    classifier_policy = cicada_manifest
+                    regression_dir = aroma_work / "regression"
+                    denoised_outputs = (
+                        regression_dir
+                        / (
+                            "denoised_func_data_aggr.nii.gz"
+                            if denoise_type == "aggr"
+                            else "denoised_func_data_nonaggr.nii.gz"
+                        ),
+                    )
+                    runner.add_step(
+                        _create_shared_aroma_regression_step(
+                            runner=runner,
+                            epi=raw_4d,
+                            input_space="T1w",
+                            regression_mask=regression_mask,
+                            mixing_matrix=melodic_dir / "melodic_mix",
+                            classified_components=classified_components,
+                            shared_policy=classifier_policy,
+                            aroma_dir=regression_dir,
+                            outputs=denoised_outputs,
+                            denoise_type=denoise_type,
+                            classifier_name="CICADA",
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                cleaned_epi = (
+                    aroma_work / "regression" if classifier == "cicada" else aroma_dir
+                ) / (
                     "denoised_func_data_aggr.nii.gz"
                     if denoise_type == "aggr"
                     else "denoised_func_data_nonaggr.nii.gz"
@@ -2554,7 +2689,7 @@ def build_module(
                         src=cleaned_epi,
                         dst=aroma_out_4d,
                         force=opts.overwrite,
-                        step_name="Install ICA-AROMA Denoised BOLD",
+                        step_name=f"Install {classifier} Denoised BOLD",
                     )
                 )
                 runner.add_step(
@@ -2566,27 +2701,36 @@ def build_module(
                         chunk_vols=opts.io_chunk_vols,
                     )
                 )
-                runner.add_step(
-                    create_json_step(
-                        step_name="Write ICA-AROMA Estimation Policy",
-                        path=policy_path,
-                        payload=_ica_aroma_policy_payload(
-                            input_is_mni=False,
-                            denoise_type=denoise_type,
-                            repetition_time=repetition_time,
-                            external_aroma=opts.ica_aroma_cmd is not None,
-                        ),
-                        inputs=(aroma_out_4d, aroma_out_mean),
-                        force=opts.overwrite,
+                if classifier == "ica_aroma":
+                    runner.add_step(
+                        create_json_step(
+                            step_name="Write ICA-AROMA Estimation Policy",
+                            path=policy_path,
+                            payload=_ica_aroma_policy_payload(
+                                input_is_mni=False,
+                                denoise_type=denoise_type,
+                                repetition_time=repetition_time,
+                                external_aroma=opts.ica_aroma_cmd is not None,
+                            ),
+                            inputs=(aroma_out_4d, aroma_out_mean),
+                            force=opts.overwrite,
+                        )
                     )
-                )
                 final_4d = aroma_out_4d
                 final_mean = aroma_out_mean
             else:
                 shared_aroma_dir = aroma_t1_dir / "aroma"
                 shared_mixing = shared_aroma_dir / "melodic.ica" / "melodic_mix"
-                shared_classified = shared_aroma_dir / "classified_motion_ICs.txt"
-                shared_policy = aroma_t1_dir / "ica_aroma_policy.json"
+                shared_classified = (
+                    shared_aroma_dir / "classified_motion_ICs.txt"
+                    if classifier == "ica_aroma"
+                    else aroma_t1_dir / "cicada/classification/cicada_python/noise_components.txt"
+                )
+                shared_policy = (
+                    aroma_t1_dir / "ica_aroma_policy.json"
+                    if classifier == "ica_aroma"
+                    else aroma_t1_dir / "cicada/classification.json"
+                )
                 runner.add_step(
                     _create_dilated_anatomical_mask_step(
                         anatomical_mask=mask_3d,
@@ -2598,11 +2742,14 @@ def build_module(
                     )
                 )
                 aroma_dir = aroma_work / "aroma"
-                denoised_outputs: list[Path] = []
-                if denoise_type in {"nonaggr", "both"}:
-                    denoised_outputs.append(aroma_dir / "denoised_func_data_nonaggr.nii.gz")
-                if denoise_type in {"aggr", "both"}:
-                    denoised_outputs.append(aroma_dir / "denoised_func_data_aggr.nii.gz")
+                denoised_outputs = [
+                    aroma_dir
+                    / (
+                        "denoised_func_data_aggr.nii.gz"
+                        if denoise_type == "aggr"
+                        else "denoised_func_data_nonaggr.nii.gz"
+                    )
+                ]
                 runner.add_step(
                     _create_shared_aroma_regression_step(
                         runner=runner,
@@ -2615,6 +2762,7 @@ def build_module(
                         aroma_dir=aroma_dir,
                         outputs=tuple(denoised_outputs),
                         denoise_type=denoise_type,
+                        classifier_name="ICA-AROMA" if classifier == "ica_aroma" else "CICADA",
                         env=env,
                         force=opts.overwrite,
                     )
@@ -2629,7 +2777,7 @@ def build_module(
                         src=cleaned_epi,
                         dst=aroma_out_4d,
                         force=opts.overwrite,
-                        step_name=f"Install {space} ICA-AROMA Denoised BOLD",
+                        step_name=f"Install {space} {classifier} Denoised BOLD",
                     )
                 )
                 runner.add_step(
@@ -2641,20 +2789,21 @@ def build_module(
                         chunk_vols=opts.io_chunk_vols,
                     )
                 )
-                runner.add_step(
-                    create_json_step(
-                        step_name=f"Write {space} ICA-AROMA Regression Policy",
-                        path=policy_path,
-                        payload=_ica_aroma_shared_regression_policy_payload(
-                            input_space=space,
-                            denoise_type=denoise_type,
-                            repetition_time=repetition_time,
-                            shared_work_dir=aroma_t1_dir,
-                        ),
-                        inputs=(aroma_out_4d, aroma_out_mean),
-                        force=opts.overwrite,
+                if classifier == "ica_aroma":
+                    runner.add_step(
+                        create_json_step(
+                            step_name=f"Write {space} ICA-AROMA Regression Policy",
+                            path=policy_path,
+                            payload=_ica_aroma_shared_regression_policy_payload(
+                                input_space=space,
+                                denoise_type=denoise_type,
+                                repetition_time=repetition_time,
+                                shared_work_dir=aroma_t1_dir,
+                            ),
+                            inputs=(aroma_out_4d, aroma_out_mean),
+                            force=opts.overwrite,
+                        )
                     )
-                )
                 final_4d = aroma_out_4d
                 final_mean = aroma_out_mean
 
@@ -2753,7 +2902,7 @@ def build_module(
                 )
             )
 
-    if opts.clean_ica_aroma:
+    if ica_enabled:
         runner.add_step(
             create_copy_nifti_step(
                 src=aroma_t1_dir / "aroma" / "melodic.ica" / "melodic_IC.nii.gz",
@@ -2828,7 +2977,7 @@ def build_module(
         reg_refine_qc_out,
         anat_brain_mask_in_t1,
         *([reg_mni_qc_out] if want_mni else []),
-        *([melodic_ic_t1_out] if opts.clean_ica_aroma else []),
+        *([melodic_ic_t1_out] if ica_enabled else []),
         *(
             [
                 marss_outputs.loadings,
@@ -2893,8 +3042,12 @@ def build_module(
             read_json(marss_outputs.metadata) if marss_outputs is not None else None
         )
         motion_indices: list[int] = []
-        classified = aroma_t1_dir / "aroma" / "classified_motion_ICs.txt"
-        if opts.clean_ica_aroma and classified.is_file():
+        classified = (
+            aroma_t1_dir / "aroma/classified_motion_ICs.txt"
+            if classifier == "ica_aroma"
+            else aroma_t1_dir / "cicada/classification/cicada_python/noise_components.txt"
+        )
+        if ica_enabled and classified.is_file():
             try:
                 motion_indices = [
                     int(value)
@@ -2923,9 +3076,11 @@ def build_module(
                 "pe_residual_refinement": pe_residual_details,
             },
             "denoising": {
-                "applied": bool(opts.clean_ica_aroma),
-                "method": "ICA-AROMA" if opts.clean_ica_aroma else None,
-                "mode": opts.ica_aroma_denoise_type if opts.clean_ica_aroma else None,
+                "applied": ica_enabled,
+                "method": ("ICA-AROMA" if classifier == "ica_aroma" else "CICADA")
+                if ica_enabled
+                else None,
+                "mode": denoise_type if ica_enabled else None,
                 "removed_noise_ic_indices": motion_indices,
                 **(
                     {"simultaneous_slice_artifact": multiband_artifact}
@@ -2988,9 +3143,11 @@ def build_module(
         if not isinstance(denoising, dict) or any(
             denoising.get(key) != expected
             for key, expected in {
-                "applied": bool(opts.clean_ica_aroma),
-                "method": "ICA-AROMA" if opts.clean_ica_aroma else None,
-                "mode": opts.ica_aroma_denoise_type if opts.clean_ica_aroma else None,
+                "applied": ica_enabled,
+                "method": ("ICA-AROMA" if classifier == "ica_aroma" else "CICADA")
+                if ica_enabled
+                else None,
+                "mode": denoise_type if ica_enabled else None,
             }.items()
         ):
             return False, "Functional denoising publication differs from the requested module."
@@ -3124,6 +3281,23 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--topup-config", type=str, default=cfg.topup_config)
     p.add_argument("--ica-aroma-cmd", type=Path, default=cfg.ica_aroma_cmd)
+    p.add_argument("--cicada-cmd", type=Path, default=cfg.cicada_cmd)
+    p.add_argument(
+        "--ica-classifier",
+        choices=["none", "ica_aroma", "cicada"],
+        default=cfg.ica_classifier,
+    )
+    p.add_argument(
+        "--ica-regression",
+        choices=["aggressive", "nonaggressive"],
+        default=cfg.ica_regression,
+    )
+    p.add_argument("--cicada-tolerance", type=int, default=int(cfg.cicada_tolerance))
+    p.add_argument(
+        "--cicada-smoothing-retention-mode",
+        choices=["revised", "historical"],
+        default=cfg.cicada_smoothing_retention_mode,
+    )
     p.add_argument(
         "--use-jacobian",
         action="store_true",
@@ -3155,17 +3329,6 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--syn-refine-smoothing-sigmas", type=str, default=str(cfg.syn_refine_smoothing_sigmas)
-    )
-    p.add_argument(
-        "--no-ica-aroma",
-        action="store_true",
-        default=not bool(cfg.clean_ica_aroma),
-        help="Skip ICA-AROMA cleaning.",
-    )
-    p.add_argument(
-        "--ica-aroma-denoise-type",
-        choices=["nonaggr", "aggr", "both"],
-        default=cfg.ica_aroma_denoise_type,
     )
     p.add_argument(
         "--marss-mode",
@@ -3266,6 +3429,7 @@ def main(
     ):
         setattr(args, key, resolve_project_path(getattr(args, key), project=project))
     args.ica_aroma_cmd = resolve_cwd_path(args.ica_aroma_cmd)
+    args.cicada_cmd = resolve_cwd_path(args.cicada_cmd)
     args.synbold_disco_image = resolve_cwd_path(args.synbold_disco_image)
     args.synbold_disco_license = resolve_cwd_path(args.synbold_disco_license)
 
@@ -3394,6 +3558,11 @@ def main(
         output_grid=str(args.output_grid),
         topup_config=str(args.topup_config),
         ica_aroma_cmd=(Path(args.ica_aroma_cmd) if args.ica_aroma_cmd is not None else None),
+        cicada_cmd=Path(args.cicada_cmd),
+        ica_classifier=str(args.ica_classifier),
+        ica_regression=str(args.ica_regression),
+        cicada_tolerance=int(args.cicada_tolerance),
+        cicada_smoothing_retention_mode=str(args.cicada_smoothing_retention_mode),
         use_jacobian=bool(args.use_jacobian),
         fieldmap_syn_refine=bool(args.fieldmap_syn_refine),
         syn_base_transform=str(args.syn_base_transform),
@@ -3404,8 +3573,6 @@ def main(
         syn_refine_convergence=str(args.syn_refine_convergence),
         syn_refine_shrink_factors=str(args.syn_refine_shrink_factors),
         syn_refine_smoothing_sigmas=str(args.syn_refine_smoothing_sigmas),
-        clean_ica_aroma=not bool(args.no_ica_aroma),
-        ica_aroma_denoise_type=str(args.ica_aroma_denoise_type),
         marss_mode=str(args.marss_mode),
         marss_min_multiband_factor=int(args.marss_min_multiband_factor),
         gradient_unwarping=str(args.gradient_unwarping),
