@@ -1612,7 +1612,7 @@ class Registry(WorkflowRegistry):
             elif not item.get("recomputable") and not item.get("demanded"):
                 state = "Unavailable"
             elif attempt == "error" and work_item_id in roots:
-                state = "Error"
+                state = "Corrupt" if item["artifact_state"] == "corrupt" else "Error"
             elif roots and item.get("demanded"):
                 state = "Blocked"
             elif attempt == "cancel_requested":
@@ -1633,6 +1633,8 @@ class Registry(WorkflowRegistry):
                 state = "Queued"
             elif attempt == "cancelled" and item.get("error_type") == "UserCancelled":
                 state = "Stopped"
+            elif item["artifact_state"] == "corrupt":
+                state = "Corrupt"
             elif item["artifact_state"] == "missing":
                 state = "Missing"
             else:

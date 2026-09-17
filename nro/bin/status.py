@@ -40,6 +40,7 @@ _STATUS_COLORS = {
     "Queued": _BLUE,
     "Blocked": _YELLOW,
     "Error": _RED + _BOLD,
+    "Corrupt": _RED + _BOLD,
     "Missing": _MAGENTA,
     "Stale": _YELLOW,
     "Unavailable": _GRAY,
@@ -162,7 +163,11 @@ def _failure_detail(row: dict, *, project: str) -> dict:
     """Extract the most specific root-failure information available."""
     log = Path(str(row.get("log_path") or ""))
     step = None
-    message = str(row.get("error_message") or "")
+    message = str(
+        row.get("artifact_reason") or ""
+        if row.get("status") == "Corrupt"
+        else row.get("error_message") or ""
+    )
     ledger = log.parent / "current-steps.json" if log else None
     if ledger is not None:
         try:
@@ -360,7 +365,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             continue
         entities = json.loads(row["entities_json"])
         root_ids = tuple(int(value) for value in row["root_failure_ids"])
-        if row["status"] == "Error":
+        if row["status"] in {"Corrupt", "Error"}:
             critical_errors[(project, int(row["id"]))] = _failure_detail(row, project=project)
         for root_id in root_ids:
             critical_errors[(project, root_id)] = _failure_detail(by_id[root_id], project=project)

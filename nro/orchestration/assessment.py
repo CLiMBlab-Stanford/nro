@@ -11,7 +11,7 @@ from typing import Iterable, Mapping
 
 from nro.orchestration import dependency_state
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 
 def _fingerprint(value: object) -> str:
@@ -158,7 +158,7 @@ class AssessmentReport:
             if type(update["id"]) is not int or update["id"] < 1 or update["id"] in seen:
                 raise ValueError("Assessment work-item IDs must be distinct positive integers")
             seen.add(update["id"])
-            if update["state"] not in ("fresh", "missing", "stale") or not isinstance(
+            if update["state"] not in ("fresh", "missing", "stale", "corrupt") or not isinstance(
                 update["reason"], str
             ):
                 raise ValueError("Invalid assessment artifact state")

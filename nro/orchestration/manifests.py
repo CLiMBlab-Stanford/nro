@@ -184,7 +184,7 @@ def _shallow_public_output_error(outputs: object) -> tuple[str, str] | None:
         return "missing", "Completion certificate contains no public artifacts"
     for item in outputs:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-            return "stale", "Completion certificate has an invalid public artifact record"
+            return "corrupt", "Completion certificate has an invalid public artifact record"
         path = Path(item["path"])
         try:
             present = path.is_file() and path.stat().st_size > 0
@@ -280,6 +280,8 @@ def preview_registry(
                             recovered, reason = _public_derivative_completion(
                                 row, registry, compiled=compiled
                             )
+                        except _PublicDerivativeCorruption as error:
+                            state = ("corrupt", str(error))
                         except _PublicDerivativeContractMismatch as error:
                             state = ("stale", str(error))
                         except OSError as error:
@@ -322,6 +324,10 @@ class _PublicDerivativeCompletion:
 
 class _PublicDerivativeContractMismatch(ValueError):
     """Public completion evidence does not implement the current output contract."""
+
+
+class _PublicDerivativeCorruption(_PublicDerivativeContractMismatch):
+    """Public completion evidence contradicts the derivative it certifies."""
 
 
 def _referenced_files(value, *, base: Path) -> tuple[Path, ...]:
@@ -411,7 +417,7 @@ def _public_derivative_completion(
                 value, json.loads(row["artifact_contract_json"]).get("processing", {})
             )
             if not valid:
-                raise _PublicDerivativeContractMismatch(reason)
+                raise _PublicDerivativeCorruption(reason)
         inventory_value = value.get("public_outputs")
         referenced = _referenced_files(inventory_value, base=artifact.parent)
         if value.get("complete") is True and "public_outputs" in value:
@@ -445,7 +451,7 @@ def _public_derivative_completion(
             None,
         )
         if changed is not None:
-            raise _PublicDerivativeContractMismatch(
+            raise _PublicDerivativeCorruption(
                 f"Public {module} output changed after its completion manifest: {changed}"
             )
     current_metadata_contract = (
@@ -790,16 +796,26 @@ def evaluate_assessment(
                     state = ("stale", "An upstream derivative is missing or stale")
                 else:
                     public_contract_mismatch = False
+                    public_corruption = False
                     try:
                         recovered, recovery_error = _public_derivative_completion(
                             row, registry, compiled=registered_only
                         )
+                    except _PublicDerivativeCorruption as error:
+                        recovered, recovery_error = None, str(error)
+                        public_corruption = True
                     except _PublicDerivativeContractMismatch as error:
                         recovered, recovery_error = None, str(error)
                         public_contract_mismatch = True
                     if recovered is None:
                         state = (
-                            "stale" if public_contract_mismatch else "missing",
+                            (
+                                "corrupt"
+                                if public_corruption
+                                else "stale"
+                                if public_contract_mismatch
+                                else "missing"
+                            ),
                             recovery_error,
                         )
                     else:

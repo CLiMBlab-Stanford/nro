@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration.store import ConfigStore
+from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.orchestration import branches
 from nro.orchestration.branch_registry import SCHEMA_VERSION, BranchRegistry
 from nro.orchestration.branch_repair import (
@@ -329,6 +329,84 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         item for item in registry.work_item_rows() if item["work_item_key"].endswith(spec.key)
     )
     assert row["recomputable"] == 1
+
+
+def test_branch_ownership_rejects_changed_configuration_identity(tmp_path):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    record = {
+        "configuration_class": "dynconn",
+        "directory_label": "evaluation",
+        "configuration": {
+            "id": "evaluation",
+            "fingerprint": "configuration",
+            "resolved": {"low_rank": True},
+        },
+        "lineage_fingerprint": "scientific-lineage",
+        "upstream": [],
+    }
+    registry.register_owned_lineages([record], branch_registry_id="branch-owner")
+
+    changed = {
+        **record,
+        "configuration": {**record["configuration"], "id": "other"},
+    }
+    with pytest.raises(ValueError, match="conflicts with registered lineage"):
+        registry.register_owned_lineages([changed], branch_registry_id="branch-owner")
+
+    moved = {**record, "directory_label": "evaluation-2"}
+    with pytest.raises(ValueError, match="conflicts with registered lineage"):
+        registry.register_owned_lineages([moved], branch_registry_id="branch-owner")
+
+
+def test_rebuild_seeds_directory_assignments_from_owned_lineages(tmp_path):
+    store = BranchStore(tmp_path / "control")
+    store.initialize()
+    scientific = store.registry("dev")
+    workflow = ConfigStore().resolve("main")
+    registered = scientific.register_workflow(workflow)
+    owned = []
+    with scientific.connection() as db:
+        for configuration_class in CONFIGURATION_CLASSES:
+            lineage_id = registered.lineages[configuration_class]
+            row = db.execute("SELECT * FROM module_lineages WHERE id=?", (lineage_id,)).fetchone()
+            upstream = [
+                {
+                    "lineage_fingerprint": parent["lineage_fingerprint"],
+                    "role": parent["role"],
+                }
+                for parent in db.execute(
+                    """SELECT parent.lineage_fingerprint,dependency.role
+                       FROM module_lineage_dependencies dependency
+                       JOIN module_lineages parent
+                         ON parent.id=dependency.upstream_module_lineage_id
+                       WHERE dependency.module_lineage_id=?""",
+                    (lineage_id,),
+                )
+            ]
+            owned.append(
+                {
+                    "configuration_class": configuration_class,
+                    "directory_label": (
+                        "preserved-dynconn"
+                        if configuration_class == "dynconn"
+                        else row["directory_label"]
+                    ),
+                    "configuration": {
+                        "id": row["config_id"],
+                        "fingerprint": row["config_fingerprint"],
+                        "resolved": yaml.safe_load(row["resolved_yaml"]),
+                    },
+                    "lineage_fingerprint": row["lineage_fingerprint"],
+                    "upstream": upstream,
+                    "updated_at": row["created_at"],
+                }
+            )
+
+    scientific.rebuild([], [], owned_lineages=owned)
+    rebuilt = scientific.register_workflow(workflow)
+
+    assert rebuilt.lineage_fingerprints == registered.lineage_fingerprints
+    assert rebuilt.directories["dynconn"] == "preserved-dynconn"
 
 
 def test_contract_revision_protects_edits_and_observations(tmp_path):

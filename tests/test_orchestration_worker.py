@@ -820,6 +820,14 @@ def test_missing_undemanded_artifact_does_not_report_historical_error(tmp_path: 
     assert row["status"] == "Missing"
     assert row["artifact_reason"] == "Purged by user"
 
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE work_items SET artifact_state='corrupt',artifact_reason='Invalid output'"
+        )
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Corrupt"
+    assert row["artifact_reason"] == "Invalid output"
+
 
 def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) -> None:
     bids = tmp_path / "bids"

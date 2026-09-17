@@ -423,6 +423,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
                 ("Blocked", False),
                 ("Missing", True),
                 ("Stale", True),
+                ("Corrupt", True),
                 ("Blocked", True),
                 ("Success", True),
                 ("Running", True),
@@ -438,6 +439,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
         ("Error", False),
         ("Missing", True),
         ("Stale", True),
+        ("Corrupt", True),
         ("Blocked", True),
     ]
 

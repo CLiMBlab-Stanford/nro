@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, Mapping
 
+import yaml
+
 from nro.configuration.store import fingerprint
 from nro.orchestration.branches import BranchRecord
 from nro.orchestration.contracts import WorkItemSpec
@@ -348,7 +350,13 @@ class BranchRegistry(WorkflowRegistry):
         """Open a serialized scientific transaction; this store has no scheduler tables."""
         return self._connection(write=write)
 
-    def rebuild(self, workflows: list[dict], work_items: list[dict]) -> None:
+    def rebuild(
+        self,
+        workflows: list[dict],
+        work_items: list[dict],
+        *,
+        owned_lineages: list[dict] | None = None,
+    ) -> None:
         """Replace scientific state from admitted records, keeping a recovery copy.
 
         The caller must reserve branch maintenance and stop its attempts first.
@@ -366,6 +374,34 @@ class BranchRegistry(WorkflowRegistry):
                     db.execute(f"PRAGMA application_id={APPLICATION_ID}")
                     db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                     db.executemany("INSERT INTO identity VALUES (?,?)", self._identity().items())
+                    lineage_ids: dict[str, int] = {}
+                    for record in owned_lineages or []:
+                        configuration = record["configuration"]
+                        cursor = db.execute(
+                            """INSERT INTO module_lineages(
+                                configuration_class,config_id,config_fingerprint,
+                                lineage_fingerprint,resolved_yaml,directory_label,created_at
+                            ) VALUES (?,?,?,?,?,?,?)""",
+                            (
+                                record["configuration_class"],
+                                configuration["id"],
+                                configuration["fingerprint"],
+                                record["lineage_fingerprint"],
+                                yaml.safe_dump(configuration["resolved"], sort_keys=False),
+                                record["directory_label"],
+                                record["updated_at"],
+                            ),
+                        )
+                        lineage_ids[str(record["lineage_fingerprint"])] = int(cursor.lastrowid)
+                    for record in owned_lineages or []:
+                        lineage_id = lineage_ids[str(record["lineage_fingerprint"])]
+                        for upstream in record["upstream"]:
+                            upstream_id = lineage_ids.get(str(upstream["lineage_fingerprint"]))
+                            if upstream_id is not None:
+                                db.execute(
+                                    "INSERT INTO module_lineage_dependencies VALUES (?,?,?)",
+                                    (lineage_id, upstream_id, upstream["role"]),
+                                )
                     for payload in workflows:
                         for table, rows in (
                             ("module_lineages", payload["lineages"]),
@@ -390,8 +426,6 @@ class BranchRegistry(WorkflowRegistry):
                                 fingerprint(row["contract"]),
                             ),
                         )
-                    import yaml
-
                     from nro.orchestration.registry import utcnow
 
                     for path in sorted(self.paths.workflows.glob("*/*_workflow.yml")):

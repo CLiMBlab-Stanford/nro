@@ -175,7 +175,8 @@ retry, and completion logic independent of how a module process is launched.
 
 State is deliberately not compressed into one ambiguous status:
 
-- **Artifact state:** `missing`, `stale`, or `fresh`.
+- **Artifact state:** `missing`, `stale`, `corrupt`, or `fresh`. Corruption
+  means existing files contradict their own contract or completion evidence.
 - **Request state:** `active`, `cancelled`, or `satisfied`.
 - **Demand state:** whether a particular request still needs a particular
   work item.
