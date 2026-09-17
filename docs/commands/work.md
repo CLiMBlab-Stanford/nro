@@ -133,6 +133,9 @@ or an active or unresolved failed attempt, `Missing` means required outputs or
 completion evidence are absent. `Stale` means the result needs updating, for
 example because its contract or an upstream dependency changed. The JSON `reason`
 field gives the specific cause; `Stale` does not guarantee all files still exist.
+`Corrupt` means files exist but contradict their own artifact contract or
+completion evidence. A matching request rebuilds the artifact; successful
+publication replaces the corrupt state.
 Both reporting modes use the same status labels. `Queued` indicates pending
 demanded work, while `Blocked` indicates work waiting on upstream errors.
 `Running` and `Error` describe current execution or an unresolved failed attempt.

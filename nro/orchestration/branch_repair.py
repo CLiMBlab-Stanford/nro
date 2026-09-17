@@ -2,6 +2,7 @@
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from nro.configuration.store import fingerprint
@@ -14,6 +15,15 @@ from nro.orchestration.ownership import (
     read_ownership_records,
 )
 from nro.orchestration.registry import utcnow
+
+
+@dataclass(frozen=True)
+class PublicOwnership:
+    """Validated lineage roots and work-item receipts in a branch namespace."""
+
+    lineages: list[dict]
+    work_items: list[tuple[dict, Path]]
+    errors: list[str]
 
 
 def _has_public_evidence(row) -> bool:
@@ -43,32 +53,18 @@ def _ancestor_work_item(
     return None
 
 
-def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> list[str]:
+def _recover_public_work_items(
+    registry,
+    *,
+    branch: str,
+    registry_id: str,
+    ownership: PublicOwnership | None = None,
+) -> list[str]:
     """Restore one branch's current ownership receipts to the shared scheduler."""
-    from nro.configuration.site import settings
-
-    values = settings()[0]
-    configured_bids = Path(values["bids"]).expanduser().resolve()
-    development = (
-        Path(values["development"])
-        if registry.paths.bids_root == configured_bids
-        else registry.paths.bids_root.parent / "NRO_DEV"
-    )
-    paths = BranchPaths(
-        branch,
-        registry.paths.bids_root,
-        Path(values["work"])
-        if registry.paths.bids_root == configured_bids
-        else registry.paths.bids_root.parent / "WORK",
-        development,
-    )
-    output_bids = paths.output_bids
-    if not output_bids.is_dir():
-        return []
-    projects = sorted(path.name for path in output_bids.iterdir() if path.is_dir())
-    lineages, records, errors = read_ownership_records(output_bids, projects)
-    lineages, records, incomplete = complete_ownership_records(lineages, records)
-    errors.extend(incomplete)
+    ownership = ownership or _public_ownership_records(registry, branch=branch)
+    lineages = ownership.lineages
+    records = ownership.work_items
+    errors = list(ownership.errors)
     if not lineages or not records:
         return errors
 
@@ -173,6 +169,35 @@ def _recover_public_work_items(registry, *, branch: str, registry_id: str) -> li
         recover_public=True,
     )
     return errors
+
+
+def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
+    """Read complete public ownership records for one branch output namespace."""
+    from nro.configuration.site import settings
+
+    values = settings()[0]
+    configured_bids = Path(values["bids"]).expanduser().resolve()
+    development = (
+        Path(values["development"])
+        if registry.paths.bids_root == configured_bids
+        else registry.paths.bids_root.parent / "NRO_DEV"
+    )
+    paths = BranchPaths(
+        branch,
+        registry.paths.bids_root,
+        Path(values["work"])
+        if registry.paths.bids_root == configured_bids
+        else registry.paths.bids_root.parent / "WORK",
+        development,
+    )
+    output_bids = paths.output_bids
+    if not output_bids.is_dir():
+        return PublicOwnership([], [], [])
+    projects = sorted(path.name for path in output_bids.iterdir() if path.is_dir())
+    lineages, records, errors = read_ownership_records(output_bids, projects)
+    lineages, records, incomplete = complete_ownership_records(lineages, records)
+    errors.extend(incomplete)
+    return PublicOwnership(lineages, records, errors)
 
 
 def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
@@ -338,16 +363,24 @@ def prepare(
             )
         registry.recover_orphaned_attempts()
         time.sleep(0.1)
-    recovery_errors = (
-        _recover_public_work_items(registry, branch=name, registry_id=owner)
-        if name != "main"
-        else []
-    )
+    ownership = _public_ownership_records(registry, branch=name)
+    recovery_errors = list(ownership.errors)
+    if name != "main":
+        recovery_errors = (
+            _recover_public_work_items(
+                registry,
+                branch=name,
+                registry_id=owner,
+                ownership=PublicOwnership(ownership.lineages, ownership.work_items, []),
+            )
+            + recovery_errors
+        )
     with registry.connection(write=True) as db:
         records = _repair_records_locked(db, branch=name, registry_id=owner)
     return dict(
         branch=name,
         work_items=records,
+        owned_lineages=ownership.lineages,
         unavailable=recovery_errors,
         reservation=reservation,
     )
@@ -411,7 +444,7 @@ def repair_checkout(control: Path, bids_root: Path, checkout: Path, *, confirm) 
         )
         # Historical workflow snapshots remain on disk for provenance. Only
         # definitions that resolve now make a recovered lineage reproducible.
-        scientific.rebuild([], data["work_items"])
+        scientific.rebuild([], data["work_items"], owned_lineages=data.get("owned_lineages", []))
         workflows = _register_current_workflows(scientific)
         result = maintenance(
             control,

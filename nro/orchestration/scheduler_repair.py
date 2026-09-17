@@ -16,6 +16,8 @@ from nro.orchestration.worker_control import stop_worker_pool_for_repair
 def repair_scientific_schemas(registry) -> list[dict]:
     """Recover branch mappings and rebuild incompatible scientific registries."""
     from nro.orchestration.branch_repair import (
+        PublicOwnership,
+        _public_ownership_records,
         _recover_public_work_items,
         _repair_records_locked,
     )
@@ -32,15 +34,18 @@ def repair_scientific_schemas(registry) -> list[dict]:
     for record in records:
         scientific = BranchRegistry(registry.paths.control, record)
         stored = scientific.stored_schema_version()
+        ownership = _public_ownership_records(registry, branch=record.name)
+        unavailable = list(ownership.errors)
         unavailable = (
             _recover_public_work_items(
                 registry,
                 branch=record.name,
                 registry_id=record.registry_id,
+                ownership=PublicOwnership(ownership.lineages, ownership.work_items, []),
             )
             if record.name != "main"
             else []
-        )
+        ) + unavailable
         if stored != scientific.stored_schema_version():
             raise RuntimeError("Scientific registry schema changed during repair")
         if stored != BRANCH_SCHEMA_VERSION:
@@ -50,7 +55,7 @@ def repair_scientific_schemas(registry) -> list[dict]:
                     branch=record.name,
                     registry_id=record.registry_id,
                 )
-            scientific.rebuild([], work_items)
+            scientific.rebuild([], work_items, owned_lineages=ownership.lineages)
             repaired.append(
                 {
                     "branch": record.name,

@@ -10,7 +10,9 @@ from nro.bin.purge import _purge_work_items
 from nro.configuration.store import ConfigStore
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.ownership import (
+    complete_ownership_records,
     lineage_record_path,
+    read_ownership_records,
     work_item_record_path,
     write_work_item_ownership,
 )
@@ -22,6 +24,53 @@ from nro.orchestration.registry import Registry
 def _write(path: Path, content: str = "x") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def test_completion_uses_receipts_from_selected_lineage_root(tmp_path: Path) -> None:
+    lineage = {
+        "lineage_fingerprint": "same-lineage",
+        "directory_label": "current",
+        "upstream": [],
+    }
+    previous = ({"lineage_fingerprint": "same-lineage", "directory_label": "previous"}, tmp_path)
+    current = ({"lineage_fingerprint": "same-lineage", "directory_label": "current"}, tmp_path)
+
+    lineages, work_items, errors = complete_ownership_records([lineage], [previous, current])
+
+    assert lineages == [lineage]
+    assert work_items == [current]
+    assert errors == []
+
+
+def test_discovery_rejects_duplicate_roots_for_one_lineage(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo/sub-01"
+    _write(subject / "anat/sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_items = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="anat",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+    )
+    ids = registry.register_work_items(work_items)
+    write_work_item_ownership(registry, ids[work_items[0].key])
+    original = lineage_record_path(bids / "demo", "anat", registered.directories["anat"])
+    duplicate = lineage_record_path(bids / "demo", "anat", "main-2")
+    marker = json.loads(original.read_text())
+    marker["directory_label"] = "main-2"
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text(json.dumps(marker))
+
+    lineages, _work_items, errors = read_ownership_records(bids, ["demo"])
+
+    assert lineages == []
+    assert any("conflicting derivative roots" in error for error in errors)
 
 
 def _historical_store(tmp_path: Path) -> ConfigStore:

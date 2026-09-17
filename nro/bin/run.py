@@ -28,7 +28,7 @@ from nro.orchestration.worker_control import stop_worker_pool_for_repair
 DEFAULT_CONCURRENCY = 50
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
 _RESUMABLE_STATUSES = frozenset({"Queued", "Stopped", "Error"})
-_DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Blocked"})
+_DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Corrupt", "Blocked"})
 
 
 def _confirm_repair_with_workers(activity: dict) -> bool:

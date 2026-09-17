@@ -149,7 +149,7 @@ def test_repair_rejects_output_newer_than_public_completion_manifest(graph):
         recover_public=True,
     )[ids["root"]]
 
-    assert state[0] == "stale", state
+    assert state[0] == "corrupt", state
     assert "changed after its completion manifest" in state[1]
 
 

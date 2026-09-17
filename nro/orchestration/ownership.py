@@ -322,6 +322,7 @@ def read_ownership_records(
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
     """Read current-format ownership records from the selected projects."""
     lineages: dict[tuple[str, str], dict] = {}
+    ambiguous: set[tuple[str, str]] = set()
     work_items: list[tuple[dict, Path]] = []
     errors: list[str] = []
     for project in projects:
@@ -339,7 +340,19 @@ def read_ownership_records(
                     continue
                 identity = (configuration_class, str(marker["lineage_fingerprint"]))
                 previous = lineages.get(identity)
-                if previous is None or str(marker["updated_at"]) > str(previous["updated_at"]):
+                if previous is not None and str(previous["directory_label"]) != str(
+                    marker["directory_label"]
+                ):
+                    errors.append(
+                        "Stored lineage "
+                        f"{marker['lineage_fingerprint']} has conflicting derivative roots: "
+                        f"{previous['directory_label']} and {marker['directory_label']}"
+                    )
+                    ambiguous.add(identity)
+                    lineages.pop(identity, None)
+                elif identity not in ambiguous and (
+                    previous is None or str(marker["updated_at"]) > str(previous["updated_at"])
+                ):
                     lineages[identity] = marker
                 work_item_root = marker_path.parent / "work_items"
                 for receipt_path in sorted(work_item_root.glob("*/*.json")):
@@ -363,7 +376,11 @@ def complete_ownership_records(
     lineage_records: list[dict],
     work_item_records: list[tuple[dict, Path]],
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
-    """Remove records whose declared module-lineage chain is incomplete."""
+    """Select complete lineage roots and their matching work-item receipts."""
+    selected_directories = {
+        str(record["lineage_fingerprint"]): str(record["directory_label"])
+        for record in lineage_records
+    }
     known = {str(record["lineage_fingerprint"]) for record in lineage_records}
     incomplete = {
         str(record["lineage_fingerprint"])
@@ -395,7 +412,10 @@ def complete_ownership_records(
         [
             record
             for record in work_item_records
-            if str(record[0]["lineage_fingerprint"]) not in incomplete
+            if str(record[0]["lineage_fingerprint"]) in selected_directories
+            and str(record[0]["lineage_fingerprint"]) not in incomplete
+            and str(record[0]["directory_label"])
+            == selected_directories[str(record[0]["lineage_fingerprint"])]
         ],
         errors,
     )
