@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from nro.configuration.store import ConfigStore
-from nro.orchestration import dependency_state, manifests
+from nro.orchestration import completion, dependency_state
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
@@ -144,7 +144,7 @@ def test_changed_generation_rejects_late_completion(graph):
 
 def test_cancellation_during_inventory_prevents_completion_publication(graph, monkeypatch):
     registry, specs, rows, leaf, _ = graph
-    original = manifests.inventory
+    original = completion.inventory
 
     def changed(paths):
         result = original(paths)
@@ -152,7 +152,7 @@ def test_cancellation_during_inventory_prevents_completion_publication(graph, mo
         registry.cancel_attempts_with_stale_upstreams()
         return result
 
-    monkeypatch.setattr(manifests, "inventory", changed)
+    monkeypatch.setattr(completion, "inventory", changed)
     with pytest.raises(dependency_state.AttemptInvalidated):
         record_completion(
             registry,
