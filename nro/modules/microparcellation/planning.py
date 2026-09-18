@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
 from nro.engine.targets import is_fsaverage_space, smoothing_entity_value
-from nro.modules.microparcellation.paths import output_paths
+from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 
@@ -97,7 +97,7 @@ def plan_work_items(
                 memory_gb=context.memory_gb,
                 max_memory_gb=context.max_memory_gb,
                 expected_outputs=tuple(
-                    output_paths(output_root, prefix)[name]
+                    microparcellation_output_paths(output_root, prefix)[name]
                     for name in ("manifest", "quality", "index")
                 ),
                 processing=context.processing_contract(descriptor),

@@ -45,7 +45,7 @@ the effective random seed.
 ## Public artifacts
 
 Outputs from every space and smoothing target share
-`derivatives/nro/dynconn/DYNCONN_ID/sub-ID/`. Their filenames include both
+`derivatives/nro/dynconn/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`. Their filenames include both
 entities.
 
 Surface targets contain one `_desc-dynamicConnectivity_bold.dtseries.nii`

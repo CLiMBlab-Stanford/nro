@@ -71,8 +71,7 @@ def request(
                 "record": record,
             },
         )
-        response = receive(connection)
-    return response
+        return receive(connection)
 
 
 def validate_request(envelope: dict[str, Any], *, token: str) -> tuple[dict[str, Any], bool]:

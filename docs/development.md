@@ -30,8 +30,6 @@ The development spine is `main -> dev -> feature branches`. Main owns production
 outputs. Development branches inherit compatible outputs through their registered
 parents and write beneath the site's `development` path. Scientific inputs always
 come from shared raw BIDS. Branch identity governs ownership, not freshness.
-The first release is `0.0.1`.
-
 [Branch registration](commands/branches.md) creates one central scientific database
 per branch. All authorized checkouts of a branch share that database. Catalog and
 scientific updates require the revision the caller read. Interrupted registration
@@ -44,6 +42,7 @@ scheduler is the sole authority for demand, attempts, concurrency, and physical
 input dependencies.
 The scientific and scheduler databases have independent schema markers. These
 are storage-format checks, not scientific freshness inputs.
+They evolve through the [registry migration contract](registry-migrations.md).
 
 ### Requests and execution
 
@@ -147,10 +146,6 @@ Promotion does not merge code, change parents, or retire branches. Its durable
 per-file journal restores pre-transaction files after interruption or finishes
 ownership metadata when the scheduler transaction already committed.
 
-[Private-state cutover](commands/cutover.md) is available for a quiescent store and
-retains a rollback copy. Existing canonical derivatives remain the main-owned baseline
-with their original provenance. Do not attribute them to release 0.0.1 after the fact.
-
 The test suite exercises different source catalogs through a persistent worker and
 through the actual central JSON service. It checks output isolation, global capacity,
 inherited reads, local fallback, cancellation, obsolete-completion rejection, and
@@ -182,7 +177,8 @@ Before a release, rehearse maintenance from the current release to the candidate
 ```
 
 The main release check runs formatting, lint, the complete test suite, this isolated
-upgrade rehearsal, and a warning-free documentation build. Configure `Version advances`
+upgrade rehearsal, registry migration validation, and a warning-free documentation
+build. Configure `Version advances`
 as a required check in the repository settings so a version cannot merge after one of
 these steps fails. The rehearsal covers orchestration and source replacement; it does
 not probe site containers or Slurm.

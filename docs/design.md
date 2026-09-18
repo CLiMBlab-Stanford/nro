@@ -16,7 +16,7 @@ owns a graph of `Step` declarations and executes them in dependency order.
 anat ──► func ──┬─► clean ──┬─► dynconn
   │             │           └─► microparcellation ──► networks
   │             └─► firstlevels
-  └── direct anatomical inputs ──► {clean, networks, firstlevels}
+  └── direct anatomical inputs ──► {clean, microparcellation, networks, firstlevels}
 ```
 
 The sequence is not a chain of monolithic cluster jobs. There are many run-wise
@@ -34,18 +34,23 @@ summaries. It does not consume `clean` or run population-level analyses.
 
 Graphs are defined by BIDS inputs and resolved configuration before execution.
 Freshness determines which declared steps execute, not which steps exist.
-Factories return `Step` objects; only `Runner.add_step()` mutates its graph.
-Module constructors must not execute image processing while building the graph.
+Factories return `Step` objects. Larger construction stages return immutable
+`StagePlan` values containing steps and typed downstream products. Only the module
+entry point passes these declarations to `Runner.add_step()` or
+`Runner.add_steps()`. Module constructors must not execute image processing while
+building the graph.
 
 ## Reuse and ownership
 
 Workflows select one configuration for each module. Every module publishes below
-`derivatives/nro/MODULE/MODULE_ID/`. Functional variants that select equivalent
+`derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. Functional variants that select equivalent
 anatomy reuse the same anatomical work item and `anat` directory. Configuration
 lineages include upstream choices, allowing equivalent workflows to share
-results. A numeric suffix distinguishes two lineages that select the same named
-configuration but have incompatible upstream inputs. Directory labels are not
-substitutes for lineage identity.
+results. A short lineage digest distinguishes configurations with the same name
+but incompatible upstream inputs. Because the label is content-addressed, a
+registry rebuild cannot rename a lineage by discovering it in a different
+order. Directory labels are readable projections of lineage identity, not
+substitutes for the full fingerprint.
 
 Public artifacts are durable results under a project's `derivatives/nro` tree.
 Private intermediates live under WORK and support resumption. Ownership receipts
@@ -64,7 +69,7 @@ they change methods or required metadata.
 The central scheduler registry stores demand, attempts, workers, and Slurm
 submissions. Each registered Git branch also has a scientific registry for its
 compiled contracts and artifact observations. The filesystem remains
-authoritative for output existence and validity. Several requests can share an
+authoritative for output existence and validity. Several requests can share a
 work item; cancelling one request need not stop work still demanded by another.
 Concurrency limits apply across projects and development branches.
 

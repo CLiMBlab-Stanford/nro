@@ -62,19 +62,27 @@ semantic contract.
 Modules can normalize their processing specification before comparison.
 Firstlevels uses a [canonical compiled task definition](task-models.md#model-edits-and-freshness)
 so equivalent authoring forms share a contract. The same normalization applies
-to recorded contracts and completion certificates. It does not suppress changes
+to recorded contracts and database completion records. It does not suppress changes
 to dependencies, output requirements, or resolved scientific configuration.
 The [configuration compiler](configuration.md#scientific-settings-and-execution-snapshots)
 separates explicitly declared execution settings from scientific settings.
 Full execution snapshots remain available as provenance.
 
 Every built-in scientific module includes its public metadata schema in the
-explicit processing portion of this contract. The schema names required fields
-and their JSON-compatible types, including conditional schemas for distinct
-output domains. Module writers and freshness validators consume the same
-declaration. Adding, removing, or changing a promised metadata field therefore
-changes the artifact contract; formatting, key order, optional descriptive
-metadata, and values that legitimately depend on the input do not.
+explicit processing portion of this contract. The schema names fields and their
+JSON-compatible types, including conditional schemas for distinct output
+domains. A plain type name marks a required field. A `kind` and `default`
+mapping marks a field whose declared default also applies to older artifacts
+that predate the field. Module writers and freshness validators consume the
+same declaration.
+
+Removing a schema field is compatible because current readers no longer use it.
+Adding a field with a default is compatible because its meaning for an older
+artifact is unambiguous. Unknown fields in recorded metadata are ignored.
+Adding a required field, making an optional field required, changing a field's
+type or default, or changing any other scientific promise remains substantive.
+Formatting, key order, descriptive metadata outside the declared schema, and
+values that legitimately depend on the input do not affect freshness.
 
 `WorkItemContract` describes the artifact promised by the whole work item. Each
 concrete file or atomic directory in that artifact is a product.
@@ -150,15 +158,14 @@ ExecutionLauncher supervises the module subprocess
 Runner freezes its graph, executes or skips every step, and records the result
         │
         ▼
-Worker validates public outputs and writes the completion manifest
+Worker validates public outputs and commits the completion record
 ```
 
 ### ExecutionEnvelope
 
 An `ExecutionEnvelope` is the typed boundary between the registry and worker.
 It contains the claimed work-item and attempt IDs, identity, normalized
-work-item contract, execution recipe, exact inputs and outputs, manifest
-destination, and log destination.
+work-item contract, execution recipe, exact inputs and outputs, and log destination.
 
 The registry decodes its SQL and JSON storage representation before returning
 the envelope. Worker execution therefore does not depend on database column
@@ -211,8 +218,8 @@ worker lease alone is not proof that its processes stopped. Completed consumers
 also become stale when their required upstream generation changes.
 
 Completion validates the attempt, contract, captured inputs, and mutation barriers
-again under the publication lock before writing its manifest and advancing its
-generation. A late completion cannot override cancellation. nro does not retain
+again in the coordinator transaction before recording its evidence and advancing
+its generation. A late completion cannot override cancellation. nro does not retain
 old derivative generations to let invalidated attempts run to completion.
 
 These rules apply to dependencies resolved across branch boundaries as well as
@@ -223,7 +230,7 @@ invalidation semantics.
 
 The planner always constructs the complete module and work-item dependency graph
 before assessing freshness. Assessment compares the work-item contract and
-completion manifest with current filesystem evidence, including:
+database completion record with current filesystem evidence, including:
 
 - direct source inputs;
 - required upstream generations;

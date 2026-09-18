@@ -28,8 +28,8 @@ Transfers are staged and checksummed. Text references are relocated; unresolved
 source-branch references or opaque files requiring path edits cause rejection.
 External symlinks are not copied. Active target jobs must be stopped first.
 Publication invalidates downstream readers and waits for their shutdown, then
-writes completion manifests last. Dependency generations and source files are
-checked again before publication.
+commits target completion records after the files are in place. Dependency
+generations and source files are checked again before publication.
 
 The completion metadata retains the original producing branch and source digest,
 plus the accepting branch, release, PR reference, and promotion event. Events are

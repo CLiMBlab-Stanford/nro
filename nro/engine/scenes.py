@@ -152,7 +152,7 @@ def manifest_anatomical_images(manifest: Path) -> tuple[Path, ...]:
         return ()
     values = (
         outputs.get("brain_image"),
-        outputs.get("subject_t1w"),
+        outputs.get("acpc_t1w"),
         outputs.get("subject_t2w"),
     )
     return tuple(

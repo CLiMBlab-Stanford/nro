@@ -37,12 +37,12 @@ def refresh(rows: list[dict], selection) -> None:
     for row in rows:
         if (
             row["module"] not in MODULES
-            or selection.projects
-            and row["project"] not in selection.projects
-            or selection.participants
-            and row["participant"] not in selection.participants
-            or selection.modules
-            and row["module"] not in selection.modules
+            or (selection.projects
+            and row["project"] not in selection.projects)
+            or (selection.participants
+            and row["participant"] not in selection.participants)
+            or (selection.modules
+            and row["module"] not in selection.modules)
             or not matches_module_lineage(row["module"], row["directory_label"], selection.lineages)
         ):
             continue

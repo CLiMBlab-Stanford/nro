@@ -12,6 +12,7 @@ from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_admission import admit_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
+from nro.orchestration.completion_records import completion_record
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.ownership import lineage_record_path, work_item_record_path
 from nro.orchestration.registry import Registry
@@ -82,7 +83,13 @@ def setup(tmp_path, monkeypatch):
         science = branches.registry(name)
         registered = science.register_workflow(ConfigStore().resolve("main"))
         paths = BranchPaths(name, registry.paths.bids_root, tmp_path / "WORK", tmp_path / "DEV")
-        out = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+        directory = registered.directories["anat"]
+        out = (
+            paths.source_project("demo")
+            / "derivatives/nro/anat"
+            / directory
+            / "sub-01/sub-01_result.txt"
+        )
         spec = WorkItemSpec.create(
             key="same-logical-key",
             module="probe_" + name,
@@ -92,7 +99,7 @@ def setup(tmp_path, monkeypatch):
             scope="subject",
             module_lineage_id=registered.lineages["anat"],
             config_fingerprint="test-science",
-            directory_label="main",
+            directory_label=directory,
             runtime_config=science.runtime_config_path(registered, "anat"),
             command=(sys.executable, "-m", "nro.probe_" + name, str(out)),
             dependencies=(),
@@ -150,11 +157,18 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
         assert all(row["state"] == "success" for row in db.execute("SELECT state FROM attempts"))
     for name, prepared in (("one", one), ("two", two)):
         _, paths, spec, _, registered, *_ = prepared
-        output = paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+        output = (
+            paths.output_project("demo")
+            / "derivatives/nro/anat"
+            / registered.directories["anat"]
+            / "sub-01/sub-01_result.txt"
+        )
         assert output.read_text() == name
         assert not spec.expected_outputs[0].exists()
         row = next(row for row in registry.work_item_rows() if row["module"] == "probe_" + name)
-        completion = json.loads(Path(row["manifest_path"]).read_text())
+        with registry.connection() as db:
+            completion = completion_record(db, int(row["id"]))
+        assert completion is not None
         assert completion["implementation"]["branch"] == name
         assert completion["implementation"]["source_digest"] == prepared[5].digest
         assert "nro.orchestration.attempt_entry" in completion["software"]["command"]
@@ -224,7 +238,13 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     registry.register_worker(worker.worker_id, resource_class="large")
     claimed = registry.claim_ready_work_item(worker.worker_id, ("small",))
     worker._execute(claimed)
-    output = parent[1].output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+    parent_directory = parent[4].directories["anat"]
+    output = (
+        parent[1].output_project("demo")
+        / "derivatives/nro/anat"
+        / parent_directory
+        / "sub-01/sub-01_result.txt"
+    )
     if conflict:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text("incompatible target")
@@ -232,11 +252,24 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
             target_id = db.execute(
                 "SELECT work_item_id FROM request_artifacts WHERE request_id=?", (parent[-1],)
             ).fetchone()[0]
-            manifest = db.execute(
-                "SELECT manifest_path FROM work_items WHERE id=?", (target_id,)
-            ).fetchone()[0]
-        Path(manifest).parent.mkdir(parents=True, exist_ok=True)
-        Path(manifest).write_text(json.dumps({"manifest_version": -1}))
+            row = db.execute("SELECT * FROM work_items WHERE id=?", (target_id,)).fetchone()
+            db.execute(
+                """INSERT INTO completions
+                       SELECT ?,NULL,?,?,?,?,?,c.config_id,c.config_fingerprint,
+                              c.lineage_fingerprint,c.resolved_yaml,?,?
+                       FROM module_lineages c WHERE c.id=?""",
+                (
+                    target_id,
+                    1,
+                    "2026-01-01T00:00:00+00:00",
+                    row["revision_fingerprint"],
+                    "{}",
+                    "invalid",
+                    "{}",
+                    "[]",
+                    row["module_lineage_id"],
+                ),
+            )
     report = preview(
         registry,
         checkout=parent[0],
@@ -287,9 +320,17 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
     result = publish(registry, checkout=parent[0], report=report, replace=conflict, attest=True)
     assert result["promoted"] == 1
     assert (
-        paths.output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+        paths.output_project("demo")
+        / "derivatives/nro/anat"
+        / parent_directory
+        / "sub-01/sub-01_result.txt"
     ).read_text() == "parent"
-    output = parent[1].output_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+    output = (
+        parent[1].output_project("demo")
+        / "derivatives/nro/anat"
+        / parent_directory
+        / "sub-01/sub-01_result.txt"
+    )
     assert output.read_text() == "parent"
     assess_registry(registry, compiled=True)
     report = preview(
@@ -306,7 +347,10 @@ def test_promotion_checks_current_target_contract_and_retains_producer(
         == 0
     )
     row = next(row for row in registry.work_item_rows() if row["output_root"] == str(output.parent))
-    provenance = json.loads(Path(row["manifest_path"]).read_text())["implementation"]
+    with registry.connection() as db:
+        completion = completion_record(db, int(row["id"]))
+    assert completion is not None
+    provenance = completion["implementation"]
     assert provenance["branch"] == "child"
     assert provenance["promotion"]["to_branch"] == "parent"
     with pytest.raises(ValueError, match="attestation"):
@@ -405,11 +449,12 @@ def test_inherited_read_has_no_parent_demand_and_cancels_on_parent_change(setup)
     checkout, paths, base, _, registered, source, _ = prepare(
         "child", parent="parent", demand=False
     )
-    output = base.output_root / "sub-01_child.txt"
+    output = base.output_root / "child" / "sub-01_child.txt"
     consumer = base.evolve(
         key="consumer",
         dependencies=(producer.key,),
         input_paths=producer.expected_outputs,
+        output_root=output.parent,
         expected_outputs=(output,),
         command=(sys.executable, "-m", "nro.probe_child", str(output)),
     )

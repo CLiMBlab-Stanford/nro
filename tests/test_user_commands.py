@@ -15,6 +15,7 @@ from nro.bin.status import _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
+from nro.configuration.store import ConfigStore
 from nro.engine.cli import CoreSelection, core_selection, page_text
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.registry import SCHEMA_VERSION, Registry
@@ -487,7 +488,7 @@ def test_shared_selection_options_accept_multiple_values() -> None:
             "dir=LR",
             "-s",
             "fsnative",
-            "T1w",
+            "ACPC",
             "-S",
             "0",
             "2",
@@ -501,19 +502,19 @@ def test_shared_selection_options_accept_multiple_values() -> None:
     assert selection.workflows == ("main", "experiment")
     assert selection.lineages == ("networks/main-2",)
     assert selection.runs == {"task": ("language", "spatial"), "dir": ("LR",)}
-    assert selection.spaces == ("fsnative", "T1w")
+    assert selection.spaces == ("fsnative", "ACPC")
     assert selection.smoothing == (0, 2)
 
 
 def test_module_specific_selectors_can_accompany_mixed_module_requests() -> None:
     args = build_parser().parse_args(
-        ["-m", "anat", "networks", "-r", "task=rest", "-s", "T1w", "-S", "0"]
+        ["-m", "anat", "networks", "-r", "task=rest", "-s", "ACPC", "-S", "0"]
     )
     selection = core_selection(args)
 
     assert selection.modules == ("anat", "networks")
     assert selection.runs == {"task": ("rest",)}
-    assert selection.spaces == ("T1w",)
+    assert selection.spaces == ("ACPC",)
     assert selection.smoothing == (0,)
 
 
@@ -870,13 +871,15 @@ def test_run_repair_registers_existing_artifacts_without_demand(
     monkeypatch.setattr("nro.engine.paths.BIDS_PATH", bids)
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
     artifact = (
         bids
         / "demo"
         / "derivatives"
         / "nro"
         / "anat"
-        / "main"
+        / registered.directories["anat"]
         / "sub-01"
         / "anat"
         / "sub-01_desc-preprocessAnat_manifest.json"
@@ -916,13 +919,15 @@ def test_repair_registers_only_existing_artifacts_and_their_dependencies(
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
     _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
     _write(
         bids
         / "demo"
         / "derivatives"
         / "nro"
         / "clean"
-        / "main"
+        / registered.directories["clean"]
         / "sub-01"
         / ("sub-01_task-rest_run-1_space-fsnative_smoothing-2mm_desc-clean_manifest.json"),
         json.dumps({"complete": True}),
@@ -1424,9 +1429,14 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
 
     assert statuses == {"anat": "Error", "func": "Blocked"}
     assert len(report["errors"]) == 1
-    assert report["errors"][0]["blocked_work_items"] == ["demo sub-01 func/main (run=1 task=rest)"]
+    directories = {row["module"]: row["directory_label"] for row in registry.work_item_rows()}
+    assert report["errors"][0]["blocked_work_items"] == [
+        f"demo sub-01 func/{directories['func']} (run=1 task=rest)"
+    ]
     assert len(report["blocked_work_items"]) == 1
-    assert report["blocked_work_items"][0]["upstream_errors"] == ["demo sub-01 anat/main"]
+    assert report["blocked_work_items"][0]["upstream_errors"] == [
+        f"demo sub-01 anat/{directories['anat']}"
+    ]
 
 
 def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:

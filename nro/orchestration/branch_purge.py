@@ -49,7 +49,6 @@ def token(row: dict, context_json: str | None) -> str:
                 "current_generation",
                 "output_root",
                 "output_prefix",
-                "manifest_path",
             )
         }
         | {"context": context_json}
@@ -151,10 +150,7 @@ def purge(
                 path = Path(raw)
                 if not path.is_absolute() or ".." in path.parts:
                     raise ValueError("Purge paths must be normalized and absolute")
-                if path != Path(row["manifest_path"]):
-                    context.require_output(path)
-                elif path.resolve() != path:
-                    raise ValueError("Manifest path is redirected")
+                context.require_output(path)
                 if _contains_protected_output(path, protected):
                     raise ValueError(
                         "Purge would remove another registered work item; narrow the paths or expand the selection"

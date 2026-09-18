@@ -96,11 +96,17 @@ setting does not by itself make a completed derivative stale. An explicit
 Already-started attempts retain their selected execution snapshot.
 
 Recorded specifications are normalized for comparison without rewriting the
-derivatives. When a completion certificate binds a full configuration snapshot
+derivatives. When a database completion record binds a full configuration snapshot
 to its fingerprint, that snapshot supplies the scientific comparison. Missing
 or invalid evidence is not treated as proof of equivalence. Configuration IDs,
 workflow IDs, directory ownership, and dependency identities remain distinct;
 normalization does not merge differently named configurations.
+
+Scientific comparison also normalizes safe schema evolution. A field absent
+from an older snapshot receives its current packaged default, while keys no
+longer declared by the schema are ignored. Author-written configurations remain
+strict: unknown keys are errors. Changing a retained value, a field type, a
+configuration ID, or a dependency still changes the scientific identity.
 
 For Python callers, `ResolvedConfiguration.fingerprint` identifies the full
 snapshot and `scientific_fingerprint` identifies the named scientific settings.

@@ -36,7 +36,7 @@ def graph(tmp_path):
                 entities={},
                 scope="subject",
                 module_lineage_id=registered.lineages["anat"],
-                directory_label="main",
+                directory_label=registered.directory_for("anat"),
                 config_fingerprint=workflow.configuration("anat").fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
                 command=(sys.executable, "-c", "pass"),
@@ -133,7 +133,13 @@ def test_changed_generation_rejects_late_completion(graph):
             attempt_id=leaf.attempt_id,
             outputs=specs[2].expected_outputs,
         )
-    assert not Path(leaf.manifest_path).exists()
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM completions WHERE work_item_id=?", (leaf.work_item_id,)
+            ).fetchone()
+            is None
+        )
 
 
 def test_cancellation_during_inventory_prevents_completion_publication(graph, monkeypatch):
@@ -154,7 +160,13 @@ def test_cancellation_during_inventory_prevents_completion_publication(graph, mo
             attempt_id=leaf.attempt_id,
             outputs=specs[2].expected_outputs,
         )
-    assert not Path(leaf.manifest_path).exists()
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM completions WHERE work_item_id=?", (leaf.work_item_id,)
+            ).fetchone()
+            is None
+        )
     registry.finish_attempt(leaf.attempt_id, state="success")
     with registry.connection() as db:
         assert (

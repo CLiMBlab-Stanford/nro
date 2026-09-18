@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from nro.engine.execution import allocated_cpus, collect_bind_directories, thread_environment
-from nro.orchestration.manifests import file_record
+from nro.orchestration.artifact_records import file_record
 from nro.orchestration.runner import ContainerSpec, Runner
 from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
 
@@ -29,6 +29,30 @@ def test_each_runner_owns_an_independent_step_counter() -> None:
     assert first.log_python_step(step_name="one", running=False) == 1
     assert first.log_python_step(step_name="two", running=False) == 2
     assert second.log_python_step(step_name="one", running=False) == 1
+
+
+def test_runner_adds_stage_declarations_in_order(tmp_path: Path) -> None:
+    runner = Runner(
+        module_name="stage",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.stage"),
+    )
+    first = Step.python(
+        name="First",
+        outputs=(tmp_path / "first",),
+        action=lambda: None,
+    )
+    second = Step.python(
+        name="Second",
+        inputs=first.outputs,
+        outputs=(tmp_path / "second",),
+        action=lambda: None,
+    )
+
+    added = runner.add_steps((first, second))
+
+    assert added == runner._graph.steps
 
 
 def test_allocated_cpus_prefers_explicit_worker_allocation(monkeypatch) -> None:

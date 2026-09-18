@@ -192,6 +192,7 @@ MODULES = MODULE_NAMES
 def canonical_contract(contract: dict, configuration: dict | None = None) -> dict:
     """Normalize recorded scientific syntax without consulting mutable definitions."""
     from nro.configuration.store import configuration_fingerprint
+    from nro.engine.artifact_metadata import metadata_contract_compatible
 
     descriptor = module_descriptor(contract["module"])
     if isinstance(configuration, dict) and contract.get("configuration") == configuration.get(
@@ -208,10 +209,19 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
                         kind, identifier, values, scientific=True
                     ),
                 }
-    normalize = descriptor.canonical_processing
-    if normalize is None or "processing" not in contract:
+    processing = contract.get("processing")
+    if not isinstance(processing, dict):
         return contract
-    return {**contract, "processing": normalize(contract["processing"])}
+    processing = dict(processing)
+    current_metadata = descriptor.processing_contract().get("output_metadata")
+    if current_metadata is not None and metadata_contract_compatible(
+        processing.get("output_metadata"), current_metadata
+    ):
+        processing["output_metadata"] = current_metadata
+    normalize = descriptor.canonical_processing
+    if normalize is not None:
+        processing = normalize(processing)
+    return {**contract, "processing": processing}
 
 
 def terminal_modules() -> tuple[str, ...]:

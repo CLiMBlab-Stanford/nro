@@ -3,7 +3,6 @@
 import json
 import shutil
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
 import yaml
@@ -84,7 +83,7 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ("func", {"bbregister_dof": 5}, "bbregister_dof"),
         ("func", {"output_spaces": []}, "output_spaces"),
         ("func", {"fsaverage_template": "fsaverage"}, "fsaverage_template"),
-        ("clean", {"space": "T1w"}, "space"),
+        ("clean", {"space": "ACPC"}, "space"),
         ("clean", {"smoothing": 4}, "smoothing"),
         ("microparcellation", {"output_dir": "/tmp/other"}, "output_dir"),
         ("dynconn", {"prefix": "custom"}, "prefix"),
@@ -154,29 +153,39 @@ def test_content_cache_detects_edits_without_timestamp_changes(store):
     )
 
 
-def test_func_classifier_vocabulary_preserves_established_aroma_identity(store):
+def test_scientific_fingerprint_tolerates_safe_schema_evolution(store):
+    current = store.load_configuration("dynconn", "main").values
+    historical = deepcopy(current)
+    historical["retired_setting"] = "no longer scientific"
+    historical["low_rank_options"].pop("power_iterations")
+    historical["low_rank_options"]["retired_nested_setting"] = 1
+
+    assert configuration_fingerprint(
+        "dynconn", "main", historical, scientific=True
+    ) == configuration_fingerprint("dynconn", "main", current, scientific=True)
+
+    changed = deepcopy(current)
+    changed["low_rank_options"]["power_iterations"] += 1
+    assert configuration_fingerprint(
+        "dynconn", "main", historical, scientific=True
+    ) != configuration_fingerprint("dynconn", "main", changed, scientific=True)
+
+
+def test_func_classifier_vocabulary_ignores_unselected_backend_settings(store):
     values = store.load_configuration("func", "main").values
     current = scientific_values("func", values)
-    legacy = {
-        key: value
-        for key, value in values.items()
-        if key
-        not in {
-            "cicada_cmd",
-            "ica_classifier",
-            "ica_regression",
-            "cicada_tolerance",
-            "cicada_smoothing_retention_mode",
-        }
-    }
-    legacy.update(clean_ica_aroma=True, ica_aroma_denoise_type="aggr")
-    assert current == scientific_values("func", legacy)
+    assert current["ica_classifier"] == "ica_aroma"
+    assert current["ica_regression"] == "aggressive"
+    assert "cicada_cmd" not in current
+    assert "cicada_tolerance" not in current
+    assert "cicada_smoothing_retention_mode" not in current
 
     cicada = scientific_values("func", {**values, "ica_classifier": "cicada"})
     assert cicada["ica_classifier"] == "cicada"
     assert cicada["ica_regression"] == "aggressive"
     assert "ica_aroma_cmd" not in cicada
     no_classifier = {**values, "ica_classifier": "none"}
+    assert scientific_values("func", no_classifier)["ica_classifier"] == "none"
     assert scientific_values("func", no_classifier) == scientific_values(
         "func",
         {
@@ -351,14 +360,10 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
 def test_execution_edit_preserves_completed_registry_artifacts(
     store, tmp_path, record_full_snapshot
 ):
+    from nro.orchestration.artifact_records import file_record
     from nro.orchestration.catalog import module_descriptor
     from nro.orchestration.contracts import WorkItemSpec
-    from nro.orchestration.manifests import (
-        MANIFEST_VERSION,
-        assess_registry,
-        file_record,
-        preview_registry,
-    )
+    from nro.orchestration.manifests import assess_registry, preview_registry
     from nro.orchestration.registry import Registry
 
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
@@ -372,9 +377,9 @@ def test_execution_edit_preserves_completed_registry_artifacts(
         module="clean",
         project="demo",
         participant="01",
-        entities={"space": "T1w", "smoothing": "2"},
+        entities={"space": "ACPC", "smoothing": "2"},
         scope="run",
-        directory_label="main",
+        directory_label=registered.directory_for("clean"),
         module_lineage_id=registered.lineages["clean"],
         config_fingerprint=config.scientific_fingerprint,
         runtime_config=registry.runtime_config_path(registered, "clean"),
@@ -396,30 +401,55 @@ def test_execution_edit_preserves_completed_registry_artifacts(
         contract["configuration"] = configuration_fingerprint("clean", "main", snapshot)
     contract_hash = fingerprint(contract)
     with registry.connection(write=True) as db:
+        completed = file_record(output)
+        lineage_fingerprint = db.execute(
+            "SELECT lineage_fingerprint FROM module_lineages WHERE id=?",
+            (row["module_lineage_id"],),
+        ).fetchone()[0]
         db.execute(
             "UPDATE work_items SET artifact_state='fresh', artifact_contract_json=?, artifact_fingerprint=? WHERE id=?",
             (json.dumps(contract), contract_hash, work_item_id),
         )
-    manifest = Path(row["manifest_path"])
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
-        json.dumps(
-            {
-                "manifest_version": MANIFEST_VERSION,
-                "artifact_contract": contract,
-                "artifact_fingerprint": contract_hash,
-                "revision_fingerprint": row["revision_fingerprint"],
-                "configuration": {
-                    "id": "main",
-                    "resolved": snapshot,
-                    "fingerprint": configuration_fingerprint("clean", "main", snapshot),
-                },
-                "inputs": [],
-                "upstream": [],
-                "public_outputs": [file_record(output)],
-            }
+        db.execute(
+            "UPDATE module_lineages SET resolved_yaml=?,config_fingerprint=? WHERE id=?",
+            (
+                yaml.safe_dump(snapshot),
+                configuration_fingerprint("clean", "main", snapshot),
+                row["module_lineage_id"],
+            ),
         )
-    )
+        db.execute(
+            """INSERT INTO completions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                work_item_id,
+                None,
+                1,
+                "2026-01-01T00:00:00+00:00",
+                row["revision_fingerprint"],
+                json.dumps(contract),
+                contract_hash,
+                "main",
+                configuration_fingerprint("clean", "main", snapshot),
+                lineage_fingerprint,
+                yaml.safe_dump(snapshot),
+                "{}",
+                "[]",
+            ),
+        )
+        db.execute(
+            """INSERT INTO artifacts(
+                   work_item_id,attempt_id,direction,path,size,mtime_ns,
+                   digest_algorithm,digest,metadata_json
+               ) VALUES (?,NULL,'output',?,?,?,?,?, '{}')""",
+            (
+                work_item_id,
+                completed["path"],
+                completed["size"],
+                completed["mtime_ns"],
+                "sha256",
+                completed["sha256"],
+            ),
+        )
     assert preview_registry(registry)[work_item_id][0] == "fresh"
     assert assess_registry(registry)[work_item_id][0] == "fresh"
     stamp = output.stat().st_mtime_ns

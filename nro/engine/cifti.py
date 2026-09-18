@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-
-import numpy as np
+from typing import TYPE_CHECKING
 
 from nro.engine.io import atomic_write_json
+
+if TYPE_CHECKING:
+    import numpy as np
 
 PCONN_INT8_SCALE = 127.0
 INDEXED_CIFTI_SCHEMA = "nro-indexed-cifti-v1"
@@ -24,6 +26,8 @@ def _nib():
 
 def load_dlabel(path: Path) -> tuple[np.ndarray, tuple[int, ...]]:
     """Load positive CIFTI labels as zero-based assignments."""
+    import numpy as np
+
     nib = _nib()
     image = nib.load(str(path))
     label_axis = image.header.get_axis(0)
@@ -46,6 +50,8 @@ def load_dlabel(path: Path) -> tuple[np.ndarray, tuple[int, ...]]:
 
 def load_pconn(path: Path) -> np.ndarray:
     """Load and validate a symmetric parcel-connectivity CIFTI matrix."""
+    import numpy as np
+
     nib = _nib()
     image = nib.load(str(path))
     axes = (image.header.get_axis(0), image.header.get_axis(1))
@@ -206,6 +212,8 @@ def indexed_cifti_indices(path: Path, field: str, value: object) -> tuple[int, .
 
 def load_indexed_cifti_map(path: Path, field: str, value: object) -> np.ndarray:
     """Load the unique CIFTI map selected by a sidecar metadata value."""
+    import numpy as np
+
     indices = indexed_cifti_indices(path, field, value)
     if len(indices) != 1:
         raise ValueError(

@@ -247,7 +247,7 @@ def resolve_gradient_unwarping(
     identifier, profile, matched = matches[0]
     action = profile["action"]
     override = bool(profile["override_existing_correction"])
-    if action == "already_corrected" or reports_corrected and not override:
+    if action == "already_corrected" or (reports_corrected and not override):
         return GradientUnwarpingResolution(
             mode="auto",
             applied=False,

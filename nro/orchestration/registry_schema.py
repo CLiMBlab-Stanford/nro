@@ -1,11 +1,15 @@
-"""Schema constants for the central scheduler registry."""
+"""Baseline and generated current schema for the central scheduler registry."""
 
-from nro.orchestration.workflow_registry import WORKFLOW_SCHEMA
+from functools import cache
+
+from nro.orchestration.migrations import RegistrySchema
+from nro.orchestration.migrations.baseline import WORKFLOW_SQL
+from nro.orchestration.migrations.scheduler import MIGRATIONS
 
 APPLICATION_ID = 0x4E524F31  # ASCII "NRO1"
-SCHEMA_VERSION = 20
+BASELINE_VERSION = 21
 
-SCHEMA_SQL = (
+BASELINE_SQL = (
     """
 CREATE TABLE metadata (
     key TEXT PRIMARY KEY,
@@ -28,7 +32,7 @@ CREATE TABLE bids_participants (
 );
 
 """
-    + WORKFLOW_SCHEMA
+    + WORKFLOW_SQL
     + """
 
 CREATE TABLE requests (
@@ -57,7 +61,6 @@ CREATE TABLE work_items (
     artifact_state TEXT NOT NULL,
     artifact_reason TEXT,
     current_generation INTEGER NOT NULL DEFAULT 0,
-    manifest_path TEXT NOT NULL,
     resource_class TEXT NOT NULL,
     memory_gb INTEGER NOT NULL DEFAULT 32,
     max_memory_gb INTEGER NOT NULL DEFAULT 256,
@@ -130,13 +133,29 @@ CREATE TABLE artifacts (
     id INTEGER PRIMARY KEY,
     work_item_id INTEGER NOT NULL REFERENCES work_items(id),
     attempt_id INTEGER REFERENCES attempts(id),
-    direction TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('input', 'output', 'private')),
     path TEXT NOT NULL,
-    size INTEGER,
+    size INTEGER CHECK(size IS NULL OR size >= 0),
     mtime_ns INTEGER,
     digest_algorithm TEXT,
     digest TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE completions (
+    work_item_id INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+    attempt_id INTEGER UNIQUE REFERENCES attempts(id),
+    generation INTEGER NOT NULL CHECK(generation > 0),
+    completed_at TEXT NOT NULL,
+    revision_fingerprint TEXT NOT NULL,
+    artifact_contract_json TEXT NOT NULL,
+    artifact_fingerprint TEXT NOT NULL,
+    config_id TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    lineage_fingerprint TEXT NOT NULL,
+    resolved_yaml TEXT NOT NULL,
+    provenance_json TEXT NOT NULL,
+    command_json TEXT NOT NULL
 );
 
 CREATE TABLE scheduler_submissions (
@@ -215,3 +234,18 @@ CREATE TABLE attempt_execution (
 );
 """
 )
+
+SCHEMA = RegistrySchema(
+    name="scheduler",
+    application_id=APPLICATION_ID,
+    baseline_version=BASELINE_VERSION,
+    baseline_sql=BASELINE_SQL,
+    migrations=MIGRATIONS,
+)
+SCHEMA_VERSION = SCHEMA.version
+
+
+@cache
+def current_schema_sql() -> str:
+    """Generate the current scheduler schema only when a database must be created."""
+    return SCHEMA.sql()

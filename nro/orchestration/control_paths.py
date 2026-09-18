@@ -97,11 +97,6 @@ class ControlPaths:
         """Return journals for transfers between branch output namespaces."""
         return self.shared / "promotions"
 
-    @property
-    def cutover_journal(self) -> Path:
-        """Return the external journal guarding an interrupted layout publication."""
-        return self.root.with_name(self.root.name + ".cutover.json")
-
     def branch(self, name: str) -> Path:
         """Return private state for a validated, collision-free branch ID."""
         encoded = name if name in ("main", "dev") else branch_id(name)
@@ -111,22 +106,14 @@ class ControlPaths:
         return path
 
     def require_current_layout(self) -> None:
-        """Reject an unmoved store instead of creating a second empty authority.
-
-        This is a diagnostic guard, not an alternate-path reader or migration.
-        Live layout conversion requires a separate, quiescent maintenance step.
-        """
-        if self.cutover_journal.exists():
-            raise ValueError(
-                "Private-state cutover is incomplete; use nro cutover --resume or --rollback"
-            )
+        """Reject the unsupported flat store instead of creating a second authority."""
         if (self.root / "registry.sqlite3").exists() or (
             self.root / "branches/registrations.json"
         ).exists():
             raise ValueError(
                 f"Private state at {self.root} uses the previous layout. "
-                "Stop or drain work and run nro cutover; "
-                "nro will not create a parallel registry or move live state automatically."
+                "This layout predates the supported registry baseline; archive or remove "
+                "it before initializing current private state."
             )
         for path in (
             self.shared,

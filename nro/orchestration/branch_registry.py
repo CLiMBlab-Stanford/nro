@@ -9,6 +9,7 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, Mapping
@@ -19,12 +20,18 @@ from nro.configuration.store import fingerprint
 from nro.orchestration.branches import BranchRecord
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.migrations import RegistrySchema, migrate_database
+from nro.orchestration.migrations.baseline import WORKFLOW_SQL
+from nro.orchestration.migrations.scientific import MIGRATIONS
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
-from nro.orchestration.workflow_registry import WORKFLOW_SCHEMA, WorkflowRegistry
+from nro.orchestration.workflow_registry import (
+    WorkflowRegistry,
+    lineage_directory_label,
+)
 
 APPLICATION_ID = 0x4E524F42  # NROB: branch state, distinct from the scheduler database.
-SCHEMA_VERSION = 5
-SCHEMA = (
+BASELINE_VERSION = 6
+BASELINE_SQL = (
     """
 CREATE TABLE identity (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE work_items (
@@ -35,8 +42,22 @@ CREATE TABLE work_items (
     observation_json TEXT
 );
 """
-    + WORKFLOW_SCHEMA
+    + WORKFLOW_SQL
 )
+SCHEMA_DEFINITION = RegistrySchema(
+    name="scientific",
+    application_id=APPLICATION_ID,
+    baseline_version=BASELINE_VERSION,
+    baseline_sql=BASELINE_SQL,
+    migrations=MIGRATIONS,
+)
+SCHEMA_VERSION = SCHEMA_DEFINITION.version
+
+
+@cache
+def current_schema_sql() -> str:
+    """Generate the current scientific schema only when a database must be created."""
+    return SCHEMA_DEFINITION.sql()
 
 
 @dataclass(frozen=True)
@@ -132,6 +153,12 @@ class BranchRegistry(WorkflowRegistry):
             finally:
                 db.close()
 
+    def migrate_schema(self) -> Path | None:
+        """Atomically migrate this branch registry from a supported baseline version."""
+        self._location()
+        with self._lock():
+            return migrate_database(self.database, SCHEMA_DEFINITION)
+
     def rebuild_schema(self) -> Path | None:
         """Replace an incompatible scientific registry without migrating its records.
 
@@ -168,7 +195,7 @@ class BranchRegistry(WorkflowRegistry):
                     db.execute("PRAGMA journal_mode=DELETE")
                     db.execute("PRAGMA synchronous=FULL")
                     db.execute(f"PRAGMA application_id={APPLICATION_ID}")
-                    db.executescript(SCHEMA)
+                    db.executescript(current_schema_sql())
                     db.executemany("INSERT INTO identity VALUES (?,?)", self._identity().items())
                     db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                     db.commit()
@@ -370,13 +397,21 @@ class BranchRegistry(WorkflowRegistry):
             try:
                 db = sqlite3.connect(temporary)
                 try:
-                    db.executescript(SCHEMA)
+                    db.executescript(current_schema_sql())
                     db.execute(f"PRAGMA application_id={APPLICATION_ID}")
                     db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                     db.executemany("INSERT INTO identity VALUES (?,?)", self._identity().items())
                     lineage_ids: dict[str, int] = {}
                     for record in owned_lineages or []:
                         configuration = record["configuration"]
+                        expected_directory = lineage_directory_label(
+                            str(configuration["id"]), str(record["lineage_fingerprint"])
+                        )
+                        if record["directory_label"] != expected_directory:
+                            raise ValueError(
+                                "Owned lineage has a nondeterministic directory; expected "
+                                f"{expected_directory}"
+                            )
                         cursor = db.execute(
                             """INSERT INTO module_lineages(
                                 configuration_class,config_id,config_fingerprint,

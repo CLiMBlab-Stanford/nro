@@ -14,18 +14,19 @@ import pytest
 
 from nro.bin.status import main as status_main
 from nro.configuration.store import ConfigStore
-from nro.orchestration import manifests
+from nro.orchestration import completion
+from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.manifests import assess_registry, file_record
+from nro.orchestration.manifests import assess_registry
 from nro.orchestration.publish import publish
 from nro.orchestration.registry import (
     Registry,
     RegistryLock,
     RegistryLockTimeout,
-    _work_item_relative_directory,
     discover_registry_projects,
 )
+from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.worker import Worker
 
 
@@ -41,6 +42,7 @@ def _spec(
     inputs: tuple[Path, ...] = (),
     project: str = "demo",
 ) -> WorkItemSpec:
+    directory_label = runtime_config.stem.rsplit("_", 1)[0]
     command = (
         sys.executable,
         "-c",
@@ -55,7 +57,7 @@ def _spec(
         scope="subject",
         module_lineage_id=lineage,
         config_fingerprint=config_fingerprint,
-        directory_label="main",
+        directory_label=directory_label,
         runtime_config=runtime_config,
         command=command,
         dependencies=dependencies,
@@ -75,10 +77,10 @@ def test_work_item_private_paths_use_the_logical_digest() -> None:
         "entities_json": "{}",
         "module": "microparcellation",
     }
-    first = _work_item_relative_directory(
+    first = work_item_relative_directory(
         {**base, "work_item_key": "owner:microparcellation:" + "a" * 64}
     )
-    second = _work_item_relative_directory(
+    second = work_item_relative_directory(
         {**base, "work_item_key": "owner:microparcellation:" + "b" * 64}
     )
 
@@ -87,29 +89,48 @@ def test_work_item_private_paths_use_the_logical_digest() -> None:
     assert second.name == "b" * 16
 
 
-def test_existing_work_item_adopts_current_manifest_path(tmp_path: Path) -> None:
+def test_registry_rejects_work_item_bound_to_the_wrong_lineage_directory(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     work_item = _spec(
-        key="networks:" + "e" * 64,
-        module="networks",
-        lineage=registered.lineages["networks"],
-        config_fingerprint=workflow.configuration("networks").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "networks"),
-        output=tmp_path / "outputs" / "network.txt",
+        key="anat:" + "1" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "outputs" / "anat.txt",
+    ).evolve(directory_label="another-lineage")
+
+    with pytest.raises(ValueError, match="does not match its registered module lineage"):
+        registry.register_work_items((work_item,))
+
+
+def test_registry_rejects_output_collision_across_registration_calls(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    first = _spec(
+        key="anat:" + "2" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "outputs" / "first.txt",
     )
-    registry.register_work_items((work_item,))
-    with registry.connection(write=True) as db:
-        db.execute(
-            "UPDATE work_items SET manifest_path='obsolete' WHERE work_item_key=?", (work_item.key,)
-        )
+    second = _spec(
+        key="anat:" + "3" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=first.expected_outputs[0],
+    )
+    registry.register_work_items((first,))
 
-    registry.register_work_items((work_item,))
-
-    manifest = Path(registry.work_item_rows()[0]["manifest_path"])
-    assert manifest.name == "completion.json"
-    assert manifest.parent.name == "e" * 16
+    with pytest.raises(ValueError, match="output claim conflicts"):
+        registry.register_work_items((second,))
 
 
 def test_existing_work_item_adopts_current_configuration_snapshot(tmp_path: Path) -> None:
@@ -197,14 +218,7 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
     assert alpha_registry.paths.control == tmp_path / ".nro"
     assert discover_registry_projects(bids) == ["alpha", "beta"]
     rows = {row["project"]: row for row in alpha_registry.work_item_rows()}
-    assert (
-        Path(rows["alpha"]["manifest_path"]).relative_to(alpha_registry.paths.manifests).parts[0]
-        == "alpha"
-    )
-    assert (
-        Path(rows["beta"]["manifest_path"]).relative_to(alpha_registry.paths.manifests).parts[0]
-        == "beta"
-    )
+    assert set(rows) == {"alpha", "beta"}
     with pytest.raises(ValueError, match="only its selected project"):
         beta_registry.register_work_items((alpha,))
     assert (
@@ -240,7 +254,14 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     raw.write_text("raw")
     anat_output = tmp_path / "outputs" / "anat.txt"
     network_output = (
-        bids / "demo" / "derivatives" / "nro" / "networks" / "main" / "sub-01" / "network.txt"
+        bids
+        / "demo"
+        / "derivatives"
+        / "nro"
+        / "networks"
+        / registered.directories["networks"]
+        / "sub-01"
+        / "network.txt"
     )
     anat = _spec(
         key="anat:" + "a" * 64,
@@ -288,19 +309,16 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     assert rows["networks"]["artifact_state"] == "fresh"
     assert rows["anat"]["current_generation"] == 1
     assert registry.request_rows()[0]["state"] == "satisfied"
-    manifest = json.loads(Path(rows["anat"]["manifest_path"]).read_text())
+    from nro.orchestration.completion_records import completion_record
+
+    with registry.connection() as db:
+        manifest = completion_record(db, rows["anat"]["id"])
+    assert manifest is not None
     assert manifest["configuration"]["id"] == "main"
-    assert manifest["runtime_config"]["sha256"]
     assert manifest["software"]["name"] == "nro"
     assert manifest["public_outputs"]
     assert manifest["artifact_contract"] == json.loads(rows["anat"]["artifact_contract_json"])
     assert manifest["artifact_fingerprint"] == rows["anat"]["artifact_fingerprint"]
-    manifest_path = Path(rows["anat"]["manifest_path"])
-    manifest["private_artifacts"].append(file_record(manifest_path))
-    manifest_path.write_text(json.dumps(manifest))
-    # A ledger may record its own control-plane certificate. This is execution
-    # metadata, not a private scientific artifact.
-    assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
     with registry.connection(write=True) as db:
         db.execute(
             "UPDATE work_items SET artifact_fingerprint='changed-contract' WHERE id=?",
@@ -315,9 +333,8 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         )
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
     steps = json.loads((Path(rows["anat"]["log_path"]).parent / "current-steps.json").read_text())
-    assert steps["orchestration:completion-manifest"]["status"] == "success"
+    assert steps["orchestration:completion"]["status"] == "success"
     assert stat.S_IMODE(Path(rows["anat"]["log_path"]).parent.stat().st_mode) == 0o2775
-    assert stat.S_IMODE(Path(rows["anat"]["manifest_path"]).parent.stat().st_mode) == 0o2775
 
     publication = publish(
         registry,
@@ -333,13 +350,29 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
     assert "configuration" in provenance["work_items"][0]
     assert provenance["work_items"][0]["upstream"][0]["module"] == "anat"
 
-    # Existing private artifacts are part of the certificate, but WORK cleanup
+    # Existing private artifacts are part of the completion record, but WORK cleanup
     # is allowed once public derivatives are complete.
     private = tmp_path / "work" / "intermediate.txt"
     private.parent.mkdir(parents=True)
     private.write_text("original")
-    manifest["private_artifacts"] = [file_record(private)]
-    Path(rows["anat"]["manifest_path"]).write_text(json.dumps(manifest))
+    private_record = file_record(private)
+    with registry.connection(write=True) as db:
+        db.execute(
+            """INSERT INTO artifacts(
+                   work_item_id,attempt_id,direction,path,size,mtime_ns,
+                   digest_algorithm,digest,metadata_json
+               ) VALUES (?,?,?,?,?,?,?,?, '{}')""",
+            (
+                rows["anat"]["id"],
+                manifest["attempt_id"],
+                "private",
+                private_record["path"],
+                private_record["size"],
+                private_record["mtime_ns"],
+                "sha256",
+                private_record["sha256"],
+            ),
+        )
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
     private.unlink()
     assert assess_registry(registry)[rows["anat"]["id"]][0] == "fresh"
@@ -411,6 +444,53 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
     ]
 
 
+def test_completion_record_and_generation_commit_atomically(tmp_path: Path) -> None:
+    """A late database failure must not leave a partial successful generation."""
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="anat:" + "d" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").scientific_fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "outputs" / "anat.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    with registry.connection(write=True) as db:
+        db.execute(
+            """CREATE TRIGGER reject_test_artifact BEFORE INSERT ON artifacts
+               BEGIN SELECT RAISE(ABORT, 'injected artifact failure'); END"""
+        )
+
+    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
+
+    with registry.connection() as db:
+        row = db.execute(
+            "SELECT id,current_generation,artifact_state FROM work_items WHERE work_item_key=?",
+            (work_item.key,),
+        ).fetchone()
+        assert row["current_generation"] == 0
+        assert row["artifact_state"] != "fresh"
+        assert (
+            db.execute("SELECT 1 FROM completions WHERE work_item_id=?", (row["id"],)).fetchone()
+            is None
+        )
+        assert (
+            db.execute("SELECT 1 FROM artifacts WHERE work_item_id=?", (row["id"],)).fetchone()
+            is None
+        )
+
+
 def test_worker_waits_for_scheduler_output_visibility(tmp_path: Path, monkeypatch) -> None:
     import nro.orchestration.worker as worker_module
 
@@ -457,9 +537,9 @@ def test_completion_inventory_retries_a_transiently_missing_output(
     def publish_after_first_probe(_seconds: float) -> None:
         output.write_text("{}")
 
-    monkeypatch.setattr(manifests.time, "sleep", publish_after_first_probe)
+    monkeypatch.setattr(completion.time, "sleep", publish_after_first_probe)
 
-    records = manifests._completion_output_inventory((output,))
+    records = completion._completion_output_inventory((output,))
 
     assert records[0]["path"] == str(output)
 
@@ -475,10 +555,10 @@ def test_completion_inventory_rejects_a_directory_without_retry(
         nonlocal slept
         slept = True
 
-    monkeypatch.setattr(manifests.time, "sleep", sleep)
+    monkeypatch.setattr(completion.time, "sleep", sleep)
 
     with pytest.raises(ValueError, match="not a regular file"):
-        manifests._completion_output_inventory((directory,))
+        completion._completion_output_inventory((directory,))
     assert not slept
 
 
@@ -604,15 +684,10 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     )
     work_item_ids = registry.register_work_items((work_item,))
     row = registry.work_item_rows()[0]
-    private_manifest = Path(row["manifest_path"])
-    private_manifest.parent.mkdir(parents=True, exist_ok=True)
-    private_manifest.write_text("not valid JSON")
-
     states = assess_registry(registry, work_item_ids=work_item_ids.values())
 
     assert states[row["id"]][0] == "fresh", states[row["id"]]
     assert "private orchestration provenance is unavailable" in states[row["id"]][1]
-    assert private_manifest.read_text() == "not valid JSON"
 
     native_payload = json.loads(native_manifest.read_text())
     native_payload["output_metadata_contract"] = {"layout": "superseded"}
@@ -1404,6 +1479,7 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     runtime = registry.runtime_config_path(registered, "anat")
+    func_runtime = registry.runtime_config_path(registered, "func")
     anat = _spec(
         key="anat:" + "7" * 64,
         module="anat",
@@ -1416,9 +1492,9 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
         _spec(
             key=f"func:{index}" + "8" * 63,
             module="func",
-            lineage=registered.lineages["anat"],
-            config_fingerprint=workflow.configuration("anat").fingerprint,
-            runtime_config=runtime,
+            lineage=registered.lineages["func"],
+            config_fingerprint=workflow.configuration("func").fingerprint,
+            runtime_config=func_runtime,
             output=tmp_path / f"func-{index}.txt",
             dependencies=(anat.key,),
         )

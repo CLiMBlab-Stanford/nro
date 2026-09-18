@@ -14,6 +14,7 @@ from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root, module_namespace_root
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import work_item_key
+from nro.orchestration.workflow_registry import lineage_directory_label
 
 if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
@@ -472,6 +473,9 @@ def _validate_lineage_record(
     )
     if record.get("lineage_fingerprint") != expected:
         raise ValueError("lineage fingerprint does not match its semantic identity")
+    expected_directory = lineage_directory_label(str(configuration.get("id")), expected)
+    if record.get("directory_label") != expected_directory:
+        raise ValueError(f"lineage directory is nondeterministic; expected {expected_directory}")
 
 
 def _validate_work_item_record(

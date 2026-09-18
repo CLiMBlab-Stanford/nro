@@ -159,7 +159,7 @@ def test_diagnose_mode_aliases_input_and_keeps_fixed_outputs(tmp_path):
     runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
-        runner=runner,
+        run_child=runner.run_child,
         source_bold=bold,
         metadata=metadata(slices=6),
         metadata_sources=(sidecar,),
@@ -198,7 +198,7 @@ def test_auto_mode_diagnoses_but_does_not_correct_multiband_two(tmp_path):
     runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
-        runner=runner,
+        run_child=runner.run_child,
         source_bold=bold,
         metadata=metadata(slices=6, factor=2),
         metadata_sources=(),
@@ -229,7 +229,7 @@ def test_auto_mode_passes_through_when_diagnostic_metadata_are_unavailable(tmp_p
     runner = SimpleNamespace(run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"))
 
     step, outputs = create_marss_step(
-        runner=runner,
+        run_child=runner.run_child,
         source_bold=bold,
         metadata={},
         metadata_sources=(),
@@ -281,7 +281,7 @@ def test_auto_correction_runs_inside_the_declared_marss_step(tmp_path, monkeypat
     monkeypatch.setattr(marss, "_package_version", lambda: marss.MARSS_PACKAGE_VERSION)
     monkeypatch.setattr(marss.importlib.util, "find_spec", lambda _name: object())
     step, outputs = create_marss_step(
-        runner=runner,
+        run_child=runner.run_child,
         source_bold=bold,
         metadata=metadata(slices=12, factor=6),
         metadata_sources=(),

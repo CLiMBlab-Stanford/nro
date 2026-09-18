@@ -1,8 +1,8 @@
 """Workflow configuration resolution."""
 
 __all__ = [
-    "ConfigStore",
     "CONFIGURATION_CLASSES",
+    "ConfigStore",
     "ResolvedConfiguration",
     "ResolvedWorkflow",
     "WorkflowError",

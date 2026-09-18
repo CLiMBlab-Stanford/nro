@@ -1,0 +1,84 @@
+version = 1
+
+[scope.shared_engine]
+paths = ["nro/engine/**", "tests/test_engine_*.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
+tests = ["tests/test_engine_primitives.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
+boundaries = ["tests/test_runner_contract.py", "tests/test_execution_invariance.py"]
+downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
+
+[scope.orchestration]
+paths = ["nro/orchestration/**", "tests/test_orchestration_*.py", "tests/test_branch_*.py", "tests/test_scheduler_*.py", "tests/test_artifact_*.py", "tests/test_dependency_state.py", "tests/test_workflow_registry.py", "tests/test_assessment_protocol.py", "tests/test_attempt_entry.py", "tests/test_control_*.py", "tests/test_development_branches.py", "tests/test_execution_cache.py", "tests/test_execution_invariance.py", "tests/test_execution_shutdown.py", "tests/test_promotion.py", "tests/test_runner_*.py", "tests/test_source_snapshots.py", "tests/test_registry_migrations.py"]
+tests = ["tests/test_orchestration_planner.py", "tests/test_orchestration_runner.py", "tests/test_branch_registry.py", "tests/test_scheduler_service.py", "tests/test_registry_migrations.py"]
+boundaries = ["tests/test_runner_contract.py", "tests/test_artifact_resolution.py", "tests/test_execution_invariance.py"]
+full = true
+
+[scope.configuration]
+paths = ["nro/configuration/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py"]
+tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_markup.py"]
+boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invariance.py"]
+downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
+
+[scope.commands]
+paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_log.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
+tests = ["tests/test_cli.py", "tests/test_user_commands.py"]
+boundaries = ["tests/test_orchestration_planner.py"]
+
+[scope.installation]
+paths = ["install", ".github/workflows/**", "nro/versioning.py", "nro/engine/bootstrap.py", "nro/engine/maintenance.py", "nro/engine/shared_installation.py", "nro/engine/site_setup.py", "nro/engine/user_launcher.py", "nro/engine/upgrade_rehearsal.py", "tests/test_installation*.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_upgrade_rehearsal.py", "tests/test_releases.py", "tests/test_user_launcher.py", "pyproject.toml", "uv.lock"]
+tests = ["tests/test_installation.py", "tests/test_installation_transition.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_user_launcher.py"]
+boundaries = ["tests/test_upgrade_rehearsal.py"]
+full = true
+
+[scope.bidsification]
+paths = ["nro/bidsify/**", "nro/bin/bidsify.py", "tests/test_bidsify*.py", "tests/test_ingestion_index.py", "tests/test_event_store.py"]
+tests = ["tests/test_bidsify.py", "tests/test_bidsify_discovery.py", "tests/test_bidsify_scanplans.py", "tests/test_ingestion_index.py"]
+boundaries = ["tests/test_scheduler_service.py"]
+
+[scope.anat]
+paths = ["nro/modules/anat/**", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
+tests = ["tests/test_anat_session_sources.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
+boundaries = ["tests/test_branch_functional_execution.py", "tests/test_scene.py"]
+downstream = ["func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
+
+[scope.func]
+paths = ["nro/modules/func/**", "tests/test_func_*.py", "tests/test_branch_functional_execution.py", "tests/test_ica_aroma.py", "tests/test_cicada.py", "tests/test_synbold_disco.py"]
+tests = ["tests/test_branch_functional_execution.py", "tests/test_func_resolver.py", "tests/test_func_resampling.py", "tests/test_cicada.py", "tests/test_ica_aroma.py"]
+boundaries = ["tests/test_clean_projection.py", "tests/test_firstlevels.py"]
+downstream = ["clean", "dynconn", "microparcellation", "networks", "firstlevels"]
+
+[scope.clean]
+paths = ["nro/modules/clean/**", "tests/test_clean_*.py", "tests/test_branch_cleaning_execution.py"]
+tests = ["tests/test_clean_projection.py", "tests/test_clean_topology.py", "tests/test_branch_cleaning_execution.py"]
+boundaries = ["tests/test_microparcellation_targets.py", "tests/test_dynconn_module.py"]
+downstream = ["dynconn", "microparcellation", "networks"]
+
+[scope.dynconn]
+paths = ["nro/modules/dynconn/**", "tests/test_dynconn_module.py"]
+tests = ["tests/test_dynconn_module.py"]
+boundaries = ["tests/test_scene.py", "tests/test_render.py"]
+
+[scope.microparcellation]
+paths = ["nro/modules/microparcellation/**", "tests/test_microparcellation_*.py", "tests/test_volume_microparcellation.py"]
+tests = ["tests/test_microparcellation_targets.py", "tests/test_microparcellation_resumption.py", "tests/test_volume_microparcellation.py"]
+boundaries = ["tests/test_networks_module.py", "tests/test_scene.py"]
+downstream = ["networks"]
+
+[scope.networks]
+paths = ["nro/modules/networks/**", "tests/test_networks_module.py"]
+tests = ["tests/test_networks_module.py"]
+boundaries = ["tests/test_scene.py", "tests/test_render.py"]
+
+[scope.firstlevels]
+paths = ["nro/modules/firstlevels/**", "tests/test_firstlevels.py"]
+tests = ["tests/test_firstlevels.py"]
+boundaries = ["tests/test_scene.py", "tests/test_render.py"]
+
+[scope.documentation]
+paths = ["README.md", "QUICKSTART.md", "CLIMBLAB_QUICKSTART.md", "CONTRIBUTING.md", "WRITING_POLICY.md", "AI_PROVENANCE.md", "docs/**", "plans/**", "AGENTS.md", "tests/test_documentation.py", "tests/test_terminology.py"]
+tests = ["tests/test_documentation.py", "tests/test_terminology.py"]
+boundaries = []
+
+[scope.development]
+paths = ["development/**", "nro/__init__.py", "nro/modules/__init__.py", "nro/modules/AGENTS.md", "nro/bin/dev.py", "nro/engine/development.py", "tests/conftest.py", "tests/test_architecture_boundaries.py", "tests/test_development_scopes.py", "tests/test_scientific_algorithms.py"]
+tests = ["tests/test_architecture_boundaries.py", "tests/test_development_scopes.py"]
+boundaries = ["tests/test_cli.py"]

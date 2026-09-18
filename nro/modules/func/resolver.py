@@ -14,7 +14,7 @@ from nro.engine.bids import (
     parse_bids_entities,
     resolve_bids_metadata,
 )
-from nro.engine.images import nifti_stem
+from nro.engine.image_paths import nifti_stem
 from nro.engine.paths import project_data_root
 
 

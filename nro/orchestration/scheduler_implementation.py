@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from nro.configuration.site import installation_record, settings
-from nro.engine.io import atomic_write_json
+from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.execution_pins import capture_site
@@ -21,7 +21,14 @@ def implementation_path(control: Path) -> Path:
     return ControlPaths(control).scheduler / "implementation.json"
 
 
-def activate(registry, checkout: Path, *, installation_maintenance: bool = False) -> dict:
+def activate(
+    registry,
+    checkout: Path,
+    *,
+    installation_maintenance: bool = False,
+    installation: dict | None = None,
+    installation_path: Path | None = None,
+) -> dict:
     """Designate a recorded main installation while site execution is quiescent.
 
     Installation maintenance may preserve inactive demand behind its global
@@ -31,7 +38,7 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
     from nro.orchestration.execution_cache import _busy, cache_lock
 
     checkout = Path(checkout).expanduser().resolve()
-    installation = installation_record(checkout)
+    installation = dict(installation or installation_record(checkout))
     if installation.get("mode") != "shared" or not installation.get("ready"):
         raise ValueError("Scheduler activation requires a ready shared installation")
     python = Path(installation["environment"]) / "bin/python"
@@ -44,44 +51,70 @@ def activate(registry, checkout: Path, *, installation_maintenance: bool = False
         raise ValueError("Scheduler installation belongs to another site")
     if not python.is_file():
         raise ValueError("Scheduler interpreter is unavailable")
+    if installation_path is not None and not installation_maintenance:
+        raise ValueError("Installation publication requires installation maintenance")
     with cache_lock(registry.paths.control):
         release = ReleaseStore(BranchStore(registry.paths.control)).require_approved(checkout)
-        with registry.connection(write=installation_maintenance) as db:
-            if installation_maintenance:
-                owner = db.execute(
-                    "SELECT value FROM metadata WHERE key='installation_checkout'"
-                ).fetchone()
-                if owner is None or owner["value"] != str(checkout):
-                    raise ValueError("Scheduler activation does not own installation maintenance")
-            busy = _busy(
-                registry,
-                db,
-                preserve_demand=installation_maintenance,
-                allowed_maintenance="installation" if installation_maintenance else None,
-            )
-            if busy:
-                raise ValueError(f"Cannot activate the scheduler during {busy}")
-            source = SourceStore(ControlPaths(registry.paths.control).implementations).capture(
-                checkout
-            )
-            record = dict(
-                protocol=1,
-                checkout=str(checkout),
-                python=str(python),
-                site=str(site),
-                release=release,
-                source_digest=source.digest,
-            )
-            path = implementation_path(registry.paths.control)
-            if path.is_symlink():
-                raise ValueError("Scheduler binding cannot be a symlink")
-            atomic_write_json(path, record, mode=0o664, durable=True)
-            if installation_maintenance:
-                db.execute(
-                    "DELETE FROM metadata WHERE "
-                    "(key='maintenance_mode' AND value='installation') "
-                    "OR key IN ('installation_checkout','installation_action')"
+        path = implementation_path(registry.paths.control)
+        installation_path = Path(installation_path) if installation_path is not None else None
+        previous_binding = path.read_bytes() if path.is_file() else None
+        previous_installation = (
+            installation_path.read_bytes()
+            if installation_path is not None and installation_path.is_file()
+            else None
+        )
+        try:
+            with registry.connection(write=installation_maintenance) as db:
+                if installation_maintenance:
+                    owner = db.execute(
+                        "SELECT value FROM metadata WHERE key='installation_checkout'"
+                    ).fetchone()
+                    if owner is None or owner["value"] != str(checkout):
+                        raise ValueError(
+                            "Scheduler activation does not own installation maintenance"
+                        )
+                busy = _busy(
+                    registry,
+                    db,
+                    preserve_demand=installation_maintenance,
+                    allowed_maintenance="installation" if installation_maintenance else None,
                 )
+                if busy:
+                    raise ValueError(f"Cannot activate the scheduler during {busy}")
+                source = SourceStore(ControlPaths(registry.paths.control).implementations).capture(
+                    checkout
+                )
+                record = dict(
+                    protocol=1,
+                    checkout=str(checkout),
+                    python=str(python),
+                    site=str(site),
+                    release=release,
+                    source_digest=source.digest,
+                )
+                if path.is_symlink():
+                    raise ValueError("Scheduler binding cannot be a symlink")
+                atomic_write_json(path, record, mode=0o664, durable=True)
+                if installation_path is not None:
+                    atomic_write_json(installation_path, installation, mode=0o644, durable=True)
+                if installation_maintenance:
+                    db.execute(
+                        "DELETE FROM metadata WHERE "
+                        "(key='maintenance_mode' AND value='installation') "
+                        "OR key IN ('installation_checkout','installation_action')"
+                    )
+        except BaseException:
+            for target, previous, mode in (
+                (path, previous_binding, 0o664),
+                (installation_path, previous_installation, 0o644),
+            ):
+                if target is None:
+                    continue
+                if previous is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    atomic_write_text(target, previous.decode("utf-8"), mode=mode, durable=True)
+            raise
     return record
 
 

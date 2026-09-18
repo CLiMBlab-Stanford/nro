@@ -40,15 +40,14 @@ from .contract import (
 )
 from .ica import ica_membership
 from .labeling import (
-    REFERENCE_ATLASES,
     network_map_names,
     project_references_to_cifti,
     rank_reference_candidates,
-    reference_paths,
 )
 from .leiden import leiden_partition, write_hint
 from .oslom import parse_tp, resolve_oslom_executable, run_oslom, write_oslom_graph
 from .paths import fixed_output_paths
+from .references import REFERENCE_ATLASES, reference_paths
 
 LOG = logging.getLogger(__name__)
 
@@ -155,8 +154,8 @@ def build_module(
                     else ()
                 ),
                 *(
-                    (cfg.inputs.mni_to_t1_transform,)
-                    if cfg.inputs.mni_to_t1_transform is not None
+                    (cfg.inputs.mni_to_acpc_transform,)
+                    if cfg.inputs.mni_to_acpc_transform is not None
                     else ()
                 ),
                 *labeling_inputs,
@@ -631,7 +630,7 @@ def build_module(
                 space=cfg.inputs.space,
                 source_surfaces=cfg.inputs.source_surfaces,
                 anatomical_reference=cfg.inputs.anatomical_reference,
-                mni_to_t1_transform=cfg.inputs.mni_to_t1_transform,
+                mni_to_acpc_transform=cfg.inputs.mni_to_acpc_transform,
             )
             records = rank_reference_candidates(
                 vertex_stability.T,
@@ -673,8 +672,8 @@ def build_module(
                             else ()
                         ),
                         *(
-                            (cfg.inputs.mni_to_t1_transform,)
-                            if cfg.inputs.mni_to_t1_transform
+                            (cfg.inputs.mni_to_acpc_transform,)
+                            if cfg.inputs.mni_to_acpc_transform
                             else ()
                         ),
                         *labeling_inputs,
@@ -867,9 +866,9 @@ def build_module(
                 {
                     "manifest": str(cfg.inputs.anatomical_manifest),
                     "reference": str(cfg.inputs.anatomical_reference),
-                    "mni_to_t1_transform": str(cfg.inputs.mni_to_t1_transform),
+                    "mni_to_acpc_transform": str(cfg.inputs.mni_to_acpc_transform),
                 }
-                if cfg.labeling.enabled and cfg.inputs.space in {"T1w", "fsnative"}
+                if cfg.labeling.enabled and cfg.inputs.space in {"ACPC", "fsnative"}
                 else None
             ),
             "outputs": {name: manifest_value(path) for name, path in publication_outputs.items()},

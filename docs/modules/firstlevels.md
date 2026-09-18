@@ -78,7 +78,7 @@ subject-level artifact without changing the work item's identity.
    subject summaries directly from runs, not from session summaries. Track
    each contribution back to its original run to retain covariance between
    effects sharing data. Never average t-values.
-7. Publish node inventories and the work-item completion manifest. Missing
+7. Publish node inventories and commit the work-item completion record. Missing
    conditions and non-estimable contrasts have omission records, not zero
    effect maps. If censoring makes the temporal model unidentifiable or leaves
    no residual dimensions, omit the entire run's estimates with a reason.
@@ -100,7 +100,7 @@ contrast in each selected statistic file. See the
 ## Artifacts
 
 ```text
-derivatives/nro/firstlevels/FIRSTLEVEL_CONFIG_ID/
+derivatives/nro/firstlevels/<CONFIG_ID>-<LINEAGE_DIGEST>/
   sub-ID/
     ses-SESSION/task-TASK/node-run/
     ses-SESSION/task-TASK/node-session/
@@ -109,9 +109,9 @@ derivatives/nro/firstlevels/FIRSTLEVEL_CONFIG_ID/
       node-subject/
 ```
 
-The configuration directory uses nro's lineage rules: it is normally the
-firstlevels configuration ID, with a distinct label when upstream choices would
-otherwise collide. Run outputs and session maps use `ses-SESSION` when the
+The configuration directory uses nro's lineage rules: the configuration ID is
+followed by a deterministic digest of the complete upstream lineage. Run
+outputs and session maps use `ses-SESSION` when the
 source data have sessions. The task-level `node-session` directory contains the
 aggregate node's manifest; datasets without sessions also use it for maps.
 Filenames include model variant, task, space, smoothing, Stats Models node name,

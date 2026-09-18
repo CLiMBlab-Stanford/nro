@@ -146,7 +146,7 @@ class WorkerSchedulerClient:
     def record_completion(
         self, *, work_item_id: int, attempt_id: int, outputs: Sequence[Path]
     ) -> dict:
-        """Validate outputs and publish the completion manifest."""
+        """Validate outputs and commit the completion record."""
         try:
             return self._call(
                 "record_completion",

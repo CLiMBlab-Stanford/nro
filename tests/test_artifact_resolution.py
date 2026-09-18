@@ -140,6 +140,29 @@ def test_invalid_or_ambiguous_graphs_are_rejected(tmp_path):
         scientific_contracts((parent.evolve(expected_outputs=(tmp_path / "elsewhere",)), child))
 
 
+def test_overlapping_output_claims_are_rejected(tmp_path):
+    parent, child = graph(tmp_path)
+    collision = child.evolve(
+        output_root=parent.output_root,
+        output_prefix="sub-01_desc-extra",
+        expected_outputs=parent.expected_outputs,
+        dependencies=(),
+    )
+    with pytest.raises(ValueError, match="output claims overlap"):
+        scientific_contracts((parent, collision))
+
+
+def test_disjoint_prefixes_may_share_an_output_directory(tmp_path):
+    parent, child = graph(tmp_path)
+    sibling = child.evolve(
+        output_root=parent.output_root,
+        output_prefix="sub-02",
+        expected_outputs=(parent.output_root / "sub-02_result.nii",),
+        dependencies=(),
+    )
+    assert set(scientific_contracts((parent, sibling))) == {"parent", "child"}
+
+
 def test_branch_graph_registration_is_atomic_and_location_independent(tmp_path):
     from nro.orchestration.branch_store import BranchStore
 

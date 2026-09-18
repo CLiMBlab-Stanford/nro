@@ -36,7 +36,16 @@ from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.engine.io import atomic_write_text
 from nro.orchestration import dependency_state
 from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.registry_schema import APPLICATION_ID, SCHEMA_SQL, SCHEMA_VERSION
+from nro.orchestration.migrations import migrate_database
+from nro.orchestration.registry_schema import (
+    APPLICATION_ID,
+    SCHEMA_VERSION,
+    current_schema_sql,
+)
+from nro.orchestration.registry_schema import (
+    SCHEMA as SCHEMA_DEFINITION,
+)
+from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 if TYPE_CHECKING:
@@ -115,25 +124,6 @@ def _remove_tree(path: Path) -> None:
             time.sleep(0.05 * (attempt + 1))
 
 
-def _work_item_relative_directory(work_item: dict) -> Path:
-    project = str(work_item["project"])
-    participant = str(work_item["participant"]).removeprefix("sub-")
-    entities = (
-        json.loads(work_item["entities_json"])
-        if isinstance(work_item["entities_json"], str)
-        else work_item["entities_json"]
-    )
-    preferred = ("ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk")
-    ordered = [key for key in preferred if key in entities]
-    ordered.extend(sorted(set(entities) - set(ordered)))
-    name = "_".join([f"sub-{participant}", *(f"{key}-{entities[key]}" for key in ordered)])
-    # Development work items prefix the logical key with their branch-registry
-    # identity. The final field is the logical digest in both main and
-    # development registries.
-    digest = str(work_item["work_item_key"]).rsplit(":", 1)[-1][:16]
-    return Path(project) / str(work_item["module"]) / f"sub-{participant}" / name / digest
-
-
 @dataclass(frozen=True)
 class RegistryPaths:
     """Resolved project context and paths into the shared orchestration store."""
@@ -145,8 +135,6 @@ class RegistryPaths:
     database: Path
     lock: Path
     recovery_lock: Path
-    manifests: Path
-    requests: Path
     events: Path
     workers: Path
     snapshots: Path
@@ -186,8 +174,6 @@ class RegistryPaths:
             database=paths.database,
             lock=paths.scheduler / "registry.lock",
             recovery_lock=paths.scheduler / "registry.lock.recovery",
-            manifests=science / "manifests",
-            requests=paths.scheduler / "requests",
             events=science / "events",
             workers=paths.scheduler / "workers",
             snapshots=science / "snapshots",
@@ -669,8 +655,6 @@ class Registry(WorkflowRegistry):
         except PermissionError:
             pass
         for path in (
-            self.paths.manifests,
-            self.paths.requests,
             self.paths.events,
             self.paths.workers,
             self.paths.snapshots,
@@ -699,7 +683,7 @@ class Registry(WorkflowRegistry):
                 connection.execute("PRAGMA journal_mode=DELETE")
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
-                connection.executescript(SCHEMA_SQL)
+                connection.executescript(current_schema_sql())
                 connection.executemany(
                     "INSERT INTO metadata(key, value) VALUES (?, ?)",
                     (
@@ -742,10 +726,10 @@ class Registry(WorkflowRegistry):
             connection.close()
             raise RuntimeError(
                 f"Unsupported registry schema {version}; expected {SCHEMA_VERSION}: "
-                f"{self.paths.database}. This development build does not migrate "
-                "registries. Rebuild the lab-wide private control state with "
-                "`python -m nro.bin.run --repair`. Public "
-                "derivatives are stored outside the registry and are not removed."
+                f"{self.paths.database}. Runtime commands do not modify registry schemas. "
+                "Run shared installation maintenance to migrate a supported schema or "
+                "reconstruct older private control state. Public derivatives are stored "
+                "outside the registry and are not removed."
             )
         return connection
 
@@ -838,6 +822,15 @@ class Registry(WorkflowRegistry):
         with self._repair_connection() as connection:
             return int(connection.execute("PRAGMA user_version").fetchone()[0])
 
+    def migrate_schema(self) -> Path | None:
+        """Atomically migrate supported scheduler state while its maintenance lock is held."""
+        self._prepare_directories()
+        with self._lock():
+            if not self.paths.database.is_file():
+                self._initialize_locked()
+                return None
+            return migrate_database(self.paths.database, SCHEMA_DEFINITION)
+
     def reinitialize(
         self, *, preserve_branch_runtime: bool = False, retain_backup: bool = False
     ) -> Path | None:
@@ -849,8 +842,8 @@ class Registry(WorkflowRegistry):
         If initialization fails, the original control state is restored.
         Running ingestion leases must be resolved before replacement.
 
-        preserve_branch_runtime retains scientific databases and configurations,
-        archiving only their registry-bound completion certificates. retain_backup
+        preserve_branch_runtime retains scientific databases, configurations,
+        and workflow snapshots. retain_backup
         keeps the replaced state and returns its directory with an original-path
         index; otherwise the replaced state is removed and None is returned.
         """
@@ -865,19 +858,12 @@ class Registry(WorkflowRegistry):
             scheduler / "artifact-mutation.recovery-lock",
         }
         science = (
-            self.paths.manifests,
             self.paths.events,
             self.paths.snapshots,
             self.paths.workflows,
         )
         if preserve_branch_runtime:
-            from nro.orchestration.branch_store import BranchStore
-
-            catalog = BranchStore(self.paths.control)
-            names = catalog.read().topology.records if catalog.path.exists() else {"main": None}
-            science = tuple(
-                ControlPaths(self.paths.control).branch(name) / "manifests" for name in names
-            )
+            science = ()
             retained.add(scheduler / "implementation.json")
         retained.update(scheduler.glob(".repair-*"))
 
@@ -946,6 +932,35 @@ class Registry(WorkflowRegistry):
         _remove_tree(quarantine)
         return None
 
+    def restore_reinitialization(self, quarantine: Path) -> None:
+        """Restore the exact scheduler state retained by :meth:`reinitialize`.
+
+        This operation is reserved for a failed shared-maintenance transaction.
+        The same cross-host locks used for replacement prevent clients from
+        observing the rollback halfway through.
+        """
+        quarantine = Path(quarantine).resolve()
+        scheduler = ControlPaths(self.paths.control).scheduler
+        if quarantine.parent != scheduler or not (quarantine / "index.json").is_file():
+            raise ValueError("Scheduler recovery directory is invalid")
+        index = json.loads((quarantine / "index.json").read_text())
+        if not isinstance(index, dict):
+            raise ValueError("Scheduler recovery index is invalid")
+        restored = [(Path(str(source)), quarantine / str(name)) for name, source in index.items()]
+        from nro.orchestration.execution_cache import cache_lock
+
+        with cache_lock(self.paths.control), self._lock():
+            for destination, _source in restored:
+                if destination.is_dir():
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            for destination, source in restored:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(destination)
+            (quarantine / "index.json").unlink()
+            quarantine.rmdir()
+
     def workflow_history(self, workflow_id: str) -> list[dict]:
         """Return recorded revisions for a workflow in history order."""
         with self.connection() as db:
@@ -969,217 +984,23 @@ class Registry(WorkflowRegistry):
         external_ids: Mapping[str, int] | None = None,
         owner_branch: str | None = None,
     ) -> dict[str, int]:
-        """Merge work items and dependency edges without creating demand."""
-        from nro.orchestration.manifests import _read_manifest
+        """Merge work items and dependency edges inside the current transaction."""
+        from nro.orchestration.registry_work_items import upsert_work_item_graph
 
-        work_item_ids: dict[str, int] = dict(external_ids or {})
-        replace_dependencies: dict[int, bool] = {}
-        for spec, record in work_item_records:
-            manifest = (
-                self.paths.manifests / _work_item_relative_directory(record) / "completion.json"
-            )
-            if owner_branch is not None:
-                manifest = (
-                    ControlPaths(self.paths.control).branch(owner_branch)
-                    / "manifests"
-                    / _work_item_relative_directory(record)
-                    / "completion.json"
-                )
-            existing = db.execute(
-                """SELECT id, scope, resource_class, revision_fingerprint,
-                          artifact_contract_json, artifact_fingerprint,
-                          command_json, runtime_config_path, input_paths_json,
-                          output_root, output_prefix, expected_outputs_json
-                   FROM work_items WHERE work_item_key=?""",
-                (spec.key,),
-            ).fetchone()
-            if existing:
-                work_item_id = int(existing["id"])
-                certificate = _read_manifest(manifest)
-                # The planner is authoritative for the current execution
-                # recipe. Only a change to the semantic work-item contract,
-                # rather than command spelling or resource settings, makes an
-                # existing derivative stale.
-                try:
-                    recorded_contract = json.loads(existing["artifact_contract_json"])
-                    if owner_branch is None:
-                        from nro.orchestration.catalog import canonical_contract
-
-                        recorded_contract = canonical_contract(
-                            recorded_contract,
-                            certificate.get("configuration") if certificate else None,
-                        )
-                    artifact_changed = (
-                        fingerprint(recorded_contract) != record["artifact_fingerprint"]
-                    )
-                except (ValueError, TypeError, KeyError):
-                    artifact_changed = True
-                replace_dependencies[work_item_id] = artifact_changed
-                db.execute(
-                    """
-                    UPDATE work_items SET scope=?, resource_class=?,
-                        revision_fingerprint=?, artifact_contract_json=?,
-                        artifact_fingerprint=?, command_json=?, runtime_config_path=?,
-                        memory_gb=MAX(memory_gb, ?), max_memory_gb=MAX(max_memory_gb, ?),
-                        input_paths_json=?, output_root=?, output_prefix=?,
-                        expected_outputs_json=?, manifest_path=?,
-                        artifact_state=CASE WHEN ? THEN 'stale' ELSE artifact_state END,
-                        artifact_reason=CASE WHEN ? THEN 'Work-item contract changed' ELSE artifact_reason END,
-                        updated_at=?
-                    WHERE id=?
-                    """,
-                    (
-                        record["scope"],
-                        record["resource_class"],
-                        record["revision_fingerprint"],
-                        record["artifact_contract_json"],
-                        record["artifact_fingerprint"],
-                        record["command_json"],
-                        record["runtime_config_path"],
-                        record["memory_gb"],
-                        record["max_memory_gb"],
-                        record["input_paths_json"],
-                        record["output_root"],
-                        record["output_prefix"],
-                        record["expected_outputs_json"],
-                        str(manifest),
-                        artifact_changed,
-                        artifact_changed,
-                        now,
-                        work_item_id,
-                    ),
-                )
-                if artifact_changed:
-                    dependency_state.invalidate(
-                        db,
-                        [work_item_id],
-                        now=now,
-                        reason="Resolved upstream work-item contract changed",
-                    )
-                    db.execute(
-                        """UPDATE attempts SET state='cancel_requested',
-                                  error_type='WorkItemGraphChanged',
-                                  error_message='Work-item contract changed while work was active'
-                           WHERE work_item_id=? AND state IN ('queued', 'running')""",
-                        (work_item_id,),
-                    )
-            else:
-                cursor = db.execute(
-                    """
-                    INSERT INTO work_items(
-                        work_item_key, module, module_lineage_id, project, participant,
-                        entities_json, scope, artifact_state, artifact_reason,
-                        manifest_path, resource_class, revision_fingerprint,
-                        artifact_contract_json, artifact_fingerprint,
-                        memory_gb, max_memory_gb, command_json, runtime_config_path, input_paths_json,
-                        output_root, output_prefix, expected_outputs_json,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'missing', 'Not yet assessed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        spec.key,
-                        spec.module,
-                        spec.module_lineage_id,
-                        spec.project,
-                        spec.participant,
-                        record["entities_json"],
-                        spec.scope,
-                        str(manifest),
-                        spec.resource_class,
-                        record["revision_fingerprint"],
-                        record["artifact_contract_json"],
-                        record["artifact_fingerprint"],
-                        record["memory_gb"],
-                        record["max_memory_gb"],
-                        record["command_json"],
-                        record["runtime_config_path"],
-                        record["input_paths_json"],
-                        record["output_root"],
-                        record["output_prefix"],
-                        record["expected_outputs_json"],
-                        now,
-                        now,
-                    ),
-                )
-                work_item_id = int(cursor.lastrowid)
-                replace_dependencies[work_item_id] = True
-            work_item_ids[spec.key] = work_item_id
-
-        for spec, _record in work_item_records:
-            work_item_id = work_item_ids[spec.key]
-            proposed = tuple(spec.dependencies)
-            if not replace_dependencies[work_item_id]:
-                continue
-            db.execute("DELETE FROM work_item_dependencies WHERE work_item_id=?", (work_item_id,))
-            for dependency in proposed:
-                db.execute(
-                    """
-                    INSERT INTO work_item_dependencies(work_item_id, upstream_work_item_id, role, required_generation)
-                    VALUES (?, ?, ?, NULL)
-                    """,
-                    (
-                        work_item_id,
-                        work_item_ids[dependency],
-                        "inherited" if dependency in (external_ids or {}) else "input",
-                    ),
-                )
-        dependency_state.synchronize(db, now=now)
-        return work_item_ids
+        return upsert_work_item_graph(
+            db,
+            work_item_records,
+            now=now,
+            external_ids=external_ids,
+            owner_branch=owner_branch,
+        )
 
     @staticmethod
     def _normalize_active_request_graph_locked(db: sqlite3.Connection) -> None:
-        """Reconcile existing active demand with the current global DAG."""
-        parents: dict[int, list[int]] = {}
-        for row in db.execute(
-            "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies WHERE role != 'inherited'"
-        ):
-            parents.setdefault(int(row["work_item_id"]), []).append(
-                int(row["upstream_work_item_id"])
-            )
-        for active_request in db.execute("SELECT id FROM requests WHERE state='active'").fetchall():
-            active_request_id = str(active_request["id"])
-            targets = {
-                int(row["work_item_id"])
-                for row in db.execute(
-                    """SELECT work_item_id FROM request_work_items
-                       WHERE request_id=? AND role='target' AND demand_state='active'""",
-                    (active_request_id,),
-                )
-            }
-            required = set(targets)
-            pending = list(targets)
-            while pending:
-                work_item_id = pending.pop()
-                for upstream_id in parents.get(work_item_id, ()):
-                    if upstream_id not in required:
-                        required.add(upstream_id)
-                        pending.append(upstream_id)
-            existing = {
-                int(row["work_item_id"]): str(row["demand_state"])
-                for row in db.execute(
-                    "SELECT work_item_id, demand_state FROM request_work_items WHERE request_id=?",
-                    (active_request_id,),
-                )
-            }
-            for required_id in required - set(existing):
-                db.execute(
-                    """INSERT INTO request_work_items(request_id, work_item_id, role, demand_state)
-                       VALUES (?, ?, 'dependency', 'active')""",
-                    (active_request_id, required_id),
-                )
-            orphaned = {
-                work_item_id
-                for work_item_id, demand_state in existing.items()
-                if demand_state == "active" and work_item_id not in required
-            }
-            if orphaned:
-                placeholders = ",".join("?" for _ in orphaned)
-                db.execute(
-                    f"""UPDATE request_work_items SET demand_state='cancelled'
-                        WHERE request_id=? AND work_item_id IN ({placeholders})
-                          AND demand_state='active'""",
-                    (active_request_id, *tuple(orphaned)),
-                )
+        """Reconcile active demand inside the current transaction."""
+        from nro.orchestration.registry_work_items import normalize_active_request_graph
+
+        normalize_active_request_graph(db)
 
     def _validate_work_item_projects(self, work_items: Sequence["WorkItemSpec"]) -> None:
         foreign_projects = {
@@ -1410,20 +1231,6 @@ class Registry(WorkflowRegistry):
             # older request is still active. Keep every active request aligned
             # with the current global graph.
             self._normalize_active_request_graph_locked(db)
-        request_record = {
-            "id": request_id,
-            "project": self.paths.project,
-            "workflow": registered.selector,
-            "module": target_module,
-            "selectors": selectors,
-            "concurrency": concurrency,
-            "partition": partition,
-            "created_at": now,
-        }
-        _atomic_text(
-            self.paths.requests / f"{request_id}.json",
-            json.dumps(request_record, indent=2, sort_keys=True) + "\n",
-        )
         return request_id
 
     def request_rows(self, *, include_terminal: bool = True) -> list[dict]:
@@ -1456,98 +1263,19 @@ class Registry(WorkflowRegistry):
 
     def work_item_rows(self, *, read_only: bool = False) -> list[dict]:
         """Read work-item records with their current orchestration and artifact state."""
+        from nro.orchestration.registry_status import work_item_rows
+
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
-            rows = db.execute(
-                """
-                SELECT t.*, ci.config_id, ci.directory_label, ci.lineage_fingerprint,
-                       ci.configuration_class,
-                       EXISTS(
-                         SELECT 1 FROM workflow_bindings binding
-                         WHERE binding.module_lineage_id=t.module_lineage_id
-                       ) AS recomputable,
-                       EXISTS(SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                              WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
-                       (SELECT a.state FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
-                       (SELECT a.error_type FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_type,
-                       (SELECT a.error_message FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_message,
-                       (SELECT a.log_path FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
-                       (SELECT COUNT(*) FROM attempts a WHERE a.work_item_id=t.id AND a.oom_detected=1) AS oom_count,
-                       (SELECT a.memory_gb FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_memory_gb
-                       ,EXISTS(
-                         SELECT 1 FROM request_work_items retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
-                         WHERE retry_rt.work_item_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
-                           AND retry.updated_at > COALESCE(
-                             (SELECT CASE WHEN latest.state='cancelled'
-                                      THEN latest.started_at ELSE latest.completed_at END
-                              FROM attempts latest WHERE latest.work_item_id=t.id
-                              ORDER BY latest.id DESC LIMIT 1),
-                             ''
-                           )
-                       ) AS retry_requested
-                       ,(SELECT GROUP_CONCAT(DISTINCT wr.workflow_id)
-                         FROM request_work_items rt
-                         JOIN requests r ON r.id=rt.request_id
-                         JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
-                         WHERE rt.work_item_id=t.id) AS workflow_ids
-                FROM work_items t
-                JOIN module_lineages ci ON ci.id=t.module_lineage_id
-                ORDER BY t.participant, t.module, t.work_item_key
-                """
-            ).fetchall()
-            lineages = {
-                int(row["id"]): {
-                    "module": str(row["configuration_class"]),
-                    "config": str(row["config_id"]),
-                }
-                for row in db.execute(
-                    "SELECT id, configuration_class, config_id FROM module_lineages"
-                )
-            }
-            parents: dict[int, list[int]] = {}
-            for edge in db.execute(
-                """SELECT module_lineage_id, upstream_module_lineage_id
-                   FROM module_lineage_dependencies"""
-            ):
-                parents.setdefault(int(edge[0]), []).append(int(edge[1]))
-
-            def route(lineage_id: int) -> list[dict[str, str]]:
-                ordered: list[dict[str, str]] = []
-                visited: set[int] = set()
-
-                def visit(current: int) -> None:
-                    if current in visited:
-                        return
-                    visited.add(current)
-                    for parent in parents.get(current, ()):
-                        visit(parent)
-                    if current in lineages:
-                        ordered.append(lineages[current])
-
-                visit(lineage_id)
-                return ordered
-
-            result = []
-            for row in rows:
-                item = dict(row)
-                item["configuration_route_json"] = json.dumps(
-                    route(int(item["module_lineage_id"])),
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-                result.append(item)
-            return result
+            return work_item_rows(db)
 
     def work_item_dependencies(self, *, read_only: bool = False) -> list[tuple[int, int]]:
         """Return dependency relationships for the selected work-item records."""
+        from nro.orchestration.registry_status import work_item_dependencies
+
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
-            return [
-                (int(row["work_item_id"]), int(row["upstream_work_item_id"]))
-                for row in db.execute(
-                    "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies"
-                )
-            ]
+            return work_item_dependencies(db)
 
     def work_item_status_snapshot(
         self,
@@ -1562,87 +1290,17 @@ class Registry(WorkflowRegistry):
         into one current work-item state for user-facing tools. A read-only
         preview may supply temporary artifact states without persisting them.
         """
-        rows = self.work_item_rows(read_only=read_only)
-        if artifact_states:
-            for row in rows:
-                projected = artifact_states.get(int(row["id"]))
-                if projected is not None:
-                    row["artifact_state"], row["artifact_reason"] = projected
-        by_id = {int(row["id"]): row for row in rows}
-        parents: dict[int, list[int]] = {}
-        for work_item_id, upstream_id in self.work_item_dependencies(read_only=read_only):
-            parents.setdefault(work_item_id, []).append(upstream_id)
-        root_cache: dict[int, tuple[int, ...]] = {}
+        from nro.orchestration.registry_status import (
+            project_work_item_status,
+            work_item_dependencies,
+            work_item_rows,
+        )
 
-        def failure_roots(work_item_id: int) -> tuple[int, ...]:
-            if work_item_id in root_cache:
-                return root_cache[work_item_id]
-            row = by_id[work_item_id]
-            roots: set[int] = set()
-            # Attempts are immutable execution history, while artifact_state is
-            # the authoritative current result.  A derivative can validate as
-            # fresh after an older failed attempt (for example through native
-            # completion evidence), so that attempt must not remain a current
-            # failure root or block downstream work items.
-            if (
-                row["artifact_state"] != "fresh"
-                and row.get("attempt_state") == "error"
-                and not row.get("retry_requested")
-                and not (
-                    row["artifact_state"] == "missing"
-                    and row.get("artifact_reason") == "Purged by user"
-                    and not row.get("demanded")
-                )
-            ):
-                roots.add(work_item_id)
-            for parent in parents.get(work_item_id, ()):
-                if parent in by_id:
-                    roots.update(failure_roots(parent))
-            root_cache[work_item_id] = tuple(sorted(roots))
-            return root_cache[work_item_id]
-
-        snapshot: list[dict] = []
-        for row in rows:
-            item = dict(row)
-            work_item_id = int(item["id"])
-            roots = failure_roots(work_item_id)
-            attempt = item.get("attempt_state")
-            if item["artifact_state"] == "fresh":
-                state = "Success"
-            elif not item.get("recomputable") and not item.get("demanded"):
-                state = "Unavailable"
-            elif attempt == "error" and work_item_id in roots:
-                state = "Corrupt" if item["artifact_state"] == "corrupt" else "Error"
-            elif roots and item.get("demanded"):
-                state = "Blocked"
-            elif attempt == "cancel_requested":
-                state = "Stopping"
-            elif attempt == "running":
-                state = "Running"
-            elif attempt == "queued" or item.get("retry_requested"):
-                state = "Queued"
-            elif (
-                item["artifact_state"] == "missing"
-                and item.get("artifact_reason") == "Purged by user"
-                and not item.get("demanded")
-            ):
-                state = "Missing"
-            elif attempt == "error":
-                state = "Error"
-            elif item.get("demanded"):
-                state = "Queued"
-            elif attempt == "cancelled" and item.get("error_type") == "UserCancelled":
-                state = "Stopped"
-            elif item["artifact_state"] == "corrupt":
-                state = "Corrupt"
-            elif item["artifact_state"] == "missing":
-                state = "Missing"
-            else:
-                state = "Stale"
-            item["status"] = state
-            item["root_failure_ids"] = roots
-            snapshot.append(item)
-        return snapshot
+        manager = self.read_connection() if read_only else self.connection()
+        with manager as db:
+            rows = work_item_rows(db)
+            dependencies = work_item_dependencies(db)
+        return project_work_item_status(rows, dependencies, artifact_states=artifact_states)
 
     def register_worker(
         self,
@@ -1992,7 +1650,7 @@ class Registry(WorkflowRegistry):
             if row is None:
                 return None
             work_item = dict(row)
-            log_dir = self.paths.events / _work_item_relative_directory(work_item)
+            log_dir = self.paths.events / work_item_relative_directory(work_item)
             execution = db.execute(
                 "SELECT * FROM work_item_execution WHERE work_item_id=?", (work_item["id"],)
             ).fetchone()
@@ -2002,7 +1660,7 @@ class Registry(WorkflowRegistry):
                 log_dir = (
                     ControlPaths(self.paths.control).branch(execution["branch"])
                     / "events"
-                    / _work_item_relative_directory(work_item)
+                    / work_item_relative_directory(work_item)
                 )
                 ensure_shared_directory(log_dir)
                 command = prepare_attempt(self, db, work_item, dict(execution), log_dir)

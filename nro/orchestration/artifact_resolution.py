@@ -11,6 +11,72 @@ from nro.orchestration.branches import BranchTopology
 from nro.orchestration.contracts import WorkItemSpec
 
 
+def _prefixes_overlap(first: str | None, second: str | None) -> bool:
+    """Return whether two filename-prefix claims can select the same file."""
+    if first is None or second is None:
+        return True
+    return first == second or first.startswith(second + "_") or second.startswith(first + "_")
+
+
+def output_contracts_overlap(
+    first_root: Path,
+    first_prefix: str | None,
+    first_expected: Sequence[Path],
+    second_root: Path,
+    second_prefix: str | None,
+    second_expected: Sequence[Path],
+) -> bool:
+    """Return whether two public-output contracts can select the same path."""
+    first_root = first_root.expanduser().resolve()
+    second_root = second_root.expanduser().resolve()
+    first_outputs = {path.expanduser().resolve() for path in first_expected}
+    second_outputs = {path.expanduser().resolve() for path in second_expected}
+    if first_outputs & second_outputs:
+        return True
+    if first_root != second_root:
+        return False
+    if first_prefix is not None and second_prefix is not None:
+        return _prefixes_overlap(first_prefix, second_prefix)
+    if first_prefix is not None:
+        return any(
+            path.parent == first_root
+            and (path.name == first_prefix or path.name.startswith(first_prefix + "_"))
+            for path in second_outputs
+        )
+    if second_prefix is not None:
+        return any(
+            path.parent == second_root
+            and (path.name == second_prefix or path.name.startswith(second_prefix + "_"))
+            for path in first_outputs
+        )
+    return False
+
+
+def output_claims_overlap(first: WorkItemSpec, second: WorkItemSpec) -> bool:
+    """Return whether two work items claim any common public output namespace."""
+    return output_contracts_overlap(
+        first.output_root,
+        first.output_prefix,
+        first.expected_outputs,
+        second.output_root,
+        second.output_prefix,
+        second.expected_outputs,
+    )
+
+
+def validate_output_ownership(work_items: Sequence[WorkItemSpec]) -> None:
+    """Reject graphs in which distinct vertices can publish the same path."""
+    ordered = sorted(work_items, key=lambda item: item.key)
+    for index, first in enumerate(ordered):
+        for second in ordered[index + 1 :]:
+            if output_claims_overlap(first, second):
+                raise ValueError(
+                    "Work-item output claims overlap: "
+                    f"{first.key} ({first.output_root}, prefix={first.output_prefix!r}) and "
+                    f"{second.key} ({second.output_root}, prefix={second.output_prefix!r})"
+                )
+
+
 def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
     """Compile location-independent contracts for a complete work-item graph.
 
@@ -22,6 +88,7 @@ def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
     by_key = {item.key: item for item in work_items}
     if len(by_key) != len(work_items):
         raise ValueError("Work-item graph contains duplicate keys")
+    validate_output_ownership(work_items)
     result: dict[str, dict] = {}
     pending = set(by_key)
     while pending:

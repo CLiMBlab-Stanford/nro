@@ -12,7 +12,6 @@ import nro.bin
 
 COMMAND_HELP = {
     "release": "Inspect installed releases or perform manual release maintenance.",
-    "cutover": "Convert the private-control layout during a maintenance window.",
     "branch": "Register branches and locate their shared scientific registries.",
     "bidsify": "Download, review, convert, and approve BIDS sessions.",
     "create": "Create a model, config, workflow, or source-markup definition.",
@@ -23,6 +22,7 @@ COMMAND_HELP = {
     "setup": "Set up dependencies or connect to a shared installation.",
     "paths": "View and edit site paths.",
     "doctor": "Check dependencies and site access.",
+    "dev": "Run validation selected from the current development sphere.",
     "log": "Browse work-item or worker logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
     "promote": "Accept equivalent development artifacts after an approved merge.",
@@ -36,7 +36,7 @@ COMMAND_HELP = {
     "render": "Render selected Workbench maps as image files.",
 }
 
-CENTRAL_ONLY_COMMANDS = frozenset({"cutover", "release"})
+CENTRAL_ONLY_COMMANDS = frozenset({"release"})
 
 
 def available_commands() -> tuple[str, ...]:

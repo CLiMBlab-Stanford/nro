@@ -17,11 +17,8 @@ from nro.engine.cleaned_timeseries import (
     load_retained_frame_mask,
 )
 from nro.engine.connectivity import connectivity_run_weights
-from nro.engine.images import (
-    load_surface_timeseries,
-    sidecar_json_path,
-    surface_timeseries_shape,
-)
+from nro.engine.image_paths import sidecar_json_path
+from nro.engine.images import load_surface_timeseries, surface_timeseries_shape
 from nro.engine.io import (
     atomic_output_path,
     atomic_write_json,
@@ -177,7 +174,7 @@ def build_module(
     )
     eligibility_path = work / "run-eligibility.json"
 
-    def assess_runs() -> None:
+    def eligibility_payload() -> dict[str, object]:
         included, skipped = [], []
         included_metadata = []
         repetition_times = set()
@@ -229,15 +226,25 @@ def build_module(
             record["start_frame"] = start
             record["stop_frame"] = stop
             start = stop
-        atomic_write_json(
-            eligibility_path,
-            {
-                "included": included,
-                "skipped": skipped,
-                "concatenated_frames": retained,
-                "repetition_time_seconds": repetition_times.pop(),
-            },
-        )
+        return {
+            "included": included,
+            "skipped": skipped,
+            "concatenated_frames": retained,
+            "repetition_time_seconds": repetition_times.pop(),
+        }
+
+    def assess_runs() -> None:
+        atomic_write_json(eligibility_path, eligibility_payload())
+
+    def validate_eligibility() -> tuple[bool, str]:
+        try:
+            cached = json.loads(eligibility_path.read_text(encoding="utf-8"))
+            current = eligibility_payload()
+        except (OSError, TypeError, ValueError) as error:
+            return False, f"Run eligibility is unreadable or invalid: {error}"
+        if cached != current:
+            return False, "Run eligibility no longer matches cleaned-run metadata."
+        return True, "Run eligibility matches cleaned-run metadata."
 
     runner.add_step(
         Step.python(
@@ -246,6 +253,7 @@ def build_module(
             outputs=(eligibility_path,),
             force=force,
             action=assess_runs,
+            validate=validate_eligibility,
             parameters=asdict(cfg.inclusion),
         )
     )

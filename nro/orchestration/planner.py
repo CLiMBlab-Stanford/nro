@@ -10,7 +10,7 @@ from nro.configuration.markup import MarkupStore
 from nro.configuration.store import ResolvedWorkflow
 from nro.engine.bids import ENTITY_ORDER, discover_raw_runs, matches_filter, matches_selectors
 from nro.engine.cli import matches_module_lineage
-from nro.engine.images import image_source_paths
+from nro.engine.image_paths import image_source_paths
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.catalog import module_descriptor, modules_through, normalize_module
 from nro.orchestration.contracts import WorkItemSpec

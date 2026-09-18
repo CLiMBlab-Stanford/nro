@@ -9,7 +9,7 @@ from typing import Any, Optional, Sequence
 from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
 from nro.engine.bids import acquisition_order_key, parse_bids_entities, resolve_bids_metadata
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import read_json
 
 
@@ -18,8 +18,7 @@ def infer_session_id(path: Path, *, default_session: str | None = None) -> str:
     for parent in [path.parent, *path.parents]:
         if parent.name.startswith("ses-"):
             return parent.name
-    fallback = default_session or str(SETTINGS.common.multi_session_label)
-    return fallback
+    return default_session or str(SETTINGS.common.multi_session_label)
 
 
 @dataclass(frozen=True)

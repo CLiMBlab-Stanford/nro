@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import nibabel as nib
 import numpy as np
@@ -51,7 +52,7 @@ def _validate_outputs(
 
 def create_gradient_unwarping_step(
     *,
-    runner,
+    run_child: Callable[..., str | None],
     source: Path,
     corrected: Path,
     warp: Path,
@@ -98,12 +99,12 @@ def create_gradient_unwarping_step(
                 container_env[prefix_name + "FSLDIR"] = "/usr/share/fsl"
                 container_env[prefix_name + "FSLOUTPUTTYPE"] = "NIFTI_GZ"
                 container_env[prefix_name + "PYTHONNOUSERSITE"] = "1"
-            runner.run_child(
+            run_child(
                 [*prefix, "fslmerge", "-t", "/work/source_as4d.nii.gz", f"/input/{source_name}"],
                 env=container_env,
                 direct=True,
             )
-            runner.run_child(
+            run_child(
                 [
                     *prefix,
                     "/opt/HCP-Pipelines/global/scripts/GradientDistortionUnwarp.sh",

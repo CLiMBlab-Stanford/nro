@@ -50,8 +50,14 @@ def test_anatomy_recovery_skips_functional_discovery_and_duplicate_workflows(tmp
     bids = tmp_path / "bids"
     sources(bids)
     sources(bids, "02")
-    write(bids / "demo/derivatives/nro/anat/main/sub-01/anat/sub-01_partial.txt")
     registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
+    write(
+        bids
+        / "demo/derivatives/nro/anat"
+        / registered.directories["anat"]
+        / "sub-01/anat/sub-01_partial.txt"
+    )
     calls = spy_planning(monkeypatch)
 
     def forbidden(*args, **kwargs):
@@ -67,13 +73,16 @@ def test_clean_recovery_selects_only_existing_run_and_exact_target_pairs(tmp_pat
     bids = tmp_path / "bids"
     sources(bids, runs=("1", "2"))
     (bids / "demo/sub-01/func/sub-01_task-rest_run-2_bold.json").unlink()
-    for space, smoothing in [("fsnative", 2), ("T1w", 0)]:
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
+    for space, smoothing in [("fsnative", 2), ("ACPC", 0)]:
         write(
             bids
-            / "demo/derivatives/nro/clean/main/sub-01"
+            / "demo/derivatives/nro/clean"
+            / registered.directories["clean"]
+            / "sub-01"
             / f"sub-01_task-rest_run-1_space-{space}_smoothing-{smoothing}mm_partial.txt"
         )
-    registry = Registry.for_project("demo", bids_root=bids)
     calls = spy_planning(monkeypatch)
     result = register_existing_artifacts(registry, bids_root=bids, inventory={"demo": ("01",)})
     assert result.artifacts == 2
@@ -81,7 +90,7 @@ def test_clean_recovery_selects_only_existing_run_and_exact_target_pairs(tmp_pat
     assert len(calls) == 2
     assert {(call["spaces"], call["smoothing_levels"]) for call in calls} == {
         (("fsnative",), (2,)),
-        (("T1w",), (0,)),
+        (("ACPC",), (0,)),
     }
     assert all(call["module"] == "clean" and call["selectors"]["run"] == ("1",) for call in calls)
     assert registry.request_rows() == []
@@ -115,7 +124,12 @@ def test_owned_records_restore_without_planning_but_new_run_is_discovered(tmp_pa
     assert first.work_items == 2
     assert calls == []
 
-    write(bids / "demo/derivatives/nro/func/main/sub-01/func/sub-01_task-rest_run-2_partial.txt")
+    write(
+        bids
+        / "demo/derivatives/nro/func"
+        / registered.directories["func"]
+        / "sub-01/func/sub-01_task-rest_run-2_partial.txt"
+    )
     registry.reinitialize()
     second = register_existing_artifacts(registry, bids_root=bids, inventory={"demo": ("01",)})
     assert second.work_items == 3
@@ -127,12 +141,14 @@ def test_owned_records_restore_without_planning_but_new_run_is_discovered(tmp_pa
 def test_microparcellation_recovery_does_not_plan_networks(tmp_path, monkeypatch):
     bids = tmp_path / "bids"
     sources(bids)
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
     write(
         bids
-        / "demo/derivatives/nro/microparcellation/main/sub-01"
-        / "sub-01_space-fsnative_smoothing-2mm_partial.txt"
+        / "demo/derivatives/nro/microparcellation"
+        / registered.directories["microparcellation"]
+        / "sub-01/sub-01_space-fsnative_smoothing-2mm_partial.txt"
     )
-    registry = Registry.for_project("demo", bids_root=bids)
     calls = spy_planning(monkeypatch)
     result = register_existing_artifacts(registry, bids_root=bids, inventory={"demo": ("01",)})
     assert result.work_items == 4

@@ -1,6 +1,8 @@
 """Explicit main-maintainer replacement of shared scheduling state."""
 
 import json
+import shutil
+import uuid
 from pathlib import Path
 
 from nro.configuration.site import CHECKOUT
@@ -48,7 +50,22 @@ def repair_scientific_schemas(registry) -> list[dict]:
         ) + unavailable
         if stored != scientific.stored_schema_version():
             raise RuntimeError("Scientific registry schema changed during repair")
-        if stored != BRANCH_SCHEMA_VERSION:
+        from nro.orchestration.branch_registry import SCHEMA_DEFINITION
+
+        if stored != BRANCH_SCHEMA_VERSION and SCHEMA_DEFINITION.supports(stored):
+            backup = scientific.migrate_schema()
+            repaired.append(
+                {
+                    "branch": record.name,
+                    "stored_schema": stored,
+                    "schema": scientific.stored_schema_version(),
+                    "backup": str(backup) if backup is not None else None,
+                    "work_items": None,
+                    "unavailable": unavailable,
+                    "action": "migrated",
+                }
+            )
+        elif stored != BRANCH_SCHEMA_VERSION:
             with registry.connection(write=True) as db:
                 work_items = _repair_records_locked(
                     db,
@@ -82,16 +99,50 @@ def repair_scientific_schemas(registry) -> list[dict]:
 
 def _rebuild(registry) -> dict:
     """Replace quiescent scheduler state and recover records backed by public files."""
+    branches = BranchStore(registry.paths.control)
+    transaction = registry.paths.control / "shared" / "maintenance" / uuid.uuid4().hex
+    transaction.mkdir(parents=True, exist_ok=False)
+    branch_backups: dict[Path, Path] = {}
+    if branches.path.is_file():
+        for name in branches.read().topology.records:
+            database = BranchRegistry(
+                registry.paths.control, branches.read().topology.records[name]
+            ).database
+            if database.is_file():
+                copy = transaction / f"branch-{len(branch_backups)}.sqlite3"
+                shutil.copy2(database, copy)
+                branch_backups[database] = copy
     backup = registry.reinitialize(preserve_branch_runtime=True, retain_backup=True)
+    assert backup is not None
     from nro.orchestration.discovery import register_existing_artifacts
     from nro.orchestration.selection import discover_bids_inventory
 
-    inventory = discover_bids_inventory(registry.paths.bids_root)
-    registry.replace_bids_inventory(inventory)
-    found = register_existing_artifacts(
-        registry, bids_root=registry.paths.bids_root, inventory=inventory
-    )
-    scientific = repair_scientific_schemas(registry)
+    try:
+        inventory = discover_bids_inventory(registry.paths.bids_root)
+        registry.replace_bids_inventory(inventory)
+        found = register_existing_artifacts(
+            registry, bids_root=registry.paths.bids_root, inventory=inventory
+        )
+        scientific = repair_scientific_schemas(registry)
+        with registry.connection() as db:
+            if str(db.execute("PRAGMA integrity_check").fetchone()[0]) != "ok":
+                raise RuntimeError("Replacement scheduler registry failed its integrity check")
+        for name, record in branches.read().topology.records.items():
+            scientific_registry = BranchRegistry(registry.paths.control, record)
+            with scientific_registry.connection() as db:
+                if str(db.execute("PRAGMA integrity_check").fetchone()[0]) != "ok":
+                    raise RuntimeError(
+                        f"Replacement scientific registry failed its integrity check: {name}"
+                    )
+    except BaseException:
+        for database, saved in branch_backups.items():
+            replacement = database.with_name(f".{database.name}.rollback")
+            shutil.copy2(saved, replacement)
+            replacement.replace(database)
+        registry.restore_reinitialization(backup)
+        raise
+    finally:
+        shutil.rmtree(transaction, ignore_errors=True)
     branch_unavailable = [
         f"{item['branch']}: {message}" for item in scientific for message in item["unavailable"]
     ]
@@ -142,8 +193,8 @@ def repair(registry, *, checkout: Path, confirm, allow_release_transition: bool 
     """Stop the whole pool and rebuild shared and incompatible scientific state.
 
     Requests and attempt history are removed from active state. Backups retain
-    replaced databases and private certificates. Public artifacts remain in
-    place and current work-item contracts are rediscovered or registered on demand.
+    replaced databases. Public artifacts remain in place, and current work-item
+    contracts are rediscovered or registered on demand.
     """
     checkout = checkout.resolve()
     if checkout != CHECKOUT:

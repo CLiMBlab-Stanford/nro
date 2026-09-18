@@ -60,7 +60,7 @@ def test_runner_owns_graph_and_module_builders_own_dag_mutation() -> None:
             if not (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "add_step"
+                and node.func.attr in {"add_step", "add_steps"}
             ):
                 continue
             owner: ast.AST = node

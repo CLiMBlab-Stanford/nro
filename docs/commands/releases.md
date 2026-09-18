@@ -91,18 +91,16 @@ nro release --repair-scheduler
 Shared repair asks for confirmation when work is active. It stops the entire pool, discards
 active scheduling history, and keeps a backup with an index of original paths.
 Branch scientific databases, runtime configurations, ingestion records, and
-public derivatives remain in place. Private completion certificates are archived
-because their registry IDs belong to the old database.
+public derivatives remain in place. Completion evidence belongs to the replaced
+scheduler database and is retained only inside its backup.
 
-Repair also rebuilds any branch scientific database whose schema is incompatible with
-the installed release. It retains the previous database as
-`registry-before-repair.sqlite3`. It does not migrate records from the incompatible
-schema. Current artifacts are rediscovered, and later requests register current
-scientific contracts on demand.
+Repair migrates a branch scientific database when its schema is at or after the
+supported baseline. It retains the previous database. Older schemas are rebuilt from
+durable ownership records and public artifacts; later requests register any remaining
+current scientific contracts on demand.
 
 Main artifacts are rediscovered from disk without creating demand. Other branches
 register their outputs against current compiled contracts when work is next
-requested. The operation rebuilds instead of migrating an obsolete schema. It requires
-the old worker-control tables to remain readable so shutdown can be confirmed. After a
-release update, `./install --maintain` performs this rebuild itself when needed, then
-installs and activates the release.
+requested. It requires old worker-control state to remain readable long enough to
+confirm shutdown. After a release update, `./install --maintain` performs the required
+migration or reconstruction before it installs and activates the release.

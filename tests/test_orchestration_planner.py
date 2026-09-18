@@ -57,7 +57,7 @@ def _plan_modules(registry, tmp_path, modules, workflow_ids=("main",)):
             name: registry.register_workflow(workflow) for name, workflow in workflows.items()
         },
         selectors={},
-        spaces=("fsnative", "T1w"),
+        spaces=("fsnative", "ACPC"),
         smoothing_levels=(0, 2),
         memory_gb=32,
         max_memory_gb=256,
@@ -199,7 +199,7 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
         key
         for key in complete.requests[0].terminal_keys
         if complete.work_items[key].participant == "01"
-        and complete.work_items[key].entities["space"] == "T1w"
+        and complete.work_items[key].entities["space"] == "ACPC"
         and complete.work_items[key].entities["smoothing"] == "2"
         and complete.work_items[key].entities["task"] == "rest"
     )
@@ -231,7 +231,7 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
         (work_item.entities.get("space"), work_item.entities.get("smoothing"))
         for work_item in exact.work_items.values()
         if work_item.module == "clean"
-    } == {("T1w", "2")}
+    } == {("ACPC", "2")}
 
 
 def test_registered_targets_preserve_workflow_associations(branch_registry, tmp_path):
@@ -358,7 +358,7 @@ def test_runner_graph_signature_tracks_bids_state_but_not_command_spelling(
         scope="subject",
         module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
-        directory_label="main",
+        directory_label=registered.directory_for("anat"),
         runtime_config=registry.runtime_config_path(registered, "anat"),
         command=("python", "-m", "nro.modules.anat"),
         dependencies=(),
@@ -399,7 +399,7 @@ def test_existing_work_item_adopts_execution_recipe_and_output_contract(
         scope="subject",
         module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
-        directory_label="main",
+        directory_label=registered.directory_for("anat"),
         runtime_config=registry.runtime_config_path(registered, "anat"),
         command=("python", "-m", "nro.modules.anat"),
         dependencies=(),
@@ -454,7 +454,7 @@ def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
         scope="subject",
         module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
-        directory_label="main",
+        directory_label=registered.directory_for("anat"),
         runtime_config=registry.runtime_config_path(registered, "anat"),
         command=("python", "-m", "nro.modules.anat"),
         dependencies=(),
@@ -495,7 +495,7 @@ def test_existing_work_item_adopts_changed_dependency_topology(tmp_path: Path) -
         scope="subject",
         module_lineage_id=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
-        directory_label="main",
+        directory_label=registered.directory_for("anat"),
         runtime_config=registry.runtime_config_path(registered, "anat"),
         command=("python", "-m", "nro.modules.anat"),
         dependencies=(),
@@ -657,10 +657,10 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "output_metadata": networks_output_contract(),
         "source_markup": source_markup,
     }
-    assert registered.directories["anat"] == "main"
-    assert registered.directories["func"] == "main"
-    assert registered.directories["microparcellation"] == "rest"
-    assert registered.directories["networks"] == "main"
+    assert registered.directories["anat"].startswith("main-")
+    assert registered.directories["func"].startswith("main-")
+    assert registered.directories["microparcellation"].startswith("rest-")
+    assert registered.directories["networks"].startswith("main-")
     assert inventory_calls == 1
 
 
@@ -756,7 +756,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         registered=registered,
         registry=registry,
         bids_root=bids,
-        spaces=("fsnative", "T1w"),
+        spaces=("fsnative", "ACPC"),
         smoothing_levels=(0, 2),
     )
     by_module = {
@@ -766,8 +766,8 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
     expected_pairs = {
         ("fsnative", "0"),
         ("fsnative", "2"),
-        ("T1w", "0"),
-        ("T1w", "2"),
+        ("ACPC", "0"),
+        ("ACPC", "2"),
     }
 
     assert len(by_module["anat"]) == 1

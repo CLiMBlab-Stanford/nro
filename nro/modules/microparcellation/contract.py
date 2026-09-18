@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from nro.engine.artifact_metadata import validate_metadata_fields
 
@@ -103,6 +104,19 @@ MICROPARCELLATION_MANIFEST_FIELDS = {
     "configuration_fingerprint": "nullable_string",
     "output_metadata_contract": "mapping",
 }
+
+
+def microparcellation_output_paths(directory: Path, prefix: str) -> dict[str, Path]:
+    """Return the public outputs for one microparcellation target."""
+    directory = Path(directory)
+    return {
+        "microparcels": directory / f"{prefix}_desc-microparcellation_dseg.dlabel.nii",
+        "connectivity": directory / f"{prefix}_connectivity.pconn.nii",
+        "quality": directory / f"{prefix}_desc-microparcellationQuality_metrics.json",
+        "manifest": directory / f"{prefix}_desc-microparcellation_manifest.yaml",
+        "index": directory / f"{prefix}_desc-microparcellationIndex_manifest.json",
+        "microparcels_volume": directory / f"{prefix}_desc-microparcellation_dseg.nii.gz",
+    }
 
 
 def microparcellation_output_contract() -> dict[str, object]:

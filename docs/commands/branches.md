@@ -157,7 +157,7 @@ requested by another branch remains intact. Inherited artifacts remain read-only
 
 `ControlPaths` supplies this layout to installation, registry, ingestion,
 branch registration, and execution-cache code. Branch directories also hold
-manifests and scientific configuration snapshots when used by processing.
+scientific configuration snapshots when used by processing.
 Shared worker logs remain with the scheduler; ingestion and caches are site-wide.
 With central execution activated, `run --repair` rebuilds only the current
 branch's scientific database. It preserves the shared scheduler, other branches'
@@ -168,8 +168,8 @@ workflow history. Current definitions restore reproducibility bindings in both t
 branch registry and shared scheduler. Repair creates no demand.
 
 nro rejects the previous flat layout before creating another scheduler. No
-automatic relocation or alternate-path fallback exists; use
-[nro cutover](cutover.md) as a separate maintenance step when retaining old state.
+automatic relocation or alternate-path fallback exists. Archive or remove an
+obsolete private store before initializing the current layout.
 
 Each database is bound to its branch name, registration identity, and shared
 control path. nro rejects a misplaced database or symlink redirection. It does
@@ -185,12 +185,13 @@ also check the revision that the caller read, so competing checkouts cannot
 silently replace one another's edits. Verified observations carry that revision
 through central assessment and cannot be attached to a replacement contract.
 
-Production registry repair preserves the branch catalog and compatible databases. A
+Production registry repair preserves the branch catalog and current databases. A
 branch's scientific schema is checked when reading its scientific records, not when
-inspecting its identity or registering another branch. Shared installation rebuilds
-incompatible branch databases after it quiesces the worker pool. It first restores
-each development branch's scheduler mappings from that branch's public derivative
-tree. Each replacement contains only contracts recovered for that branch.
+inspecting its identity or registering another branch. Shared installation migrates
+schemas at or after the supported baseline after it quiesces the worker pool. For an
+older schema, it first restores each development branch's scheduler mappings from that
+branch's public derivative tree, then reconstructs the branch database from recovered
+contracts.
 
 These checks protect trusted developers against mistakes. They are not an
 access-control boundary against someone who can directly modify shared files.

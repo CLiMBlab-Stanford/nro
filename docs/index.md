@@ -51,5 +51,8 @@ work-item-lifecycle
 orchestration-design
 api
 development
+development-spheres
+registry-migrations
+architecture-map
 autoapi/nro/index
 ```

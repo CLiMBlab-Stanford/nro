@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from nro.engine.paths import module_artifact_root
+from nro.orchestration.completion_records import completion_record
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import Registry, utcnow
 
@@ -37,19 +38,26 @@ def _derivative_root(project_root: Path, work_item: dict) -> Path:
     return expected
 
 
-def _portable_manifest(path: Path, seen: set[Path], digests: dict[Path, str]) -> dict:
+def _completion_digest(record: dict) -> str:
+    """Fingerprint one detached database completion record."""
+    return hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _portable_manifest(database, work_item_id: int, seen: set[int]) -> dict:
     """Embed workflow-agnostic recursive provenance without registry IDs/paths."""
-    path = path.resolve()
-    if path in seen:
-        raise RuntimeError(f"Completion-manifest dependency cycle: {path}")
-    seen.add(path)
-    digests[path] = _sha256(path)
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if work_item_id in seen:
+        raise RuntimeError(f"Completion dependency cycle at work item {work_item_id}")
+    seen.add(work_item_id)
+    manifest = completion_record(database, work_item_id)
+    if manifest is None:
+        raise RuntimeError(f"Work item {work_item_id} has no completion record")
     upstream = [
-        _portable_manifest(Path(item["manifest"]), seen, digests)
+        _portable_manifest(database, int(item["work_item_id"]), seen)
         for item in manifest.get("upstream", [])
     ]
-    seen.remove(path)
+    seen.remove(work_item_id)
     return {
         "module": manifest["module"],
         "participant": manifest["participant"],
@@ -95,15 +103,19 @@ def publish(
     staging.mkdir()
     copied: list[dict] = []
     expected_generations: dict[int, tuple[int, str]] = {}
-    provenance_manifests: dict[Path, str] = {}
     embedded_work_items: list[dict] = []
     try:
         for work_item in work_items:
-            manifest_path = Path(work_item["manifest_path"])
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            with registry.connection() as db:
+                manifest = completion_record(db, int(work_item["id"]))
+                if manifest is None:
+                    raise RuntimeError(
+                        f"Fresh work item {work_item['id']} has no completion record"
+                    )
+                portable = _portable_manifest(db, int(work_item["id"]), set())
             expected_generations[int(work_item["id"])] = (
                 int(work_item["current_generation"]),
-                _sha256(manifest_path),
+                _completion_digest(manifest),
             )
             with registry.connection() as db:
                 execution = db.execute(
@@ -131,9 +143,7 @@ def publish(
                 copied.append(
                     {"source": str(source), "path": str(relative), "sha256": target_digest}
                 )
-            embedded_work_items.append(
-                _portable_manifest(manifest_path, set(), provenance_manifests)
-            )
+            embedded_work_items.append(portable)
         description = {
             "Name": destination.name,
             "BIDSVersion": "1.10.0",
@@ -169,18 +179,20 @@ def publish(
         if any(work_item["artifact_state"] != "fresh" for work_item in work_items_after):
             raise RuntimeError("Live derivative changed or became stale during publication")
         current = {int(work_item["id"]): work_item for work_item in work_items_after}
-        for work_item_id, (generation, manifest_digest) in expected_generations.items():
+        for work_item_id, (generation, completion_digest) in expected_generations.items():
             work_item = current.get(work_item_id)
             if work_item is None or int(work_item["current_generation"]) != generation:
                 raise RuntimeError("Live derivative generation changed during publication")
-            if _sha256(Path(work_item["manifest_path"])) != manifest_digest:
-                raise RuntimeError("Live derivative manifest changed during publication")
+            with registry.connection() as db:
+                current_completion = completion_record(db, work_item_id)
+            if (
+                current_completion is None
+                or _completion_digest(current_completion) != completion_digest
+            ):
+                raise RuntimeError("Live derivative completion changed during publication")
         for item in copied:
             if _sha256(Path(item["source"])) != item["sha256"]:
                 raise RuntimeError("Live derivative output changed during publication")
-        for manifest_path, digest in provenance_manifests.items():
-            if _sha256(manifest_path) != digest:
-                raise RuntimeError("Upstream derivative provenance changed during publication")
         os.replace(staging, destination)
         return destination
     except BaseException:

@@ -11,7 +11,7 @@ from typing import Iterable, Mapping
 
 from nro.orchestration import dependency_state
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 
 def _fingerprint(value: object) -> str:
@@ -38,6 +38,7 @@ class AssessmentSnapshot:
     work_items: tuple[dict, ...]
     dependencies: tuple[dict, ...]
     configurations: tuple[dict, ...]
+    completions: tuple[dict, ...]
     attempts: tuple[dict, ...]
     mutations: tuple[dict, ...]
 
@@ -57,6 +58,7 @@ class AssessmentSnapshot:
                     "work_items": self.work_items,
                     "dependencies": self.dependencies,
                     "configurations": self.configurations,
+                    "completions": self.completions,
                     "attempts": self.attempts,
                     "mutations": self.mutations,
                 },
@@ -77,6 +79,7 @@ class AssessmentSnapshot:
                 "work_items",
                 "dependencies",
                 "configurations",
+                "completions",
                 "attempts",
                 "mutations",
             }
@@ -87,7 +90,14 @@ class AssessmentSnapshot:
         for key in ("bids_root", "control"):
             if not isinstance(value[key], str) or not Path(value[key]).is_absolute():
                 raise ValueError("Assessment paths must be absolute")
-        for key in ("work_items", "dependencies", "configurations", "attempts", "mutations"):
+        for key in (
+            "work_items",
+            "dependencies",
+            "configurations",
+            "completions",
+            "attempts",
+            "mutations",
+        ):
             if not isinstance(value[key], list) or not all(
                 isinstance(row, dict) for row in value[key]
             ):
@@ -98,7 +108,14 @@ class AssessmentSnapshot:
             Path(detached["control"]),
             *(
                 tuple(detached[key])
-                for key in ("work_items", "dependencies", "configurations", "attempts", "mutations")
+                for key in (
+                    "work_items",
+                    "dependencies",
+                    "configurations",
+                    "completions",
+                    "attempts",
+                    "mutations",
+                )
             ),
         )
 
@@ -229,6 +246,9 @@ def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> Asses
         )
         if row["id"] in lineages
     )
+    from nro.orchestration.completion_records import completion_records
+
+    completions = tuple(completion_records(db, tuple(sorted(selected))).values())
     attempts = tuple(
         dict(row)
         for row in db.execute(
@@ -248,6 +268,7 @@ def _capture_locked(registry, db, *, work_item_ids=None, projects=None) -> Asses
         tuple(work_items),
         tuple(edge for edge in edges if edge["work_item_id"] in selected),
         configs,
+        completions,
         attempts,
         mutations,
     )

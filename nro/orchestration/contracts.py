@@ -435,7 +435,6 @@ class ExecutionEnvelope:
     participant: str
     entities: Mapping[str, str]
     scope: str
-    manifest_path: Path
     revision_fingerprint: str
     config_fingerprint: str
     work_item_contract: Mapping[str, Any]
@@ -458,7 +457,6 @@ class ExecutionEnvelope:
             "participant": self.participant,
             "entities": dict(self.entities),
             "scope": self.scope,
-            "manifest_path": str(self.manifest_path),
             "revision_fingerprint": self.revision_fingerprint,
             "config_fingerprint": self.config_fingerprint,
             "work_item_contract": dict(self.work_item_contract),
@@ -483,7 +481,6 @@ class ExecutionEnvelope:
             participant=str(value["participant"]),
             entities=dict(value["entities"]),
             scope=str(value["scope"]),
-            manifest_path=Path(value["manifest_path"]),
             revision_fingerprint=str(value["revision_fingerprint"]),
             config_fingerprint=str(value["config_fingerprint"]),
             work_item_contract=dict(value["work_item_contract"]),
@@ -508,7 +505,6 @@ class ExecutionEnvelope:
             participant=str(row["participant"]),
             entities=json.loads(row["entities_json"]),
             scope=str(row["scope"]),
-            manifest_path=Path(row["manifest_path"]),
             revision_fingerprint=str(row["revision_fingerprint"]),
             config_fingerprint=str(row["config_fingerprint"]),
             work_item_contract=json.loads(row["artifact_contract_json"]),

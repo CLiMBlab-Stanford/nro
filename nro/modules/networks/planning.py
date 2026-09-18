@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
 from nro.engine.targets import smoothing_entity_value
-from nro.modules.networks.labeling import reference_paths
 from nro.modules.networks.paths import fixed_output_paths
+from nro.modules.networks.references import reference_paths
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 

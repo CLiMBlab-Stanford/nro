@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
+from nro.engine.io import atomic_write_text
 from nro.orchestration.runner_graph import Step
 
 
@@ -97,9 +98,9 @@ def create_synthetic_reference_step(
                     "SynBOLD-DisCo did not honor nro's precomputed EPI-to-T1 "
                     f"transform: {container_transform} does not match {transform_input}."
                 )
-            shim_verified.write_text(
+            atomic_write_text(
+                shim_verified,
                 "The container epi_reg call used nro's precomputed transform.\n",
-                encoding="utf-8",
             )
 
     return Step.python(

@@ -69,8 +69,9 @@ def test_discovery_rejects_duplicate_roots_for_one_lineage(tmp_path: Path) -> No
 
     lineages, _work_items, errors = read_ownership_records(bids, ["demo"])
 
-    assert lineages == []
-    assert any("conflicting derivative roots" in error for error in errors)
+    assert len(lineages) == 1
+    assert lineages[0]["directory_label"] == registered.directories["anat"]
+    assert any("nondeterministic" in error for error in errors)
 
 
 def _historical_store(tmp_path: Path) -> ConfigStore:
@@ -136,7 +137,7 @@ def test_work_item_ownership_survives_removed_workflow(tmp_path: Path) -> None:
 
     rows = {row["work_item_key"]: row for row in registry.work_item_rows()}
     assert clean.key in rows
-    assert rows[clean.key]["directory_label"] == "retired"
+    assert rows[clean.key]["directory_label"] == registered.directories["clean"]
     assert rows[clean.key]["workflow_ids"] is None
     status = {row["work_item_key"]: row for row in registry.work_item_status_snapshot()}
     assert status[clean.key]["status"] == "Unavailable"

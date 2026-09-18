@@ -23,12 +23,13 @@ from nro.engine.cleaned_timeseries import (
     load_retained_frame_mask,
 )
 from nro.engine.connectivity import connectivity_run_weights
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.images import (
     gifti_vertex_count,
     load_surface_timeseries,
-    sidecar_json_path,
 )
 from nro.engine.io import (
+    atomic_output_path,
     atomic_save_npy,
     atomic_save_npz,
     atomic_write_text,
@@ -52,10 +53,10 @@ from .coarsen import loukas_variation_edges
 from .config import ModuleConfig, validate_config
 from .contract import (
     microparcellation_output_contract,
+    microparcellation_output_paths,
     validate_microparcellation_manifest,
     validate_microparcellation_quality,
 )
-from .paths import output_paths
 from .quality import spatial_null_partitions
 from .statistics import (
     local_edge_correlations,
@@ -131,7 +132,7 @@ def build_module(
     work = cfg.output.work_directory
     force = bool(cfg.output.overwrite)
 
-    paths = output_paths(out, cfg.output.prefix)
+    paths = microparcellation_output_paths(out, cfg.output.prefix)
     manifest_path = paths["manifest"]
     dlabel_path = paths["microparcels"]
     pconn_path = paths["connectivity"]
@@ -534,22 +535,22 @@ def build_module(
         expected_regions = step_targets[-1] if step_targets else int(mask.sum())
         if labels.shape != (n_vertices,) or int(labels[mask].max()) + 1 != expected_regions:
             raise RuntimeError("Final coarsening checkpoint has invalid labels.")
-        temporary_dlabel = temporary_sibling(dlabel_path)
         if cfg.inputs.domain == "surface":
-            write_dlabel(temporary_dlabel, labels, vertex_counts, cfg.inputs.surface)
-            temporary_dlabel.replace(dlabel_path)
+            with atomic_output_path(dlabel_path) as temporary_dlabel:
+                write_dlabel(temporary_dlabel, labels, vertex_counts, cfg.inputs.surface)
         else:
             assert active_volume_space is not None
-            temporary_volume = temporary_sibling(label_volume_path)
-            write_volume_labels(temporary_volume, labels, active_volume_space)
-            write_volume_dlabel(
-                temporary_dlabel,
-                labels,
-                active_volume_space.mask,
-                active_volume_space.affine,
-            )
-            temporary_volume.replace(label_volume_path)
-            temporary_dlabel.replace(dlabel_path)
+            with (
+                atomic_output_path(label_volume_path) as temporary_volume,
+                atomic_output_path(dlabel_path) as temporary_dlabel,
+            ):
+                write_volume_labels(temporary_volume, labels, active_volume_space)
+                write_volume_dlabel(
+                    temporary_dlabel,
+                    labels,
+                    active_volume_space.mask,
+                    active_volume_space.affine,
+                )
 
     runner.add_step(
         Step.python(

@@ -11,7 +11,7 @@ from nro.modules.firstlevels.compiler import compile_model
 from nro.modules.firstlevels.contract import _matches_definition, definition_fingerprint
 from nro.modules.firstlevels.task_models import scientific_model
 from nro.orchestration.catalog import canonical_contract
-from nro.orchestration.manifests import _certificate_matches_contract
+from nro.orchestration.manifests import _completion_matches_contract
 
 
 def _source():
@@ -105,16 +105,16 @@ def test_recorded_contracts_normalize_without_loading_current_model():
         "module": "firstlevels",
         "processing": {"task_model": _source(), "other_policy": "unchanged"},
     }
-    certificate = {"artifact_contract": contract, "artifact_fingerprint": fingerprint(contract)}
+    completion = {"artifact_contract": contract, "artifact_fingerprint": fingerprint(contract)}
     expected = fingerprint(canonical_contract(contract))
-    assert certificate["artifact_fingerprint"] != expected
-    assert _certificate_matches_contract(certificate, expected)
+    assert completion["artifact_fingerprint"] != expected
+    assert _completion_matches_contract(completion, expected)
     changed = deepcopy(contract)
     changed["processing"]["task_model"]["hrf"] = "glover"
-    assert not _certificate_matches_contract(certificate, fingerprint(canonical_contract(changed)))
-    certificate["artifact_fingerprint"] = "corrupt"
-    assert not _certificate_matches_contract(certificate, expected)
-    assert not _certificate_matches_contract({}, expected)
+    assert not _completion_matches_contract(completion, fingerprint(canonical_contract(changed)))
+    completion["artifact_fingerprint"] = "corrupt"
+    assert not _completion_matches_contract(completion, expected)
+    assert not _completion_matches_contract({}, expected)
 
 
 def test_registry_preview_assessment_and_registration_accept_equivalent_recorded_model(
@@ -123,14 +123,10 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     import yaml
 
     from nro.modules.firstlevels import task_models
+    from nro.orchestration.artifact_records import file_record
     from nro.orchestration.catalog import module_descriptor
     from nro.orchestration.contracts import WorkItemSpec
-    from nro.orchestration.manifests import (
-        MANIFEST_VERSION,
-        assess_registry,
-        file_record,
-        preview_registry,
-    )
+    from nro.orchestration.manifests import assess_registry, preview_registry
     from nro.orchestration.registry import Registry
 
     model_path = tmp_path / "model.yml"
@@ -142,7 +138,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     registered = registry.register_workflow(workflow)
     output = tmp_path / "output.txt"
     output.write_text("synthetic completed derivative")
-    entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}
+    entities = {"task": "task", "model": "main", "space": "ACPC", "smoothing": "0"}
     spec = WorkItemSpec.create(
         key="firstlevels:" + "a" * 64,
         module="firstlevels",
@@ -151,8 +147,8 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
         entities=entities,
         scope="subject",
         module_lineage_id=registered.lineages["firstlevels"],
-        config_fingerprint=workflow.configuration("firstlevels").fingerprint,
-        directory_label="main",
+        config_fingerprint=workflow.configuration("firstlevels").scientific_fingerprint,
+        directory_label=registered.directory_for("firstlevels"),
         runtime_config=registry.runtime_config_path(registered, "firstlevels"),
         command=("true",),
         dependencies=(),
@@ -177,21 +173,39 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
             )
 
     record_source_contract()
-    certificate = Path(row["manifest_path"])
-    certificate.parent.mkdir(parents=True, exist_ok=True)
-    certificate.write_text(
-        json.dumps(
-            {
-                "manifest_version": MANIFEST_VERSION,
-                "artifact_contract": recorded,
-                "artifact_fingerprint": old_fingerprint,
-                "revision_fingerprint": row["revision_fingerprint"],
-                "inputs": [],
-                "upstream": [],
-                "public_outputs": [file_record(output)],
-            }
+    completed = file_record(output)
+    with registry.connection(write=True) as db:
+        db.execute(
+            """INSERT INTO completions
+                   SELECT ?,NULL,?,?,?,?,?,c.config_id,c.config_fingerprint,
+                          c.lineage_fingerprint,c.resolved_yaml,?,?
+                   FROM module_lineages c WHERE c.id=?""",
+            (
+                work_item_id,
+                1,
+                "2026-01-01T00:00:00+00:00",
+                row["revision_fingerprint"],
+                json.dumps(recorded),
+                old_fingerprint,
+                "{}",
+                "[]",
+                row["module_lineage_id"],
+            ),
         )
-    )
+        db.execute(
+            """INSERT INTO artifacts(
+                   work_item_id,attempt_id,direction,path,size,mtime_ns,
+                   digest_algorithm,digest,metadata_json
+               ) VALUES (?,NULL,'output',?,?,?,?,?, '{}')""",
+            (
+                work_item_id,
+                completed["path"],
+                completed["size"],
+                completed["mtime_ns"],
+                "sha256",
+                completed["sha256"],
+            ),
+        )
     stamp = output.stat().st_mtime_ns
     assert preview_registry(registry)[work_item_id][0] == "fresh"
     assert registry.work_item_rows()[0]["artifact_fingerprint"] == old_fingerprint

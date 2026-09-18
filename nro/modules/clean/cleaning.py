@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 
 from nro.engine.bids import bids_entity, replace_bids_entity_token
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.images import (
     gifti_vertex_count,
     load_gifti_timeseries,
     save_gifti_timeseries,
-    sidecar_json_path,
 )
 from nro.engine.io import read_json, write_json
 from nro.engine.targets import is_fsaverage_space, is_surface_space
@@ -769,7 +769,7 @@ def _expected_input_groups(
 
 def _main_sidecar_path(vols: list[Path], surfs: list[Path]) -> Path:
     for p in vols:
-        if "_space-T1w_" in p.name:
+        if "_space-ACPC_" in p.name:
             return sidecar_json_path(p)
     if vols:
         return sidecar_json_path(vols[0])

@@ -20,7 +20,6 @@ import numpy as np
 from nro.engine.images import nifti_is_valid
 from nro.engine.io import atomic_output_path, write_json
 from nro.modules.func.contract import MARSS_DIAGNOSTIC_METHOD
-from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 
 MARSS_PACKAGE_VERSION = "1.0.2"
@@ -512,7 +511,7 @@ def _package_version() -> str:
 
 def create_marss_step(
     *,
-    runner: Runner,
+    run_child: Callable[..., str | None],
     source_bold: Path,
     metadata: Mapping[str, Any],
     metadata_sources: Sequence[Path],
@@ -625,7 +624,7 @@ def create_marss_step(
                 temporary_path = Path(temporary)
                 corrected = temporary_path / "corrected.nii.gz"
                 artifact = temporary_path / "artifact.nii.gz"
-                runner.run_child(
+                run_child(
                     (
                         sys.executable,
                         "-m",

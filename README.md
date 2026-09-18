@@ -16,7 +16,7 @@ Derivatives are produced by _modules_ with configurable settings. Sequences of
 configured modules are organized into _workflows_.
 
 All module artifacts live under
-`BIDS/PROJECT/derivatives/nro/MODULE/MODULE_ID/`. Anatomy and functional
+`BIDS/PROJECT/derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. Anatomy and functional
 processing have separate directories, so workflows can select either
 configuration independently.
 
@@ -102,7 +102,7 @@ produce their cross-product:
 
 ```bash
 nro run -p 01 -P example -m networks \
-  --space fsnative T1w --smoothing 0 2
+  --space fsnative ACPC --smoothing 0 2
 ```
 
 The `main` workflow estimates networks with ICA. Select repeated connectivity
@@ -156,7 +156,7 @@ nro render -p 01 -P example -m networks firstlevels
 ```
 
 Seed-driven connectivity is skipped unless `--seeds` supplies subject-specific
-T1w coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
+ACPC coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
 file format and rendering controls.
 
 Common controls are:

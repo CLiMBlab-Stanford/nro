@@ -94,7 +94,13 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
     paths = BranchPaths(
         "feature", Path(values["bids"]), Path(values["work"]), Path(values["development"])
     )
-    output = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+    directory_label = registered.directory_for("anat")
+    output = (
+        paths.source_project("demo")
+        / "derivatives/nro/anat"
+        / directory_label
+        / "sub-01/sub-01_result.txt"
+    )
     spec = WorkItemSpec.create(
         key="extension",
         module="probe_extension",
@@ -104,7 +110,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         scope="subject",
         module_lineage_id=registered.lineages["anat"],
         config_fingerprint="science",
-        directory_label="main",
+        directory_label=directory_label,
         runtime_config=science.runtime_config_path(registered, "anat"),
         command=(sys.executable, "-m", "nro.probe_extension", str(output)),
         dependencies=(),

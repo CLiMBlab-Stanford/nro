@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional, Sequence
+from typing import Callable, Generic, Iterable, Mapping, Optional, Sequence, TypeVar
 
 from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json
@@ -312,6 +312,22 @@ class Step:
             completion_boundary=bool(completion_boundary),
             scientific_signature=cls._scientific_signature(parameters),
         )
+
+
+_Products = TypeVar("_Products")
+
+
+@dataclass(frozen=True)
+class StagePlan(Generic[_Products]):
+    """Group immutable step declarations with their named downstream products."""
+
+    steps: tuple[Step, ...]
+    products: _Products
+
+    def __post_init__(self) -> None:
+        """Reject accidental non-step declarations at the construction boundary."""
+        if any(not isinstance(step, Step) for step in self.steps):
+            raise TypeError("StagePlan.steps must contain only Step declarations")
 
 
 @dataclass

@@ -85,7 +85,7 @@ numeric identifiers. These are spatial heuristics, not functional localizer
 results or ground-truth labels. Correlations and ranks are retained.
 
 Outputs from every space and smoothing target share
-`derivatives/nro/networks/NETWORKS_ID/sub-ID/`. Their filenames include both
+`derivatives/nro/networks/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`. Their filenames include both
 entities.
 Public outputs include a multi-map `desc-networks_stat.dscalar.nii`, stability,
 homelessness, and overlap CIFTIs; label TSV/JSON; YAML publication manifest; and

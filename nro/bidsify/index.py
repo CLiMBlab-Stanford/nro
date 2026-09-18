@@ -42,12 +42,12 @@ class IngestionIndex:
             row
             for row in self.rows()
             if row["state"] in {"running", "cancel_requested"}
-            or row["state"] == "queued"
+            or (row["state"] == "queued"
             and (
                 row["branch"] == "main"
-                or row["branch"] in records
-                and not records[row["branch"]].retired
-            )
+                or (row["branch"] in records
+                and not records[row["branch"]].retired)
+            ))
         ]
 
     def summary(self, memory_gb: int | None = None) -> tuple[int, int, int]:

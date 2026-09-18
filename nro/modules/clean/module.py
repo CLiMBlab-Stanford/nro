@@ -27,9 +27,7 @@ from nro.engine.container import (
     add_container_arguments,
     build_container,
 )
-from nro.engine.images import (
-    sidecar_json_path,
-)
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import read_json, write_json
 from nro.engine.paths import (
     anatomical_manifest_path,

@@ -43,7 +43,8 @@ projection and distinguish undefined models from input-validation errors.
 
 ## Public artifacts and quality metadata
 
-Outputs are under `derivatives/nro/clean/CLEAN_ID/sub-ID/[ses-ID/]/` and retain
+Outputs are under
+`derivatives/nro/clean/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/[ses-ID/]/` and retain
 run, space, hemisphere where applicable, and `smoothing-Nmm` in their filenames.
 The output set includes NIfTI or paired GIFTI cleaned time courses, JSON
 sidecars, and a run/space/smoothing-specific manifest. Different combinations

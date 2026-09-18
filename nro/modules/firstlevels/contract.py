@@ -5,6 +5,10 @@ from pathlib import Path
 
 from nro.configuration.schema import scientific_values
 from nro.configuration.store import fingerprint
+from nro.engine.artifact_metadata import (
+    metadata_contract_compatible,
+    validate_metadata_fields,
+)
 from nro.engine.cifti import (
     INDEXED_CIFTI_SCHEMA,
     indexed_cifti_sidecar,
@@ -52,18 +56,18 @@ def firstlevels_output_contract() -> dict:
         "degrees_of_freedom": "run-conditional-satterthwaite",
         "input_denoising": "shared-policy-and-per-run-upstream-func-output",
         "missing_conditions": "omit-maps-record-reason",
-        "required_manifest_fields": [
-            "complete",
-            "model",
-            "node",
-            "configuration",
-            "definition_fingerprint",
-            "input_denoising",
-            "public_outputs",
-            "omissions",
-            "records",
-            "source_fits",
-        ],
+        "required_manifest_fields": {
+            "complete": "boolean",
+            "model": "string",
+            "node": "string",
+            "configuration": "mapping",
+            "definition_fingerprint": "string",
+            "input_denoising": "mapping",
+            "public_outputs": "string_list",
+            "omissions": "list",
+            "records": "list",
+            "source_fits": "mapping",
+        },
     }
 
 
@@ -72,11 +76,15 @@ def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[
     try:
         value = json.loads(Path(path).read_text())
         expected = firstlevels_output_contract()
-        if value.get("output_metadata_contract") != expected or value.get("complete") is not True:
+        if not metadata_contract_compatible(value.get("output_metadata_contract"), expected):
             return False, "Firstlevels publication contract differs"
-        for field in expected["required_manifest_fields"]:
-            if field not in value:
-                return False, f"Missing firstlevels field: {field}"
+        validate_metadata_fields(
+            value,
+            expected["required_manifest_fields"],
+            label="Firstlevels publication manifest",
+        )
+        if value["complete"] is not True:
+            return False, "Firstlevels publication is incomplete"
         if definition is not None and not _matches_definition(value, definition):
             return False, "Firstlevels model or configuration changed"
         if not isinstance(value["records"], list) or not isinstance(value["omissions"], list):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from dataclasses import replace
 from itertools import count
 from pathlib import Path
@@ -11,7 +13,7 @@ import numpy as np
 import yaml
 from nibabel.gifti import GiftiDataArray, GiftiImage
 
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.modules.dynconn.config import (
     InclusionConfig,
     InputsConfig,
@@ -126,18 +128,17 @@ def test_surface_module_concatenates_retained_frames(tmp_path: Path) -> None:
     assert manifest["published_frames"] == 6
     assert manifest["low_rank"] is None
 
-    compressed = _execute(
-        replace(
-            cfg,
-            output=replace(
-                cfg.output,
-                directory=tmp_path / "low-rank-out",
-                work_directory=tmp_path / "low-rank-work",
-            ),
-            low_rank=True,
-            low_rank_options=LowRankConfig(2, 2, 1),
-        )
+    compressed_cfg = replace(
+        cfg,
+        output=replace(
+            cfg.output,
+            directory=tmp_path / "low-rank-out",
+            work_directory=tmp_path / "low-rank-work",
+        ),
+        low_rank=True,
+        low_rank_options=LowRankConfig(2, 2, 1),
     )
+    compressed = _execute(compressed_cfg)
     compressed_image = nib.load(str(compressed["timeseries"]))
     assert compressed_image.shape == (3, 6)
     assert compressed_image.header.get_axis(0).step == 1.0
@@ -149,6 +150,21 @@ def test_surface_module_concatenates_retained_frames(tmp_path: Path) -> None:
     assert compressed_manifest["low_rank"]["requested_dimensions"] == 2
     assert compressed_manifest["low_rank"]["synthetic_frames"] == 3
     assert isinstance(compressed_manifest["low_rank"]["random_seed"], int)
+
+    for mask, run in zip(masks, runs):
+        mask.write_text("motion_outlier00\n0\n0\n0\n0\n")
+        for path in run:
+            _sidecar(path, mask, frames=4, retained=4)
+    eligibility = compressed_cfg.output.work_directory / "run-eligibility.json"
+    future = time.time() + 10
+    os.utime(eligibility, (future, future))
+    compressed["timeseries"].unlink()
+    compressed["manifest"].unlink()
+    (compressed_cfg.output.work_directory / "low-rank-summary.json").unlink()
+
+    refreshed = _execute(compressed_cfg)
+    refreshed_manifest = yaml.safe_load(refreshed["manifest"].read_text())
+    assert refreshed_manifest["concatenated_frames"] == 8
 
 
 def test_volume_module_writes_uncompressed_four_dimensional_nifti(tmp_path: Path) -> None:

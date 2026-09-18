@@ -25,6 +25,7 @@ from nro.orchestration.compiled_request import export_workflow
 from nro.orchestration.planner import Planner
 from nro.orchestration.registry import APPLICATION_ID, SCHEMA_VERSION, Registry
 from nro.orchestration.runtime import select_runtime_config
+from nro.orchestration.workflow_registry import lineage_directory_label
 from nro.qc.registration import build_parser as registration_parser
 
 
@@ -72,7 +73,7 @@ def test_registry_requires_the_current_schema_without_implicit_migration(
 
     with pytest.raises(
         RuntimeError,
-        match="This development build does not migrate registries",
+        match="Runtime commands do not modify registry schemas",
     ):
         registry.initialize()
 
@@ -226,13 +227,23 @@ def test_registry_reuses_config_lineage_across_workflows(tmp_path: Path) -> None
     second = registry.register_workflow(store.resolve("experiment_nogsr"))
 
     assert first.revision == 1
-    assert first.directories["anat"] == "main"
-    assert first.directories["func"] == "experiment"
-    assert first.directories["clean"] == "main"
+    assert first.directories["anat"] == lineage_directory_label(
+        "main", first.lineage_fingerprints["anat"]
+    )
+    assert first.directories["func"] == lineage_directory_label(
+        "experiment", first.lineage_fingerprints["func"]
+    )
+    assert first.directories["clean"] == lineage_directory_label(
+        "main", first.lineage_fingerprints["clean"]
+    )
     assert second.lineages["anat"] == first.lineages["anat"]
     assert second.lineages["func"] == first.lineages["func"]
-    assert second.directories["clean"] == "nogsr"
-    assert second.directories["networks"] == "main-2"
+    assert second.directories["clean"] == lineage_directory_label(
+        "nogsr", second.lineage_fingerprints["clean"]
+    )
+    assert second.directories["networks"] == lineage_directory_label(
+        "main", second.lineage_fingerprints["networks"]
+    )
 
 
 def test_func_variants_share_one_anatomical_work_item(tmp_path: Path) -> None:
@@ -259,10 +270,14 @@ def test_func_variants_share_one_anatomical_work_item(tmp_path: Path) -> None:
     variant = registry.register_workflow(variant_workflow)
 
     assert main.lineages["func"] != variant.lineages["func"]
-    assert main.directories["func"] == "main"
-    assert variant.directories["func"] == "variant"
+    assert main.directories["func"] == lineage_directory_label(
+        "main", main.lineage_fingerprints["func"]
+    )
+    assert variant.directories["func"] == lineage_directory_label(
+        "variant", variant.lineage_fingerprints["func"]
+    )
     assert variant.lineages["anat"] == main.lineages["anat"]
-    assert variant.directories["anat"] == main.directories["anat"] == "main"
+    assert variant.directories["anat"] == main.directories["anat"]
 
     planner = Planner(registry, bids_root=bids)
     main_specs = planner.plan_subject(
@@ -322,9 +337,15 @@ def test_workflow_mutation_allocates_numeric_revision_and_reuses_prefix(
     repeated = registry.register_workflow(store.resolve("experiment"))
 
     assert second.revision == 2
-    assert second.directories["func"] == "experiment"
-    assert second.directories["clean"] == "nogsr"
-    assert second.directories["networks"] == "main-2"
+    assert second.directories["func"] == lineage_directory_label(
+        "experiment", second.lineage_fingerprints["func"]
+    )
+    assert second.directories["clean"] == lineage_directory_label(
+        "nogsr", second.lineage_fingerprints["clean"]
+    )
+    assert second.directories["networks"] == lineage_directory_label(
+        "main", second.lineage_fingerprints["networks"]
+    )
     assert repeated.revision_id == second.revision_id
     assert not repeated.created
     assert len(registry.workflow_history("experiment")) == 2
@@ -367,12 +388,15 @@ def test_central_import_reconciles_rebuilt_branch_revision_and_configuration(
     assert tuple(lineage) == ("rebuilt-configuration", "rebuilt: true\n")
 
 
-def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
+def test_all_lineage_directories_are_content_addressed(tmp_path: Path) -> None:
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(ConfigStore().resolve("main"))
 
     assert registered.directories == {
-        configuration_class: "main" for configuration_class in CONFIGURATION_CLASSES
+        configuration_class: lineage_directory_label(
+            "main", registered.lineage_fingerprints[configuration_class]
+        )
+        for configuration_class in CONFIGURATION_CLASSES
     }
 
     anat_id, _ = load_runtime_configuration(
@@ -391,12 +415,15 @@ def test_all_main_lineage_reserves_main_directory(tmp_path: Path) -> None:
     networks_id, networks = load_runtime_configuration(
         registry.runtime_config_path(registered, "networks"), "networks"
     )
-    assert (anat_id, func_id, clean_id, micro_id, networks_id) == ("main",) * 5
-    assert func["anat_directory"] == "main"
-    assert clean["func_directory"] == "main"
-    assert clean["anat_directory"] == "main"
-    assert micro["clean_directory"] == "main"
-    assert networks["microparcellation_directory"] == "main"
+    assert (anat_id, func_id, clean_id, micro_id, networks_id) == tuple(
+        registered.directories[name]
+        for name in ("anat", "func", "clean", "microparcellation", "networks")
+    )
+    assert func["anat_directory"] == registered.directories["anat"]
+    assert clean["func_directory"] == registered.directories["func"]
+    assert clean["anat_directory"] == registered.directories["anat"]
+    assert micro["clean_directory"] == registered.directories["clean"]
+    assert networks["microparcellation_directory"] == registered.directories["microparcellation"]
 
 
 def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -> None:
@@ -411,9 +438,7 @@ def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -
     second = registry.register_workflow(store.resolve("main"))
 
     assert second.revision == 2
-    assert second.directories == {
-        configuration_class: "main" for configuration_class in CONFIGURATION_CLASSES
-    }
+    assert second.directories == first.directories
     assert second.lineages == first.lineages
 
 
@@ -433,7 +458,9 @@ def test_changed_named_config_gets_new_lineage_reused_by_contents(tmp_path: Path
     changed = registry.register_workflow(store.resolve("experiment"))
     matching = registry.register_workflow(store.resolve("same_content"))
 
-    assert first.directories["func"] == "alternate"
+    assert first.directories["func"] == lineage_directory_label(
+        "alternate", first.lineage_fingerprints["func"]
+    )
     assert changed.directories == first.directories
     assert matching.directories == changed.directories
     assert matching.lineages == changed.lineages
@@ -470,7 +497,13 @@ def test_module_directories_use_independent_configuration_namespaces(tmp_path: P
     _write_yaml(workflow_path, {"func": "second"})
     second = registry.register_workflow(store.resolve("experiment"))
 
-    assert occupied.directories["func"] == "alternate"
-    assert first.directories["func"] == "first"
+    assert occupied.directories["func"] == lineage_directory_label(
+        "alternate", occupied.lineage_fingerprints["func"]
+    )
+    assert first.directories["func"] == lineage_directory_label(
+        "first", first.lineage_fingerprints["func"]
+    )
     assert second.revision == 2
-    assert second.directories["func"] == "second"
+    assert second.directories["func"] == lineage_directory_label(
+        "second", second.lineage_fingerprints["func"]
+    )
