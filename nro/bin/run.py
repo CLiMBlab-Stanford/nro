@@ -27,7 +27,7 @@ from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
 DEFAULT_CONCURRENCY = 50
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
-_RESUMABLE_STATUSES = frozenset({"Queued", "Stopped", "Error"})
+_RESUMABLE_STATUSES = frozenset({"Queued", "Waiting", "Stopped", "Error"})
 _DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Corrupt", "Blocked"})
 
 
@@ -88,6 +88,10 @@ def _resumable_rows(
             row.get("demanded") and status in _DEMAND_GATED_RESUME_STATUSES
         ):
             continue
+        if "resume_workflow_ids" in row and not row.get("resume_workflow_ids"):
+            # Dependencies are reconstructed from the requested terminal.  Do
+            # not independently re-plan every member of its closure.
+            continue
         if selection.projects and row["project"] not in selection.projects:
             continue
         if selection.participants and row["participant"] not in selection.participants:
@@ -107,6 +111,31 @@ def _resumable_rows(
             continue
         selected.append(row)
     return selected
+
+
+def _terminal_resume_rows(
+    rows: list[dict], dependencies: list[list[int]] | list[tuple[int, int]]
+) -> list[dict]:
+    """Drop resumable dependencies covered by another resumable endpoint."""
+    candidates = {int(row["id"]) for row in rows}
+    downstream: dict[int, set[int]] = {}
+    for work_item_id, upstream_id in dependencies:
+        downstream.setdefault(int(upstream_id), set()).add(int(work_item_id))
+
+    covered: set[int] = set()
+    for candidate in candidates:
+        pending = list(downstream.get(candidate, ()))
+        visited: set[int] = set()
+        while pending:
+            descendant = pending.pop()
+            if descendant in visited:
+                continue
+            visited.add(descendant)
+            if descendant in candidates:
+                covered.add(candidate)
+                break
+            pending.extend(downstream.get(descendant, ()))
+    return [row for row in rows if int(row["id"]) not in covered]
 
 
 def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSelection:
@@ -433,9 +462,17 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         raise SystemExit("--drain-minutes must be nonnegative and shorter than --time")
     if args.worker_idle_timeout < 1:
         raise SystemExit("--worker-idle-timeout must be at least 1 second")
-    inventory = discover_bids_inventory(bids_root)
-    actual_projects = list(inventory)
-    if selection.projects:
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    values = site.settings()[0]
+    branch_execution = (
+        record.get("mode") == "branch" or implementation_path(Path(values["registry"])).is_file()
+    )
+    inventory = None if args.resume and branch_execution else discover_bids_inventory(bids_root)
+    actual_projects = list(inventory or {})
+    if inventory is None:
+        projects = list(selection.projects)
+    elif selection.projects:
         absent_projects = sorted(set(selection.projects) - set(actual_projects))
         if absent_projects:
             raise SystemExit(
@@ -444,21 +481,15 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         projects = list(selection.projects)
     else:
         projects = actual_projects
-    if not projects:
+    if inventory is not None and not projects:
         raise SystemExit(f"No BIDS projects were found under {bids_root}")
-
-    from nro.orchestration.scheduler_implementation import implementation_path
-
-    values = site.settings()[0]
-    branch_execution = (
-        record.get("mode") == "branch" or implementation_path(Path(values["registry"])).is_file()
-    )
     if branch_execution:
         from nro.orchestration.branch_store import BranchStore
 
         registry = BranchStore(Path(values["registry"])).registry_for_checkout(site.CHECKOUT)
         new_registry = False
     else:
+        assert inventory is not None
         registry = Registry.for_project(projects[0], bids_root=bids_root)
         new_registry = not registry.existing_database_path().is_file()
         registry.replace_bids_inventory(inventory)
@@ -483,6 +514,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             resumed_rows = _resumable_rows(
                 report["rows"], selection, visible_ids=set(report["visible_ids"])
             )
+            resumed_rows = _terminal_resume_rows(resumed_rows, report["dependencies"])
         else:
             resumed_rows = _resumable_rows(registry.work_item_status_snapshot(), selection)
         if not resumed_rows:

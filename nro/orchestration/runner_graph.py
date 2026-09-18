@@ -669,25 +669,36 @@ class RunnerGraph:
     def changed_steps(self, path: Path, *, signature: str) -> frozenset[str]:
         """Return nodes whose scientific declarations changed from the prior contract.
 
-        A new work item has no prior contract and therefore relies on ordinary
-        artifact freshness. When a work-item contract changes, nodes are
-        compared independently so the runner can invalidate only changed nodes
-        and their descendants. The enclosing signature is intentionally not a
+        A new work item with no outputs can rely on ordinary artifact
+        freshness. Existing outputs without a successful runner contract are
+        untrusted, because they may have been produced by a failed attempt
+        under a different graph. In that case every node with existing output
+        is invalidated. When a prior contract exists, nodes are compared
+        independently so the runner can invalidate only changed nodes and
+        their descendants. The enclosing signature is intentionally not a
         node-level freshness input.
         """
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before comparing contracts.")
+
+        def existing_outputs() -> frozenset[str]:
+            return frozenset(
+                step.id
+                for step in self.ordered_steps()
+                if any(output.exists() for output in step.outputs)
+            )
+
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return frozenset()
+            return existing_outputs()
         if not isinstance(existing, dict):
-            return frozenset()
+            return existing_outputs()
         if existing.get("signature") == signature:
             self.bind_contract(path, signature=signature)
         old_nodes = existing.get("nodes")
         if not isinstance(old_nodes, list):
-            return frozenset()
+            return existing_outputs()
         previous_version = int(existing.get("version", 0) or 0)
         if previous_version < 3:
             # Version 2 cannot identify the scientific parameters of one node.

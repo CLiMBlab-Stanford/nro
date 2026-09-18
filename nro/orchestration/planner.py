@@ -7,8 +7,15 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from nro.configuration.markup import MarkupStore
-from nro.configuration.store import ResolvedWorkflow
-from nro.engine.bids import ENTITY_ORDER, discover_raw_runs, matches_filter, matches_selectors
+from nro.configuration.site import with_site_read_cache
+from nro.configuration.store import ResolvedWorkflow, fingerprint
+from nro.engine.bids import (
+    ENTITY_ORDER,
+    discover_raw_runs,
+    matches_filter,
+    matches_selectors,
+    with_bids_metadata_cache,
+)
 from nro.engine.cli import matches_module_lineage
 from nro.engine.image_paths import image_source_paths
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
@@ -145,8 +152,13 @@ class Planner:
 
     def __init__(self, registry: WorkflowRegistry, *, bids_root: str | Path) -> None:
         """Bind scientific workflow records and raw BIDS without opening a scheduler."""
+        from nro.configuration.site import definitions_root, settings
+
         self.registry = registry
         self.bids_root = Path(bids_root).expanduser().resolve()
+        self._site_values = settings()[0]
+        self._definitions_root = definitions_root()
+        self._module_plan_cache: dict[tuple[object, ...], tuple[WorkItemSpec, ...]] = {}
 
     @staticmethod
     def participants(project_root: Path, requested: Sequence[str]) -> tuple[str, ...]:
@@ -154,6 +166,8 @@ class Planner:
         available = set(discover_bids_participants(project_root))
         return tuple(sorted(available.intersection(requested) if requested else available))
 
+    @with_site_read_cache
+    @with_bids_metadata_cache
     def plan(
         self,
         *,
@@ -265,6 +279,8 @@ class Planner:
             site_settings=site_settings,
         )
 
+    @with_site_read_cache
+    @with_bids_metadata_cache
     def plan_registered_targets(
         self,
         targets: Sequence[RegisteredTarget],
@@ -286,6 +302,7 @@ class Planner:
         unavailable: list[UnavailableSelection] = []
         matched: dict[str, list[str]] = {}
         seen: set[tuple[str, str, str, str, str]] = set()
+        planned_cache: dict[tuple[object, ...], tuple[WorkItemSpec, ...]] = {}
         for target in targets:
             identity = (
                 target.project,
@@ -305,27 +322,52 @@ class Planner:
                 selectors = None
             elif target.module == "firstlevels":
                 selectors = {"task": (entities["task"],)}
+            spaces = (entities["space"],) if "space" in entities else None
+            smoothing = (int(entities["smoothing"]),) if "smoothing" in entities else None
+            models = (
+                (f"{entities['task']}/{entities['model']}",)
+                if target.module == "firstlevels"
+                else ()
+            )
+            selected_memory = target.memory_gb if target.memory_gb is not None else memory_gb
+            selected_max_memory = (
+                target.max_memory_gb if target.max_memory_gb is not None else max_memory_gb
+            )
+            cache_key = (
+                target.project,
+                target.participant,
+                target.module,
+                target.workflow_id,
+                tuple(
+                    sorted(
+                        (key, None if value is None else tuple(value))
+                        for key, value in (selectors or {}).items()
+                    )
+                ),
+                spaces,
+                smoothing,
+                models,
+                selected_memory,
+                selected_max_memory,
+            )
             try:
-                planned = self.plan_subject(
-                    project=target.project,
-                    participant=target.participant,
-                    module=target.module,
-                    workflow=workflow,
-                    registered=registered,
-                    selectors=selectors,
-                    spaces=(entities["space"],) if "space" in entities else None,
-                    smoothing_levels=(int(entities["smoothing"]),)
-                    if "smoothing" in entities
-                    else None,
-                    models=(f"{entities['task']}/{entities['model']}",)
-                    if target.module == "firstlevels"
-                    else (),
-                    model_sets=(),
-                    memory_gb=target.memory_gb if target.memory_gb is not None else memory_gb,
-                    max_memory_gb=(
-                        target.max_memory_gb if target.max_memory_gb is not None else max_memory_gb
-                    ),
-                )
+                planned = planned_cache.get(cache_key)
+                if planned is None:
+                    planned = self.plan_subject(
+                        project=target.project,
+                        participant=target.participant,
+                        module=target.module,
+                        workflow=workflow,
+                        registered=registered,
+                        selectors=selectors,
+                        spaces=spaces,
+                        smoothing_levels=smoothing,
+                        models=models,
+                        model_sets=(),
+                        memory_gb=selected_memory,
+                        max_memory_gb=selected_max_memory,
+                    )
+                    planned_cache[cache_key] = planned
             except (FileNotFoundError, ParticipantUnavailableError) as error:
                 unavailable.append(
                     UnavailableSelection(
@@ -426,6 +468,8 @@ class Planner:
                 for request in plan.requests
             )
 
+    @with_site_read_cache
+    @with_bids_metadata_cache
     def plan_subject(
         self,
         *,
@@ -528,13 +572,35 @@ class Planner:
             target_pairs=target_pairs,
             memory_gb=memory_gb,
             max_memory_gb=max_memory_gb,
+            definitions_root=self._definitions_root,
+            gradient_coefficients_root=Path(self._site_values["gradient_coefficients"]),
             task_models=task_models,
             source_markup=source_markup,
         )
         descriptors = modules_through(target)
         planned: dict[str, tuple[WorkItemSpec, ...]] = {}
         for descriptor in descriptors:
-            planned[descriptor.name] = descriptor.plan(context, planned, descriptor)
+            upstream_keys = tuple(
+                (name, tuple(item.key for item in items)) for name, items in planned.items()
+            )
+            cache_key = (
+                descriptor.name,
+                project,
+                participant,
+                context.registered.lineage_fingerprints[descriptor.name],
+                tuple(str(run.path) for run in context.runs),
+                context.target_pairs,
+                fingerprint(context.task_models or {}),
+                fingerprint(context.source_markup.as_dict() if context.source_markup else {}),
+                context.memory_gb,
+                context.max_memory_gb,
+                upstream_keys,
+            )
+            cached = self._module_plan_cache.get(cache_key)
+            if cached is None:
+                cached = descriptor.plan(context, planned, descriptor)
+                self._module_plan_cache[cache_key] = cached
+            planned[descriptor.name] = cached
         return tuple(
             work_item for descriptor in descriptors for work_item in planned[descriptor.name]
         )

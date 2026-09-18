@@ -11,6 +11,11 @@ from nro.orchestration.branches import BranchTopology
 from nro.orchestration.contracts import WorkItemSpec
 
 
+def _logical_path(path: Path) -> Path:
+    """Normalize a controlled output path without touching the filesystem."""
+    return path.expanduser().absolute()
+
+
 def _prefixes_overlap(first: str | None, second: str | None) -> bool:
     """Return whether two filename-prefix claims can select the same file."""
     if first is None or second is None:
@@ -27,10 +32,10 @@ def output_contracts_overlap(
     second_expected: Sequence[Path],
 ) -> bool:
     """Return whether two public-output contracts can select the same path."""
-    first_root = first_root.expanduser().resolve()
-    second_root = second_root.expanduser().resolve()
-    first_outputs = {path.expanduser().resolve() for path in first_expected}
-    second_outputs = {path.expanduser().resolve() for path in second_expected}
+    first_root = _logical_path(first_root)
+    second_root = _logical_path(second_root)
+    first_outputs = {_logical_path(path) for path in first_expected}
+    second_outputs = {_logical_path(path) for path in second_expected}
     if first_outputs & second_outputs:
         return True
     if first_root != second_root:
@@ -67,14 +72,29 @@ def output_claims_overlap(first: WorkItemSpec, second: WorkItemSpec) -> bool:
 def validate_output_ownership(work_items: Sequence[WorkItemSpec]) -> None:
     """Reject graphs in which distinct vertices can publish the same path."""
     ordered = sorted(work_items, key=lambda item: item.key)
-    for index, first in enumerate(ordered):
-        for second in ordered[index + 1 :]:
-            if output_claims_overlap(first, second):
+    by_root: dict[Path, list[WorkItemSpec]] = {}
+    expected_owners: dict[Path, WorkItemSpec] = {}
+    for item in ordered:
+        for output in item.expected_outputs:
+            normalized = _logical_path(output)
+            previous = expected_owners.get(normalized)
+            if previous is not None:
                 raise ValueError(
                     "Work-item output claims overlap: "
-                    f"{first.key} ({first.output_root}, prefix={first.output_prefix!r}) and "
-                    f"{second.key} ({second.output_root}, prefix={second.output_prefix!r})"
+                    f"{previous.key} ({previous.output_root}, prefix={previous.output_prefix!r}) "
+                    f"and {item.key} ({item.output_root}, prefix={item.output_prefix!r})"
                 )
+            expected_owners[normalized] = item
+        by_root.setdefault(_logical_path(item.output_root), []).append(item)
+    for group in by_root.values():
+        for index, first in enumerate(group):
+            for second in group[index + 1 :]:
+                if output_claims_overlap(first, second):
+                    raise ValueError(
+                        "Work-item output claims overlap: "
+                        f"{first.key} ({first.output_root}, prefix={first.output_prefix!r}) and "
+                        f"{second.key} ({second.output_root}, prefix={second.output_prefix!r})"
+                    )
 
 
 def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
@@ -100,10 +120,10 @@ def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
             parents = [by_key[parent] for parent in sorted(set(spec.dependencies))]
             inputs = []
             for path in spec.input_paths:
-                resolved = path.expanduser().resolve()
+                resolved = _logical_path(path)
                 references = []
                 for parent in parents:
-                    root = parent.output_root.expanduser().resolve()
+                    root = _logical_path(parent.output_root)
                     if not resolved.is_relative_to(root):
                         continue
                     prefix = parent.output_prefix
@@ -120,10 +140,10 @@ def scientific_contracts(work_items: Sequence[WorkItemSpec]) -> dict[str, dict]:
                 if len(references) > 1:
                     raise ValueError(f"Direct input has ambiguous producer ownership: {path}")
                 inputs.append(references[0] if references else {"source": str(resolved)})
-            root = spec.output_root.expanduser().resolve()
+            root = _logical_path(spec.output_root)
             members = []
             for path in spec.expected_outputs:
-                resolved = path.expanduser().resolve()
+                resolved = _logical_path(path)
                 if not resolved.is_relative_to(root):
                     raise ValueError(f"Expected output escapes its artifact root: {path}")
                 members.append(str(resolved.relative_to(root)))

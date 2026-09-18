@@ -295,6 +295,12 @@ def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
         partition=None,
     )
 
+    initial = {row["module"]: row for row in registry.work_item_status_snapshot()}
+    assert initial["anat"]["status"] == "Queued"
+    assert initial["anat"]["unfinished_dependency_ids"] == ()
+    assert initial["networks"]["status"] == "Waiting"
+    assert initial["networks"]["unfinished_dependency_ids"] == (initial["anat"]["id"],)
+
     assert Worker(registry, resource_class="large", idle_timeout=0.2, poll_interval=0.02).run() == 0
     worker_log = capsys.readouterr().out
     assert "started (Slurm job " in worker_log

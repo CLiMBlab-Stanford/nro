@@ -170,6 +170,8 @@ def gradient_unwarping_records(
     *,
     mode: str,
     markup=None,
+    definitions: Path | None = None,
+    coefficient_root: Path | None = None,
 ) -> tuple[list[dict[str, object]], dict[Path, GradientUnwarpingResolution]]:
     """Resolve path-independent processing records for selected BIDS images."""
     if str(mode).strip().lower() == "off":
@@ -179,12 +181,23 @@ def gradient_unwarping_records(
     records: list[dict[str, object]] = []
     resolutions: dict[Path, GradientUnwarpingResolution] = {}
     sources = sorted({Path(image).expanduser().absolute() for image in images})
+    selected_definitions = definitions_root() if definitions is None else definitions
+    selected_coefficients = (
+        Path(settings()[0]["gradient_coefficients"])
+        if coefficient_root is None
+        else coefficient_root
+    )
     for source in sources:
         try:
             metadata = resolve_bids_metadata(source, markup=markup).values
         except FileNotFoundError:
             metadata = {}
-        resolution = resolve_gradient_unwarping(metadata, mode=mode)
+        resolution = resolve_gradient_unwarping(
+            metadata,
+            mode=mode,
+            definitions=selected_definitions,
+            coefficient_root=selected_coefficients,
+        )
         resolutions[source] = resolution
         records.append({"source": str(source), **resolution.scientific_record()})
     return records, resolutions

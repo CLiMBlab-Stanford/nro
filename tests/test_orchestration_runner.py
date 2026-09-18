@@ -787,6 +787,70 @@ def test_module_dag_contract_rejects_topology_change_for_same_signature(
         changed.reconcile_contract(contract, signature="source-and-workflow")
 
 
+@pytest.mark.parametrize("contract_value", (None, "not JSON", "[]", "{}"))
+def test_uncontracted_existing_outputs_are_not_trusted(
+    tmp_path: Path, contract_value: str | None
+) -> None:
+    contract = tmp_path / "runner-contract.json"
+    if contract_value is not None:
+        contract.write_text(contract_value)
+    existing = tmp_path / "existing.txt"
+    missing = tmp_path / "missing.txt"
+    existing.write_text("partial attempt")
+    graph = RunnerGraph("Interrupted")
+    existing_step = graph.add(
+        Step.python(name="Existing", outputs=(existing,), action=lambda: None)
+    )
+    graph.add(Step.python(name="Missing", outputs=(missing,), action=lambda: None))
+    graph.freeze()
+
+    assert graph.changed_steps(contract, signature="current") == frozenset({existing_step.id})
+
+
+def test_runner_contract_changes_remain_step_specific(tmp_path: Path) -> None:
+    contract = tmp_path / "runner-contract.json"
+    first = RunnerGraph("Independent siblings")
+    first.add(
+        Step.python(
+            name="Changed",
+            outputs=(tmp_path / "changed.txt",),
+            parameters={"method": "old"},
+            action=lambda: None,
+        )
+    )
+    first.add(
+        Step.python(
+            name="Unchanged",
+            outputs=(tmp_path / "unchanged.txt",),
+            parameters={"method": "stable"},
+            action=lambda: None,
+        )
+    )
+    first.freeze()
+    first.reconcile_contract(contract, signature="same-work-item")
+
+    current = RunnerGraph("Independent siblings")
+    changed = current.add(
+        Step.python(
+            name="Changed",
+            outputs=(tmp_path / "changed.txt",),
+            parameters={"method": "new"},
+            action=lambda: None,
+        )
+    )
+    current.add(
+        Step.python(
+            name="Unchanged",
+            outputs=(tmp_path / "unchanged.txt",),
+            parameters={"method": "stable"},
+            action=lambda: None,
+        )
+    )
+    current.freeze()
+
+    assert current.changed_steps(contract, signature="same-work-item") == frozenset({changed.id})
+
+
 def test_module_dag_contract_ignores_source_capture_relocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -412,6 +412,7 @@ def _create_acpc_registration_step(
 def _create_acpc_grid_step(
     *,
     source: Path,
+    source_mask: Path,
     template: Path,
     transform: Path,
     output: Path,
@@ -422,10 +423,17 @@ def _create_acpc_grid_step(
     return Step.python(
         name="Construct ACPC Output Grid",
         outputs=(output,),
-        inputs=(source, template, transform),
+        inputs=(source, source_mask, template, transform),
         force=force,
-        action=lambda: create_acpc_grid(source, template, transform, output, margin_mm=margin_mm),
-        parameters={"margin_mm": float(margin_mm), "resolution": "source"},
+        action=lambda: create_acpc_grid(
+            source, source_mask, template, transform, output, margin_mm=margin_mm
+        ),
+        parameters={
+            "extent": "anatomical_mask",
+            "margin_mm": float(margin_mm),
+            "resolution": "source",
+            "transform_direction": "moving_to_fixed",
+        },
     )
 
 
@@ -480,6 +488,7 @@ def _create_acpc_inverse_step(*, source: Path, output: Path, force: bool) -> Ste
 def _create_acpc_qc_step(
     *,
     source: Path,
+    source_mask: Path,
     aligned: Path,
     template: Path,
     transform: Path,
@@ -490,12 +499,12 @@ def _create_acpc_qc_step(
     """Validate rigid geometry and record compact ACPC alignment measures."""
 
     def action() -> None:
-        write_json(output, acpc_quality(source, aligned, template, transform, grid))
+        write_json(output, acpc_quality(source, source_mask, aligned, template, transform, grid))
 
     return Step.python(
         name="Validate ACPC Pose Alignment",
         outputs=(output,),
-        inputs=(source, aligned, template, transform, grid),
+        inputs=(source, source_mask, aligned, template, transform, grid),
         force=force,
         action=action,
     )

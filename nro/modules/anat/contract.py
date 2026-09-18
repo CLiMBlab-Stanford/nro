@@ -40,6 +40,16 @@ ANATOMICAL_MANIFEST_FIELDS = {
 }
 
 
+def pose_normalization_contract() -> dict[str, object]:
+    """Describe the substantive ACPC pose-normalization method."""
+    return {
+        "extent": "anatomical_mask",
+        "margin_mm": 5.0,
+        "resolution": "selected_anatomical",
+        "transform_direction": "moving_to_fixed",
+    }
+
+
 def anatomical_output_contract() -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     return {"publication_manifest_fields": dict(ANATOMICAL_MANIFEST_FIELDS)}

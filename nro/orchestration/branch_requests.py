@@ -1,7 +1,11 @@
 """Compile branch-owned demand and hand it to the central scheduler."""
 
+from __future__ import annotations
+
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
 
 from nro.configuration.site import CHECKOUT, protected_site_fingerprint, settings
 from nro.orchestration.branch_store import BranchStore
@@ -10,6 +14,37 @@ from nro.orchestration.compiled_request import encode_spec, export_workflow
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.execution_pins import capture_execution
+
+if TYPE_CHECKING:
+    from nro.orchestration.contracts import WorkItemSpec
+    from nro.orchestration.planner import RequestPlan
+    from nro.orchestration.workflow_registry import RegisteredWorkflow
+
+
+@dataclass
+class _RequestGroup:
+    """One project/workflow demand record with all independent endpoints."""
+
+    project: str
+    registered: RegisteredWorkflow
+    work_items: dict[str, WorkItemSpec]
+    terminal_keys: list[str]
+
+
+def _request_groups(requests: Sequence[RequestPlan]) -> tuple[_RequestGroup, ...]:
+    """Coalesce one invocation's endpoints by project and workflow."""
+    groups: dict[tuple[str, str], _RequestGroup] = {}
+    for request in requests:
+        key = (request.project, request.workflow_id)
+        group = groups.get(key)
+        if group is None:
+            group = _RequestGroup(request.project, request.registered, {}, [])
+            groups[key] = group
+        group.work_items.update((spec.key, spec) for spec in request.work_items)
+        group.terminal_keys.extend(request.terminal_keys)
+    for group in groups.values():
+        group.terminal_keys[:] = dict.fromkeys(group.terminal_keys)
+    return tuple(groups.values())
 
 
 def register_requests(
@@ -65,7 +100,7 @@ def register_requests(
         )
         central = command(control, paths.bids)
         entries = []
-        for request in plan.requests:
+        for request in _request_groups(plan.requests):
             payload = dict(
                 protocol=1,
                 branch=name,
@@ -74,9 +109,11 @@ def register_requests(
                 context=ExecutionContext(
                     paths, request.project, request.terminal_keys[0], ()
                 ).as_dict(),
-                specifications=[encode_spec(spec) for spec in request.work_items],
-                revisions={spec.key: revisions[spec.key] for spec in request.work_items},
-                contracts={spec.key: records[spec.key].contract for spec in request.work_items},
+                specifications=[encode_spec(spec) for spec in request.work_items.values()],
+                revisions={spec.key: revisions[spec.key] for spec in request.work_items.values()},
+                contracts={
+                    spec.key: records[spec.key].contract for spec in request.work_items.values()
+                },
                 terminals=list(request.terminal_keys),
                 inherit=inherit,
                 workflow=export_workflow(scientific, request.registered),

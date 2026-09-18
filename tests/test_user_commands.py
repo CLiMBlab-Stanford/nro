@@ -8,7 +8,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.bin.run import _resumable_rows, _resume_workflows, _write_worker_script, build_parser
+from nro.bin.run import (
+    _resumable_rows,
+    _resume_workflows,
+    _terminal_resume_rows,
+    _write_worker_script,
+    build_parser,
+)
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
 from nro.bin.status import _render_report
@@ -417,6 +423,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
         for index, (status, demanded) in enumerate(
             (
                 ("Queued", False),
+                ("Waiting", False),
                 ("Stopped", False),
                 ("Error", False),
                 ("Missing", False),
@@ -436,6 +443,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
 
     assert [(row["status"], bool(row["demanded"])) for row in selected] == [
         ("Queued", False),
+        ("Waiting", False),
         ("Stopped", False),
         ("Error", False),
         ("Missing", True),
@@ -443,6 +451,41 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
         ("Corrupt", True),
         ("Blocked", True),
     ]
+
+
+def test_resume_reconstructs_dependencies_from_requested_terminals() -> None:
+    selection = CoreSelection((), (), (), (), {}, (), ())
+    common = {
+        "status": "Queued",
+        "demanded": True,
+        "project": "demo",
+        "participant": "01",
+        "workflow_ids": "main",
+        "entities_json": "{}",
+    }
+
+    selected = _resumable_rows(
+        [
+            {**common, "id": 1, "module": "anat", "resume_workflow_ids": ""},
+            {**common, "id": 2, "module": "networks", "resume_workflow_ids": "main"},
+        ],
+        selection,
+    )
+
+    assert [row["module"] for row in selected] == ["networks"]
+
+
+def test_resume_collapses_old_scheduler_dependency_rows_to_endpoints() -> None:
+    rows = [
+        {"id": 1, "module": "anat"},
+        {"id": 2, "module": "func"},
+        {"id": 3, "module": "clean"},
+        {"id": 4, "module": "networks"},
+    ]
+
+    selected = _terminal_resume_rows(rows, [(2, 1), (3, 2), (4, 3)])
+
+    assert [row["module"] for row in selected] == ["networks"]
 
 
 def test_run_can_disable_ancestor_reuse() -> None:
@@ -1290,7 +1333,7 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
     status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
     assert set(report) == {"work_items", "errors", "blocked_work_items", "bidsification"}
-    assert {row["status"] for row in report["work_items"]} == {"Queued"}
+    assert {row["status"] for row in report["work_items"]} == {"Queued", "Waiting"}
     assert report["errors"] == []
     assert report["blocked_work_items"] == []
 

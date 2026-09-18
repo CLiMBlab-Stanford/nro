@@ -11,6 +11,18 @@ import numpy as np
 _LPS_RAS = np.diag((-1.0, -1.0, 1.0, 1.0))
 
 
+def _moving_to_fixed_ras(transform: Path) -> np.ndarray:
+    """Return the forward point map represented by an ANTs affine.
+
+    ANTs stores the fixed-to-moving map used during image resampling. Mapping
+    points from the moving source image into fixed space therefore requires its
+    inverse.
+    """
+    fixed_to_moving_lps, _center, _document = read_itk_affine(transform)
+    fixed_to_moving_ras = _LPS_RAS @ fixed_to_moving_lps @ _LPS_RAS
+    return np.linalg.inv(fixed_to_moving_ras)
+
+
 def read_itk_affine(path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     """Read an ITK affine stored in the MATLAB file emitted by ANTs."""
     from scipy.io import loadmat  # type: ignore
@@ -55,29 +67,45 @@ def invert_itk_affine(source: Path, destination: Path) -> None:
     )
 
 
+def _masked_corners(image, mask) -> np.ndarray:
+    """Return voxel-edge corners around the nonzero mask extent."""
+    if image.shape[:3] != mask.shape[:3] or not np.allclose(image.affine, mask.affine, atol=1e-4):
+        raise ValueError("The anatomical image and pose mask must share a grid")
+    values = np.asarray(mask.dataobj)
+    if values.ndim != 3:
+        raise ValueError("ACPC grid construction requires a three-dimensional pose mask")
+    occupied = np.isfinite(values) & (values > 0)
+    if not np.any(occupied):
+        raise ValueError("The anatomical pose mask is empty")
+    bounds = []
+    for axis in range(3):
+        other_axes = tuple(index for index in range(3) if index != axis)
+        indices = np.flatnonzero(np.any(occupied, axis=other_axes))
+        bounds.append((float(indices[0]) - 0.5, float(indices[-1]) + 0.5))
+    return np.array(list(itertools.product(*bounds)), dtype=np.float64)
+
+
 def create_acpc_grid(
     source: Path,
+    source_mask: Path,
     template: Path,
     transform: Path,
     destination: Path,
     *,
     margin_mm: float = 5.0,
 ) -> None:
-    """Create a template-oriented grid that covers the rigidly transformed source."""
+    """Create a template-oriented grid around the transformed anatomical mask."""
     import nibabel as nib  # type: ignore
 
     image = nib.load(str(source))
+    mask = nib.load(str(source_mask))
     reference = nib.load(str(template))
     if len(image.shape) < 3 or len(reference.shape) < 3:
         raise ValueError("ACPC grid construction requires three-dimensional images")
-    rigid_lps, _center, _document = read_itk_affine(transform)
-    rigid_ras = _LPS_RAS @ rigid_lps @ _LPS_RAS
-    corners = np.array(
-        list(itertools.product(*[(-0.5, float(size) - 0.5) for size in image.shape[:3]])),
-        dtype=np.float64,
-    )
+    moving_to_fixed_ras = _moving_to_fixed_ras(transform)
+    corners = _masked_corners(image, mask)
     source_world = nib.affines.apply_affine(image.affine, corners)
-    transformed = nib.affines.apply_affine(rigid_ras, source_world)
+    transformed = nib.affines.apply_affine(moving_to_fixed_ras, source_world)
     directions = np.asarray(reference.affine[:3, :3], dtype=np.float64)
     directions /= np.linalg.norm(directions, axis=0)
     if not np.allclose(directions.T @ directions, np.eye(3), atol=1e-4):
@@ -101,6 +129,7 @@ def create_acpc_grid(
 
 def acpc_quality(
     source: Path,
+    source_mask: Path,
     aligned: Path,
     template: Path,
     transform: Path,
@@ -121,13 +150,10 @@ def acpc_quality(
 
     source_image = nib.load(str(source))
     grid_image = nib.load(str(grid))
-    rigid_ras = _LPS_RAS @ rigid_lps @ _LPS_RAS
-    corners = np.array(
-        list(itertools.product(*[(-0.5, float(size) - 0.5) for size in source_image.shape[:3]])),
-        dtype=np.float64,
-    )
+    moving_to_fixed_ras = _moving_to_fixed_ras(transform)
+    corners = _masked_corners(source_image, nib.load(str(source_mask)))
     transformed = nib.affines.apply_affine(
-        rigid_ras, nib.affines.apply_affine(source_image.affine, corners)
+        moving_to_fixed_ras, nib.affines.apply_affine(source_image.affine, corners)
     )
     voxels = nib.affines.apply_affine(np.linalg.inv(grid_image.affine), transformed)
     covered = bool(
@@ -135,7 +161,7 @@ def acpc_quality(
         and np.all(voxels <= np.asarray(grid_image.shape[:3], dtype=float) - 1 + 1e-3)
     )
     if not covered:
-        raise ValueError("ACPC grid does not cover the transformed anatomy")
+        raise ValueError("ACPC grid does not cover the transformed anatomical mask")
 
     aligned_image = nib.load(str(aligned))
     reference = resample_from_to(nib.load(str(template)), aligned_image, order=1)
@@ -155,6 +181,6 @@ def acpc_quality(
         "OrthogonalityError": orthogonality_error,
         "RotationDegrees": angle,
         "TranslationMillimeters": translation,
-        "GridCoversTransformedSource": covered,
+        "GridCoversTransformedMask": covered,
         "IntensityCorrelation": correlation,
     }

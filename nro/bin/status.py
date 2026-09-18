@@ -38,6 +38,7 @@ _STATUS_COLORS = {
     "Stopping": _YELLOW,
     "Stopped": _GRAY,
     "Queued": _BLUE,
+    "Waiting": _BLUE,
     "Blocked": _YELLOW,
     "Error": _RED + _BOLD,
     "Corrupt": _RED + _BOLD,

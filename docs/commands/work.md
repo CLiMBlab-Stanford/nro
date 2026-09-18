@@ -10,8 +10,9 @@ needs execution. No upfront catalog of all space/smoothing combinations is neede
 The command admits demand without starting a persistent service. If ready work
 needs worker capacity, it starts the ephemeral scheduler controller and sends
 requests directly over TCP. Concurrent invocations share the same controller.
-The controller exits after work and workers become idle; users do not manage it.
-`--no-submit` never starts the controller.
+The controller remains available for 12 hours after work and workers become
+idle, then exits. This avoids another Slurm wait when work is requested later
+the same day. Users do not manage it. `--no-submit` never starts the controller.
 
 Omitting `--module` requests every workflow endpoint, currently `dynconn`,
 `networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
@@ -69,8 +70,9 @@ option is unavailable before branch execution is activated.
 
 Use `--resume` when the original sequence of requests is inconvenient to
 reconstruct. A bare invocation selects registered work with status `Queued`,
-`Stopped`, or `Error`. It also selects `Missing`, `Stale`, or `Blocked` work
-that still has demand. Those three states do not create demand on their own.
+`Waiting`, `Stopped`, or `Error`. It also selects `Missing`, `Stale`, or
+`Blocked` work that still has demand. Those three states do not create demand
+on their own.
 The shared selectors narrow the selection; omitted selectors mean all existing
 resumable work rather than the usual workflow endpoints and default target.
 
@@ -136,8 +138,10 @@ field gives the specific cause; `Stale` does not guarantee all files still exist
 `Corrupt` means files exist but contradict their own artifact contract or
 completion evidence. A matching request rebuilds the artifact; successful
 publication replaces the corrupt state.
-Both reporting modes use the same status labels. `Queued` indicates pending
-demanded work, while `Blocked` indicates work waiting on upstream errors.
+Both reporting modes use the same status labels. `Queued` indicates demanded
+work whose dependencies are complete and which is waiting for worker capacity.
+`Waiting` indicates demanded work held behind unfinished dependencies.
+`Blocked` indicates demanded work held behind an upstream error.
 `Running` and `Error` describe current execution or an unresolved failed attempt.
 `Stopping` means cancellation is awaiting worker confirmation. `Stopped` means
 the latest attempt ended because a user cancelled its demand; it is not an

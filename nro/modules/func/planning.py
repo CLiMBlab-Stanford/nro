@@ -100,6 +100,8 @@ def plan_work_items(
             images,
             mode=gradient_mode,
             markup=context.source_markup,
+            definitions=context.definitions_root,
+            coefficient_root=context.gradient_coefficients_root,
         )
         bold_resolution = gradient_resolutions.get(run.path.expanduser().absolute())
         bold_gradient_applied = bool(bold_resolution and bold_resolution.applied)

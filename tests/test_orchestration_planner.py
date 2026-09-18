@@ -10,7 +10,7 @@ import yaml
 import nro.modules.func.planning as func_planning
 from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.store import ConfigStore
-from nro.modules.anat.contract import anatomical_output_contract
+from nro.modules.anat.contract import anatomical_output_contract, pose_normalization_contract
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.microparcellation.contract import microparcellation_output_contract
@@ -603,6 +603,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
             }
         ],
         "output_metadata": anatomical_output_contract(),
+        "pose_normalization": pose_normalization_contract(),
         "source_markup": source_markup,
     }
     assert by_module["func"][0].work_item_contract["processing"] == {

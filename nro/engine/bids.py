@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import itertools
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, time
+from functools import wraps
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .io import read_json
 
@@ -27,6 +29,26 @@ NON_RUN_ENTITIES = {
     "to",
     "mode",
 }
+
+_METADATA_CACHE: ContextVar[dict[tuple[object, ...], "BidsMetadata"] | None] = ContextVar(
+    "nro_bids_metadata_cache", default=None
+)
+
+
+def with_bids_metadata_cache(function: Callable) -> Callable:
+    """Reuse inherited metadata reads within one planner operation."""
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        if _METADATA_CACHE.get() is not None:
+            return function(*args, **kwargs)
+        token = _METADATA_CACHE.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _METADATA_CACHE.reset(token)
+
+    return wrapped
 
 
 def _source_markup():
@@ -156,13 +178,16 @@ def resolve_bids_metadata(
     sidecars at the same location and specificity are rejected as ambiguous.
     """
     path = Path(path).expanduser().absolute()
+    requested_root = (
+        Path(dataset_root).expanduser().absolute() if dataset_root is not None else None
+    )
+    cache = _METADATA_CACHE.get()
+    cache_key = (path, requested_root, markup)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
     if _is_excluded(path, markup):
         raise FileNotFoundError(f"BIDS image is excluded by source markup: {path}")
-    root = (
-        Path(dataset_root).expanduser().absolute()
-        if dataset_root is not None
-        else bids_dataset_root(path)
-    )
+    root = requested_root if requested_root is not None else bids_dataset_root(path)
     try:
         relative_parent = path.parent.relative_to(root)
     except ValueError as error:
@@ -212,7 +237,10 @@ def resolve_bids_metadata(
     ordered_sources = tuple(dict.fromkeys(sources))
     if not ordered_sources:
         raise FileNotFoundError(f"No applicable BIDS JSON metadata found for {path}")
-    return BidsMetadata(values=effective, sources=ordered_sources)
+    result = BidsMetadata(values=effective, sources=ordered_sources)
+    if cache is not None:
+        cache[cache_key] = result
+    return result
 
 
 def bids_entity(path: Path, name: str, *, default: str | None = None) -> str | None:

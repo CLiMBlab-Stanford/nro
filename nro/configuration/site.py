@@ -8,11 +8,35 @@ import os
 import re
 import tomllib
 from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
 from nro.engine.io import atomic_write_text
+
+_READ_CACHE: ContextVar[dict[tuple[str, str], object] | None] = ContextVar(
+    "nro_site_read_cache", default=None
+)
+
+
+def with_site_read_cache(function: Callable) -> Callable:
+    """Reuse immutable site-definition reads within one planning operation."""
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        if _READ_CACHE.get() is not None:
+            return function(*args, **kwargs)
+        token = _READ_CACHE.set({})
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _READ_CACHE.reset(token)
+
+    return wrapped
+
 
 CHECKOUT = Path(__file__).resolve().parents[2]
 RECORD_NAME = ".nro-installation.json"
@@ -364,6 +388,11 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
     overrides are ignored by shared installations. This function performs no writes.
     """
     path = site_file() if path is None else path
+    cache = _READ_CACHE.get()
+    cache_key = ("settings", str(path))
+    if cache is not None and cache_key in cache:
+        cached_values, cached_sources = cache[cache_key]
+        return dict(cached_values), dict(cached_sources)
     values = dict(DEFAULTS)
     sources = {key: "lab default" for key in values}
     if not LAB.is_dir() or not os.access(LAB, os.R_OK | os.X_OK):
@@ -402,6 +431,8 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
             sources[key] = f"derived from {parent}"
     for key in PATH_KEYS:
         values[key] = str(Path(values[key]).expanduser())
+    if cache is not None:
+        cache[cache_key] = (dict(values), dict(sources))
     return values, sources
 
 
@@ -412,6 +443,10 @@ def bids_root() -> Path:
 
 def definitions_root() -> Path:
     """Resolve the selected definitions directory without creating it or reading its files."""
+    cache = _READ_CACHE.get()
+    cache_key = ("definitions", "active")
+    if cache is not None and cache_key in cache:
+        return Path(cache[cache_key])
     values = settings()[0]
     root = Path(values["definitions"]).resolve()
     record = installation_record()
@@ -423,6 +458,8 @@ def definitions_root() -> Path:
         raise ValueError(
             f"Definitions publication is incomplete: {root}; inspect or recreate the store"
         )
+    if cache is not None:
+        cache[cache_key] = root
     return root
 
 
