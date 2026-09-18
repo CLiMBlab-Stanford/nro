@@ -342,7 +342,7 @@ def _synthetic_project(tmp_path, domain):
             }
         ).to_csv(functional / f"{stem}_desc-confounds_timeseries.tsv", sep="\t", index=False)
         if domain == "volume":
-            path = functional / f"{stem}_space-T1w_desc-preproc_bold.nii.gz"
+            path = functional / f"{stem}_space-ACPC_desc-preproc_bold.nii.gz"
             nib.save(
                 nib.Nifti1Image(
                     rng.normal(size=(2, 2, 2, 120)).astype(np.float32) + 100, np.eye(4)
@@ -409,7 +409,7 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
         model_id="langlocSN/main",
         model=model,
         config=config,
-        space="T1w" if domain == "volume" else "fsnative",
+        space="ACPC" if domain == "volume" else "fsnative",
         smoothing=smoothing,
         work_root=tmp_path / "work",
     )
@@ -492,7 +492,7 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
         model_id="langlocSN/main",
         model=load_task_model("langlocSN/main"),
         config=config,
-        space="T1w" if domain == "volume" else "fsnative",
+        space="ACPC" if domain == "volume" else "fsnative",
         smoothing=smoothing,
         work_root=paths.work / "demo/derivatives/nro/firstlevels/main",
         execution_context=context,
@@ -521,7 +521,7 @@ def test_all_censored_run_is_an_explicit_omission(tmp_path):
         model_id="langlocSN/main",
         model=load_task_model("langlocSN/main"),
         config=config,
-        space="T1w",
+        space="ACPC",
         smoothing=0,
         work_root=tmp_path / "work",
     )
@@ -557,7 +557,7 @@ def test_functional_inputs_use_canonical_preprocessed_output(tmp_path):
 
     root = _synthetic_project(tmp_path, "volume")
     run = discover_raw_runs(root / "sub-01")[0]
-    assert "desc-preproc_bold" in functional_paths(root, "main", run, "T1w")[0].name
+    assert "desc-preproc_bold" in functional_paths(root, "main", run, "ACPC")[0].name
 
 
 def test_absent_named_dummy_contrast_is_recorded():
@@ -598,7 +598,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
         registered=registered,
         registry=registry,
         bids_root=root.parent,
-        spaces=("fsnative", "T1w"),
+        spaces=("fsnative", "ACPC"),
         smoothing_levels=(0, 2),
     )
     targets = [s for s in specs if s.module == "firstlevels"]
@@ -609,8 +609,8 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     assert {(s.entities["space"], s.entities["smoothing"]) for s in targets} == {
         ("fsnative", "0"),
         ("fsnative", "2"),
-        ("T1w", "0"),
-        ("T1w", "2"),
+        ("ACPC", "0"),
+        ("ACPC", "2"),
     }
     target = targets[0]
     runtime = yaml.safe_load(target.runtime_config.read_text())
@@ -636,11 +636,14 @@ def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
     anatomy = root / "sub-01/anat/sub-01_T1w.nii.gz"
     anatomy.parent.mkdir(parents=True)
     nib.save(nib.Nifti1Image(np.ones((2, 2, 2), np.float32), np.eye(4)), anatomy)
-    directory = artifact_root(root, "main", "01") / "task-langlocSN/node-run"
-    directory.mkdir(parents=True)
-    prefix = work_item_prefix("01", "langlocSN/main", "T1w", 0)
-    (directory / f"{prefix}_partial.txt").write_text("partial artifact")
     registry = Registry.for_project("demo", bids_root=root.parent)
+    registered = registry.register_workflow(ConfigStore().resolve("main"))
+    directory = (
+        artifact_root(root, registered.directories["firstlevels"], "01") / "task-langlocSN/node-run"
+    )
+    directory.mkdir(parents=True)
+    prefix = work_item_prefix("01", "langlocSN/main", "ACPC", 0)
+    (directory / f"{prefix}_partial.txt").write_text("partial artifact")
     register_existing_artifacts(registry, bids_root=root.parent, inventory={"demo": ("01",)})
     assert any(row["module"] == "firstlevels" for row in registry.work_item_rows())
     with registry.connection() as db:
@@ -696,14 +699,14 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
                 "--run",
                 "task=langlocSN,other",
                 "-s",
-                "T1w",
+                "ACPC",
                 "-S",
                 "0",
             ]
         )
     )
     assert selection.runs == {"task": ("langlocSN",)}
-    entities = {"task": "langlocSN", "model": "dev", "space": "T1w", "smoothing": "0"}
+    entities = {"task": "langlocSN", "model": "dev", "space": "ACPC", "smoothing": "0"}
     assert matches_work_item_selectors(entities, selection.work_item_entities)
     assert not matches_work_item_selectors(
         {**entities, "model": "main"}, selection.work_item_entities
@@ -739,7 +742,7 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
         registered=registered,
         registry=registry,
         bids_root=root.parent,
-        spaces=("T1w",),
+        spaces=("ACPC",),
         smoothing_levels=(0,),
         models=("main", "dev"),
     )
@@ -792,7 +795,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
         model_id="langlocSN/main",
         model=source,
         config=config,
-        space="T1w",
+        space="ACPC",
         smoothing=0,
         work_root=tmp_path / "work",
     )
@@ -974,7 +977,7 @@ def test_disjoint_conditions_produce_subject_contrast_but_no_run_contrasts(tmp_p
         model_id="langlocSN/main",
         model=model,
         config=config,
-        space="T1w",
+        space="ACPC",
         smoothing=0,
         work_root=tmp_path / "work",
     )

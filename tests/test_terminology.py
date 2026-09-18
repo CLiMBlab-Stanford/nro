@@ -205,9 +205,11 @@ def test_fresh_registry_uses_class_and_module_columns(tmp_path: Path) -> None:
 
 
 def test_branch_registry_schema_uses_work_item_vocabulary() -> None:
-    from nro.orchestration.branch_registry import SCHEMA
+    from nro.orchestration.branch_registry import current_schema_sql
 
-    assert "work_items" in SCHEMA
-    assert "module_lineages" in SCHEMA
-    assert "instance" not in SCHEMA.lower()
-    assert "configuration_lineage" not in SCHEMA.lower()
+    schema = current_schema_sql()
+
+    assert "work_items" in schema
+    assert "module_lineages" in schema
+    assert "instance" not in schema.lower()
+    assert "configuration_lineage" not in schema.lower()

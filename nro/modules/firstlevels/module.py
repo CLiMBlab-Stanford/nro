@@ -14,7 +14,7 @@ from scipy.ndimage import gaussian_filter
 
 from nro.configuration.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root
 from nro.engine.targets import is_surface_space

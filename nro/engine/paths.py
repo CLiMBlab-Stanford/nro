@@ -189,7 +189,7 @@ def func_session_work_dir(sub_id: str, ses_id: str, *, project: str, func_id: st
 def anatomical_manifest_path(
     sub_id: str, *, project: str, anat_id: str, bids_root: Path | None = None
 ) -> Path:
-    """Return the fixed anatomical completion manifest under the selected root."""
+    """Return the fixed anatomical publication manifest under the selected root."""
     return (
         anat_subject_dir(sub_id, project=project, anat_id=anat_id, bids_root=bids_root)
         / f"{sub_id}_desc-preprocessAnat_manifest.json"

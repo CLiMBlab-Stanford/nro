@@ -183,6 +183,54 @@ def test_installation_activation_preserves_demand_and_clears_barrier(central):
         )
 
 
+def test_installation_cutover_restores_both_bindings_on_failure(central, monkeypatch, tmp_path):
+    registry, root, _ = central
+    implementation.activate(registry, root)
+    binding = implementation.implementation_path(registry.paths.control)
+    installation_path = root / ".nro-installation.json"
+    previous_binding = binding.read_bytes()
+    previous_installation = installation_path.read_bytes()
+    candidate_environment = tmp_path / "candidate"
+    (candidate_environment / "bin").mkdir(parents=True)
+    (candidate_environment / "bin/python").symlink_to(sys.executable)
+    candidate = {
+        **json.loads(installation_path.read_text()),
+        "environment": str(candidate_environment),
+    }
+    with registry.connection(write=True) as db:
+        db.execute("INSERT INTO metadata VALUES ('maintenance_mode','installation')")
+        db.execute("INSERT INTO metadata VALUES ('installation_checkout',?)", (str(root),))
+        db.execute("INSERT INTO metadata VALUES ('installation_action','stop')")
+    atomic_write_json = implementation.atomic_write_json
+    calls = 0
+
+    def fail_second_write(path, value, **options):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated installation-record failure")
+        atomic_write_json(path, value, **options)
+
+    monkeypatch.setattr(implementation, "atomic_write_json", fail_second_write)
+
+    with pytest.raises(OSError, match="installation-record failure"):
+        implementation.activate(
+            registry,
+            root,
+            installation_maintenance=True,
+            installation=candidate,
+            installation_path=installation_path,
+        )
+
+    assert binding.read_bytes() == previous_binding
+    assert installation_path.read_bytes() == previous_installation
+    with registry.connection() as db:
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone()[0]
+            == "installation"
+        )
+
+
 def test_incomplete_shared_installation_can_resume_maintenance(central):
     registry, root, python = central
     implementation.activate(registry, root)

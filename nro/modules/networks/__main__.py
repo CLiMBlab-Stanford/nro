@@ -24,6 +24,7 @@ from nro.engine.targets import (
     supported_output_spaces,
     target_output_names,
 )
+from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.modules.networks.config import (
     ClusteringConfig,
     ConnectivityConfig,
@@ -61,7 +62,7 @@ def _target_module_config(
     overwrite: bool | None,
     anatomical_manifest: Path | None,
     anatomical_reference: Path | None,
-    mni_to_t1_transform: Path | None,
+    mni_to_acpc_transform: Path | None,
 ) -> ModuleConfig:
     oslom = config["oslom"].copy()
     oslom["executable"] = optional_path(oslom.get("executable"))
@@ -78,7 +79,7 @@ def _target_module_config(
             source_surfaces=target.source_surfaces,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
-            mni_to_t1_transform=mni_to_t1_transform,
+            mni_to_acpc_transform=mni_to_acpc_transform,
         ),
         output=OutputConfig(
             directory=output,
@@ -105,7 +106,7 @@ def make_target_config(
     overwrite=None,
     micro_manifest=None,
     anatomical_reference=None,
-    mni_to_t1_transform=None,
+    mni_to_acpc_transform=None,
     anatomical_manifest=None,
     execution_context: ExecutionContext | None = None,
 ):
@@ -150,7 +151,7 @@ def make_target_config(
             overwrite=overwrite,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
-            mni_to_t1_transform=mni_to_t1_transform,
+            mni_to_acpc_transform=mni_to_acpc_transform,
         ),
     )
 
@@ -224,16 +225,16 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     anat_manifest = json.loads(anat_manifest_path.read_text(encoding="utf-8"))
     anat_outputs = anat_manifest.get("outputs") or {}
     anatomical_reference_value = anat_outputs.get("brain_image")
-    mni_to_t1_value = (anat_outputs.get("xfms") or {}).get("mni_to_t1")
-    if not anatomical_reference_value or not mni_to_t1_value:
+    mni_to_acpc_value = (anat_outputs.get("xfms") or {}).get("mni_to_acpc")
+    if not anatomical_reference_value or not mni_to_acpc_value:
         raise ValueError(
-            f"Anatomical manifest lacks outputs.brain_image or outputs.xfms.mni_to_t1: "
+            f"Anatomical manifest lacks outputs.brain_image or outputs.xfms.mni_to_acpc: "
             f"{anat_manifest_path}"
         )
     anatomical_reference = Path(str(anatomical_reference_value))
-    mni_to_t1_transform = Path(str(mni_to_t1_value))
+    mni_to_acpc_transform = Path(str(mni_to_acpc_value))
     missing_anatomical_inputs = [
-        str(path) for path in (anatomical_reference, mni_to_t1_transform) if not path.is_file()
+        str(path) for path in (anatomical_reference, mni_to_acpc_transform) if not path.is_file()
     ]
     if missing_anatomical_inputs:
         raise FileNotFoundError(
@@ -255,9 +256,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         participant_id, args.space, smoothing_mm
     )
     micro_subject = micro_base / participant_id
-    from nro.modules.microparcellation.paths import output_paths as micro_output_paths
-
-    micro_paths = micro_output_paths(micro_subject, micro_target_prefix)
+    micro_paths = microparcellation_output_paths(micro_subject, micro_target_prefix)
     micro_manifest = micro_paths["manifest"]
     publication_index = micro_paths["index"]
     if execution_context is not None:
@@ -285,7 +284,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         micro_manifest=micro_manifest,
         anatomical_manifest=anat_manifest_path,
         anatomical_reference=anatomical_reference,
-        mni_to_t1_transform=mni_to_t1_transform,
+        mni_to_acpc_transform=mni_to_acpc_transform,
         execution_context=execution_context,
     )
     stderr(

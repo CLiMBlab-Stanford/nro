@@ -10,7 +10,7 @@ from nro.configuration import site
 from nro.engine import bootstrap, user_launcher
 from nro.engine import installation_transition as transition
 from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.registry import SCHEMA_SQL
+from nro.orchestration.registry_schema import current_schema_sql
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ def test_failed_preflight_preserves_original_record(installations, monkeypatch, 
         database = ControlPaths(control).database
         database.parent.mkdir(parents=True)
         with sqlite3.connect(database) as db:
-            db.executescript(SCHEMA_SQL)
+            db.executescript(current_schema_sql())
             if failure == "active_demand":
                 db.execute(
                     "INSERT INTO workflow_revisions VALUES (1,'main',1,'definition','workflow.yml','{}','now')"

@@ -1,4 +1,4 @@
-"""Publish completion certificates for successful work-item attempts.
+"""Commit successful work-item evidence to the coordinator database.
 
 Publication inventories the public products and available private intermediates,
 checks the attempt against its registered work-item contract, and advances the
@@ -8,24 +8,39 @@ artifact generation atomically.
 from __future__ import annotations
 
 import json
-import sys
+import time
 from pathlib import Path
 from typing import Iterable
 
-import yaml
-
-from nro.engine.io import atomic_write_json
 from nro.orchestration import dependency_state
-from nro.orchestration.manifests import (
-    MANIFEST_VERSION,
-    _completion_output_inventory,
-    _is_orchestration_control_artifact,
-    _read_manifest,
-    file_record,
-    inventory,
-)
+from nro.orchestration.artifact_records import inventory, is_control_artifact, read_json_mapping
+from nro.orchestration.completion_records import completion_record
 from nro.orchestration.ownership import write_work_item_ownership
-from nro.orchestration.registry import Registry, ensure_shared_directory, utcnow
+from nro.orchestration.registry import Registry, utcnow
+
+COMPLETION_VISIBILITY_TIMEOUT = 30.0
+COMPLETION_VISIBILITY_POLL_INTERVAL = 0.25
+
+
+def _completion_output_inventory(paths: Iterable[str | Path]) -> list[dict]:
+    """Inventory completed outputs after bounded visibility retries.
+
+    A worker publishes files atomically before asking the coordinator to certify
+    them. Shared filesystems can expose a replaced directory entry to another
+    node after a short delay, so the authoritative coordinator read retries only
+    paths that are still absent. Visible non-files fail immediately.
+    """
+    resolved = tuple(sorted({Path(path).expanduser().resolve() for path in paths}))
+    deadline = time.monotonic() + COMPLETION_VISIBILITY_TIMEOUT
+    while True:
+        try:
+            return inventory(resolved)
+        except ValueError:
+            if any(path.exists() and not path.is_file() for path in resolved):
+                raise
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(COMPLETION_VISIBILITY_POLL_INTERVAL)
 
 
 def _private_step_artifacts(
@@ -46,7 +61,7 @@ def _private_step_artifacts(
     if row is None or not row["log_path"]:
         return []
     ledger = Path(str(row["log_path"])).parent / "current-steps.json"
-    value = _read_manifest(ledger)
+    value = read_json_mapping(ledger)
     if value is None:
         return []
     public_root = output_root.resolve()
@@ -69,9 +84,7 @@ def _private_step_artifacts(
                 resolved = path.resolve()
                 resolved.relative_to(public_root)
             except ValueError:
-                if resolved.is_file() and not _is_orchestration_control_artifact(
-                    resolved, registry
-                ):
+                if resolved.is_file() and not is_control_artifact(resolved, registry.paths.control):
                     paths.add(resolved)
     return inventory(paths)
 
@@ -83,18 +96,11 @@ def record_completion(
     attempt_id: int,
     outputs: Iterable[str | Path],
 ) -> dict:
-    """Write a completion manifest last, then advance the registry generation."""
+    """Validate filesystem evidence and commit one completed generation atomically."""
     with registry.connection() as db:
-        existing = db.execute(
-            "SELECT manifest_path,artifact_state FROM work_items WHERE id=?", (work_item_id,)
-        ).fetchone()
-    if existing is not None and existing["artifact_state"] == "fresh":
-        path = Path(existing["manifest_path"])
-        if path.is_file():
-            manifest = json.loads(path.read_text())
-            if int(manifest.get("attempt_id", -1)) == attempt_id:
-                return manifest
-    with registry.connection() as db:
+        existing = completion_record(db, work_item_id)
+        if existing is not None and int(existing["attempt_id"]) == attempt_id:
+            return existing
         work_item = dict(
             db.execute(
                 """SELECT t.*, ci.config_id, ci.config_fingerprint,
@@ -105,21 +111,21 @@ def record_completion(
             ).fetchone()
         )
         dependency_state.check_completion(db, work_item, attempt_id)
-        execution = db.execute(
-            "SELECT provenance_json,command_json FROM attempt_execution WHERE attempt_id=?",
-            (attempt_id,),
-        ).fetchone()
         parents = [
             dict(row)
             for row in db.execute(
                 """
-                SELECT t.id, t.current_generation, t.manifest_path
+                SELECT t.id, t.current_generation
                 FROM work_item_dependencies td JOIN work_items t ON t.id=td.upstream_work_item_id
                 WHERE td.work_item_id=? ORDER BY t.id
                 """,
                 (work_item_id,),
             )
         ]
+        execution = db.execute(
+            "SELECT provenance_json,command_json FROM attempt_execution WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
     output_records = _completion_output_inventory(outputs)
     if not output_records:
         raise RuntimeError(
@@ -132,56 +138,34 @@ def record_completion(
     )
     input_records = inventory(json.loads(work_item["input_paths_json"]))
     generation = int(work_item["current_generation"]) + 1
-    runtime_config = file_record(work_item["runtime_config_path"])
-    manifest = {
-        "manifest_version": MANIFEST_VERSION,
-        "work_item_id": work_item_id,
-        "work_item_key": work_item["work_item_key"],
-        "module": work_item["module"],
-        "project": work_item["project"],
-        "participant": work_item["participant"],
-        "entities": json.loads(work_item["entities_json"]),
-        "module_lineage_id": work_item["module_lineage_id"],
-        "revision_fingerprint": work_item["revision_fingerprint"],
-        "artifact_contract": json.loads(work_item["artifact_contract_json"]),
-        "artifact_fingerprint": work_item["artifact_fingerprint"],
-        "configuration": {
-            "id": work_item["config_id"],
-            "fingerprint": work_item["config_fingerprint"],
-            "lineage_fingerprint": work_item["lineage_fingerprint"],
-            "resolved": yaml.safe_load(work_item["resolved_yaml"]) or {},
-        },
-        "runtime_config": runtime_config,
-        "software": {
-            "name": "nro",
-            "python": sys.version,
-            "executable": sys.executable,
-            "command": json.loads(work_item["command_json"]),
-        },
-        "generation": generation,
-        "attempt_id": attempt_id,
-        "completed_at": utcnow(),
-        "inputs": input_records,
-        "upstream": [
-            {
-                "work_item_id": int(parent["id"]),
-                "generation": int(parent["current_generation"]),
-                "manifest": parent["manifest_path"],
-            }
-            for parent in parents
-        ],
-        "public_outputs": output_records,
-        "private_artifacts": private_records,
-    }
-    path = Path(work_item["manifest_path"])
-    if execution is not None:
-        manifest["implementation"] = json.loads(execution["provenance_json"])
-        manifest["software"]["command"] = json.loads(execution["command_json"])
-    ensure_shared_directory(path.parent)
+    completed_at = utcnow()
     write_work_item_ownership(registry, work_item_id, attempt_id=attempt_id)
     with registry.connection(write=True) as db:
         dependency_state.check_completion(db, work_item, attempt_id)
-        atomic_write_json(path, manifest, sort_keys=True, mode=0o664, durable=True)
+        db.execute("DELETE FROM completions WHERE work_item_id=?", (work_item_id,))
+        db.execute("DELETE FROM artifacts WHERE work_item_id=?", (work_item_id,))
+        db.execute(
+            """INSERT INTO completions(
+                   work_item_id,attempt_id,generation,completed_at,revision_fingerprint,
+                   artifact_contract_json,artifact_fingerprint,config_id,config_fingerprint,
+                   lineage_fingerprint,resolved_yaml,provenance_json,command_json
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                work_item_id,
+                attempt_id,
+                generation,
+                completed_at,
+                work_item["revision_fingerprint"],
+                work_item["artifact_contract_json"],
+                work_item["artifact_fingerprint"],
+                work_item["config_id"],
+                work_item["config_fingerprint"],
+                work_item["lineage_fingerprint"],
+                work_item["resolved_yaml"],
+                execution["provenance_json"] if execution is not None else "{}",
+                execution["command_json"] if execution is not None else work_item["command_json"],
+            ),
+        )
         db.execute(
             """
             UPDATE work_items SET artifact_state='fresh', artifact_reason='Completed successfully',
@@ -194,32 +178,29 @@ def record_completion(
                           WHERE work_item_id=? AND upstream_work_item_id=?""",
             [(parent["current_generation"], work_item_id, parent["id"]) for parent in parents],
         )
-        for item in input_records:
-            db.execute(
-                """INSERT INTO artifacts(work_item_id, attempt_id, direction, path, size, mtime_ns,
-                   digest_algorithm, digest, metadata_json) VALUES (?, ?, 'input', ?, ?, ?, ?, ?, '{}')""",
-                (
-                    work_item_id,
-                    attempt_id,
-                    item["path"],
-                    item["size"],
-                    item["mtime_ns"],
-                    "sha256" if "sha256" in item else None,
-                    item.get("sha256"),
-                ),
-            )
-        for item in output_records:
-            db.execute(
-                """INSERT INTO artifacts(work_item_id, attempt_id, direction, path, size, mtime_ns,
-                   digest_algorithm, digest, metadata_json) VALUES (?, ?, 'output', ?, ?, ?, ?, ?, '{}')""",
-                (
-                    work_item_id,
-                    attempt_id,
-                    item["path"],
-                    item["size"],
-                    item["mtime_ns"],
-                    "sha256" if "sha256" in item else None,
-                    item.get("sha256"),
-                ),
-            )
-    return manifest
+        for direction, records in (
+            ("input", input_records),
+            ("output", output_records),
+            ("private", private_records),
+        ):
+            for item in records:
+                db.execute(
+                    """INSERT INTO artifacts(
+                           work_item_id,attempt_id,direction,path,size,mtime_ns,
+                           digest_algorithm,digest,metadata_json
+                       ) VALUES (?,?,?,?,?,?,?,?, '{}')""",
+                    (
+                        work_item_id,
+                        attempt_id,
+                        direction,
+                        item["path"],
+                        item["size"],
+                        item["mtime_ns"],
+                        "sha256" if "sha256" in item else None,
+                        item.get("sha256"),
+                    ),
+                )
+        record = completion_record(db, work_item_id)
+        if record is None:
+            raise RuntimeError("Committed completion evidence could not be read back")
+        return record

@@ -120,12 +120,29 @@ an active pool.
 After updating `main` to a newer tagged release, `./install --maintain` records and
 activates that release automatically. Runtime checks compare the installation's
 commit, tree, package version, environment, site, and source fingerprint with the
-active release record. If the release changes the private scheduler schema, the
-installer rebuilds that state before starting the candidate coordinator. It reports
-the rebuild and retains a backup. After the pool is quiet, it also rebuilds any
-incompatible branch scientific registries from their stored contracts and workflow
-snapshots. Public derivatives, scientific contracts, and revision numbers remain in
-place. Requests, attempt history, and cached artifact observations do not.
+active release record. Maintenance first audits every scheduler and branch database
+and every public ownership record without changing them. It reports all corrupt or
+obsolete records together. Schema differences request migration or reconstruction;
+SQLite or branch-identity failures stop maintenance before the active installation
+changes.
+
+Shared maintenance synchronizes the candidate Python environment in a new
+`.nro-environments/candidate-*` directory. It does not modify the environment named by
+the active installation record, and this package synchronization finishes before the
+worker pool is drained. After resource checks and registry maintenance pass,
+the installer publishes the scheduler binding and installation record while the
+installation barrier is held. A failed cutover restores both prior records. Only a
+successful cutover removes inactive candidate environments; the active environment is
+never deleted before its replacement is ready.
+
+After the pool is quiet, schemas at or after the supported baseline are migrated on
+staged database copies. Each copy must match the generated target schema and pass
+foreign-key and SQLite integrity checks before an atomic swap. Older schemas are
+reconstructed from durable ownership records and public artifacts. The previous
+scheduler state and every changed branch database are retained as rollback copies.
+A durable phase record lets a repeated invocation resume the same maintenance
+transaction. Corrupt or obsolete derivatives are reported and are never silently
+assigned to a new lineage. See [registry migrations](registry-migrations.md).
 
 Before publishing an update, rehearse the transition from the newest release tag:
 
@@ -135,8 +152,8 @@ Before publishing an update, rehearse the transition from the newest release tag
 
 Pass a Git ref after the option to select another baseline. The rehearsal clones that
 revision into a temporary directory, gives it an isolated registry and BIDS root, then
-replaces its executable source with the current working tree. It gives the baseline an
-obsolete scheduler schema, then exercises candidate maintenance and the real one-shot
+replaces its executable source with the current working tree. It exercises any required
+schema migration or reconstruction, candidate maintenance, and the real one-shot
 scheduler. It does not alter the configured site, shared installation, user launcher,
 or scientific data. The check
 does not install or validate third-party scientific software; use `nro doctor --deep`
@@ -255,10 +272,9 @@ a registry. Commit the result in the definitions repository. Worker attempts
 carry a resolved, immutable site snapshot rather than rereading mutable values.
 
 Private state uses the [shared/branch hierarchy](commands/branches.md#storage-and-safeguards).
-An existing flat-layout control store is rejected before any new scheduler is
-created. Use the explicit [cutover command](commands/cutover.md) during a
-coordinated maintenance window; neither installation nor registry repair silently
-moves or adopts the old store.
+An existing flat-layout control store predates the supported registry baseline and
+is rejected before a scheduler is created. Archive or remove that obsolete private
+state before initializing the current layout. Installation and repair never adopt it.
 
 The path editor accepts `definitions`, `bids`, `work`, `development`,
 `registry`, `images`, `templates`, `gradient_coefficients`, `workbench`,

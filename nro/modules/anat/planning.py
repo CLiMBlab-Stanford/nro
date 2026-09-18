@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.configuration.hardware import gradient_unwarping_records
 from nro.configuration.markup import SubjectMarkup
-from nro.engine.images import image_source_paths
+from nro.engine.image_paths import image_source_paths
 from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (

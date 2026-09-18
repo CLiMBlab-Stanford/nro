@@ -51,10 +51,10 @@ def _run_sort_key(path: Path) -> tuple[object, ...]:
 
 
 def find_registered_bold(subject_dir: Path) -> list[Path]:
-    """Find final preprocessed BOLD series registered to the subject T1w space."""
+    """Find final preprocessed BOLD series registered to the subject ACPC space."""
     files = {
         path
-        for path in subject_dir.glob("**/func/*_space-T1w_desc-preproc_bold.nii*")
+        for path in subject_dir.glob("**/func/*_space-ACPC_desc-preproc_bold.nii*")
         if path.is_file() and path.name.endswith((".nii", ".nii.gz"))
     }
     return sorted(files, key=_run_sort_key)
@@ -222,7 +222,7 @@ def create_registration_audit(
     bold_files = find_registered_bold(subject_dir) if bold_files is None else bold_files
     if not bold_files:
         raise FileNotFoundError(
-            f"No *_space-T1w_desc-preproc_bold.nii[.gz] files found under {subject_dir}"
+            f"No *_space-ACPC_desc-preproc_bold.nii[.gz] files found under {subject_dir}"
         )
     source_surfaces = find_surfaces(subject_dir, subject)
     anatomical_path = find_anatomical_reference(subject_dir, subject)
@@ -295,7 +295,7 @@ def create_registration_audit(
     actual_xyz = slab_affine @ actual_center
     metadata_path = output_dir / f"{prefix}.json"
     metadata = {
-        "Description": "Workbench audit of final functional-to-T1w registrations.",
+        "Description": "Workbench audit of final functional-to-ACPC registrations.",
         "AnatomicalReference": str(anatomical_path.resolve()),
         "QCGridOrientation": "world-aligned RAS sagittal slab",
         "QCVoxelSizeMm": qc_voxel_size,
@@ -422,7 +422,7 @@ def main(
                 for row in selected
                 if row["module"] == "func"
                 for path in Path(row["output_root"]).rglob(
-                    f"{row['output_prefix']}_space-T1w_desc-preproc_bold.nii*"
+                    f"{row['output_prefix']}_space-ACPC_desc-preproc_bold.nii*"
                 )
                 if path.is_file()
             },

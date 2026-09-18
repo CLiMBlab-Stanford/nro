@@ -325,11 +325,12 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
         "prepare_pool",
         lambda registry, **options: events.append(("drain", options["checkout"])),
     )
-    monkeypatch.setattr(
-        shared_installation,
-        "publish",
-        lambda checkout, registry: events.append(("publish", checkout)),
-    )
+
+    def publish(checkout, registry, *, installation):
+        events.append(("publish", checkout))
+        bootstrap.write_record(checkout / bootstrap.RECORD, installation)
+
+    monkeypatch.setattr(shared_installation, "publish", publish)
     commands = []
     monkeypatch.setattr(
         bootstrap.subprocess,
@@ -342,7 +343,59 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
 
     assert events == [("drain", root), ("publish", root)]
     assert "--prepared-maintenance" in commands[1]
-    assert json.loads((root / bootstrap.RECORD).read_text())["ready"] is True
+    saved = json.loads((root / bootstrap.RECORD).read_text())
+    assert saved["ready"] is True
+    assert Path(saved["environment"]).parent == root / ".nro-environments"
+    assert Path(saved["environment"]).name.startswith("candidate-")
+
+
+def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeypatch):
+    root = tmp_path / "shared"
+    (root / ".nro-bootstrap/bin").mkdir(parents=True)
+    (root / ".nro-bootstrap/bin/uv").write_text("uv")
+    active = root / ".nro-env"
+    site = root / "site.toml"
+    site.write_text(f'registry = "{tmp_path / "registry"}"\n')
+    record = {
+        "mode": "shared",
+        "checkout": str(root),
+        "environment": str(active),
+        "site": str(site),
+        "ready": True,
+        "with_oslom": True,
+        "with_bidsify": False,
+        "with_marss": True,
+        "dev": False,
+        "local": False,
+    }
+    record_path = root / bootstrap.RECORD
+    record_path.write_text(json.dumps(record))
+    original = record_path.read_bytes()
+    monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
+    monkeypatch.setattr(shared_installation, "prepare_pool", lambda *args, **options: None)
+    monkeypatch.setattr(
+        shared_installation,
+        "publish",
+        lambda *args, **options: pytest.fail("Invalid candidate was published"),
+    )
+    calls = []
+
+    def run(command, **options):
+        calls.append((command, options))
+        if len(calls) == 2:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", run)
+
+    with pytest.raises(SystemExit) as stopped:
+        bootstrap.main(["--maintain", "--offline"])
+
+    assert stopped.value.code == 1
+    assert record_path.read_bytes() == original
+    candidate = Path(calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"])
+    assert candidate != active
+    assert candidate.parent == root / ".nro-environments"
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])

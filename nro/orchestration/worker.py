@@ -72,13 +72,12 @@ def _update_orchestration_step(
     *,
     status: str,
     started_at: float,
-    manifest_path: str,
     error: str | None = None,
 ) -> None:
-    """Track worker-owned completion/provenance work in the shared step ledger."""
+    """Track coordinator-owned completion validation in the shared step ledger."""
     path = log_path.parent / "current-steps.json"
     ensure_shared_directory(path.parent)
-    key = "orchestration:completion-manifest"
+    key = "orchestration:completion"
     try:
         current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         if not isinstance(current, dict):
@@ -87,10 +86,10 @@ def _update_orchestration_step(
         current = {}
     record = {
         "step_id": key,
-        "name": "Completion Manifest and Provenance",
+        "name": "Completion Validation and Provenance",
         "status": status,
         "timestamp": utcnow(),
-        "outputs": [manifest_path],
+        "outputs": [],
         "command": None,
         "cwd": os.getcwd(),
         "reason": "Validate and fingerprint work-item outputs after module completion.",
@@ -541,7 +540,7 @@ class Worker:
         step_ledger = log_path.parent / "current-steps.json"
         # These files describe one current attempt, just like the stored work-item.log. Do
         # not let obsolete branch-specific nodes from an older attempt leak
-        # into the new completion certificate's private-artifact inventory.
+        # into the new database completion record's private-artifact inventory.
         for current_attempt_file in (
             step_ledger,
             log_path.parent / "step-events.jsonl",
@@ -721,7 +720,6 @@ class Worker:
                 log_path,
                 status="running",
                 started_at=completion_started,
-                manifest_path=str(work_item.manifest_path),
             )
             outputs = _outputs(work_item)
             self._wait_for_output_visibility(outputs, log_path)
@@ -743,7 +741,6 @@ class Worker:
                 log_path,
                 status="success",
                 started_at=completion_started,
-                manifest_path=str(work_item.manifest_path),
             )
             completion_started = None
             self.registry.finish_attempt(attempt_id, state="success")
@@ -790,7 +787,6 @@ class Worker:
                         log_path,
                         status="error",
                         started_at=completion_started,
-                        manifest_path=str(work_item.manifest_path),
                         error=message,
                     )
                 except BaseException:

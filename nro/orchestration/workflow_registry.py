@@ -14,47 +14,6 @@ from nro.configuration.store import (
     fingerprint,
 )
 
-WORKFLOW_SCHEMA = """
-CREATE TABLE workflow_revisions (
-    id INTEGER PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    definition_fingerprint TEXT NOT NULL,
-    source_path TEXT NOT NULL,
-    resolved_yaml TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(workflow_id, revision),
-    UNIQUE(workflow_id, definition_fingerprint)
-);
-
-CREATE TABLE module_lineages (
-    id INTEGER PRIMARY KEY,
-    configuration_class TEXT NOT NULL,
-    config_id TEXT NOT NULL,
-    config_fingerprint TEXT NOT NULL,
-    lineage_fingerprint TEXT NOT NULL,
-    resolved_yaml TEXT NOT NULL,
-    directory_label TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(configuration_class, lineage_fingerprint)
-);
-
-CREATE TABLE module_lineage_dependencies (
-    module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
-    upstream_module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
-    role TEXT NOT NULL,
-    PRIMARY KEY(module_lineage_id, upstream_module_lineage_id, role)
-);
-
-CREATE TABLE workflow_bindings (
-    workflow_revision_id INTEGER NOT NULL REFERENCES workflow_revisions(id),
-    configuration_class TEXT NOT NULL,
-    module_lineage_id INTEGER NOT NULL REFERENCES module_lineages(id),
-    PRIMARY KEY(workflow_revision_id, configuration_class)
-);
-
-"""
-
 
 @dataclass(frozen=True)
 class RegisteredWorkflow:
@@ -88,6 +47,13 @@ CONFIGURATION_FILE_SUFFIX = {
     "networks": "networks",
     "firstlevels": "firstlevels",
 }
+
+
+def lineage_directory_label(config_id: str, lineage_fingerprint: str) -> str:
+    """Return the deterministic public directory for one module lineage."""
+    if not config_id or not lineage_fingerprint:
+        raise ValueError("Lineage directory identity cannot be empty")
+    return f"{config_id}-{lineage_fingerprint[:12]}"
 
 
 class WorkflowRegistry:
@@ -252,20 +218,6 @@ class WorkflowRegistry:
                 directories: dict[str, str] = {}
                 lineage_fingerprints: dict[str, str] = {}
 
-                def allocate_directory(module: str, config_id: str) -> str:
-                    """Allocate a stable directory within one module namespace."""
-                    number: int | None = None
-                    while True:
-                        candidate = config_id if number is None else f"{config_id}-{number}"
-                        occupied = db.execute(
-                            """SELECT 1 FROM module_lineages
-                               WHERE configuration_class=? AND directory_label=? LIMIT 1""",
-                            (module, candidate),
-                        ).fetchone()
-                        if not occupied:
-                            return candidate
-                        number = 2 if number is None else number + 1
-
                 for configuration_class in CONFIGURATION_CLASSES:
                     resolved = workflow.configurations[configuration_class]
                     upstream_class = UPSTREAM_CLASS[configuration_class]
@@ -303,7 +255,17 @@ class WorkflowRegistry:
                             ),
                         )
                     else:
-                        directory = allocate_directory(configuration_class, resolved.config_id)
+                        directory = lineage_directory_label(resolved.config_id, lineage)
+                        collision = db.execute(
+                            """SELECT lineage_fingerprint FROM module_lineages
+                               WHERE configuration_class=? AND directory_label=? LIMIT 1""",
+                            (configuration_class, directory),
+                        ).fetchone()
+                        if collision is not None:
+                            raise RuntimeError(
+                                "Lineage directory digest collision for "
+                                f"{configuration_class}/{directory}"
+                            )
                         cursor = db.execute(
                             """
                             INSERT INTO module_lineages(

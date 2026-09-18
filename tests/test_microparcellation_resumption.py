@@ -7,7 +7,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.modules.microparcellation.config import (
     CoarseningConfig,
     ConnectivityConfig,

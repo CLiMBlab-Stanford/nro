@@ -28,8 +28,7 @@ class PublicOwnership:
 
 def _has_public_evidence(row) -> bool:
     """Return whether a registered work item still has a declared public file."""
-    paths = [Path(row["manifest_path"])] if row["manifest_path"] else []
-    paths.extend(Path(value) for value in json.loads(row["expected_outputs_json"]))
+    paths = [Path(value) for value in json.loads(row["expected_outputs_json"])]
     return any(path.is_file() for path in paths)
 
 
@@ -206,7 +205,7 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         dict(row)
         for row in db.execute(
             """SELECT b.logical_key,b.scientific_contract_json,b.work_item_id,
-                      i.manifest_path,i.expected_outputs_json,
+                      i.expected_outputs_json,
                       COALESCE(r.revision,1) AS revision
                FROM branch_work_items b
                JOIN work_items i ON i.id=b.work_item_id
@@ -234,7 +233,7 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
     rows = {
         int(row["id"]): dict(row)
         for row in db.execute(
-            f"SELECT id,manifest_path,expected_outputs_json FROM work_items WHERE id IN ({placeholders})",
+            f"SELECT id,expected_outputs_json FROM work_items WHERE id IN ({placeholders})",
             tuple(sorted(candidates)),
         )
     }

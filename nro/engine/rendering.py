@@ -39,7 +39,7 @@ class RenderTarget:
 
 
 def read_seed_file(path: Path) -> dict[tuple[str, str], tuple[np.ndarray, ...]]:
-    """Read subject-specific T1w world coordinates from a YAML seed file."""
+    """Read subject-specific ACPC world coordinates from a YAML seed file."""
 
     path = Path(path).expanduser().resolve()
     try:
@@ -221,7 +221,7 @@ def _nearest_brainordinate(
             )
     if not candidates:
         raise ValueError(
-            "Connectivity image has no brainordinates that can be resolved in T1w space"
+            "Connectivity image has no brainordinates that can be resolved in ACPC space"
         )
     distance, record = min(candidates, key=lambda item: item[0])
     return {**record, "distance_mm": distance}
@@ -272,7 +272,7 @@ def _nearest_parcel(axis, xyz: np.ndarray, surfaces: dict[str, np.ndarray]) -> d
                 )
             )
     if not candidates:
-        raise ValueError("Parcel image has no locations that can be resolved in T1w space")
+        raise ValueError("Parcel image has no locations that can be resolved in ACPC space")
     distance, record = min(candidates, key=lambda item: item[0])
     return {**record, "distance_mm": distance}
 
@@ -417,10 +417,10 @@ def seed_targets(
     if not coordinates:
         return ()
     space = str(manifest.get("space") or "")
-    if space not in {"fsnative", "T1w"}:
+    if space not in {"fsnative", "ACPC"}:
         raise ValueError(
-            f"T1w seed coordinates cannot yet be resolved into space-{space}; "
-            "select fsnative or T1w"
+            f"ACPC seed coordinates cannot yet be resolved into space-{space}; "
+            "select fsnative or ACPC"
         )
     surfaces = _surface_coordinates(scene, manifest)
     targets = []

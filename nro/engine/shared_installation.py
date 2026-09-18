@@ -21,12 +21,19 @@ def _repair_scientific_schemas(registry: Registry) -> list[dict]:
     repaired = repair_scientific_schemas(registry)
     for item in repaired:
         if item["backup"] is not None:
-            print(
-                f"Rebuilt scientific schema {item['stored_schema']} as {item['schema']} "
-                f"for branch {item['branch']} with {item['work_items']} recovered work item(s); "
-                f"backup: {item['backup']}",
-                flush=True,
-            )
+            if item.get("action") == "migrated":
+                print(
+                    f"Migrated scientific schema {item['stored_schema']} to {item['schema']} "
+                    f"for branch {item['branch']}; backup: {item['backup']}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"Rebuilt scientific schema {item['stored_schema']} as {item['schema']} "
+                    f"for branch {item['branch']} with {item['work_items']} recovered work "
+                    f"item(s); backup: {item['backup']}",
+                    flush=True,
+                )
         for message in item["unavailable"]:
             print(f"Could not recover branch {item['branch']}: {message}", flush=True)
     return repaired
@@ -39,10 +46,20 @@ def prepare_pool(
     confirm: Callable[[dict], MaintenanceAction | None],
     poll_interval: float = 5.0,
     report_interval: float = 30.0,
-    rebuild_schema: bool = False,
+    update_schema: bool = False,
 ) -> dict:
     """Quiesce workers under an installation barrier while preserving demand."""
     checkout = Path(checkout).expanduser().resolve()
+    from nro.engine.maintenance import MaintenanceJournal, audit_shared_state
+    from nro.orchestration.selection import discover_bids_inventory
+
+    journal = MaintenanceJournal(registry.paths.control, checkout)
+    audit = audit_shared_state(registry, discover_bids_inventory(registry.paths.bids_root))
+    journal.record("audited", audit=audit.as_dict())
+    if audit.fatal_errors:
+        raise RuntimeError("Shared-maintenance audit failed:\n- " + "\n- ".join(audit.fatal_errors))
+    for message in audit.ownership_errors:
+        print(f"Corrupt or obsolete derivative ownership: {message}", flush=True)
     from nro.orchestration.scheduler_implementation import implementation_path
 
     if not implementation_path(registry.paths.control).is_file():
@@ -65,7 +82,7 @@ def prepare_pool(
                 ),
             )
         scientific = _repair_scientific_schemas(registry)
-        return {
+        result = {
             "workers": 0,
             "submissions": 0,
             "attempts": 0,
@@ -76,6 +93,8 @@ def prepare_pool(
             "failures": [],
             "scientific": scientific,
         }
+        journal.finish(result=result)
+        return result
     from nro.orchestration.scheduler_bus import read_active
     from nro.orchestration.scheduler_client import maintenance, shutdown_service
 
@@ -84,10 +103,10 @@ def prepare_pool(
 
     stored_schema = registry.stored_schema_version()
     if stored_schema != SCHEMA_VERSION:
-        if not rebuild_schema:
+        if not update_schema:
             raise RuntimeError(
                 f"Scheduler schema {stored_schema} does not match {SCHEMA_VERSION}; "
-                "shared installation maintenance must rebuild it"
+                "shared installation maintenance must update it"
             )
         if read_active(control) is not None:
             shutdown_service(
@@ -119,14 +138,24 @@ def prepare_pool(
             from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
             stop_worker_pool_for_repair(registry)
-        from nro.orchestration.scheduler_repair import repair_for_installation
+        from nro.orchestration.registry_schema import SCHEMA as SCHEDULER_SCHEMA
 
-        repaired = repair_for_installation(registry, checkout=checkout)
-        print(
-            f"Rebuilt scheduler schema {stored_schema} as {SCHEMA_VERSION}; "
-            f"backup: {repaired['backup']}",
-            flush=True,
-        )
+        if SCHEDULER_SCHEMA.supports(stored_schema):
+            backup = registry.migrate_schema()
+            print(
+                f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",
+                flush=True,
+            )
+        else:
+            from nro.orchestration.scheduler_repair import repair_for_installation
+
+            repaired = repair_for_installation(registry, checkout=checkout)
+            print(
+                f"Rebuilt scheduler schema {stored_schema} as {SCHEMA_VERSION}; "
+                f"backup: {repaired['backup']}",
+                flush=True,
+            )
+    journal.record("quiescing", audit=audit.as_dict())
     summary = maintenance(
         control,
         bids_root,
@@ -180,12 +209,15 @@ def prepare_pool(
         if time.monotonic() >= deadline:
             raise RuntimeError("Scheduler did not release installation maintenance")
         time.sleep(0.1)
+    journal.record("rebuilding", audit=audit.as_dict())
     scientific = _repair_scientific_schemas(registry)
-    return {**summary, **progress, "scientific": scientific}
+    result = {**summary, **progress, "scientific": scientific}
+    journal.finish(result=result)
+    return result
 
 
-def publish(checkout: Path, registry: Registry) -> dict:
-    """Register main, record its exact release tag, and activate its scheduler."""
+def publish(checkout: Path, registry: Registry, *, installation: dict | None = None) -> dict:
+    """Publish a validated environment and scheduler binding under the maintenance barrier."""
     checkout = Path(checkout).expanduser().resolve()
     tagged_source(checkout)
     branches = BranchStore(registry.paths.control)
@@ -195,10 +227,36 @@ def publish(checkout: Path, registry: Registry) -> dict:
         snapshot = branches.authorize_checkout("main", checkout, revision=snapshot.revision)
     release = ReleaseStore(branches).record_tagged(checkout)
     from nro.configuration.site import installation_record
-    from nro.engine.bootstrap import RECORD, write_record
+    from nro.engine.bootstrap import RECORD
+    from nro.engine.io import atomic_write_text
+    from nro.orchestration.scheduler_implementation import implementation_path
 
-    installation = installation_record(checkout)
+    installation = dict(installation or installation_record(checkout))
+    if installation.get("mode") != "shared" or installation.get("checkout") != str(checkout):
+        raise ValueError("Shared publication requires a matching installation candidate")
+    if not installation.get("ready"):
+        raise ValueError("Shared publication requires a validated installation candidate")
     installation["release"] = release
-    write_record(checkout / RECORD, installation)
-    implementation = activate(registry, checkout, installation_maintenance=True)
+    record_path = checkout / RECORD
+    binding_path = implementation_path(registry.paths.control)
+    previous_record = record_path.read_bytes() if record_path.is_file() else None
+    previous_binding = binding_path.read_bytes() if binding_path.is_file() else None
+    try:
+        implementation = activate(
+            registry,
+            checkout,
+            installation_maintenance=True,
+            installation=installation,
+            installation_path=record_path,
+        )
+    except BaseException:
+        if previous_record is None:
+            record_path.unlink(missing_ok=True)
+        else:
+            atomic_write_text(record_path, previous_record.decode("utf-8"), durable=True)
+        if previous_binding is None:
+            binding_path.unlink(missing_ok=True)
+        else:
+            atomic_write_text(binding_path, previous_binding.decode("utf-8"), durable=True)
+        raise
     return {"release": release, "implementation": implementation}

@@ -229,7 +229,6 @@ def _work_item_paths(
                 / output_prefix
             )
 
-    derivative_paths.append(Path(work_item["manifest_path"]))
     derivative_paths.append(
         work_item_record_path(
             registry.paths.project_root,
@@ -316,43 +315,43 @@ def _purge_reserved_work_items(
     work_count = 0
     central_registry = planned[0][0]
     inventories: dict[Path, tuple[Path, ...]] = {}
-    # Hold the one lab-wide registry lock across the full multi-project purge.
-    # This prevents a worker from claiming any selected work item after the
-    # active-attempt check but before its artifact state is updated.
-    with central_registry.connection(write=True) as db:
-        placeholders = ",".join("?" for _ in work_item_ids)
-        active = db.execute(
-            f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
-                FROM attempts a JOIN work_items i ON i.id=a.work_item_id
-                WHERE a.work_item_id IN ({placeholders})
-                  AND a.state IN ('queued', 'running', 'cancel_requested')
-                ORDER BY i.project, i.module, i.participant, i.id""",
-            tuple(sorted(work_item_ids)),
-        ).fetchall()
+    # artifact_mutation() fences the selected outputs before this function is
+    # called. Keep database transactions short while filesystem removal runs.
+    if not dry_run:
+        with central_registry.connection() as db:
+            placeholders = ",".join("?" for _ in work_item_ids)
+            active = db.execute(
+                f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
+                    FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+                    WHERE a.work_item_id IN ({placeholders})
+                      AND a.state IN ('queued', 'running', 'cancel_requested')
+                    ORDER BY i.project, i.module, i.participant, i.id""",
+                tuple(sorted(work_item_ids)),
+            ).fetchall()
         if active:
             raise SystemExit(_active_error([dict(row) for row in active]))
 
-        for registry, work_item in selected:
-            derivatives, work = _work_item_paths(
-                work_item,
-                registry=registry,
-                work_root=work_root,
-                inventories=inventories,
-            )
-            derivative_roots = (
-                registry.paths.project_root / "derivatives" / "nro",
-                registry.paths.control,
-            )
-            for path in derivatives:
-                prune_root = next(root for root in derivative_roots if _is_within(path, root))
-                derivative_count += int(_remove_path(path, dry_run=dry_run, prune_root=prune_root))
-            work_root_boundary = work_root / registry.paths.project / "derivatives" / "nro"
-            for path in work:
-                work_count += int(
-                    _remove_path(path, dry_run=dry_run, prune_root=work_root_boundary)
-                )
+    for registry, work_item in selected:
+        derivatives, work = _work_item_paths(
+            work_item,
+            registry=registry,
+            work_root=work_root,
+            inventories=inventories,
+        )
+        derivative_roots = (
+            registry.paths.project_root / "derivatives" / "nro",
+            registry.paths.control,
+        )
+        for path in derivatives:
+            prune_root = next(root for root in derivative_roots if _is_within(path, root))
+            derivative_count += int(_remove_path(path, dry_run=dry_run, prune_root=prune_root))
+        work_root_boundary = work_root / registry.paths.project / "derivatives" / "nro"
+        for path in work:
+            work_count += int(_remove_path(path, dry_run=dry_run, prune_root=work_root_boundary))
 
-        if not dry_run:
+    if not dry_run:
+        placeholders = ",".join("?" for _ in work_item_ids)
+        with central_registry.connection(write=True) as db:
             db.execute(
                 f"""UPDATE work_items SET artifact_state='missing', artifact_reason='Purged by user',
                     updated_at=? WHERE id IN ({placeholders})""",
@@ -543,15 +542,14 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     plan, public, private, projects = [], set(), set(), set()
     for row in snapshot["rows"]:
         if (
-            selection.projects
-            and row["project"] not in selection.projects
-            or selection.participants
-            and row["participant"] not in selection.participants
-            or selection.modules
-            and row["module"] not in selection.modules
-            or selection.workflows
-            and not set(selection.workflows).intersection(
-                str(row.get("workflow_ids") or "").split(",")
+            (selection.projects and row["project"] not in selection.projects)
+            or (selection.participants and row["participant"] not in selection.participants)
+            or (selection.modules and row["module"] not in selection.modules)
+            or (
+                selection.workflows
+                and not set(selection.workflows).intersection(
+                    str(row.get("workflow_ids") or "").split(",")
+                )
             )
             or not matches_module_lineage(
                 str(row["module"]), str(row["directory_label"]), selection.lineages

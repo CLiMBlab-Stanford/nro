@@ -199,15 +199,17 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     assert (owner / "code/freesurfer").is_dir()
     manifest = next(s for s in graph.steps if s.completion_boundary)
     assert manifest.outputs == (owner / "sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",)
-    registrations = [step for step in graph.steps if step.name == "Register T2w to T1w"]
+    registrations = [step for step in graph.steps if step.name == "Register T2w to ACPC T1w"]
     if modalities == ("T1w", "T2w"):
         assert len(registrations) == 1
         registration = registrations[0]
         assert registration.inputs[0].is_relative_to(context.paths.development / "dev" / "WORK")
-        assert registration.inputs[1] == owner / "sub-1/anat/sub-1_desc-preproc_T1w.nii.gz"
+        assert registration.inputs[1] == (
+            owner / "sub-1/anat/sub-1_space-ACPC_desc-preproc_T1w.nii.gz"
+        )
         assert registration.outputs == (
-            owner / "sub-1/anat/sub-1_desc-preproc_T2w.nii.gz",
-            owner / "sub-1/anat/sub-1_from-T2w_to-T1w_mode-image_xfm.mat",
+            owner / "sub-1/anat/sub-1_space-ACPC_desc-preproc_T2w.nii.gz",
+            owner / "sub-1/anat/sub-1_from-T2w_to-ACPC_mode-image_xfm.mat",
         )
     else:
         assert not registrations

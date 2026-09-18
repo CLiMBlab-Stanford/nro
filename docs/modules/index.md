@@ -31,8 +31,9 @@ per run and summarizes effects within each participant. Its work items
 distinguish model, space, and smoothing, with separate run/session/subject
 output directories.
 
-The ordinary output root is `BIDS/PROJECT/derivatives/nro/MODULE/MODULE_ID/`.
-`MODULE_ID` is the registry-assigned lineage label, usually the selected
-configuration ID. It is not the workflow ID. WORK mirrors the derivative
+The ordinary output root is
+`BIDS/PROJECT/derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`.
+The registry derives this label from the selected configuration and upstream
+lineage. It is not the workflow ID. WORK mirrors the derivative
 organization for private files. See [configuration](../configuration.md) and
 [the API](../api.md) before adding or changing a module.

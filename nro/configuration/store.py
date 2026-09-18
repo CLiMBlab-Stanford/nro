@@ -14,6 +14,7 @@ import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -124,8 +125,50 @@ def configuration_fingerprint(
 ) -> str:
     """Hash a named snapshot; optionally compare only its scientific settings."""
     if scientific:
-        values = scientific_values(kind, compile_configuration(kind, values))
+        values = scientific_values(kind, _compile_scientific_snapshot(kind, values))
     return fingerprint({"module": kind, "config_id": identifier, "values": values})
+
+
+@lru_cache(maxsize=None)
+def _scientific_defaults(kind: str) -> dict:
+    """Compile one package-owned default snapshot once per process."""
+    default_path = PACKAGED_CONFIGS / kind / f"main_{kind}.yml"
+    return compile_configuration(
+        kind,
+        resolve_resources(
+            parse_mapping(default_path.read_text(encoding="utf-8"), source=str(default_path))
+        ),
+    )
+
+
+def _compile_scientific_snapshot(kind: str, values: dict) -> dict:
+    """Normalize a current or historical snapshot against today's declared defaults.
+
+    Configuration files are strict when authored: misspelled and retired keys are
+    errors. Stored artifact snapshots need different semantics. A field introduced
+    with a packaged default had that default implicitly before it was recorded, and
+    a field removed from the schema no longer describes scientific output. Project
+    only recognized fields onto the current packaged defaults before validation so
+    those two safe schema changes do not make equivalent artifacts stale.
+    """
+
+    defaults = _scientific_defaults(kind)
+
+    def project(schema: dict, baseline: dict, snapshot: Mapping[str, Any]) -> dict:
+        result = deepcopy(baseline)
+        for key, rule in schema.items():
+            if key not in snapshot:
+                continue
+            value = snapshot[key]
+            if isinstance(rule, dict) and isinstance(value, Mapping):
+                result[key] = project(rule, baseline[key], value)
+            else:
+                result[key] = deepcopy(value)
+        return result
+
+    if not isinstance(values, Mapping):
+        raise DefinitionError(f"{kind}: configuration snapshot must be a mapping")
+    return compile_configuration(kind, project(SCHEMAS[kind], defaults, values))
 
 
 @dataclass(frozen=True)

@@ -43,9 +43,9 @@ def functional_case(tmp_path, monkeypatch):
                 "freesurfer_subjects_dir": str(subjects),
                 "mni_template": str(template),
                 "outputs": {
-                    "subject_t1w": str(image),
+                    "acpc_t1w": str(image),
                     "brain_mask": str(image),
-                    "xfms": {"t1_to_mni": str(image), "mni_to_t1": str(image)},
+                    "xfms": {"acpc_to_mni": str(image), "mni_to_acpc": str(image)},
                     "surfaces": {
                         f"{hemi}.{surface}": str(image)
                         for hemi in ("lh", "rh")
@@ -92,7 +92,7 @@ def functional_case(tmp_path, monkeypatch):
         synbold_disco_license=tmp_path / "license",
         synbold_disco_engine="singularity",
         sdc_method="syn",
-        output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
+        output_spaces=("ACPC", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
         gradient_unwarp_image=tmp_path / "gradient.sif",
         gradient_unwarp_runtime="singularity",
         cicada_cmd=tmp_path / "cicada-python",
@@ -178,8 +178,26 @@ def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
     names = [step.name for step in job._graph.freeze().steps]
     assert "Estimate MELODIC Decomposition for CICADA" in names
     assert "Run CICADA Component Classification" in names
-    assert "Regress Shared CICADA Components in T1w" in names
+    assert "Regress Shared CICADA Components in ACPC" in names
     assert "Run ICA-AROMA Classification and Denoising" not in names
+
+
+def test_cicada_configuration_snapshot_validates_after_writing(functional_case):
+    inputs, options, context, _manifest, _image = functional_case
+    job = func.build_module(
+        inputs,
+        replace(options, ica_classifier="cicada"),
+        execution_context=context,
+    )
+    steps = job._graph.freeze().steps
+    initialize = next(step for step in steps if step.name == "Initialize Functional Outputs")
+    snapshot = next(step for step in steps if step.name == "Write Functional Configuration")
+
+    initialize.action()
+    snapshot.action()
+
+    assert snapshot.validate is not None
+    assert snapshot.validate()[0] is True
 
 
 def test_functional_graph_rejects_unselected_anatomy(functional_case):

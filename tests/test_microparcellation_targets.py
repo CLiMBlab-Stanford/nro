@@ -25,9 +25,9 @@ def _touch(path: Path) -> Path:
 
 
 def test_output_names_use_space_without_redundant_domain() -> None:
-    directory, prefix = target_output_names("sub-01", "T1w", 2)
-    assert directory == "space-T1w_smoothing-2mm"
-    assert prefix == "sub-01_space-T1w_smoothing-2mm"
+    directory, prefix = target_output_names("sub-01", "ACPC", 2)
+    assert directory == "space-ACPC_smoothing-2mm"
+    assert prefix == "sub-01_space-ACPC_smoothing-2mm"
     assert "domain-" not in directory + prefix
 
 

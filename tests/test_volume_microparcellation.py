@@ -8,7 +8,7 @@ import yaml
 
 from nro.configuration.store import ConfigStore
 from nro.engine.cifti import load_dlabel, load_pconn
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.modules.microparcellation.cifti import (
     write_volume_dlabel,
 )

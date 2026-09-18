@@ -52,11 +52,11 @@ class Field:
                 fail("must be an integer")
             value = int(value) if self.kind == "int" else float(value)
             if self.minimum is not None and (
-                value < self.minimum or self.exclusive_minimum and value == self.minimum
+                value < self.minimum or (self.exclusive_minimum and value == self.minimum)
             ):
                 fail(f"must be {'>' if self.exclusive_minimum else '>='} {self.minimum}")
             if self.maximum is not None and (
-                value > self.maximum or self.exclusive_maximum and value == self.maximum
+                value > self.maximum or (self.exclusive_maximum and value == self.maximum)
             ):
                 fail(f"must be {'<' if self.exclusive_maximum else '<='} {self.maximum}")
             if value == 0:
@@ -65,7 +65,7 @@ class Field:
             if not isinstance(value, bool):
                 fail("must be a boolean")
         elif self.kind in {"str", "regex"}:
-            if not isinstance(value, str) or self.nonempty and not value.strip():
+            if not isinstance(value, str) or (self.nonempty and not value.strip()):
                 fail("must be a nonempty string")
             if self.kind == "regex":
                 try:
@@ -73,7 +73,7 @@ class Field:
                 except re.error as error:
                     fail(f"invalid regular expression: {error}")
         elif self.kind == "list":
-            if not isinstance(value, list) or self.nonempty and not value:
+            if not isinstance(value, list) or (self.nonempty and not value):
                 fail("must be a nonempty list" if self.nonempty else "must be a list")
             value = [
                 self.item.normalize(item, f"{location}[{index}]")
@@ -483,27 +483,19 @@ def scientific_values(kind: str, values: dict) -> dict:
         }
     result = select(schema, values)
     if kind == "func":
-        # Keep the established AROMA/no-ICA scientific identity while exposing
-        # one classifier vocabulary to new configurations. This is semantic
-        # compilation, not a runtime compatibility path.
-        if "ica_classifier" in result:
-            classifier = result.pop("ica_classifier")
-            regression = result.pop("ica_regression")
-            if classifier in {"none", "ica_aroma"}:
-                result["clean_ica_aroma"] = classifier == "ica_aroma"
-                result["ica_aroma_denoise_type"] = {
-                    "aggressive": "aggr",
-                    "nonaggressive": "nonaggr",
-                }[regression if classifier == "ica_aroma" else "aggressive"]
-                if classifier == "none":
-                    result["ica_aroma_cmd"] = None
-                result.pop("cicada_cmd", None)
-                result.pop("cicada_tolerance", None)
-                result.pop("cicada_smoothing_retention_mode", None)
-            else:
-                result["ica_classifier"] = classifier
-                result["ica_regression"] = regression
-                result.pop("ica_aroma_cmd", None)
+        classifier = result.get("ica_classifier")
+        if classifier == "none":
+            result.pop("ica_regression", None)
+            result.pop("ica_aroma_cmd", None)
+            result.pop("cicada_cmd", None)
+            result.pop("cicada_tolerance", None)
+            result.pop("cicada_smoothing_retention_mode", None)
+        elif classifier == "ica_aroma":
+            result.pop("cicada_cmd", None)
+            result.pop("cicada_tolerance", None)
+            result.pop("cicada_smoothing_retention_mode", None)
+        elif classifier == "cicada":
+            result.pop("ica_aroma_cmd", None)
         if result.get("marss_mode") == "off":
             result.pop("marss_mode", None)
         if result.get("marss_mode") != "auto":

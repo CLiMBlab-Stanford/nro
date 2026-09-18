@@ -11,7 +11,8 @@ import pytest
 import yaml
 
 from nro.configuration.runtime import configure
-from nro.engine.images import load_gifti_timeseries, sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
+from nro.engine.images import load_gifti_timeseries
 from nro.modules.clean import module as clean
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext, InputBinding
@@ -52,10 +53,10 @@ def cleaning_case(tmp_path, request):
     func.mkdir(parents=True)
     rng = np.random.default_rng(9)
     metrics = []
-    for space in ("T1w", "fsnative"):
+    for space in ("ACPC", "fsnative"):
         names = (
-            [f"{stem}_space-T1w_desc-preproc_bold.nii.gz"]
-            if space == "T1w"
+            [f"{stem}_space-ACPC_desc-preproc_bold.nii.gz"]
+            if space == "ACPC"
             else [
                 f"{stem}_space-fsnative_hemi-{hemi}_desc-preproc_bold.func.gii"
                 for hemi in ("L", "R")
@@ -63,7 +64,7 @@ def cleaning_case(tmp_path, request):
         )
         for name in names:
             path = func / name
-            if space == "T1w":
+            if space == "ACPC":
                 nib.save(
                     nib.Nifti1Image(rng.normal(size=(3, 3, 3, 60)).astype("float32"), np.eye(4)),
                     path,
@@ -127,7 +128,7 @@ def cleaning_case(tmp_path, request):
     return args, context, (anat, func), events
 
 
-@pytest.mark.parametrize("space", ["T1w", "fsnative"])
+@pytest.mark.parametrize("space", ["ACPC", "fsnative"])
 @pytest.mark.parametrize("smoothing", [0, 2])
 def test_clean_graph_keeps_selected_inputs_and_owned_outputs(cleaning_case, space, smoothing):
     args, context, sources, events = cleaning_case

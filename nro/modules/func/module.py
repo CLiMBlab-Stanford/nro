@@ -29,13 +29,12 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nro.configuration.hardware import GradientUnwarpingResolution, resolve_gradient_unwarping
+from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.runtime import SETTINGS
-from nro.configuration.schema import scientific_values
 from nro.configuration.site import settings as site_settings
 from nro.engine.bids import (
     bids_entity,
@@ -54,13 +53,10 @@ from nro.engine.execution import (
     neuroimaging_environment,
     require_existing_path,
 )
-from nro.engine.gradient_unwarping import create_gradient_unwarping_step
+from nro.engine.image_paths import nifti_stem, sidecar_json_path, uncompressed_nifti_path
 from nro.engine.images import (
     nifti_spatial_shape,
-    nifti_stem,
     nifti_volume_count,
-    sidecar_json_path,
-    uncompressed_nifti_path,
 )
 from nro.engine.io import read_json, write_json
 from nro.engine.manifests import (
@@ -94,28 +90,30 @@ from nro.engine.paths import (
 from nro.engine.targets import supported_output_spaces
 from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.func.contract import (
-    MARSS_DIAGNOSTIC_METHOD,
-    final_resampling_contract,
     final_resampling_metadata,
     functional_output_contract,
     validate_functional_image_sidecar,
     validate_functional_manifest,
 )
-from nro.modules.func.marss import create_marss_motion_step, create_marss_step
 from nro.modules.func.resolver import (
     ResolvedFuncRun,
     resolve_func_run_request,
 )
 from nro.modules.func.synbold_disco import create_synthetic_reference_step, ensure_image
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.runner import ContainerSpec, Runner, write_completion_breadcrumb
+from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
-from nro.orchestration.runtime import selected_configuration_fingerprint
 
+from .config import Inputs, Options, normalize_output_spaces
 from .constants import (
     _FIELDMAP_TRANSFER_POLICY_VERSION,
     _ICA_AROMA_MELODIC_MASK_DILATION_MM,
     _ICA_AROMA_REGRESSION_MASK_DILATION_MM,
+)
+from .construction import (
+    plan_initialization,
+    plan_input_preparation,
+    plan_reference_preparation,
 )
 from .denoising_steps import (
     _create_cicada_classification_step,
@@ -129,10 +127,6 @@ from .denoising_steps import (
     _create_shared_aroma_regression_step,
     _ica_aroma_policy_payload,
     _ica_aroma_shared_regression_policy_payload,
-)
-from .reference_steps import (
-    _create_functional_reference_selection_step,
-    _create_robust_bold_reference_step,
 )
 from .registration_steps import (
     _ants_pe_aligned_frame,
@@ -191,169 +185,6 @@ from .surface_steps import (
 )
 
 LOG = logging.getLogger("func")
-
-
-@dataclass(frozen=True)
-class Inputs:
-    """Resolved BOLD, reference, fieldmap, and anatomy inputs for one functional run."""
-
-    sbref: Optional[Path]
-    epi: Path
-    se1: Optional[Path]
-    se2: Optional[Path]
-    se1_json: Optional[Path] = None
-    se2_json: Optional[Path] = None
-    epi_json: Optional[Path] = None
-    sbref_json: Optional[Path] = None
-    epi_metadata: Optional[dict[str, Any]] = None
-    epi_metadata_sources: tuple[Path, ...] = ()
-    sbref_metadata: Optional[dict[str, Any]] = None
-    sbref_metadata_sources: tuple[Path, ...] = ()
-    se1_metadata: Optional[dict[str, Any]] = None
-    se1_metadata_sources: tuple[Path, ...] = ()
-    se2_metadata: Optional[dict[str, Any]] = None
-    se2_metadata_sources: tuple[Path, ...] = ()
-    sbref_metadata_inheritance: Optional[dict[str, Any]] = None
-
-
-@dataclass(frozen=True)
-class Options:
-    """Functional registration, resampling, denoising, output-space, and execution settings."""
-
-    out_dir: Path
-    work_dir: Path
-    project: str
-    func_id: str
-    sub_id: str
-    ses_id: Optional[str]
-    overwrite: bool
-    output_grid: str
-    topup_config: str
-    ica_aroma_cmd: Optional[Path]
-    cicada_cmd: Path
-    ica_classifier: str
-    ica_regression: str
-    cicada_tolerance: int
-    cicada_smoothing_retention_mode: str
-    use_jacobian: bool
-    fieldmap_syn_refine: bool
-    syn_base_transform: str
-    syn_base_convergence: str
-    syn_base_shrink_factors: str
-    syn_base_smoothing_sigmas: str
-    syn_refine_transform: str
-    syn_refine_convergence: str
-    syn_refine_shrink_factors: str
-    syn_refine_smoothing_sigmas: str
-    marss_mode: str
-    marss_min_multiband_factor: int
-    gradient_unwarping: str
-    gradient_unwarp_image: Path
-    gradient_unwarp_runtime: str
-    fsaverage_template: str
-    bbregister_surf: str
-    bbregister_init: str
-    bbregister_dof: int
-    container: Optional[ContainerSpec]
-    debug_first_nvols: int
-    output_spaces: tuple[str, ...]
-    io_chunk_vols: int
-    sdc_method: str
-    synbold_disco_image: Path
-    synbold_disco_license: Path
-    synbold_disco_engine: str
-    synbold_overlap_erosion_voxels: int
-    synbold_min_overlap_voxels: int
-    synbold_max_rigid_translation_mm: float
-    synbold_max_rigid_rotation_degrees: float
-    sbref_max_rigid_displacement_mm: float
-    sbref_max_rigid_rotation_degrees: float
-    sbref_min_support_overlap: float
-    sbref_min_intensity_correlation: float
-    anat_id: str
-
-
-def _functional_config_payload(
-    opts: Options,
-    *,
-    gradient_unwarping: GradientUnwarpingResolution | None = None,
-) -> dict[str, object]:
-    """Canonical output-affecting configuration recorded by every new run."""
-    payload = {
-        "output_grid": opts.output_grid,
-        "topup_config": opts.topup_config,
-        "ica_aroma_cmd": str(opts.ica_aroma_cmd) if opts.ica_aroma_cmd else None,
-        "cicada_cmd": str(opts.cicada_cmd),
-        "ica_classifier": opts.ica_classifier,
-        "ica_regression": opts.ica_regression,
-        "cicada_tolerance": int(opts.cicada_tolerance),
-        "cicada_smoothing_retention_mode": opts.cicada_smoothing_retention_mode,
-        "use_jacobian": bool(opts.use_jacobian),
-        "fieldmap_syn_refine": bool(opts.fieldmap_syn_refine),
-        "syn_base_transform": opts.syn_base_transform,
-        "syn_base_convergence": opts.syn_base_convergence,
-        "syn_base_shrink_factors": opts.syn_base_shrink_factors,
-        "syn_base_smoothing_sigmas": opts.syn_base_smoothing_sigmas,
-        "syn_refine_transform": opts.syn_refine_transform,
-        "syn_refine_convergence": opts.syn_refine_convergence,
-        "syn_refine_shrink_factors": opts.syn_refine_shrink_factors,
-        "syn_refine_smoothing_sigmas": opts.syn_refine_smoothing_sigmas,
-        "bbregister_surf": opts.bbregister_surf,
-        "bbregister_init": opts.bbregister_init,
-        "bbregister_dof": int(opts.bbregister_dof),
-        "debug_first_nvols": int(opts.debug_first_nvols),
-        "output_spaces": list(opts.output_spaces),
-        "fsaverage_template": opts.fsaverage_template,
-        "gradient_unwarping": opts.gradient_unwarping,
-        "final_resampling": final_resampling_contract(
-            gradient_unwarping=bool(gradient_unwarping and gradient_unwarping.applied)
-        ),
-        "sdc_method": opts.sdc_method,
-        "synbold_disco_image": str(opts.synbold_disco_image),
-        "synbold_disco_engine": opts.synbold_disco_engine,
-        "synbold_overlap_erosion_voxels": int(opts.synbold_overlap_erosion_voxels),
-        "synbold_min_overlap_voxels": int(opts.synbold_min_overlap_voxels),
-        "synbold_max_rigid_translation_mm": float(opts.synbold_max_rigid_translation_mm),
-        "synbold_max_rigid_rotation_degrees": float(opts.synbold_max_rigid_rotation_degrees),
-        "sbref_max_rigid_displacement_mm": float(opts.sbref_max_rigid_displacement_mm),
-        "sbref_max_rigid_rotation_degrees": float(opts.sbref_max_rigid_rotation_degrees),
-        "sbref_min_support_overlap": float(opts.sbref_min_support_overlap),
-        "sbref_min_intensity_correlation": float(opts.sbref_min_intensity_correlation),
-    }
-    if opts.marss_mode != "off":
-        payload["marss_mode"] = opts.marss_mode
-        payload["marss_diagnostic_method"] = MARSS_DIAGNOSTIC_METHOD
-    if opts.marss_mode == "auto":
-        payload["marss_min_multiband_factor"] = int(opts.marss_min_multiband_factor)
-    return payload
-
-
-def _normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
-    mapping = {
-        "t1w": "T1w",
-        "t1": "T1w",
-        "fsnative": "fsnative",
-        "mni": "MNI152NLin2009cAsym",
-        "mni152nlin2009casym": "MNI152NLin2009cAsym",
-        "fsaverage": "fsaverage",
-        "fsaverage6": "fsaverage6",
-    }
-    out: list[str] = []
-    for raw in values:
-        key = str(raw).strip()
-        if not key:
-            continue
-        canon = mapping.get(key.lower())
-        if canon is None:
-            raise SystemExit(
-                "Unknown output space "
-                f"{raw!r}. Expected T1w, fsnative, MNI152NLin2009cAsym, or an fsaverage template"
-            )
-        if canon not in out:
-            out.append(canon)
-    if not out:
-        raise SystemExit("At least one output space must be requested.")
-    return tuple(out)
 
 
 def build_module(
@@ -462,7 +293,7 @@ def build_module(
         raise SystemExit(f"Anatomical manifest is missing fs_subject: {anat_manifest}")
     anat_t1 = require_manifest_output(
         anat_info,
-        "subject_t1w",
+        "acpc_t1w",
         manifest_path=anat_manifest,
         manifest_name="Anatomical",
     )
@@ -477,14 +308,14 @@ def build_module(
     t1_to_mni_xfm = require_nested_manifest_output(
         anat_info,
         "xfms",
-        "t1_to_mni",
+        "acpc_to_mni",
         manifest_path=anat_manifest,
         manifest_name="Anatomical",
     )
     require_nested_manifest_output(
         anat_info,
         "xfms",
-        "mni_to_t1",
+        "mni_to_acpc",
         manifest_path=anat_manifest,
         manifest_name="Anatomical",
     )
@@ -544,7 +375,6 @@ def build_module(
         logger=LOG,
         execution_context=execution_context,
     )
-    initialized = opts.work_dir / "initialized.complete"
     derivative_root = module_derivatives_root(
         "func",
         opts.func_id,
@@ -553,50 +383,6 @@ def build_module(
     )
     if execution_context is not None:
         derivative_root = execution_context.output_path(derivative_root)
-
-    def initialize_outputs() -> None:
-        ensure_directory(derivative_root)
-        ensure_directory(opts.out_dir)
-        ensure_directory(opts.work_dir)
-        write_completion_breadcrumb(initialized, "Functional outputs initialized\n")
-
-    runner.add_step(
-        Step.python(
-            name="Initialize Functional Outputs",
-            outputs=(initialized,),
-            action=initialize_outputs,
-        )
-    )
-    configuration = {
-        "configuration": _functional_config_payload(
-            opts,
-            gradient_unwarping=gradient_resolution,
-        ),
-        "configuration_fingerprint": selected_configuration_fingerprint(),
-    }
-    configuration_snapshot = opts.work_dir / "configuration.json"
-
-    def validate_configuration() -> tuple[bool, str]:
-        try:
-            current = read_json(configuration_snapshot)
-        except (OSError, ValueError, TypeError):
-            return False, "Functional configuration snapshot is missing or unreadable."
-        if isinstance(current.get("configuration"), dict):
-            current["configuration"] = scientific_values("func", current["configuration"])
-        if current != configuration:
-            return False, "Functional configuration changed."
-        return True, "Functional configuration is unchanged."
-
-    runner.add_step(
-        Step.python(
-            name="Write Functional Configuration",
-            outputs=(configuration_snapshot,),
-            inputs=(initialized,),
-            force=opts.overwrite,
-            action=lambda: write_json(configuration_snapshot, configuration),
-            validate=validate_configuration,
-        )
-    )
     fieldmap_pair_available = all(
         p is not None
         for p in (
@@ -647,22 +433,17 @@ def build_module(
     ]
     if ica_enabled:
         base_cmds.extend(("bet", "fsl_regfilt", "fslinfo", "fslstats", "melodic"))
-    dependency_check = opts.work_dir / "dependencies.complete"
-
-    def check_dependencies() -> None:
-        runner.require_cmds(
-            base_cmds if use_syn_fallback else base_cmds + ["topup", "bbregister", "tkregister2"]
-        )
-        write_completion_breadcrumb(dependency_check, "Functional dependencies available\n")
-
-    runner.add_step(
-        Step.python(
-            name="Check Functional Dependencies",
-            outputs=(dependency_check,),
-            force=opts.overwrite,
-            action=check_dependencies,
-        )
+    initialization = plan_initialization(
+        opts=opts,
+        derivative_root=derivative_root,
+        gradient_unwarping=gradient_resolution,
+        required_commands=(
+            base_cmds if use_syn_fallback else [*base_cmds, "topup", "bbregister", "tkregister2"]
+        ),
+        require_commands=runner.require_cmds,
     )
+    runner.add_steps(initialization.steps)
+    configuration = initialization.products.configuration
     LOG.info(
         "Susceptibility distortion correction: base=%s refinement=%s",
         "fieldmap" if use_fieldmap_sdc else sdc_method,
@@ -674,10 +455,9 @@ def build_module(
     )
     run_stem = nifti_stem(inputs.epi)
     run_base = run_stem[: -len("_bold")] if run_stem.endswith("_bold") else run_stem
-    run_prefix = f"{run_base}_space-T1w"
+    run_prefix = f"{run_base}_space-ACPC"
     source_volume_count = nifti_volume_count(inputs.epi)
     source_spatial_shape = nifti_spatial_shape(inputs.epi)
-    processing_volume_count = source_volume_count
     func_dir = opts.out_dir
     fmap_dir = func_dir.parent / "fmap"
     sdc_dir = opts.work_dir / "sdc"
@@ -685,177 +465,53 @@ def build_module(
     mc_dir = opts.work_dir / "mc"
     surf_dir = opts.work_dir / "surf"
     qc_dir = opts.work_dir / "qc"
-    # Debug truncation must precede reference construction so the provisional
-    # and final motion passes operate on exactly the series being processed.
-    epi_for_proc = inputs.epi
-    debug_epi: Optional[Path] = None
-    if int(opts.debug_first_nvols) > 0:
-        n = int(opts.debug_first_nvols)
-        processing_volume_count = min(n, source_volume_count)
-        debug_dir = opts.work_dir / "debug"
-        debug_epi = debug_dir / f"{run_stem}_first{n:04d}.nii.gz"
-        debug_cmd = ["fslroi", str(inputs.epi), str(debug_epi), "0", str(n)]
-        runner.add_step(
-            Step.command_step(
-                debug_cmd,
-                name="Select Debug BOLD Volumes",
-                outputs=(debug_epi,),
-                inputs=(inputs.epi,),
-                force=opts.overwrite,
-                env=env,
-                prepare=lambda: ensure_directory(debug_dir),
-            )
-        )
-        epi_for_proc = debug_epi
-
-    marss_outputs = None
-    marss_mode = str(opts.marss_mode).strip().lower()
-    if marss_mode not in {"off", "diagnose", "auto"}:
-        raise SystemExit(
-            f"Unsupported MARSS mode {opts.marss_mode!r}; expected off, diagnose, or auto."
-        )
-    if marss_mode != "off":
-        marss_dir = opts.work_dir / "marss"
-        motion_step, marss_motion = create_marss_motion_step(
-            run_child=runner.run_child,
-            source_bold=epi_for_proc,
-            work_dir=marss_dir / "motion",
-            env=env,
-            force=opts.overwrite,
-        )
-        runner.add_step(motion_step)
-        marss_step, marss_outputs = create_marss_step(
-            runner=runner,
-            source_bold=epi_for_proc,
-            metadata=epi_input_meta,
-            metadata_sources=epi_metadata_sources,
-            motion_parameters=marss_motion,
-            work_dir=marss_dir,
-            artifact_dir=opts.out_dir,
-            run_stem=run_base,
-            mode=marss_mode,
-            min_multiband_factor=int(opts.marss_min_multiband_factor),
-            chunk_volumes=max(1, int(opts.io_chunk_vols)),
-            force=opts.overwrite,
-        )
-        runner.add_step(marss_step)
-        epi_for_proc = marss_outputs.bold
-
-    final_resampling_source = epi_for_proc
-    gradient_afni_warp: Path | None = None
-    gradient_relative_warp: Path | None = None
-    gradient_dir: Path | None = None
-    if gradient_resolution.applied:
-        gradient_dir = opts.work_dir / "gradient_unwarping" / "bold"
-        corrected_bold = gradient_dir / f"{run_stem}_desc-gradientCorrected_bold.nii.gz"
-        gradient_relative_warp = gradient_dir / f"{run_stem}_gradient_warp.nii.gz"
-        gradient_metadata = gradient_dir / f"{run_stem}_gradient.json"
-        runner.add_step(
-            create_gradient_unwarping_step(
-                runner=runner,
-                source=final_resampling_source,
-                corrected=corrected_bold,
-                warp=gradient_relative_warp,
-                metadata=gradient_metadata,
-                resolution=gradient_resolution,
-                runtime=opts.gradient_unwarp_runtime,
-                image=opts.gradient_unwarp_image,
-                force=opts.overwrite,
-            )
-        )
-        epi_for_proc = corrected_bold
-
-    def corrected_auxiliary(kind: str, source: Path | None):
-        resolution = gradient_resolutions[kind]
-        if source is None or not resolution.applied:
-            return source, None
-        directory = opts.work_dir / "gradient_unwarping" / kind
-        corrected = directory / source.name
-        stem = nifti_stem(source)
-        step = create_gradient_unwarping_step(
-            runner=runner,
-            source=source,
-            corrected=corrected,
-            warp=directory / f"{stem}_gradient_warp.nii.gz",
-            metadata=directory / f"{stem}_gradient.json",
-            resolution=resolution,
-            runtime=opts.gradient_unwarp_runtime,
-            image=opts.gradient_unwarp_image,
-            force=opts.overwrite,
-        )
-        return corrected, step
-
-    sbref, sbref_gradient_step = corrected_auxiliary("sbref", inputs.sbref)
-    se1, se1_gradient_step = corrected_auxiliary("se1", inputs.se1)
-    se2, se2_gradient_step = corrected_auxiliary("se2", inputs.se2)
-    for step in (sbref_gradient_step, se1_gradient_step, se2_gradient_step):
-        if step is not None:
-            runner.add_step(step)
-    inputs = replace(
-        inputs,
-        sbref=sbref,
-        se1=se1,
-        se2=se2,
-    )
-
-    robust_reference_step = _create_robust_bold_reference_step(
-        run_child=runner.run_child,
-        epi_in=epi_for_proc,
-        volume_count=processing_volume_count,
-        run_stem=run_stem,
-        mc_dir=mc_dir,
-        env=env,
-        force=opts.overwrite,
-    )
-    runner.add_step(robust_reference_step.step)
-    robust_ref = robust_reference_step.reference
-    robust_reference_metadata = robust_reference_step.metadata
-    if gradient_relative_warp is not None and gradient_dir is not None:
-        gradient_world_warp = gradient_dir / f"{run_stem}_gradient_world.nii.gz"
-        gradient_afni_warp = gradient_dir / f"{run_stem}_gradient_afni_lps.nii.gz"
-        runner.add_step(
-            _create_world_warp_step(
-                run_child=runner.run_child,
-                motion_ref_3d=robust_ref,
-                ref_3d=robust_ref,
-                fnirt_warp=gradient_relative_warp,
-                world_warp=gradient_world_warp,
-                env=env,
-                force=opts.overwrite,
-            )
-        )
-        runner.add_step(
-            _create_afni_warp_step(
-                world_warp=gradient_world_warp,
-                motion_ref_3d=robust_ref,
-                ref_3d=robust_ref,
-                afni_warp=gradient_afni_warp,
-                force=opts.overwrite,
-            )
-        )
-    selected_reference = _create_functional_reference_selection_step(
-        run_child=runner.run_child,
-        robust_ref=robust_ref,
+    preparation = plan_input_preparation(
+        opts=opts,
+        inputs=inputs,
         epi_metadata=epi_input_meta,
         epi_metadata_sources=epi_metadata_sources,
-        sbref=inputs.sbref,
-        sbref_json=inputs.sbref_json,
-        sbref_metadata=inputs.sbref_metadata,
-        sbref_metadata_sources=sbref_metadata_sources,
-        sbref_metadata_inheritance=inputs.sbref_metadata_inheritance,
-        work_dir=opts.work_dir / "reference" / "sbref_qc",
-        env=env,
-        max_rotation_degrees=opts.sbref_max_rigid_rotation_degrees,
-        max_displacement_mm=opts.sbref_max_rigid_displacement_mm,
-        min_support_overlap=opts.sbref_min_support_overlap,
-        min_correlation=opts.sbref_min_intensity_correlation,
-        force=opts.overwrite,
+        gradient_resolutions=gradient_resolutions,
+        environment=env,
+        run_stem=run_stem,
+        run_base=run_base,
+        source_volume_count=source_volume_count,
+        run_child=runner.run_child,
     )
-    runner.add_step(selected_reference.step)
+    runner.add_steps(preparation.steps)
+    inputs = preparation.products.inputs
+    epi_for_proc = preparation.products.processing_bold
+    final_resampling_source = preparation.products.resampling_source
+    processing_volume_count = preparation.products.processing_volume_count
+    gradient_relative_warp = preparation.products.gradient_relative_warp
+    gradient_dir = preparation.products.gradient_directory
+    marss_outputs = preparation.products.marss
+
+    reference = plan_reference_preparation(
+        opts=opts,
+        inputs=inputs,
+        processing_bold=epi_for_proc,
+        processing_volume_count=processing_volume_count,
+        run_stem=run_stem,
+        motion_directory=mc_dir,
+        environment=env,
+        epi_metadata=epi_input_meta,
+        epi_metadata_sources=epi_metadata_sources,
+        sbref_metadata_sources=sbref_metadata_sources,
+        gradient_relative_warp=gradient_relative_warp,
+        gradient_directory=gradient_dir,
+        run_child=runner.run_child,
+    )
+    runner.add_steps(reference.steps)
+    robust_ref = reference.products.robust_reference
+    robust_reference_metadata = reference.products.robust_metadata
+    selected_reference_image = reference.products.selected_reference
+    epi_to_reference = reference.products.epi_to_reference
+    selected_reference_metadata = reference.products.selected_metadata
+    gradient_afni_warp = reference.products.gradient_afni_warp
     reg_ref_tag = "regRef"
     reg_ref_space = "FunctionalReference"
     requested_spaces = set(opts.output_spaces)
-    want_t1 = "T1w" in requested_spaces
+    want_t1 = "ACPC" in requested_spaces
     want_mni = "MNI152NLin2009cAsym" in requested_spaces
     if classifier == "cicada" and not want_mni:
         raise SystemExit(
@@ -970,7 +626,7 @@ def build_module(
         f"{run_base}_space-{reg_ref_space}", "_desc-synbold_boldref.nii.gz"
     )
     fmap_synbold_rigid_out = fmap_dir / _with_suffix(
-        f"{run_base}_space-T1w", "_desc-synboldRigid_boldref.nii.gz"
+        f"{run_base}_space-ACPC", "_desc-synboldRigid_boldref.nii.gz"
     )
     anat_brain_mask_in_t1 = func_dir / _with_suffix(run_prefix, "_desc-brain_mask.nii.gz")
     anat_brain_mask_in_mni = qc_dir / _with_suffix(
@@ -982,7 +638,7 @@ def build_module(
         if classifier == "cicada"
         else _ica_aroma_output_label(denoise_type)
     )
-    aroma_t1_dir = aroma_dir / "space-T1w"
+    aroma_t1_dir = aroma_dir / "space-ACPC"
     aroma_mni_dir = aroma_dir / "space-MNI152NLin2009cAsym"
     aroma_clean = uncompressed_nifti_path(
         aroma_t1_dir / _with_suffix(run_prefix, f"_desc-{aroma_label}_bold.nii.gz")
@@ -1071,7 +727,7 @@ def build_module(
     synbold_rigid_qc: Optional[Path] = None
     ants_forward_xfm: Optional[Path] = None
     epi_mc_ref: Optional[Path] = robust_ref
-    reg_ref_dist_ref: Optional[Path] = selected_reference.image
+    reg_ref_dist_ref: Optional[Path] = selected_reference_image
     reg_ref_dc_ref: Optional[Path] = None
     pre_nonlinear_ref_in_t1: Optional[Path] = None
     fsl_mat: Optional[Path] = None
@@ -1079,10 +735,10 @@ def build_module(
     mc_mat_dir = mc_dir / f"{run_stem}_mc.nii.gz.mat"
 
     if use_syn_fallback:
-        reg_ref_dist_ref = selected_reference.image
+        reg_ref_dist_ref = selected_reference_image
     else:
         require_existing_path(subjects_dir, "FreeSurfer SUBJECTS_DIR from anatomical manifest")
-        reg_ref_dist_ref = selected_reference.image
+        reg_ref_dist_ref = selected_reference_image
 
         topup_label = "fieldmap" if use_fieldmap_sdc else "synbold_disco"
         topup_work_dir = opts.work_dir / f"topup_{topup_label}_native"
@@ -1560,7 +1216,7 @@ def build_module(
 
             bold_ref_to_topup_step = _create_bold_ref_to_topup_transform_step(
                 reg_ref_to_topup_mat=reg_ref_to_topup_mat,
-                epi_ref_to_reg_ref_mat=selected_reference.epi_to_reference,
+                epi_ref_to_reg_ref_mat=epi_to_reference,
                 work_dir=opts.work_dir,
                 env=env,
                 force=opts.overwrite,
@@ -1905,7 +1561,7 @@ def build_module(
         runner.add_step(
             _create_convertwarp_premat_and_warp_step(
                 ref=t1_ref,
-                premat=selected_reference.epi_to_reference,
+                premat=epi_to_reference,
                 warp1=fallback_base_warp,
                 out_warp=epi_to_t1_warp_planned,
                 env=env,
@@ -1993,7 +1649,7 @@ def build_module(
             runner.add_step(
                 _create_convertwarp_premat_and_warp_step(
                     ref=t1_ref,
-                    premat=selected_reference.epi_to_reference,
+                    premat=epi_to_reference,
                     warp1=warp_sbref2t1,
                     out_warp=epi_to_t1_warp_planned,
                     env=env,
@@ -2250,8 +1906,8 @@ def build_module(
         and warp_regref2t1_refined is not None
     )
     if (not use_syn_fallback) and topup_native is not None:
-        # The Hz field lives in registration-reference space, so its T1w
-        # derivative must follow the final registration-reference-to-T1w warp.
+        # The Hz field lives in registration-reference space, so its ACPC
+        # derivative must follow the final registration-reference-to-ACPC warp.
         # In particular, defer this until after anatomical SyN refinement; the
         # base warp above is not the final spatial mapping in that pathway.
         fieldmap_hz_in_t1 = fieldmap_hz_in_t1_out
@@ -2338,14 +1994,14 @@ def build_module(
 
     space_sequence: list[str] = []
     if compute_t1:
-        space_sequence.append("T1w")
+        space_sequence.append("ACPC")
     if want_mni:
         space_sequence.append("MNI152NLin2009cAsym")
     log_space_sequence = []
     if want_t1:
-        log_space_sequence.append("T1w")
+        log_space_sequence.append("ACPC")
     elif compute_t1:
-        log_space_sequence.append("T1w(required)")
+        log_space_sequence.append("ACPC(required)")
     if want_fsnative:
         log_space_sequence.append("fsnative")
     if want_fsaverage:
@@ -2387,7 +2043,7 @@ def build_module(
     )
 
     for space in space_sequence:
-        if space == "T1w":
+        if space == "ACPC":
             raw_4d, mean_3d, mask_3d = epi_t1, epi_mean_t1, anat_brain_mask_in_t1
             ref_img, warp_img = t1_ref, warp_sbref2t1_refined
             aroma_out_4d, aroma_out_mean, aroma_work = aroma_clean, aroma_clean_mean, aroma_t1_dir
@@ -2406,8 +2062,8 @@ def build_module(
 
         space_name = (
             f"Output Space: {space}"
-            if (space != "T1w" or want_t1)
-            else "Preparing Required T1w Source"
+            if (space != "ACPC" or want_t1)
+            else "Preparing Required ACPC Source"
         )
         LOG.info("Constructing %s", space_name)
         world_warp = resampling_work / "warp_world.nii.gz"
@@ -2481,7 +2137,7 @@ def build_module(
                     force=opts.overwrite,
                 )
             )
-            if space == "T1w":
+            if space == "ACPC":
                 melodic_mask = aroma_work / "melodic_mask.nii.gz"
                 melodic_input = aroma_work / "melodic_input_smooth6mm.nii.gz"
                 runner.add_step(
@@ -2664,7 +2320,7 @@ def build_module(
                         _create_shared_aroma_regression_step(
                             runner=runner,
                             epi=raw_4d,
-                            input_space="T1w",
+                            input_space="ACPC",
                             regression_mask=regression_mask,
                             mixing_matrix=melodic_dir / "melodic_mix",
                             classified_components=classified_components,
@@ -2820,7 +2476,7 @@ def build_module(
         final_sources_mean[space] = final_mean
         final_masks[space] = mask_3d
 
-    confounds_space = "T1w" if "T1w" in final_sources_4d else "MNI152NLin2009cAsym"
+    confounds_space = "ACPC" if "ACPC" in final_sources_4d else "MNI152NLin2009cAsym"
     confounds_source_4d = final_sources_4d[confounds_space]
     confounds_source_mean = final_sources_mean[confounds_space]
     confounds_mask = final_masks[confounds_space]
@@ -2912,8 +2568,8 @@ def build_module(
             )
         )
 
-    final_preproc_source = final_sources_4d.get("T1w", confounds_source_4d)
-    final_t1_surface_source_4d = final_sources_4d.get("T1w", final_preproc_source)
+    final_preproc_source = final_sources_4d.get("ACPC", confounds_source_4d)
+    final_t1_surface_source_4d = final_sources_4d.get("ACPC", final_preproc_source)
     fsnative_metric_outputs = (
         preproc_fsnative
         if want_fsnative
@@ -3037,7 +2693,7 @@ def build_module(
     }
 
     def publication_payload() -> dict[str, object]:
-        selection = read_json(selected_reference.metadata)
+        selection = read_json(selected_reference_metadata)
         multiband_artifact = (
             read_json(marss_outputs.metadata) if marss_outputs is not None else None
         )
@@ -3169,7 +2825,7 @@ def build_module(
         Step.python(
             name="Publish Functional Derivatives",
             outputs=(*metadata_outputs, publication_manifest),
-            inputs=(*public_files, selected_reference.metadata, robust_reference_metadata),
+            inputs=(*public_files, selected_reference_metadata, robust_reference_metadata),
             force=opts.overwrite,
             action=publish,
             validate=validate_publication,
@@ -3584,7 +3240,7 @@ def main(
         bbregister_dof=int(args.bbregister_dof),
         container=container,
         debug_first_nvols=int(args.debug_first_nvols),
-        output_spaces=_normalize_output_spaces(args.output_spaces),
+        output_spaces=normalize_output_spaces(args.output_spaces),
         io_chunk_vols=max(1, int(args.io_chunk_vols)),
         sdc_method=str(args.sdc_method),
         synbold_disco_image=Path(args.synbold_disco_image),

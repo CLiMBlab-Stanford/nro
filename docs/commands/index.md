@@ -18,7 +18,6 @@ scanplans
 branches
 releases
 promotion
-cutover
 ```
 
 `nro definitions create [PATH]` initializes a site-owned definitions store.

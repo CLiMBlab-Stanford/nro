@@ -167,7 +167,7 @@ def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(
         registry,
         checkout=tmp_path / "main",
         confirm=lambda _activity: "stop",
-        rebuild_schema=True,
+        update_schema=True,
     )
 
     assert result["done"]
@@ -230,7 +230,7 @@ def test_schema_rebuild_stops_the_live_scheduler_before_direct_registry_access(
         registry,
         checkout=tmp_path / "main",
         confirm=lambda _activity: "stop",
-        rebuild_schema=True,
+        update_schema=True,
     )
 
     assert result["done"]
@@ -419,14 +419,68 @@ def test_publish_records_release_in_installation(tmp_path, monkeypatch):
     )
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     registry.initialize()
-    monkeypatch.setattr(
-        shared_installation,
-        "activate",
-        lambda registry, checkout, installation_maintenance: {"checkout": str(checkout)},
-    )
+
+    def activate(registry, checkout, **options):
+        options["installation_path"].write_text(json.dumps(options["installation"]))
+        return {"checkout": str(checkout)}
+
+    monkeypatch.setattr(shared_installation, "activate", activate)
 
     result = shared_installation.publish(root, registry)
 
     saved = json.loads((root / ".nro-installation.json").read_text())
     assert saved["release"] == result["release"]
     assert saved["release"]["version"] == "1.2.3"
+
+
+def test_publish_restores_both_bindings_when_cutover_fails(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname="example"\nversion="1.2.3"\n')
+    (root / ".gitignore").write_text(".nro-installation.json\ncandidate/\nsite.toml\n")
+    import subprocess
+
+    for args in (
+        ("init", "-b", "main"),
+        ("config", "user.name", "Test Maintainer"),
+        ("config", "user.email", "maintainer@example.invalid"),
+        ("add", "."),
+        ("commit", "-m", "Release"),
+        ("tag", "-a", "v1.2.3", "-m", "Release 1.2.3"),
+        ("update-ref", "refs/remotes/origin/main", "HEAD"),
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    environment = root / "candidate/bin"
+    environment.mkdir(parents=True)
+    (environment / "python").write_text("")
+    site = root / "site.toml"
+    site.write_text("")
+    candidate = {
+        "mode": "shared",
+        "checkout": str(root),
+        "environment": str(environment.parent),
+        "site": str(site),
+        "ready": True,
+    }
+    record_path = root / ".nro-installation.json"
+    record_path.write_text('{"old": true}\n')
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    binding = implementation_path(registry.paths.control)
+    binding.parent.mkdir(parents=True, exist_ok=True)
+    binding.write_text('{"old": true}\n')
+
+    def activate(registry, checkout, **options):
+        binding.write_text('{"new": true}\n')
+        options["installation_path"].write_text('{"new": true}\n')
+        raise RuntimeError("cutover failed")
+
+    monkeypatch.setattr(shared_installation, "activate", activate)
+
+    with pytest.raises(RuntimeError, match="cutover failed"):
+        shared_installation.publish(root, registry, installation=candidate)
+
+    assert record_path.read_text() == '{"old": true}\n'
+    assert binding.read_text() == '{"old": true}\n'

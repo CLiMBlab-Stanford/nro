@@ -181,7 +181,10 @@ def test_worker_option_opens_matching_worker_logs(tmp_path: Path, monkeypatch) -
         lambda command, *, check: commands.append(command),
     )
 
-    log_cli.main(["-P", "demo", "-m", "func", "-i", "func/main", "--worker"])
+    directory = next(
+        row["directory_label"] for row in _registry.work_item_rows() if row["module"] == "func"
+    )
+    log_cli.main(["-P", "demo", "-m", "func", "-i", f"func/{directory}", "--worker"])
 
     assert commands == [["/usr/bin/less", "-R", "--", str(func_worker.resolve())]]
 

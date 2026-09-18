@@ -1,4 +1,4 @@
-"""Assess artifact freshness from completion certificates and the filesystem.
+"""Assess artifact freshness from database completion records and the filesystem.
 
 The orchestration layer validates direct inputs, upstream work-item generations,
 and public artifacts below a work item's derivative output root. Private
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,11 @@ import yaml
 
 from nro.configuration.store import fingerprint
 from nro.engine.bids import discover_raw_runs, matches_filter
+from nro.orchestration.artifact_records import (
+    inventory,
+    is_control_artifact,
+    read_json_mapping,
+)
 from nro.orchestration.assessment import (
     AssessmentConflict,
     AssessmentReport,
@@ -29,52 +33,6 @@ from nro.orchestration.assessment import (
 )
 from nro.orchestration.ownership import missing_work_item_ownership, write_work_item_ownership
 from nro.orchestration.registry import Registry
-
-MANIFEST_VERSION = 5
-SMALL_DIGEST_LIMIT = 1024 * 1024
-COMPLETION_VISIBILITY_TIMEOUT = 30.0
-COMPLETION_VISIBILITY_POLL_INTERVAL = 0.25
-
-
-def file_record(path: str | Path) -> dict:
-    """Describe one completed file for later integrity checks."""
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.is_file():
-        if resolved.exists():
-            raise ValueError(f"Completion artifact is not a regular file: {resolved}")
-        raise ValueError(f"Completion artifact is missing: {resolved}")
-    stat = resolved.stat()
-    record = {"path": str(resolved), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    if stat.st_size <= SMALL_DIGEST_LIMIT:
-        record["sha256"] = hashlib.sha256(resolved.read_bytes()).hexdigest()
-    return record
-
-
-def inventory(paths: Iterable[str | Path]) -> list[dict]:
-    """Return deterministic integrity records for unique resolved files."""
-    return [file_record(path) for path in sorted({Path(path).resolve() for path in paths})]
-
-
-def _completion_output_inventory(paths: Iterable[str | Path]) -> list[dict]:
-    """Read completed outputs after bounded shared-filesystem visibility retries.
-
-    A worker publishes each file atomically and checks it before asking the scheduler
-        to certify the work item. Some shared filesystems can nevertheless expose a newly
-    replaced directory entry to another node only after a short delay. Retry missing
-    paths here, at the authoritative scheduler read, while rejecting visible
-    non-files immediately.
-    """
-    resolved = tuple(sorted({Path(path).expanduser().resolve() for path in paths}))
-    deadline = time.monotonic() + COMPLETION_VISIBILITY_TIMEOUT
-    while True:
-        try:
-            return inventory(resolved)
-        except ValueError:
-            if any(path.exists() and not path.is_file() for path in resolved):
-                raise
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(COMPLETION_VISIBILITY_POLL_INTERVAL)
 
 
 def _same_file(record: dict) -> tuple[bool, str | None]:
@@ -106,34 +64,11 @@ def _same_existing_private_file(record: dict) -> tuple[bool, str | None]:
     return _same_file(record)
 
 
-def _is_orchestration_control_artifact(path: Path, registry: Registry) -> bool:
-    """Control records describe execution; they are never work-item inputs.
-
-    In particular, the completion manifest is written after the worker's step
-    ledger has been updated.  Recording it as a private artifact would make a
-    certificate invalidate itself on its next rewrite.
-    """
-    try:
-        path.resolve().relative_to(registry.paths.control.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def _read_manifest(path: Path) -> dict | None:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _current_contract(row: dict) -> tuple[dict, str, bool]:
+def _current_contract(row: dict, completion: dict | None = None) -> tuple[dict, str, bool]:
     """Overlay the current code-defined processing policy on a stored contract."""
     from nro.orchestration.catalog import canonical_contract, module_descriptor
 
-    certificate = _read_manifest(Path(row["manifest_path"])) if row.get("manifest_path") else None
-    configuration = certificate.get("configuration") if certificate else None
+    configuration = completion.get("configuration") if completion else None
     contract = json.loads(row["artifact_contract_json"])
     try:
         contract = canonical_contract(contract, configuration)
@@ -155,23 +90,23 @@ def _current_contract(row: dict) -> tuple[dict, str, bool]:
     return contract, fingerprint(contract), changed
 
 
-def _certificate_matches_contract(
-    certificate: dict, expected_fingerprint: str, *, compiled: bool = False
+def _completion_matches_contract(
+    completion: dict, expected_fingerprint: str, *, compiled: bool = False
 ) -> bool:
     """Compare recorded specifications after module-specific normalization."""
     try:
-        recorded = certificate["artifact_contract"]
+        recorded = completion["artifact_contract"]
         if compiled:
             return (
-                certificate.get("artifact_fingerprint")
+                completion.get("artifact_fingerprint")
                 == fingerprint(recorded)
                 == expected_fingerprint
             )
         from nro.orchestration.catalog import canonical_contract
 
         return (
-            certificate.get("artifact_fingerprint") == fingerprint(recorded)
-            and fingerprint(canonical_contract(recorded, certificate.get("configuration")))
+            completion.get("artifact_fingerprint") == fingerprint(recorded)
+            and fingerprint(canonical_contract(recorded, completion.get("configuration")))
             == expected_fingerprint
         )
     except (KeyError, TypeError, ValueError):
@@ -181,10 +116,10 @@ def _certificate_matches_contract(
 def _shallow_public_output_error(outputs: object) -> tuple[str, str] | None:
     """Check only declaration shape, existence, and nonempty file size."""
     if not isinstance(outputs, list) or not outputs:
-        return "missing", "Completion certificate contains no public artifacts"
+        return "missing", "Completion record contains no public artifacts"
     for item in outputs:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-            return "corrupt", "Completion certificate has an invalid public artifact record"
+            return "corrupt", "Completion record has an invalid public artifact entry"
         path = Path(item["path"])
         try:
             present = path.is_file() and path.stat().st_size > 0
@@ -222,6 +157,10 @@ def preview_registry(
         ]
 
     by_id = {int(row["id"]): row for row in work_items}
+    from nro.orchestration.completion_records import completion_records
+
+    with registry.connection() as database:
+        completions = completion_records(database, tuple(sorted(by_id)))
     upstream: dict[int, list[int]] = {}
     for work_item_id, upstream_id in dependencies:
         upstream.setdefault(work_item_id, []).append(upstream_id)
@@ -239,7 +178,9 @@ def preview_registry(
                 current_fingerprint = row["artifact_fingerprint"]
                 contract_changed = False
             else:
-                contract, current_fingerprint, contract_changed = _current_contract(row)
+                _contract, current_fingerprint, contract_changed = _current_contract(
+                    row, completions.get(work_item_id)
+                )
             if contract_changed:
                 state = ("stale", "Current module processing contract changed")
             elif any(states[parent][0] != "fresh" for parent in parents):
@@ -261,12 +202,12 @@ def preview_registry(
                 if missing_input is not None:
                     state = ("stale", f"Direct input is missing: {missing_input}")
                 else:
-                    completion = _read_manifest(Path(row["manifest_path"]))
+                    completion = completions.get(work_item_id)
                     if completion is not None:
-                        if not _certificate_matches_contract(
+                        if not _completion_matches_contract(
                             completion, current_fingerprint, compiled=compiled
                         ):
-                            state = ("stale", "Completion certificate contract changed")
+                            state = ("stale", "Completion record contract changed")
                         else:
                             output_error = _shallow_public_output_error(
                                 completion.get("public_outputs")
@@ -401,7 +342,9 @@ def _public_derivative_completion(
             continue
         visited.add(artifact)
         value = (
-            _read_manifest(artifact) if artifact.suffix == ".json" else _read_yaml_mapping(artifact)
+            read_json_mapping(artifact)
+            if artifact.suffix == ".json"
+            else _read_yaml_mapping(artifact)
         )
         if value is None:
             return None, f"Public {module} completion manifest is invalid: {artifact}"
@@ -460,11 +403,16 @@ def _public_derivative_completion(
         else module_descriptor(module).processing_contract().get("output_metadata")
     )
     if current_metadata_contract is not None:
+        from nro.engine.artifact_metadata import metadata_contract_compatible
+
         if not declared_metadata_contracts:
             raise _PublicDerivativeContractMismatch(
                 f"Public {module} completion evidence does not declare an output metadata contract"
             )
-        if current_metadata_contract not in declared_metadata_contracts:
+        if not any(
+            metadata_contract_compatible(recorded, current_metadata_contract)
+            for recorded in declared_metadata_contracts
+        ):
             raise _PublicDerivativeContractMismatch(
                 f"Public {module} output metadata does not implement the current contract"
             )
@@ -510,6 +458,223 @@ def assess_registry(
     return states
 
 
+@dataclass
+class _InputAssessmentWorkspace:
+    """Caches and pending updates used while reassessing direct source inputs."""
+
+    snapshot: AssessmentSnapshot
+    by_id: dict[int, dict]
+    config_values: dict[int, dict]
+    raw_runs_by_participant: dict[tuple[str, str, str | None], tuple]
+    markups: dict[tuple[str, str, str | None], object]
+    session_inventories: dict[tuple[Path, bool, str | None], object]
+    input_updates: dict[int, str]
+    contract_updates: dict[int, tuple[str, str]]
+    changed_contracts: set[int]
+
+
+def _assess_direct_inputs(
+    workspace: _InputAssessmentWorkspace,
+    row: dict,
+    parents: list[int],
+    *,
+    registered_only: bool,
+) -> tuple[str | None, str | None]:
+    """Compare one work item's selected source universe with its compiled graph."""
+    if registered_only:
+        return None, None
+
+    from nro.configuration.hardware import gradient_unwarping_records
+    from nro.configuration.markup import MarkupStore
+    from nro.modules.anat.planning import raw_anatomical_inputs
+    from nro.modules.clean.planning import clean_direct_inputs
+    from nro.modules.func.contract import final_resampling_contract
+    from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
+    from nro.orchestration.catalog import module_descriptor
+
+    work_item_id = int(row["id"])
+    project = str(row["project"])
+    participant = str(row["participant"])
+    subject_dir = workspace.snapshot.paths.bids_root / project / f"sub-{participant}"
+    config = workspace.config_values[int(row["module_lineage_id"])]
+    module_config = config[row["module"]] if isinstance(config.get(row["module"]), dict) else config
+    markup_key = (project, participant, module_config.get("markup"))
+    if markup_key not in workspace.markups:
+        workspace.markups[markup_key] = MarkupStore().subject(
+            module_config.get("markup"), project, subject_dir
+        )
+    source_markup = workspace.markups[markup_key]
+    command = [str(value) for value in json.loads(row["command_json"])]
+    descriptor = module_descriptor(row["module"])
+    managed_direct_inputs = bool(descriptor.execution_module in command)
+    expected_paths: tuple[Path, ...] | set[str] = ()
+    direct_universe_error: str | None = None
+    matched_run = None
+
+    if managed_direct_inputs and row["module"] in {"func", "clean"}:
+        try:
+            if markup_key not in workspace.raw_runs_by_participant:
+                workspace.raw_runs_by_participant[markup_key] = discover_raw_runs(
+                    subject_dir, markup=source_markup
+                )
+            runs = workspace.raw_runs_by_participant[markup_key]
+            entities = json.loads(row["entities_json"])
+            source_entities = {
+                key: value for key, value in entities.items() if key not in {"space", "smoothing"}
+            }
+            matches = [run for run in runs if dict(run.entities) == source_entities]
+            if len(matches) != 1:
+                raise ValueError(f"expected one raw run for {entities}, found {len(matches)}")
+            matched_run = matches[0]
+            if row["module"] == "func":
+                sdc_from_sbref_pair = bool(module_config["sdc_from_sbref_pair"])
+                inventory_key = (
+                    matched_run.path.parent.parent.resolve(),
+                    not sdc_from_sbref_pair,
+                    module_config.get("markup"),
+                )
+                if inventory_key not in workspace.session_inventories:
+                    workspace.session_inventories[inventory_key] = load_session_inventory(
+                        matched_run, markup=source_markup
+                    )
+                expected_paths = resolved_func_inputs(
+                    matched_run,
+                    sdc_from_sbref_pair=sdc_from_sbref_pair,
+                    session_inventory=workspace.session_inventories[inventory_key],
+                    markup=source_markup,
+                )
+            else:
+                expected_paths = clean_direct_inputs(
+                    matched_run, module_config, markup=source_markup
+                )
+            recorded_paths = {
+                str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
+            }
+            current_paths = {str(Path(value).resolve()) for value in expected_paths}
+            if current_paths != recorded_paths:
+                workspace.input_updates[work_item_id] = json.dumps(sorted(current_paths))
+                direct_universe_error = (
+                    "Selected direct input set changed: expected "
+                    f"{len(current_paths)} file(s), work item records {len(recorded_paths)}"
+                )
+        except (KeyError, OSError, ValueError) as error:
+            direct_universe_error = f"Could not reassess selected direct inputs: {error}"
+    elif managed_direct_inputs and row["module"] == "anat":
+        expected_paths = {
+            str(path.resolve()) for path in raw_anatomical_inputs(subject_dir, source_markup)
+        }
+        recorded_paths = {
+            str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
+        }
+        if expected_paths != recorded_paths:
+            workspace.input_updates[work_item_id] = json.dumps(sorted(expected_paths))
+            direct_universe_error = (
+                "Selected anatomical input set changed: expected "
+                f"{len(expected_paths)} file(s), work item records {len(recorded_paths)}"
+            )
+
+    if managed_direct_inputs and expected_paths and row["module"] in {"anat", "func"}:
+        images = [
+            Path(path) for path in expected_paths if Path(path).name.endswith((".nii", ".nii.gz"))
+        ]
+        records, resolutions = gradient_unwarping_records(
+            images,
+            mode=str(module_config.get("gradient_unwarping", "off")),
+            markup=source_markup,
+        )
+        expected_dynamic = {"gradient_unwarping": records}
+        if row["module"] == "func" and matched_run is not None:
+            bold_path = matched_run.path.expanduser().absolute()
+            bold_resolution = resolutions.get(bold_path)
+            expected_dynamic["final_resampling"] = final_resampling_contract(
+                gradient_unwarping=bool(bold_resolution and bold_resolution.applied)
+            )
+        contract = json.loads(row["artifact_contract_json"])
+        processing = dict(contract.get("processing", {}))
+        if any(processing.get(key) != value for key, value in expected_dynamic.items()):
+            processing.update(expected_dynamic)
+            contract["processing"] = processing
+            current_fingerprint = fingerprint(contract)
+            row["artifact_contract_json"] = json.dumps(
+                contract, sort_keys=True, separators=(",", ":")
+            )
+            row["artifact_fingerprint"] = current_fingerprint
+            workspace.contract_updates[work_item_id] = (
+                row["artifact_contract_json"],
+                current_fingerprint,
+            )
+            workspace.changed_contracts.add(work_item_id)
+
+    if descriptor.direct_inputs is not None and descriptor.execution_module in command:
+        try:
+            if markup_key not in workspace.raw_runs_by_participant:
+                workspace.raw_runs_by_participant[markup_key] = discover_raw_runs(
+                    subject_dir, markup=source_markup
+                )
+            paths = descriptor.direct_inputs(
+                workspace.raw_runs_by_participant[markup_key],
+                module_config,
+                participant,
+                json.loads(row["entities_json"]),
+                markup=source_markup,
+            )
+            current_paths = {str(path.resolve()) for path in paths}
+            recorded_paths = {
+                str(Path(path).resolve()) for path in json.loads(row["input_paths_json"])
+            }
+            if current_paths != recorded_paths:
+                workspace.input_updates[work_item_id] = json.dumps(sorted(current_paths))
+                direct_universe_error = "Selected direct input set changed"
+        except (KeyError, OSError, ValueError) as error:
+            direct_universe_error = f"Could not reassess selected direct inputs: {error}"
+
+    multirun_error: str | None = None
+    if row["module"] in {"dynconn", "microparcellation"} or descriptor.select_runs is not None:
+        try:
+            if markup_key not in workspace.raw_runs_by_participant:
+                workspace.raw_runs_by_participant[markup_key] = discover_raw_runs(
+                    subject_dir, markup=source_markup
+                )
+            expected_runs = workspace.raw_runs_by_participant[markup_key]
+            if descriptor.select_runs is not None:
+                expected_runs = descriptor.select_runs(
+                    expected_runs,
+                    module_config,
+                    row["participant"],
+                    entities=json.loads(row["entities_json"]),
+                )
+            input_filter = module_config.get("input_filter", {})
+            expected_entities = {
+                json.dumps(dict(run.entities), sort_keys=True)
+                for run in expected_runs
+                if matches_filter(run.entities, input_filter)
+            }
+            recorded_entities = {
+                json.dumps(
+                    {
+                        key: value
+                        for key, value in json.loads(
+                            workspace.by_id[parent]["entities_json"]
+                        ).items()
+                        if key not in {"space", "smoothing"}
+                    },
+                    sort_keys=True,
+                )
+                for parent in parents
+                if workspace.by_id[parent]["module"] == descriptor.upstream_modules[0]
+            }
+            if expected_entities != recorded_entities:
+                multirun_error = (
+                    "Selected raw run universe changed: expected "
+                    f"{len(expected_entities)} run(s), dependency graph records "
+                    f"{len(recorded_entities)}; submit python -m nro.bin.run to plan the "
+                    "new upstream work item set"
+                )
+        except (KeyError, OSError, ValueError) as error:
+            multirun_error = f"Could not reassess selected raw run universe: {error}"
+    return direct_universe_error, multirun_error
+
+
 def evaluate_assessment(
     snapshot: AssessmentSnapshot, *, compiled: bool = False, recover_public: bool = False
 ) -> AssessmentReport:
@@ -521,12 +686,6 @@ def evaluate_assessment(
     freshness.
     """
     if not compiled:
-        from nro.configuration.hardware import gradient_unwarping_records
-        from nro.configuration.markup import MarkupStore
-        from nro.modules.anat.planning import raw_anatomical_inputs
-        from nro.modules.clean.planning import clean_direct_inputs
-        from nro.modules.func.contract import final_resampling_contract
-        from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
         from nro.orchestration.catalog import module_descriptor
     work_items = deepcopy(snapshot.work_items)
     dependencies = [
@@ -534,6 +693,7 @@ def evaluate_assessment(
     ]
     registry = snapshot
     by_id = {int(row["id"]): row for row in work_items}
+    completions = {int(record["work_item_id"]): record for record in snapshot.completions}
     contract_updates: dict[int, tuple[str, str]] = {}
     changed_contracts: set[int] = set()
     command_updates: dict[int, str] = {}
@@ -545,7 +705,9 @@ def evaluate_assessment(
     for work_item_id, row in by_id.items():
         if uses_registered_contract(row):
             continue
-        contract, current_fingerprint, changed = _current_contract(row)
+        contract, current_fingerprint, changed = _current_contract(
+            row, completions.get(work_item_id)
+        )
         if changed:
             changed_contracts.add(work_item_id)
         if changed or fingerprint(json.loads(row["artifact_contract_json"])) != current_fingerprint:
@@ -575,6 +737,17 @@ def evaluate_assessment(
     markups: dict[tuple[str, str, str | None], object] = {}
     session_inventories: dict[tuple[Path, bool, str | None], object] = {}
     completion_bounds: dict[int, tuple[int, int]] = {}
+    input_workspace = _InputAssessmentWorkspace(
+        snapshot,
+        by_id,
+        config_values,
+        raw_runs_by_participant,
+        markups,
+        session_inventories,
+        input_updates,
+        contract_updates,
+        changed_contracts,
+    )
     remaining = set(by_id)
     while remaining:
         progressed = False
@@ -584,205 +757,14 @@ def evaluate_assessment(
                 continue
             row = by_id[work_item_id]
             registered_only = uses_registered_contract(row)
-            project = str(row["project"])
-            participant = str(row["participant"])
-            subject_dir = registry.paths.bids_root / project / f"sub-{participant}"
-            config = config_values[int(row["module_lineage_id"])]
-            module_config = (
-                config[row["module"]] if isinstance(config.get(row["module"]), dict) else config
+            direct_universe_error, multirun_error = _assess_direct_inputs(
+                input_workspace,
+                row,
+                parents,
+                registered_only=registered_only,
             )
-            markup_key = (project, participant, module_config.get("markup"))
-            if not registered_only and markup_key not in markups:
-                markups[markup_key] = MarkupStore().subject(
-                    module_config.get("markup"), project, subject_dir
-                )
-            source_markup = None if registered_only else markups[markup_key]
-            run_key = markup_key
-            command = [str(value) for value in json.loads(row["command_json"])]
-            descriptor = None if registered_only else module_descriptor(row["module"])
-            managed_direct_inputs = descriptor is not None and bool(
-                descriptor.execution_module in command
-            )
-            expected_paths: tuple[Path, ...] = ()
-            direct_universe_error: str | None = None
-            if managed_direct_inputs and row["module"] in {"func", "clean"}:
-                try:
-                    if run_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[run_key] = discover_raw_runs(
-                            subject_dir, markup=source_markup
-                        )
-                    runs = raw_runs_by_participant[run_key]
-                    entities = json.loads(row["entities_json"])
-                    source_entities = {
-                        key: value
-                        for key, value in entities.items()
-                        if key not in {"space", "smoothing"}
-                    }
-                    matches = [run for run in runs if dict(run.entities) == source_entities]
-                    if len(matches) != 1:
-                        raise ValueError(
-                            f"expected one raw run for {entities}, found {len(matches)}"
-                        )
-                    if row["module"] == "func":
-                        sdc_from_sbref_pair = bool(module_config["sdc_from_sbref_pair"])
-                        inventory_key = (
-                            matches[0].path.parent.parent.resolve(),
-                            not sdc_from_sbref_pair,
-                            module_config.get("markup"),
-                        )
-                        if inventory_key not in session_inventories:
-                            session_inventories[inventory_key] = load_session_inventory(
-                                matches[0], markup=source_markup
-                            )
-                        expected_paths = resolved_func_inputs(
-                            matches[0],
-                            sdc_from_sbref_pair=sdc_from_sbref_pair,
-                            session_inventory=session_inventories[inventory_key],
-                            markup=source_markup,
-                        )
-                    else:
-                        expected_paths = clean_direct_inputs(
-                            matches[0], module_config, markup=source_markup
-                        )
-                    recorded_paths = {
-                        str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
-                    }
-                    current_paths = {str(Path(value).resolve()) for value in expected_paths}
-                    if current_paths != recorded_paths:
-                        input_updates[work_item_id] = json.dumps(sorted(current_paths))
-                        direct_universe_error = (
-                            "Selected direct input set changed: expected "
-                            f"{len(current_paths)} file(s), work item records {len(recorded_paths)}"
-                        )
-                except (KeyError, OSError, ValueError) as error:
-                    direct_universe_error = f"Could not reassess selected direct inputs: {error}"
-            elif managed_direct_inputs and row["module"] == "anat":
-                expected_paths = {
-                    str(path.resolve())
-                    for path in raw_anatomical_inputs(subject_dir, source_markup)
-                }
-                recorded_paths = {
-                    str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
-                }
-                if expected_paths != recorded_paths:
-                    input_updates[work_item_id] = json.dumps(sorted(expected_paths))
-                    direct_universe_error = (
-                        "Selected anatomical input set changed: expected "
-                        f"{len(expected_paths)} file(s), work item records {len(recorded_paths)}"
-                    )
-            if (
-                not registered_only
-                and managed_direct_inputs
-                and expected_paths
-                and row["module"] in {"anat", "func"}
-            ):
-                images = [
-                    Path(path)
-                    for path in expected_paths
-                    if Path(path).name.endswith((".nii", ".nii.gz"))
-                ]
-                records, resolutions = gradient_unwarping_records(
-                    images,
-                    mode=str(module_config.get("gradient_unwarping", "off")),
-                    markup=source_markup,
-                )
-                expected_dynamic = {"gradient_unwarping": records}
-                if row["module"] == "func":
-                    bold_path = matches[0].path.expanduser().absolute()
-                    bold_resolution = resolutions.get(bold_path)
-                    expected_dynamic["final_resampling"] = final_resampling_contract(
-                        gradient_unwarping=bool(bold_resolution and bold_resolution.applied)
-                    )
-                contract = json.loads(row["artifact_contract_json"])
-                processing = dict(contract.get("processing", {}))
-                if any(processing.get(key) != value for key, value in expected_dynamic.items()):
-                    processing.update(expected_dynamic)
-                    contract["processing"] = processing
-                    current_fingerprint = fingerprint(contract)
-                    row["artifact_contract_json"] = json.dumps(
-                        contract, sort_keys=True, separators=(",", ":")
-                    )
-                    row["artifact_fingerprint"] = current_fingerprint
-                    contract_updates[work_item_id] = (
-                        row["artifact_contract_json"],
-                        current_fingerprint,
-                    )
-                    changed_contracts.add(work_item_id)
-            multirun_error: str | None = None
-            if (
-                descriptor is not None
-                and descriptor.direct_inputs is not None
-                and descriptor.execution_module in command
-            ):
-                try:
-                    if run_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[run_key] = discover_raw_runs(
-                            subject_dir, markup=source_markup
-                        )
-                    paths = descriptor.direct_inputs(
-                        raw_runs_by_participant[run_key],
-                        module_config,
-                        participant,
-                        json.loads(row["entities_json"]),
-                        markup=source_markup,
-                    )
-                    current_paths = {str(path.resolve()) for path in paths}
-                    recorded_paths = {
-                        str(Path(path).resolve()) for path in json.loads(row["input_paths_json"])
-                    }
-                    if current_paths != recorded_paths:
-                        input_updates[work_item_id] = json.dumps(sorted(current_paths))
-                        direct_universe_error = "Selected direct input set changed"
-                except (KeyError, OSError, ValueError) as error:
-                    direct_universe_error = f"Could not reassess selected direct inputs: {error}"
-            if not registered_only and (
-                row["module"] in {"dynconn", "microparcellation"}
-                or descriptor.select_runs is not None
-            ):
-                try:
-                    if run_key not in raw_runs_by_participant:
-                        raw_runs_by_participant[run_key] = discover_raw_runs(
-                            subject_dir, markup=source_markup
-                        )
-                    expected_runs = raw_runs_by_participant[run_key]
-                    if descriptor.select_runs is not None:
-                        expected_runs = descriptor.select_runs(
-                            expected_runs,
-                            module_config,
-                            row["participant"],
-                            entities=json.loads(row["entities_json"]),
-                        )
-                    input_filter = module_config.get("input_filter", {})
-                    expected_entities = {
-                        json.dumps(dict(run.entities), sort_keys=True)
-                        for run in expected_runs
-                        if matches_filter(run.entities, input_filter)
-                    }
-                    recorded_entities = {
-                        json.dumps(
-                            {
-                                key: value
-                                for key, value in json.loads(by_id[parent]["entities_json"]).items()
-                                if key not in {"space", "smoothing"}
-                            },
-                            sort_keys=True,
-                        )
-                        for parent in parents
-                        if by_id[parent]["module"] == descriptor.upstream_modules[0]
-                    }
-                    if expected_entities != recorded_entities:
-                        multirun_error = (
-                            "Selected raw run universe changed: expected "
-                            f"{len(expected_entities)} run(s), dependency graph records "
-                            f"{len(recorded_entities)}; submit python -m "
-                            "nro.bin.run to plan the "
-                            "new upstream work item set"
-                        )
-                except (KeyError, OSError, ValueError) as error:
-                    multirun_error = f"Could not reassess selected raw run universe: {error}"
-            manifest_path = Path(row["manifest_path"])
-            manifest = _read_manifest(manifest_path)
-            certificate_bounds: tuple[int, int] | None = None
+            manifest = completions.get(work_item_id)
+            recorded_output_bounds: tuple[int, int] | None = None
             if work_item_id in changed_contracts:
                 state = ("stale", "Current module processing contract changed")
             elif manifest is None:
@@ -862,8 +844,6 @@ def evaluate_assessment(
                                 "stale",
                                 f"Could not validate direct input timestamps: {error}",
                             )
-            elif manifest.get("manifest_version") != MANIFEST_VERSION:
-                state = ("stale", "Completion manifest version changed")
             else:
                 # The work item key binds the module, entities, and immutable
                 # work-item-level configuration. Implementation hashes
@@ -896,7 +876,7 @@ def evaluate_assessment(
                         )
                     except (ValueError, KeyError, TypeError):
                         configuration_compatible = False
-                if not _certificate_matches_contract(
+                if not _completion_matches_contract(
                     manifest, row["artifact_fingerprint"], compiled=registered_only
                 ):
                     state = ("stale", "Work-item contract changed")
@@ -942,7 +922,7 @@ def evaluate_assessment(
                             if not public_outputs:
                                 state = (
                                     "missing",
-                                    "Completion certificate contains no public artifacts",
+                                    "Completion record contains no public artifacts",
                                 )
                             else:
                                 output_error = next(
@@ -961,8 +941,9 @@ def evaluate_assessment(
                                         for okay, reason in (
                                             _same_existing_private_file(item)
                                             for item in manifest.get("private_artifacts", [])
-                                            if not _is_orchestration_control_artifact(
-                                                Path(str(item.get("path", ""))), registry
+                                            if not is_control_artifact(
+                                                Path(str(item.get("path", ""))),
+                                                registry.paths.control,
                                             )
                                         )
                                         if not okay
@@ -974,8 +955,8 @@ def evaluate_assessment(
                                 elif private_error:
                                     state = ("stale", f"Private artifact changed: {private_error}")
                                 else:
-                                    state = ("fresh", "Completion certificate artifacts validate")
-                                    # The certificate's public artifacts have
+                                    state = ("fresh", "Completion record artifacts validate")
+                                    # The recorded public artifacts have
                                     # just been stat'ed/validated.  Their live
                                     # mtimes are the completion bounds needed
                                     # by descendants, so do not recursively
@@ -984,10 +965,13 @@ def evaluate_assessment(
                                         Path(str(item["path"])).stat().st_mtime_ns
                                         for item in public_outputs
                                     ]
-                                    certificate_bounds = (min(output_mtimes), max(output_mtimes))
+                                    recorded_output_bounds = (
+                                        min(output_mtimes),
+                                        max(output_mtimes),
+                                    )
             if state[0] == "fresh" and work_item_id not in completion_bounds:
-                if certificate_bounds is not None:
-                    completion_bounds[work_item_id] = certificate_bounds
+                if recorded_output_bounds is not None:
+                    completion_bounds[work_item_id] = recorded_output_bounds
                 else:
                     try:
                         recovered, _recovery_error = _public_derivative_completion(
@@ -1000,9 +984,6 @@ def evaluate_assessment(
                             recovered.oldest_completion_ns,
                             recovered.newest_completion_ns,
                         )
-                    elif manifest_path.is_file():
-                        stamp = manifest_path.stat().st_mtime_ns
-                        completion_bounds[work_item_id] = (stamp, stamp)
             states[work_item_id] = state
             remaining.remove(work_item_id)
             progressed = True

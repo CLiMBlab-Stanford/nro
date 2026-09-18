@@ -81,7 +81,10 @@ def test_workers_protect_cache_even_with_expired_leases(cache, state):
 
 def test_demand_protects_queued_work_and_retries(cache):
     registry, source, site = cache
-    demand(registry)
+    request_id = demand(registry)
+    with registry.connection() as database:
+        assert database.execute("SELECT id FROM requests WHERE id=?", (request_id,)).fetchone()
+    assert not (registry.paths.control / "shared/scheduler/requests").exists()
     assert collect_cache(registry).reason == "outstanding demand"
     assert source.exists() and site.exists()
 

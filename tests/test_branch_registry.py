@@ -85,13 +85,13 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
             scope="subject",
             module_lineage_id=registered.lineages["anat"],
             config_fingerprint="test",
-            directory_label="main",
+            directory_label=registered.directory_for("anat"),
             runtime_config=runtime,
             command=("python", "-m", "nro.modules.anat"),
             dependencies=dependencies,
             input_paths=(),
             output_root=output.parent,
-            output_prefix="sub-01",
+            output_prefix=None,
             expected_outputs=(output,),
             output_format="test",
             resource_class="small",
@@ -175,7 +175,12 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     scientific = store.registry("dev")
     workflow = ConfigStore().resolve("main")
     registered = scientific.register_workflow(workflow)
-    output = development / "dev/BIDS/demo/derivatives/nro/anat/main/sub-01/sub-01_result.txt"
+    output = (
+        development
+        / "dev/BIDS/demo/derivatives/nro/anat"
+        / registered.directories["anat"]
+        / "sub-01/sub-01_result.txt"
+    )
     output.parent.mkdir(parents=True)
     output.write_text("complete")
     runtime = scientific.runtime_config_path(registered, "anat")
@@ -358,7 +363,7 @@ def test_branch_ownership_rejects_changed_configuration_identity(tmp_path):
         registry.register_owned_lineages([moved], branch_registry_id="branch-owner")
 
 
-def test_rebuild_seeds_directory_assignments_from_owned_lineages(tmp_path):
+def test_rebuild_rejects_nondeterministic_owned_directory(tmp_path):
     store = BranchStore(tmp_path / "control")
     store.initialize()
     scientific = store.registry("dev")
@@ -402,11 +407,8 @@ def test_rebuild_seeds_directory_assignments_from_owned_lineages(tmp_path):
                 }
             )
 
-    scientific.rebuild([], [], owned_lineages=owned)
-    rebuilt = scientific.register_workflow(workflow)
-
-    assert rebuilt.lineage_fingerprints == registered.lineage_fingerprints
-    assert rebuilt.directories["dynconn"] == "preserved-dynconn"
+    with pytest.raises(ValueError, match="nondeterministic directory"):
+        scientific.rebuild([], [], owned_lineages=owned)
 
 
 def test_contract_revision_protects_edits_and_observations(tmp_path):

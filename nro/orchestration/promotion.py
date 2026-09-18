@@ -10,15 +10,15 @@ from pathlib import Path
 
 from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json
+from nro.orchestration.artifact_records import inventory
 from nro.orchestration.branch_purge import token
 from nro.orchestration.branch_reconciliation import candidates_locked
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.completion_records import completion_record
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.manifests import (
-    MANIFEST_VERSION,
     _public_derivative_completion,
     assess_registry,
-    inventory,
 )
 from nro.orchestration.registry import utcnow
 
@@ -26,7 +26,8 @@ from nro.orchestration.registry import utcnow
 def _rows(db):
     return {
         row["id"]: dict(row)
-        for row in db.execute("""SELECT i.*,c.config_fingerprint
+        for row in db.execute("""SELECT i.*,c.config_id,c.config_fingerprint,
+                                         c.lineage_fingerprint,c.resolved_yaml
         FROM work_items i JOIN module_lineages c ON c.id=i.module_lineage_id""")
     }
 
@@ -448,7 +449,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                         parents = [
                             dict(parent)
                             for parent in db.execute(
-                                """SELECT i.id,i.current_generation,i.manifest_path,i.artifact_state
+                                """SELECT i.id,i.current_generation,i.artifact_state
                             FROM work_item_dependencies d JOIN work_items i ON i.id=d.upstream_work_item_id WHERE d.work_item_id=?""",
                                 (key,),
                             )
@@ -478,10 +479,7 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                             entry["state"] = "published"
                             atomic_write_json(journal, record, durable=True)
                             outputs.append(destination)
-                        original = Path(rows[item["source"]]["manifest_path"])
-                        original_manifest = (
-                            json.loads(original.read_text()) if original.is_file() else {}
-                        )
+                        original_manifest = completion_record(db, int(item["source"])) or {}
                         provenance = dict(
                             original_manifest.get("implementation")
                             or json.loads(
@@ -496,37 +494,59 @@ def _publish(registry, *, checkout: Path, report: dict, replace: bool, attest: b
                             accepting_release=report["release"],
                             source_generation=rows[item["source"]]["current_generation"],
                         )
-                        manifest = dict(
-                            manifest_version=MANIFEST_VERSION,
-                            work_item_id=key,
-                            work_item_key=row["work_item_key"],
-                            module=row["module"],
-                            project=row["project"],
-                            participant=row["participant"],
-                            entities=json.loads(row["entities_json"]),
-                            revision_fingerprint=row["revision_fingerprint"],
-                            artifact_fingerprint=row["artifact_fingerprint"],
-                            artifact_contract=json.loads(row["artifact_contract_json"]),
-                            generation=row["current_generation"] + 1,
-                            configuration={"fingerprint": row["config_fingerprint"]},
-                            implementation=provenance,
-                            inputs=inventory(json.loads(row["input_paths_json"])),
-                            public_outputs=inventory(outputs),
-                            private_artifacts=[],
-                            upstream=[
-                                dict(
-                                    work_item_id=parent["id"],
-                                    generation=parent["current_generation"],
-                                    manifest=parent["manifest_path"],
-                                )
-                                for parent in parents
-                            ],
-                            completed_at=utcnow(),
+                        generation = int(row["current_generation"]) + 1
+                        completed_at = utcnow()
+                        input_records = inventory(json.loads(row["input_paths_json"]))
+                        output_records = inventory(outputs)
+                        db.execute("DELETE FROM completions WHERE work_item_id=?", (key,))
+                        db.execute("DELETE FROM artifacts WHERE work_item_id=?", (key,))
+                        db.execute(
+                            """INSERT INTO completions(
+                                   work_item_id,attempt_id,generation,completed_at,
+                                   revision_fingerprint,artifact_contract_json,
+                                   artifact_fingerprint,config_id,config_fingerprint,
+                                   lineage_fingerprint,resolved_yaml,provenance_json,command_json
+                               ) VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                key,
+                                generation,
+                                completed_at,
+                                row["revision_fingerprint"],
+                                row["artifact_contract_json"],
+                                row["artifact_fingerprint"],
+                                row["config_id"],
+                                row["config_fingerprint"],
+                                row["lineage_fingerprint"],
+                                row["resolved_yaml"],
+                                json.dumps(provenance),
+                                row["command_json"],
+                            ),
                         )
-                        atomic_write_json(Path(row["manifest_path"]), manifest, durable=True)
+                        for direction, records in (
+                            ("input", input_records),
+                            ("output", output_records),
+                        ):
+                            db.executemany(
+                                """INSERT INTO artifacts(
+                                       work_item_id,attempt_id,direction,path,size,mtime_ns,
+                                       digest_algorithm,digest,metadata_json
+                                   ) VALUES (?,NULL,?,?,?,?,?,?, '{}')""",
+                                [
+                                    (
+                                        key,
+                                        direction,
+                                        record["path"],
+                                        record["size"],
+                                        record["mtime_ns"],
+                                        "sha256" if "sha256" in record else None,
+                                        record.get("sha256"),
+                                    )
+                                    for record in records
+                                ],
+                            )
                         db.execute(
                             "UPDATE work_items SET artifact_state='fresh',artifact_reason='Promoted with target contract validation',current_generation=?,updated_at=? WHERE id=?",
-                            (manifest["generation"], utcnow(), key),
+                            (generation, completed_at, key),
                         )
                         db.execute(
                             "UPDATE work_item_execution SET provenance_json=? WHERE work_item_id=?",

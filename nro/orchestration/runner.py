@@ -129,6 +129,13 @@ class Runner:
         self._container_mount_cache = None
         return added
 
+    def add_steps(self, steps: Sequence[Step]) -> tuple[Step, ...]:
+        """Add an ordered collection of externally constructed steps."""
+        declarations = tuple(steps)
+        if any(not isinstance(step, Step) for step in declarations):
+            raise TypeError("Runner.add_steps() requires only Step declarations")
+        return tuple(self.add_step(step) for step in declarations)
+
     def _validate_step_destinations(self, step: Step) -> None:
         if self._execution_context is not None:
             for path in (*step.outputs, step.directory, step.breadcrumb, step.cwd):
@@ -685,7 +692,7 @@ class Runner:
             "newer than outputs" in text
             or text.startswith("forced re-run")
             or text.startswith("re-running")
-            or text.startswith("work item completion certificate")
+            or text.startswith("work item completion record")
         ):
             return "Rerunning"
         return "Running"

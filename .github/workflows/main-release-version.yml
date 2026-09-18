@@ -40,6 +40,10 @@ jobs:
         run: .venv/bin/ruff format --check nro tests docs/conf.py
       - name: Check Python style
         run: .venv/bin/ruff check nro tests docs/conf.py
+      - name: Validate registry migration chains
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: .venv/bin/python -m nro.bin.dev schema check --base-ref "$BASE_COMMIT"
       - name: Run complete test suite
         run: .venv/bin/python -m pytest -q -m "integration or not integration"
       - name: Rehearse the release upgrade

@@ -35,13 +35,12 @@ workflow and fully resolved class values; module processes read the immutable
 runtime values without a second merge or another configuration source.
 
 Module lineages form a DAG independent of participant work items. Equivalent
-lineages reuse a derivative directory. A changed definition creates
-a workflow revision. Each module writes below
-`derivatives/nro/MODULE/MODULE_ID/`. A lineage first receives its selected
-configuration ID as the directory label. If that label already belongs to an
-incompatible upstream lineage, nro appends a numeric suffix. Separate `anat`
-and `func` lineages let functional variants reuse identical anatomy without
-mixing their files.
+lineages reuse a derivative directory. A changed definition creates a workflow
+revision. Each module writes below
+`derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. The digest is derived from
+the configuration ID and complete upstream lineage. It does not depend on
+registration or discovery order. Separate `anat` and `func` lineages let
+functional variants reuse identical anatomy without mixing their files.
 
 ## Work-item specifications and contracts
 
@@ -52,13 +51,13 @@ entities, not configuration or directory identities. Revision fingerprints conta
 module, configuration fingerprint, entities, and the explicit contract
 version. Source-code hashes are not identity or freshness inputs.
 
-The implementation represents this identity with `WorkItemIdentity`. An
-`WorkItemSpec` contains an `WorkItemIdentity`, `WorkItemContract`,
+The implementation represents this identity with `WorkItemIdentity`. A
+`WorkItemSpec` contains a `WorkItemIdentity`, `WorkItemContract`,
 `ExecutionRecipe`, and `ResourceRequest`. The work-item contract records output
 topology, dependency topology, entities, configuration, substantive direct
-inputs, and explicit processing policy. Its normalized storage representation
-is currently recorded in the registry and completion manifest under the field
-name `artifact_contract`.
+inputs, and explicit processing policy. Its normalized storage representation is
+recorded in the registry's work-item and completion tables under the field name
+`artifact_contract`.
 
 The current command is part of the execution recipe and may be reformatted
 without making a derivative stale. Replanning an unchanged contract updates
@@ -67,7 +66,8 @@ keeps the immutable recipe captured when it started.
 
 ## Registries and scheduler
 
-A shared deployment has one private control store for every project and branch:
+A shared deployment has one site-wide private control store. It contains one
+scheduler registry and one scientific registry for each registered branch:
 
 ```text
 CONTROL/
@@ -84,9 +84,12 @@ CONTROL/
 ```
 
 Independent schema markers validate the private scheduler and scientific
-registry layouts. They do not contribute to scientific freshness. There is no
-migration ladder; rebuild an incompatible development registry with the
-documented repair command.
+registry layouts. They do not contribute to scientific freshness. Shared
+maintenance migrates schemas at or after the supported baseline and reconstructs
+older private state from durable public ownership records. It retains rollback state
+until replacement registries pass integrity and identity checks. The
+[migration contract](registry-migrations.md) derives each supported schema from an
+immutable baseline and restricted, ordered changes.
 
 Source project and participant directories are discovered independently of
 derivative planning. Branch registries hold compiled scientific contracts,
@@ -95,16 +98,23 @@ attempts, workers, and submissions. Consequently, concurrency limits and
 reusable worker capacity are enforced across simultaneous requests from
 different projects and branches.
 
-An automatically managed Slurm controller is the only long-lived client of the
+An automatically managed controller is the only long-lived client of the
 shared scheduler SQLite database. Checkout processes may compile scientific
 state in their branch-owned registries, which contain no attempts or worker-pool
-state. User commands and workers send requests directly to the controller over
-TCP. Each request is also journaled in the control filesystem until its registry
+state. On a Slurm site, work-producing commands submit the controller through
+Slurm; local deployments run it directly. User commands and workers send requests
+over TCP. Each request is also journaled in the control filesystem until its registry
 change commits. A replacement controller can replay an unresolved request.
 Atomic launch election and fencing permit only the current controller to act.
 The controller uses rollback journaling and short transactions; no transaction
 spans scientific computation, Slurm waiting, network waiting, or bulk filesystem
 work.
+
+`Registry` is the sole connection and transaction facade. Focused internal
+operations handle work-item registration, demand reconciliation, and status
+projection using a connection supplied by that facade. They cannot open or commit
+connections themselves, so decomposing registry logic does not create competing
+lock or rollback authorities.
 
 The controller publishes an atomic JSON read model after relevant changes.
 Cached observation reads that snapshot without starting the controller or
@@ -117,9 +127,29 @@ pending requests remain idle for a short grace period. Installation and repair
 use a deliberate shutdown barrier before entering their exceptional offline
 maintenance phase.
 
+### Private files outside SQLite
+
+SQLite owns private scientific and scheduling facts. A small set of files remains
+because those records cross a process, bootstrap, or filesystem-transaction boundary:
+
+- the branch catalog and installed-release binding locate the databases before a
+  controller can open them;
+- immutable workflow, site, and source snapshots are execution inputs for pinned
+  subprocesses;
+- the scheduler request journal allows a replacement controller to replay a request
+  whose client or controller died before acknowledging it;
+- the atomic status snapshot supports fast observation while no controller is live;
+- logs and runner ledgers explain execution and support step-level resumption; and
+- ingestion and promotion journals recover multi-file publication operations that a
+  SQLite transaction cannot roll back.
+
+These files are bootstrap records, immutable inputs, diagnostics, caches, or
+write-ahead records for effects outside SQLite. They do not duplicate completed
+work-item authority. In particular, nro has no private completion-manifest tree.
+
 Registry state separates:
 
-- artifact state: `missing`, `stale`, or `fresh`;
+- artifact state: `missing`, `stale`, `corrupt`, or `fresh`;
 - request demand: `active`, `cancelled`, or `satisfied`;
 - attempt state: `queued`, `running`, `cancel_requested`, `cancelled`,
   `success`, or `error`;
@@ -136,26 +166,40 @@ The filesystem is authoritative for current artifacts; the database is
 authoritative for orchestration history. A successful attempt remains
 historically successful even if its output later becomes stale.
 
-Every completed work item receives a private manifest containing:
+Every completed work item receives one normalized database record containing:
 
 - exact resolved configuration and lineage;
 - direct source inputs;
-- required upstream generations and manifests;
+- required upstream generations;
 - public output inventory and integrity records;
-- runtime configuration, command, interpreter, attempt, and completion data.
+- command, implementation, attempt, and completion provenance.
 
-Manifest version 5 uses one public-output field, `public_outputs`; it does not
-use a source-implementation sentinel.
+The completion row and its input, output, and private-artifact rows commit in the
+same transaction as the new generation. There is no private completion file to
+race with the database or to outlive the registry identity it describes. Public
+module manifests remain scientific derivative outputs: they index variable output
+sets and provide portable metadata to downstream tools.
+
+Requests likewise live only in the coordinator database. The scheduler does not
+write a second per-request JSON archive. Files in private control storage are
+limited to boundaries that SQLite cannot replace: durable RPC delivery, service
+election, immutable execution inputs, logs, filesystem-transaction journals, and
+public ownership recovery.
+
+Registration rejects two distinct work items that claim the same public output.
+Fixed-output contracts may share a directory when their exact filenames are
+disjoint. A prefixed contract owns that filename namespace, including files
+listed by a variable-output completion index. Runner-graph freezing separately
+rejects two internal steps that produce the same path.
 
 Each module creates one `Runner`, which creates and owns that module's
 `RunnerGraph`. Step factories remain outside `Runner`: they receive the inputs
-needed for one operation and return an immutable `Step`. The module's
-`build_module()` function is the construction site that passes those steps to
-`Runner.add_step()`, making the full sequence and its conditional paths
-visible in one place. A factory never adds its own step, and a helper never
-hides a sequence of steps behind a side effect. A factory may return named
-references to its step's outputs when later steps need those paths, but it
-still produces exactly one `Step`.
+needed for one operation and return an immutable `Step`. A larger named stage may
+return an immutable `StagePlan`, which contains an ordered tuple of steps and typed
+references to their downstream products. The module's `build_module()` function is
+the sole construction site that passes these declarations to `Runner.add_step()` or
+`Runner.add_steps()`. Factories and stage planners never mutate a runner as a side
+effect.
 
 `Runner.execute()` freezes its owned graph before performing any freshness
 check. Artifact state can make a declared step run or skip, but can never add,
@@ -192,8 +236,7 @@ or changed products are freshness evidence.
 `input_filter` belongs to the microparcellation configuration. The planner
 discovers the raw BOLD universe, applies the filter, builds all required
 run-level preprocessing and cleaning work items, and makes the participant-level
-work items, and makes the participant-level work item depend on the complete
-selected set. Adding or removing a matching run
+work item depend on the complete selected set. Adding or removing a matching run
 changes that dependency set and requires replanning.
 
 Space and smoothing are demand-driven. The planner does not enumerate every
@@ -247,7 +290,10 @@ Tests enforce these boundaries:
 - exactly one `Runner` class and one `RunnerGraph` engine;
 - graph creation occurs only inside `Runner`, and DAG mutation occurs only in
   each module's `build_module()` function;
-- step factories return one `Step` without mutating a runner;
+- step factories return one `Step`, and named stages return immutable `StagePlan`
+  values, without mutating a runner;
+- focused registry operations use caller-owned connections and cannot connect,
+  commit, or roll back;
 - no subprocess execution bypassing the runner in scientific modules;
 - no outputless resumable steps;
 - no derivative-member discovery by globs in downstream scientific modules;
@@ -256,6 +302,6 @@ Tests enforce these boundaries:
 - typed work-item specifications and worker execution envelopes;
 - immutable execution recipes for claimed attempts, with current recipes used
   by later attempts;
-- one schema with no implicit migration;
+- one generated schema per registry family, with explicit ordered migrations;
 - request sharing, cancellation, lease recovery, OOM escalation, freshness,
   multirun expansion, and atomic publication behavior.

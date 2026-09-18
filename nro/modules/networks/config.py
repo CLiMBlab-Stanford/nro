@@ -27,7 +27,7 @@ class InputsConfig:
     source_surfaces: tuple[Path, ...] = ()
     anatomical_manifest: Path | None = None
     anatomical_reference: Path | None = None
-    mni_to_t1_transform: Path | None = None
+    mni_to_acpc_transform: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -183,22 +183,22 @@ def validate_config(cfg: ModuleConfig) -> None:
             },
         },
     )
-    if cfg.labeling.enabled and cfg.inputs.space in {"T1w", "fsnative"}:
+    if cfg.labeling.enabled and cfg.inputs.space in {"ACPC", "fsnative"}:
         if (
             cfg.inputs.anatomical_manifest is None
             or cfg.inputs.anatomical_reference is None
-            or cfg.inputs.mni_to_t1_transform is None
+            or cfg.inputs.mni_to_acpc_transform is None
         ):
             raise ValueError(
                 f"Heuristic labeling in space-{cfg.inputs.space} requires an anatomical "
-                "reference and MNI-to-T1w transform"
+                "reference and MNI-to-ACPC transform"
             )
         missing_anatomical = [
             str(path)
             for path in (
                 cfg.inputs.anatomical_manifest,
                 cfg.inputs.anatomical_reference,
-                cfg.inputs.mni_to_t1_transform,
+                cfg.inputs.mni_to_acpc_transform,
             )
             if path is not None and not path.is_file()
         ]

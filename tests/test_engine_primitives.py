@@ -17,7 +17,7 @@ from nro.engine.cleaned_timeseries import (
     load_retained_frame_mask,
 )
 from nro.engine.connectivity import connectivity_run_weights
-from nro.engine.images import sidecar_json_path
+from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import flatten_paths, manifest_value
 
 

@@ -892,7 +892,7 @@ def _create_t1_epi_vox_target_step(
     env: dict[str, str],
     force: bool,
 ) -> Step:
-    """Create a T1w target with the source BOLD voxel dimensions.
+    """Create an ACPC target with the source BOLD voxel dimensions.
 
     The source BOLD is a BIDS input available while the DAG is constructed.
     Motion correction preserves its voxel grid, so consulting a future

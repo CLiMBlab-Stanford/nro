@@ -281,9 +281,6 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     runtime = scientific.root / "workflows" / "example.yml"
     runtime.parent.mkdir(parents=True, exist_ok=True)
     runtime.write_text("retained runtime")
-    certificate = scientific.root / "manifests" / "example.json"
-    certificate.parent.mkdir(parents=True, exist_ok=True)
-    certificate.write_text("{}")
     with sqlite3.connect(registry.paths.database) as db:
         db.execute("PRAGMA user_version=999")
     with sqlite3.connect(scientific.database) as db:
@@ -294,12 +291,10 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     assert scientific.database.is_file()
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
     assert scientific.work_items() == ()
-    assert not certificate.exists()
     from pathlib import Path
 
     backup = Path(result["backup"])
-    archived = json.loads((backup / "index.json").read_text())
-    assert str(certificate.parent) in archived.values()
+    assert json.loads((backup / "index.json").read_text())
     with registry.connection() as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert not db.execute("SELECT * FROM requests").fetchall()

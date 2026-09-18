@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from nro.configuration.store import ConfigStore
-from nro.orchestration import dependency_state, manifests
+from nro.orchestration import completion, dependency_state
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
@@ -36,7 +36,7 @@ def graph(tmp_path):
                 entities={},
                 scope="subject",
                 module_lineage_id=registered.lineages["anat"],
-                directory_label="main",
+                directory_label=registered.directory_for("anat"),
                 config_fingerprint=workflow.configuration("anat").fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
                 command=(sys.executable, "-c", "pass"),
@@ -133,12 +133,18 @@ def test_changed_generation_rejects_late_completion(graph):
             attempt_id=leaf.attempt_id,
             outputs=specs[2].expected_outputs,
         )
-    assert not Path(leaf.manifest_path).exists()
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM completions WHERE work_item_id=?", (leaf.work_item_id,)
+            ).fetchone()
+            is None
+        )
 
 
 def test_cancellation_during_inventory_prevents_completion_publication(graph, monkeypatch):
     registry, specs, rows, leaf, _ = graph
-    original = manifests.inventory
+    original = completion.inventory
 
     def changed(paths):
         result = original(paths)
@@ -146,7 +152,7 @@ def test_cancellation_during_inventory_prevents_completion_publication(graph, mo
         registry.cancel_attempts_with_stale_upstreams()
         return result
 
-    monkeypatch.setattr(manifests, "inventory", changed)
+    monkeypatch.setattr(completion, "inventory", changed)
     with pytest.raises(dependency_state.AttemptInvalidated):
         record_completion(
             registry,
@@ -154,7 +160,13 @@ def test_cancellation_during_inventory_prevents_completion_publication(graph, mo
             attempt_id=leaf.attempt_id,
             outputs=specs[2].expected_outputs,
         )
-    assert not Path(leaf.manifest_path).exists()
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT 1 FROM completions WHERE work_item_id=?", (leaf.work_item_id,)
+            ).fetchone()
+            is None
+        )
     registry.finish_attempt(leaf.attempt_id, state="success")
     with registry.connection() as db:
         assert (

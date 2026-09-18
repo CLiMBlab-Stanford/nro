@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .images import sidecar_json_path
+from .image_paths import sidecar_json_path
 
 
 @dataclass(frozen=True)

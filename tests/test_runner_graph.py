@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
+from nro.orchestration.runner_graph import RunnerGraph, StagePlan, Step, artifact_decision
 
 
 def test_shared_artifact_rule_detects_newer_input_without_deleting_output(
@@ -80,6 +80,21 @@ def test_graph_construction_does_not_consult_artifact_freshness(
 
     assert graph.steps == (step,)
     assert graph.results == {}
+
+
+def test_stage_plan_binds_steps_to_typed_products(tmp_path: Path) -> None:
+    step = Step.python(
+        name="Produce output",
+        outputs=(tmp_path / "output",),
+        action=lambda: None,
+    )
+    plan = StagePlan(steps=(step,), products={"output": step.outputs[0]})
+
+    assert plan.steps == (step,)
+    assert plan.products == {"output": tmp_path / "output"}
+
+    with pytest.raises(TypeError, match="only Step"):
+        StagePlan(steps=(object(),), products=None)  # type: ignore[arg-type]
 
 
 def test_frozen_graph_rejects_mutation(tmp_path: Path) -> None:

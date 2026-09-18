@@ -108,7 +108,7 @@ def _prepare_pool(checkout: Path, site: Path, control: Path, bids: Path, python:
         "registry = Registry.for_project('', bids_root=bids, registry_path=control, "
         "installation_maintenance=True)\n"
         "result = prepare_pool(registry, checkout=checkout, confirm=lambda _: 'stop', "
-        "poll_interval=0.01, report_interval=60.0, rebuild_schema=True)\n"
+        "poll_interval=0.01, report_interval=60.0, update_schema=True)\n"
         "assert result['done']\n"
     )
     environment = {
@@ -211,22 +211,18 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
 
         _initialize_control(synthetic, site, control, bids, python)
         database_path = ControlPaths(control).database
-        with sqlite3.connect(database_path) as database:
-            database.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
         scientific_path = ControlPaths(control).branch("main") / "registry.sqlite3"
-        with sqlite3.connect(scientific_path) as database:
-            database.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
 
         _copy_candidate(checkout, synthetic)
         _prepare_pool(synthetic, site, control, bids, python)
         with sqlite3.connect(database_path) as database:
             rebuilt_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
         if rebuilt_schema != SCHEMA_VERSION:
-            raise RuntimeError("Rehearsal did not rebuild the obsolete scheduler schema")
+            raise RuntimeError("Rehearsal did not produce the candidate scheduler schema")
         with sqlite3.connect(scientific_path) as database:
             scientific_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
         if scientific_schema != SCIENTIFIC_SCHEMA_VERSION:
-            raise RuntimeError("Rehearsal did not rebuild the obsolete scientific schema")
+            raise RuntimeError("Rehearsal did not produce the candidate scientific schema")
         if json.loads(implementation_path(control).read_text()) != binding:
             raise RuntimeError("Maintenance changed the active implementation before publication")
         return {

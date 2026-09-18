@@ -15,10 +15,14 @@ are available. A missing modality is skipped. Single images are copied.
 Acquisition metadata and filename ordering resolve selection reproducibly.
 
 T1w and T2w availability determines the graph. Session outputs retain their
-native geometry. The module builds participant T1w and T2w references
-independently, even when their sources come from different sessions. When both
-exist, it registers the selected participant T2w reference to the selected T1w
-reference. A T1w/T2w myelin proxy exists only when both modalities are available.
+acquisition geometry. The module selects participant T1w and T2w references
+independently, even when their sources come from different sessions. It rigidly
+aligns the selected T1w reference to the pose of the configured MNI template and
+resamples it once onto a source-resolution `ACPC` grid. The transform has six
+degrees of freedom, so it changes head position without scaling or deforming the
+brain. When both modalities exist, the module registers the selected T2w
+reference directly to the ACPC T1w reference. A T1w/T2w myelin proxy exists only
+when both modalities are available.
 This ratio is not a quantitative myelin measurement. Review the manifest's
 selected sources before comparing subjects with different acquisition schemes.
 
@@ -30,21 +34,26 @@ selected sources before comparing subjects with different acquisition schemes.
    pass through unchanged. Apply ANTs N4 bias correction. Then produce
    brain-extracted session copies and masks with SynthStrip without changing
    their native grids.
-2. Select or combine T1w and T2w acquisitions independently into participant
-   references. If both exist, align the participant T2w reference to the T1w
-   reference with six-degree-of-freedom FSL FLIRT. Save source lists, selection
-   metadata, the transform, and the optional T1w/T2w ratio.
-3. Run FreeSurfer `recon-all` with a validated directory completion boundary.
+2. Select or combine T1w and T2w acquisitions independently. Estimate a rigid
+   T1w-to-ACPC transform with ANTs mutual-information registration. Construct a
+   deterministic template-oriented grid at the selected source resolution,
+   verify that it covers the transformed anatomy, and resample the T1w once.
+   Publish both transform directions and numerical pose checks. If no T1w exists,
+   use the selected T2w as the pose source.
+3. If both modalities exist, align the selected T2w reference directly to the
+   ACPC T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
+   inverse transforms and the optional T1w/T2w ratio.
+4. Run FreeSurfer `recon-all` from the ACPC reference with a validated directory completion boundary.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric
    values are in `nro.modules.anat.constants`; they are not learned tissue probabilities.
-4. Convert FreeSurfer geometry to GIFTI and construct white, pial, inflated,
+5. Convert FreeSurfer geometry to GIFTI and construct white, pial, inflated,
    and midthickness surfaces. Export sphere registrations and surface metrics.
    FSL/FreeSurfer coordinate transforms and Workbench surface operations place
    geometry in the requested native and template coordinate systems. The
    packaged configuration uses the pinned 41k-vertex-per-hemisphere
    `fsaverage6` geometry from the local TemplateFlow store.
-5. Register the subject anatomy to the configured MNI reference with ANTs SyN.
+6. Register the ACPC anatomy to the configured MNI reference with ANTs SyN.
    Publish forward and inverse composite transforms and registration-check images.
    The fixed schedule is rigid and affine MI (32 bins, regular 25% sampling),
    then SyN with radius-4 cross-correlation. Linear stages use
@@ -52,7 +61,7 @@ selected sources before comparing subjects with different acquisition schemes.
    `8x4x2x1` and smoothing `3x2x1x0vox`. Registration uses brain masks,
    histogram matching, 0.5–99.5% winsorization, and Lanczos-windowed sinc
    interpolation. These schedules are implementation constants, not YAML keys.
-6. Validate and publish the anatomical manifest. Session copies and subject-level
+7. Validate and publish the anatomical manifest. Session copies and subject-level
    results have separate paths; the subject manifest identifies the complete
    public result set, including the FreeSurfer directory.
 
@@ -63,11 +72,14 @@ published scenes copy them only when requested.
 
 ## Public artifacts
 
-Outputs live under `derivatives/nro/anat/ANAT_ID/sub-ID/`, with session
+Outputs live under
+`derivatives/nro/anat/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`, with session
 acquisitions under `ses-ID/anat` where applicable. Subject `anat` contains
-preprocessed anatomical references, brain and gray-matter masks, cortical
+ACPC-aligned anatomical references, brain and gray-matter masks, cortical
 ribbon and subcortical masks, surfaces, metrics, and transforms. The publication
 manifest records exact paths rather than requiring downstream filename guesses.
+It also records the pose transforms, grid and registration checks, and the
+separate ACPC-to-MNI transforms.
 
 Required metadata includes `inputs`, `selection_strategy`, `outputs`,
 `freesurfer_subjects_dir`, `mni_template`, configuration provenance, and

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.11.0"
+version = "0.12.0"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -56,6 +56,7 @@ include = ["nro*"]
 "nro.engine" = ["*.scene.in", "*.b85"]
 "nro.modules.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
 "nro.qc" = ["*.scene.in"]
+"nro.orchestration.migrations" = ["baselines.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

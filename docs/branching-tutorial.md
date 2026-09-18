@@ -198,11 +198,12 @@ gh pr merge --merge dev
 cd /path/to/nro-main
 git fetch origin
 git merge --ff-only origin/main
-git tag -a v0.1.0 -m "nro 0.1.0"
-git push origin v0.1.0
+git tag -a vMAJOR.MINOR.PATCH -m "nro MAJOR.MINOR.PATCH"
+git push origin vMAJOR.MINOR.PATCH
 ```
 
-Pushing a valid version tag starts the GitHub Release workflow. Confirm that the
+Replace `MAJOR.MINOR.PATCH` with the version in `pyproject.toml`. Pushing a valid
+version tag starts the GitHub Release workflow. Confirm that the
 workflow created the corresponding GitHub Release. Do not move a published tag.
 
 Install and activate the new release from the shared `main` checkout:

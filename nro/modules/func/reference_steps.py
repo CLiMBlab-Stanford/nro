@@ -12,7 +12,7 @@ from nro.engine.bids import (
 from nro.engine.images import (
     copy_or_convert_nifti,
 )
-from nro.engine.io import read_json, write_json
+from nro.engine.io import atomic_write_text, read_json, write_json
 from nro.engine.registration import rigid_transform_metrics
 from nro.orchestration.runner import (
     write_completion_breadcrumb,
@@ -302,8 +302,8 @@ def _create_functional_reference_selection_step(
 
     def choose_robust(details: dict[str, object]) -> None:
         copy_or_convert_nifti(robust_ref, selected_image)
-        epi_to_selected.write_text(identity, encoding="utf-8")
-        selected_to_epi.write_text(identity, encoding="utf-8")
+        atomic_write_text(epi_to_selected, identity)
+        atomic_write_text(selected_to_epi, identity)
         details["Selected"] = False
         details["SelectedRegistrationReference"] = "RobustBOLDReference"
         write_json(metadata_path, details)
@@ -562,8 +562,8 @@ def _create_functional_reference_selection_step(
             ],
             env=env,
         )
-        epi_to_selected.write_text(identity, encoding="utf-8")
-        selected_to_epi.write_text(identity, encoding="utf-8")
+        atomic_write_text(epi_to_selected, identity)
+        atomic_write_text(selected_to_epi, identity)
         details["Selected"] = True
         details["SelectedRegistrationReference"] = "SBRef"
         details["NormalizedToBOLDReferenceGrid"] = True

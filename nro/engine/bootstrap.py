@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -40,6 +41,16 @@ def write_record(path: Path, record: dict) -> None:
             os.close(descriptor)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _prune_shared_environments(root: Path, active: Path) -> None:
+    """Remove inactive candidate environments after a successful shared cutover."""
+    parent = root / ".nro-environments"
+    if not parent.is_dir() or active.parent != parent:
+        return
+    for path in parent.glob("candidate-*"):
+        if path != active and path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
 
 
 @contextmanager
@@ -532,15 +543,16 @@ def _main(argv=None) -> None:
                 shared_registry,
                 checkout=ROOT,
                 confirm=confirm_drain,
-                rebuild_schema=True,
+                update_schema=True,
             )
 
     with maintenance_lock(ROOT, mode):
-        if prepare_shared is not None:
-            prepare_shared()
-        elif mode != "branch":
+        if mode != "shared" and mode != "branch":
             check_workers(site)
-        environment = Path(existing["environment"]) if existing else ROOT / ".nro-env"
+        if mode == "shared":
+            environment = ROOT / ".nro-environments" / f"candidate-{uuid.uuid4().hex}"
+        else:
+            environment = Path(existing["environment"]) if existing else ROOT / ".nro-env"
         if mode == "branch" and existing:
             check_branch_environment(site, environment)
         record = {
@@ -557,7 +569,8 @@ def _main(argv=None) -> None:
         }
         if branch_name:
             record["branch"] = branch_name
-        write_record(record_path, record)
+        if mode != "shared":
+            write_record(record_path, record)
         uv_env = ROOT / ".nro-bootstrap"
         uv = uv_env / "bin/uv"
         if not uv.is_file():
@@ -588,6 +601,8 @@ def _main(argv=None) -> None:
             "NRO_SETUP_CHILD": "1",
         }
         subprocess.run(sync, cwd=ROOT, env=env, check=True)
+        if prepare_shared is not None:
+            prepare_shared()
         command = [
             str(environment / "bin/python"),
             "-I",
@@ -628,17 +643,14 @@ def _main(argv=None) -> None:
             binding = json.loads(paths.catalog.read_text())[branch_name]
             record.update(registry_id=binding["registry_id"], branch_catalog=str(paths.catalog))
         record["ready"] = True
-        write_record(record_path, record)
         if mode == "shared":
             from nro.engine.shared_installation import publish
 
-            try:
-                publish(ROOT, shared_registry)
-                record = json.loads(record_path.read_text())
-            except BaseException:
-                record["ready"] = False
-                write_record(record_path, record)
-                raise
+            publish(ROOT, shared_registry, installation=record)
+            record = json.loads(record_path.read_text())
+            _prune_shared_environments(ROOT, Path(record["environment"]))
+        else:
+            write_record(record_path, record)
         connect_user(
             record,
             bin_dir=args.bin_dir,

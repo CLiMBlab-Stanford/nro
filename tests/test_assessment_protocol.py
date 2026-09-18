@@ -46,7 +46,7 @@ def graph(tmp_path):
                 entities={},
                 scope="subject",
                 module_lineage_id=registered.lineages["anat"],
-                directory_label="main",
+                directory_label=registered.directories["anat"],
                 config_fingerprint=workflow.configuration("anat").scientific_fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
                 command=(sys.executable, "-c", "pass"),
@@ -88,7 +88,7 @@ def test_snapshot_is_consistent_detached_and_includes_ancestors(graph, monkeypat
     report = manifests.evaluate_assessment(decoded)
     assert AssessmentReport.from_dict(report.as_dict()) == report
     assert registry.paths.database.read_bytes() == before
-    assert not any(registry.paths.manifests.rglob("completion.json"))
+    assert decoded.completions == ()
 
 
 def test_recovered_branch_artifact_uses_its_registered_contract(graph, monkeypatch):
@@ -191,7 +191,7 @@ def test_assessment_restores_a_missing_ownership_receipt(graph):
     receipt = work_item_record_path(
         registry.paths.bids_root / "demo",
         "anat",
-        "main",
+        row["directory_label"],
         "anat",
         row["work_item_key"],
     )

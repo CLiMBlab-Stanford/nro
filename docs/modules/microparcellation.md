@@ -54,7 +54,7 @@ variance-retention denominators, quantization, and split allocation.
 ## Public artifacts
 
 Outputs from every space and smoothing target share
-`derivatives/nro/microparcellation/MICROPARCELLATION_ID/sub-ID/`. `PREFIX`
+`derivatives/nro/microparcellation/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`. `PREFIX`
 includes subject, space, and smoothing, which keeps targets distinct within
 that directory. The fixed scientific outputs are:
 
@@ -70,7 +70,7 @@ that directory. The fixed scientific outputs are:
 Use `nro scene -m microparcellation` to create a Workbench view. The linked
 form reuses the source geometry and scientific outputs without copying them.
 Use `nro render -m microparcellation --seeds FILE` to create static parcel
-connectivity maps from T1w coordinates; see the
+connectivity maps from ACPC coordinates; see the
 [viewing guide](../commands/viewing.md#nro-render).
 
 ## Configuration

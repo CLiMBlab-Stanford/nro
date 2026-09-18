@@ -68,7 +68,7 @@ several scenes, each scene receives a separate directory beneath that path.
 
 Dynamic connectivity and parcel connectivity need a seed. Without `--seeds`,
 the command skips `dynconn` time series and microparcellation connectivity
-matrices. A seed file assigns T1w world coordinates, in millimeters, to
+matrices. A seed file assigns participant ACPC world coordinates, in millimeters, to
 subjects:
 
 ```yaml
@@ -80,12 +80,12 @@ projects:
 ```
 
 For `fsnative` data, nro finds the nearest eligible cortical vertex or volume
-voxel. For `T1w` data, it finds the nearest eligible voxel. The render manifest
+voxel. For `ACPC` data, it finds the nearest eligible voxel. The render manifest
 records both coordinates, their distance, and the resolved vertex, voxel, or
 parcel. A distance above 10 mm produces a warning; change that threshold with
 `--warn-seed-distance`. Seed rendering is currently limited to `fsnative` and
-`T1w`, where coordinates and imaging data share the subject's T1w coordinate
-system.
+`ACPC`, where coordinates and imaging data share the participant's ACPC
+coordinate system.
 
 Rendering uses Workbench's headless OSMesa renderer. It does not start the X11
 viewer broker or consume an nro worker slot. `--width` sets the image width;

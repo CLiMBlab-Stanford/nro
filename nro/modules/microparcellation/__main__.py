@@ -33,8 +33,8 @@ from nro.modules.microparcellation.config import (
     OutputConfig,
     QualityConfig,
 )
+from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.modules.microparcellation.module import build_module
-from nro.modules.microparcellation.paths import output_paths
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
@@ -270,7 +270,9 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     )
     result = build_module(cfg, runner, completion_boundary=False)
     manifest = Path(result["manifest"])
-    publication_index = output_paths(cfg.output.directory, cfg.output.prefix)["index"]
+    publication_index = microparcellation_output_paths(cfg.output.directory, cfg.output.prefix)[
+        "index"
+    ]
     published_outputs = tuple(path for value in result.values() for path in flatten_paths(value))
     payload = {
         "manifest_version": 1,

@@ -52,7 +52,7 @@ every run used the default path.
 4. Estimate susceptibility distortion from TOPUP, SynBOLD-DisCo's synthetic
    reference, or anatomical ANTs registration. Compose pose and distortion
    transforms, adapting displacement fields to the BOLD readout when needed.
-5. Align corrected EPI to anatomy with FreeSurfer boundary-based registration.
+5. Align corrected EPI to the participant ACPC anatomy with FreeSurfer boundary-based registration.
    `bbregister_surf`, `bbregister_init`, and `bbregister_dof` select the boundary,
    initialization, and rigid/affine degrees of freedom. Compose anatomy-to-MNI
    transforms for template output. Publish registration-check images.
@@ -66,7 +66,7 @@ every run used the default path.
    controls intensity modulation. Warp interpolation is linear; signal
    interpolation uses AFNI's `wsinc5`.
 7. When `ica_classifier` selects `ica_aroma` or `cicada`, estimate one shared
-   MELODIC decomposition from the spatially smoothed T1w series. Transform the
+   MELODIC decomposition from the spatially smoothed ACPC series. Transform the
    component maps needed for classification to the 2 mm MNI reference. The
    selected classifier labels noise components, which are then regressed from
    every output-space time course. `ica_regression` selects aggressive or
@@ -80,7 +80,7 @@ every run used the default path.
    squares, global/CSF/WM signals and expansions, framewise displacement,
    aCompCor, DVARS, and numbered outlier families. See
    [denoising](../methods/denoising.md).
-9. Produce T1w/MNI volumes and left/right fsnative/template GIFTI time courses.
+9. Produce ACPC/MNI volumes and left/right fsnative/template GIFTI time courses.
    The selected `anat` configuration defines the fsaverage target; the packaged
    target is `fsaverage6`. Filenames record each exact space. Native surfaces
    and registration spheres come from anatomy. Publish sidecars, confounds,
@@ -97,7 +97,8 @@ Native surface sampling is ribbon-constrained between white and pial surfaces.
 ## Public artifacts
 
 Run outputs are under
-`derivatives/nro/func/FUNC_ID/sub-ID/[ses-ID/]func/`. Names retain the
+`derivatives/nro/func/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/[ses-ID/]func/`.
+Names retain the
 run's BIDS entities and add space, hemisphere, and processing descriptions.
 Products include preprocessed BOLD images, their JSON sidecars, brain masks,
 registration transforms/QC images, and `desc-confounds_timeseries.tsv` with
