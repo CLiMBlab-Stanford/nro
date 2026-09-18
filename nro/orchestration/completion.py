@@ -84,9 +84,7 @@ def _private_step_artifacts(
                 resolved = path.resolve()
                 resolved.relative_to(public_root)
             except ValueError:
-                if resolved.is_file() and not is_control_artifact(
-                    resolved, registry.paths.control
-                ):
+                if resolved.is_file() and not is_control_artifact(resolved, registry.paths.control):
                     paths.add(resolved)
     return inventory(paths)
 

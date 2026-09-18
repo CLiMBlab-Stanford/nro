@@ -194,8 +194,7 @@ def validate_message(record: Any, *, expected_id: str | None = None) -> dict[str
         or record["protocol"] != PROTOCOL
         or record["kind"] not in {"command", "worker"}
         or not isinstance(record["payload"], dict)
-        or (expected_id is not None
-        and expected_id != record["id"])
+        or (expected_id is not None and expected_id != record["id"])
     ):
         raise ValueError(f"Invalid scheduler message: {expected_id or '<direct>'}")
     _identifier(record["id"], "message ID")

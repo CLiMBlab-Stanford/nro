@@ -59,8 +59,7 @@ def convert(record: dict, registry) -> dict:
         if (
             item.get("scanplan_include") is False
             or item["datatype"] == "ignore"
-            or (item["suffix"] == "sbref"
-            and item["id"] not in sbref_owners)
+            or (item["suffix"] == "sbref" and item["id"] not in sbref_owners)
         ):
             continue
         selected = sbref_owners.get(item["id"], item)

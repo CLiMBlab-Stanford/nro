@@ -542,16 +542,15 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     plan, public, private, projects = [], set(), set(), set()
     for row in snapshot["rows"]:
         if (
-            (selection.projects
-            and row["project"] not in selection.projects)
-            or (selection.participants
-            and row["participant"] not in selection.participants)
-            or (selection.modules
-            and row["module"] not in selection.modules)
-            or (selection.workflows
-            and not set(selection.workflows).intersection(
-                str(row.get("workflow_ids") or "").split(",")
-            ))
+            (selection.projects and row["project"] not in selection.projects)
+            or (selection.participants and row["participant"] not in selection.participants)
+            or (selection.modules and row["module"] not in selection.modules)
+            or (
+                selection.workflows
+                and not set(selection.workflows).intersection(
+                    str(row.get("workflow_ids") or "").split(",")
+                )
+            )
             or not matches_module_lineage(
                 str(row["module"]), str(row["directory_label"]), selection.lineages
             )

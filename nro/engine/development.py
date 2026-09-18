@@ -72,8 +72,7 @@ def load_scopes(path: Path) -> dict[str, TestScope]:
     )
     if missing_tests:
         raise ValueError(
-            "Development test scope references missing test files: "
-            + ", ".join(missing_tests)
+            "Development test scope references missing test files: " + ", ".join(missing_tests)
         )
     return scopes
 
