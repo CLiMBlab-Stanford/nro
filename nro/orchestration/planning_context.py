@@ -55,6 +55,8 @@ class SubjectPlanningContext:
     target_pairs: tuple[tuple[str, int], ...]
     memory_gb: int
     max_memory_gb: int
+    definitions_root: Path
+    gradient_coefficients_root: Path
     task_models: Mapping[str, dict] | None = None
     source_markup: SubjectMarkup | None = None
 

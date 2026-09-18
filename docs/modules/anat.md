@@ -36,8 +36,11 @@ selected sources before comparing subjects with different acquisition schemes.
    their native grids.
 2. Select or combine T1w and T2w acquisitions independently. Estimate a rigid
    T1w-to-ACPC transform with ANTs mutual-information registration. Construct a
-   deterministic template-oriented grid at the selected source resolution,
-   verify that it covers the transformed anatomy, and resample the T1w once.
+   deterministic template-oriented grid around the transformed anatomical mask
+   at the selected source resolution. Include a 5 mm margin, verify mask
+   coverage, and resample the T1w once. ANTs affine files encode the
+   fixed-to-moving map used for resampling, so grid construction inverts that
+   map when projecting source-mask points into ACPC space.
    Publish both transform directions and numerical pose checks. If no T1w exists,
    use the selected T2w as the pose source.
 3. If both modalities exist, align the selected T2w reference directly to the

@@ -171,7 +171,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
         active_resume_workflows = {}
         latest_resume_workflow = {}
         for row in db.execute(
-            """SELECT ri.work_item_id,w.workflow_id,r.state,ri.demand_state
+            """SELECT ri.work_item_id,w.workflow_id,r.state,ri.demand_state,ri.role
                FROM request_work_items ri
                JOIN requests r ON r.id=ri.request_id
                JOIN request_owners o ON o.request_id=r.id
@@ -180,6 +180,8 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
                ORDER BY r.updated_at DESC,r.created_at DESC,r.id DESC""",
             (owner,),
         ):
+            if row["role"] != "target":
+                continue
             work_item_id = int(row["work_item_id"])
             workflow = str(row["workflow_id"]).removeprefix(owner + ":")
             latest_resume_workflow.setdefault(work_item_id, workflow)

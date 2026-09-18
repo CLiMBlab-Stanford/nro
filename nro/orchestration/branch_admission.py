@@ -292,16 +292,17 @@ def _admit_resolved(
                     include_roots=True,
                     reason="Resolved scientific contract changed",
                 )
-                db.execute(
-                    "UPDATE work_items SET command_json=?, runtime_config_path=? WHERE id=?",
-                    (
-                        json.dumps(
-                            source.command((str(python), *item.spec.command[1:]), site=site)
-                        ),
-                        str(item.spec.runtime_config),
-                        work_item_id,
-                    ),
-                )
+            # Execution recipes are operational pins, not scientific inputs.
+            # Every admission adopts the requesting checkout's captured source
+            # even when its normalized scientific contract is unchanged.
+            db.execute(
+                "UPDATE work_items SET command_json=?, runtime_config_path=? WHERE id=?",
+                (
+                    json.dumps(source.command((str(python), *item.spec.command[1:]), site=site)),
+                    str(item.spec.runtime_config),
+                    work_item_id,
+                ),
+            )
         sources = []
         for key in dict.fromkeys(item.spec.dependencies):
             upstream = ids[keys[key]]

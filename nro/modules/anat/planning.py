@@ -80,6 +80,8 @@ def plan_work_items(
         list(raw_anatomical_images(context.subject_dir, context.source_markup)),
         mode=str(config["gradient_unwarping"]),
         markup=context.source_markup,
+        definitions=context.definitions_root,
+        coefficient_root=context.gradient_coefficients_root,
     )
     return (
         WorkItemSpec.create(

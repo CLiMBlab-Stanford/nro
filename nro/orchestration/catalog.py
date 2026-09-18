@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping
 
 from nro.modules import MODULE_NAMES
-from nro.modules.anat.contract import anatomical_output_contract
+from nro.modules.anat.contract import anatomical_output_contract, pose_normalization_contract
 from nro.modules.anat.planning import plan_work_items as plan_anat_work_items
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.clean.planning import plan_work_items as plan_clean_work_items
@@ -40,7 +40,10 @@ ProcessingContractFunction = Callable[[], Mapping[str, object]]
 
 
 def _anat_processing_contract() -> Mapping[str, object]:
-    return {"output_metadata": anatomical_output_contract()}
+    return {
+        "output_metadata": anatomical_output_contract(),
+        "pose_normalization": pose_normalization_contract(),
+    }
 
 
 def _func_processing_contract() -> Mapping[str, object]:

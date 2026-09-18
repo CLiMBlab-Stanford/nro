@@ -455,6 +455,7 @@ def build_module(
     runner.add_step(
         _create_acpc_grid_step(
             source=pose_source,
+            source_mask=pose_mask,
             template=opts.mni_template,
             transform=source_to_acpc,
             output=acpc_grid,
@@ -502,6 +503,7 @@ def build_module(
     runner.add_step(
         _create_acpc_qc_step(
             source=pose_source,
+            source_mask=pose_mask,
             aligned=pose_output,
             template=opts.mni_template,
             transform=source_to_acpc,

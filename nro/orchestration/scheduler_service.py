@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from nro.configuration.site import protected_site_fingerprint
@@ -43,28 +44,13 @@ def _request_stop(_signum, _frame) -> None:
     _STOP = True
 
 
-def admit(
-    registry,
-    payload: dict,
-    *,
-    checkout: Path,
-    site_values: dict,
-    assess: bool = True,
-    source_verified: bool = False,
-    request_id: str | None = None,
-) -> str:
-    """Keep an installed environment out of maintenance until demand is published."""
+@contextmanager
+def _installation_access(checkout: Path, payloads: tuple[dict, ...]):
+    """Hold one shared maintenance guard for an admission batch."""
     record_path = checkout / ".nro-installation.json"
     if not record_path.exists():
-        return _admit(
-            registry,
-            payload,
-            checkout=checkout,
-            site_values=site_values,
-            assess=assess,
-            source_verified=source_verified,
-            request_id=request_id,
-        )
+        yield
+        return
     lock = checkout / ".nro-install.lock"
     if not lock.is_file():
         raise ValueError("Installed checkout lacks its maintenance lock; rerun installation")
@@ -76,8 +62,24 @@ def admit(
         record = json.loads(record_path.read_text())
         if record.get("checkout") != str(checkout) or not record.get("ready"):
             raise ValueError("The submitting installation is not ready")
-        if str(Path(record["environment"]) / "bin/python") != payload["python"]:
+        expected_python = str(Path(record["environment"]) / "bin/python")
+        if any(payload.get("python") != expected_python for payload in payloads):
             raise ValueError("Request interpreter does not match the installed environment")
+        yield
+
+
+def admit(
+    registry,
+    payload: dict,
+    *,
+    checkout: Path,
+    site_values: dict,
+    assess: bool = True,
+    source_verified: bool = False,
+    request_id: str | None = None,
+) -> str:
+    """Keep an installed environment out of maintenance until demand is published."""
+    with _installation_access(checkout, (payload,)):
         return _admit(
             registry,
             payload,
@@ -122,22 +124,37 @@ def admit_many(
     assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=True)
     from nro.orchestration.registry import Registry
 
-    return [
-        admit(
-            Registry.for_project(
-                entry["project"],
-                bids_root=registry.paths.bids_root,
-                registry_path=registry.paths.control,
-            ),
-            entry["payload"],
-            checkout=checkout,
-            site_values=site_values,
-            assess=False,
-            source_verified=True,
-            request_id=f"{message_id}-{index}",
-        )
-        for index, entry in enumerate(entries)
-    ]
+    branches = BranchStore(registry.paths.control)
+    expected_site = protected_site_fingerprint(Path(site_values["definitions"]))
+    payloads = tuple(entry["payload"] for entry in entries)
+    results = []
+    with _installation_access(checkout, payloads), branches._lock():
+        topology = branches.read().topology
+        with registry.connection(write=True) as db:
+            candidates = {
+                project: candidates_locked(db, project) for project in dict.fromkeys(projects)
+            }
+            for index, entry in enumerate(entries):
+                project = entry["project"]
+                project_registry = Registry.for_project(
+                    project,
+                    bids_root=registry.paths.bids_root,
+                    registry_path=registry.paths.control,
+                )
+                results.append(
+                    _admit(
+                        project_registry,
+                        entry["payload"],
+                        checkout=checkout,
+                        site_values=site_values,
+                        assess=False,
+                        source_verified=True,
+                        request_id=f"{message_id}-{index}",
+                        expected_site=expected_site,
+                        locked=(topology, db, candidates[project]),
+                    )
+                )
+    return results
 
 
 def _admit(
@@ -149,6 +166,8 @@ def _admit(
     assess: bool = True,
     source_verified: bool = False,
     request_id: str | None = None,
+    expected_site: str | None = None,
+    locked: tuple[object, object, tuple] | None = None,
 ) -> str:
     """Validate and admit a detached graph without opening its scientific registry.
 
@@ -168,7 +187,7 @@ def _admit(
     if not Path(payload["python"]).is_absolute() or not Path(payload["python"]).is_file():
         raise ValueError("The job interpreter is unavailable")
     context = ExecutionContext.from_dict(payload["context"])
-    expected_site = protected_site_fingerprint(Path(site_values["definitions"]))
+    expected_site = expected_site or protected_site_fingerprint(Path(site_values["definitions"]))
     if payload.get("site_fingerprint") != expected_site:
         raise ValueError(
             "Request site definitions differ from the central protected site; "
@@ -207,39 +226,45 @@ def _admit(
             or active.get("source_digest") != source.digest
         ):
             raise ValueError("Main request does not match its approved release")
-    with branches._lock():
-        topology = branches.read().topology
+
+    def publish(topology, db, candidates) -> str:
         name = topology.registered_checkout(checkout)
         if (
             name != payload["branch"]
             or topology.records[name].registry_id != payload["registry_id"]
         ):
             raise ValueError("Request ownership does not match the submitting checkout")
-        with registry.connection(write=True) as db:
-            for key, contract in contracts.items():
-                revision = payload["revisions"][key]
-                if type(revision) is not int or revision < 1:
-                    raise ValueError("Scientific revisions must be positive integers")
-                digest = fingerprint(contract)
-                row = db.execute(
-                    "SELECT revision,fingerprint FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
-                    (payload["registry_id"], key),
-                ).fetchone()
-                if row and (
-                    revision < row["revision"]
-                    or (revision == row["revision"] and digest != row["fingerprint"])
-                ):
-                    raise ValueError(
-                        "A newer scientific request was admitted; refresh this checkout before retrying"
-                    )
-                db.execute(
-                    """INSERT INTO compiled_revisions VALUES (?,?,?,?)
-                    ON CONFLICT(registry_id,logical_key) DO UPDATE SET revision=excluded.revision,
-                    fingerprint=excluded.fingerprint""",
-                    (payload["registry_id"], key, revision, digest),
+        for key, contract in contracts.items():
+            revision = payload["revisions"][key]
+            if type(revision) is not int or revision < 1:
+                raise ValueError("Scientific revisions must be positive integers")
+            digest = fingerprint(contract)
+            row = db.execute(
+                "SELECT revision,fingerprint FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                (payload["registry_id"], key),
+            ).fetchone()
+            if row and (
+                revision < row["revision"]
+                or (revision == row["revision"] and digest != row["fingerprint"])
+            ):
+                raise ValueError(
+                    "A newer scientific request was admitted; refresh this checkout before retrying"
                 )
-            plan = resolve_payload(topology, payload, candidates_locked(db, context.project))
-            return _admit_resolved(registry, db, plan, payload, request_id=request_id)
+            db.execute(
+                """INSERT INTO compiled_revisions VALUES (?,?,?,?)
+                ON CONFLICT(registry_id,logical_key) DO UPDATE SET revision=excluded.revision,
+                fingerprint=excluded.fingerprint""",
+                (payload["registry_id"], key, revision, digest),
+            )
+        plan = resolve_payload(topology, payload, candidates)
+        return _admit_resolved(registry, db, plan, payload, request_id=request_id)
+
+    if locked is not None:
+        return publish(*locked)
+    with branches._lock():
+        topology = branches.read().topology
+        with registry.connection(write=True) as db:
+            return publish(topology, db, candidates_locked(db, context.project))
 
 
 def _validate_worker_event(registry, message: dict, *, registering: bool = False) -> None:

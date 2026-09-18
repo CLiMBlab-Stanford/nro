@@ -146,6 +146,13 @@ def project_work_item_status(
         item = dict(row)
         work_item_id = int(item["id"])
         roots = failure_roots(work_item_id)
+        unfinished_dependencies = tuple(
+            sorted(
+                parent
+                for parent in parents.get(work_item_id, ())
+                if parent in by_id and by_id[parent]["artifact_state"] != "fresh"
+            )
+        )
         attempt = item.get("attempt_state")
         if item["artifact_state"] == "fresh":
             state = "Success"
@@ -159,6 +166,8 @@ def project_work_item_status(
             state = "Stopping"
         elif attempt == "running":
             state = "Running"
+        elif unfinished_dependencies and item.get("demanded"):
+            state = "Waiting"
         elif attempt == "queued" or item.get("retry_requested"):
             state = "Queued"
         elif (
@@ -181,5 +190,6 @@ def project_work_item_status(
             state = "Stale"
         item["status"] = state
         item["root_failure_ids"] = roots
+        item["unfinished_dependency_ids"] = unfinished_dependencies
         snapshot.append(item)
     return snapshot
