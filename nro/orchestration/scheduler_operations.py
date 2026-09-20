@@ -5,6 +5,11 @@ import sys
 from pathlib import Path
 
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.resources import (
+    GPU_RESOURCE_CLASS,
+    SCHEDULABLE_RESOURCE_CLASSES,
+    memory_tiers,
+)
 
 
 def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
@@ -26,6 +31,13 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
 
     submitted = []
     if options["local"]:
+        for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
+            if registry.worker_capacity_needed(
+                request_id=request_ids[0] if request_ids else None,
+                resource_class=GPU_RESOURCE_CLASS,
+                memory_gb=tier,
+            ):
+                raise ValueError("Lesion-aware GPU anatomy requires a scheduled GPU worker")
         process = run_local_worker(
             registry,
             memory_gb=options["memory"],
@@ -37,28 +49,34 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
         )
         submitted = [process.nro_worker_id]
     elif not options.get("no_submit", False):
-        tier, scripts = options["memory"], {}
-        while True:
-            scripts[tier] = _write_worker_script(
-                registry,
-                bids_root=registry.paths.bids_root,
-                partition=options["partition"],
-                account=options["account"],
-                hours=options["time"],
-                memory_gb=tier,
-                cpus=options["cpus"],
-                idle_timeout=options["worker_idle_timeout"],
-                drain_seconds=options["drain_minutes"] * 60,
-            )
-            if tier >= options["max_memory"]:
-                break
-            tier = min(options["max_memory"], tier * 2)
-        submitted = _submit_workers(
-            registry,
-            request_ids[0] if request_ids else None,
-            scripts[options["memory"]],
-            options["memory"],
-        )
+        scripts = {}
+        for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+            for tier in memory_tiers(options["memory"], options["max_memory"]):
+                scripts[(resource_class, tier)] = _write_worker_script(
+                    registry,
+                    bids_root=registry.paths.bids_root,
+                    partition=options["partition"],
+                    account=options["account"],
+                    hours=options["time"],
+                    memory_gb=tier,
+                    cpus=options["cpus"],
+                    resource_class=resource_class,
+                    idle_timeout=options["worker_idle_timeout"],
+                    drain_seconds=options["drain_minutes"] * 60,
+                )
+        for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+            class_submitted: list[str] = []
+            for tier in memory_tiers(options["memory"], options["max_memory"]):
+                class_submitted = _submit_workers(
+                    registry,
+                    request_ids[0] if request_ids else None,
+                    scripts[(resource_class, tier)],
+                    tier,
+                    resource_class=resource_class,
+                )
+                if class_submitted:
+                    break
+            submitted.extend(class_submitted)
     return {"submitted_workers": submitted}
 
 
@@ -76,11 +94,18 @@ def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: 
                 raise ValueError("Worker supply request belongs to another branch")
     registry.cancel_attempts_with_stale_upstreams()
     registry.reconcile_requests()
-    needed = registry.worker_capacity_needed(
-        request_id=request_ids[0] if request_ids else None,
-        resource_class="large",
-        memory_gb=int(options["memory"]),
-    )
+    needed = False
+    for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+        for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
+            if registry.worker_capacity_needed(
+                request_id=request_ids[0] if request_ids else None,
+                resource_class=resource_class,
+                memory_gb=tier,
+            ):
+                needed = True
+                break
+        if needed:
+            break
     return {"needed": needed}
 
 
@@ -116,6 +141,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
     from nro.orchestration.manifests import assess_registry, preview_registry
 
     if mode == "verify":
+        registry.reconcile_attempt_timeouts()
         assess_registry(registry, compiled=True, recover_public=True)
     elif mode not in {"cached", "preview"}:
         raise ValueError("Unknown status mode")

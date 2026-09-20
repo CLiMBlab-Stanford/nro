@@ -22,8 +22,10 @@ and known-bad source exclusion. A site can also define
 :language: yaml
 ```
 
-The `clustering` and `oslom` workflows change the networks strategy while
-sharing upstream lineages. Named configurations are merged over their class's
+The `clustering` and `oslom` workflows change the networks estimator, and
+`dynconn-networks` changes its source to dynconn. The selected source becomes a
+static workflow dependency; OSLOM requires microparcellation. Named
+configurations are merged over their class's
 `main` configuration. Unknown override keys are rejected rather than silently
 creating misspelled settings. Config IDs are validated filename identifiers;
 use the definitions store instead of assembling paths in scientific code.
@@ -102,11 +104,14 @@ or invalid evidence is not treated as proof of equivalence. Configuration IDs,
 workflow IDs, directory ownership, and dependency identities remain distinct;
 normalization does not merge differently named configurations.
 
-Scientific comparison also normalizes safe schema evolution. A field absent
-from an older snapshot receives its current packaged default, while keys no
-longer declared by the schema are ignored. Author-written configurations remain
-strict: unknown keys are errors. Changing a retained value, a field type, a
-configuration ID, or a dependency still changes the scientific identity.
+Scientific comparison normalizes schema evolution through explicit
+[artifact-contract migrations](artifact-contract-migrations.md). A new field declares
+both its default for new work and the value represented by older snapshots. These
+values may differ. If the historical value is unknown, the older artifact becomes
+stale. Keys explicitly retired as scientifically irrelevant are ignored.
+Author-written configurations remain strict: unknown keys are errors. Changing a
+retained value, a field type, a configuration ID, or a dependency still changes the
+scientific identity.
 
 For Python callers, `ResolvedConfiguration.fingerprint` identifies the full
 snapshot and `scientific_fingerprint` identifies the named scientific settings.

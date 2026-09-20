@@ -146,6 +146,7 @@ def test_installation_migrates_legacy_site_and_bidsify_settings(isolated_site, t
     from nro.configuration.site import read_site_definition
 
     definitions = create_store(tmp_path / "definitions")
+    (definitions / ".nro-definitions.yml").unlink()
     (definitions / "site/site.yml").unlink()
     profile_path = definitions / "bidsify/main.yml"
     profile = yaml.safe_load(profile_path.read_text())
@@ -401,8 +402,9 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
 @pytest.mark.parametrize("without_oslom", [False, True])
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("without_marss", [False, True])
+@pytest.mark.parametrize("with_lesion", [False, True])
 def test_personal_setup_installs_selected_extras(
-    tmp_path, monkeypatch, without_oslom, existing, without_marss
+    tmp_path, monkeypatch, without_oslom, existing, without_marss, with_lesion
 ):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
@@ -432,11 +434,13 @@ def test_personal_setup_installs_selected_extras(
             str(config),
             *(["--without-oslom"] if without_oslom else []),
             *(["--without-marss"] if without_marss else []),
+            *(["--with-lesion"] if with_lesion else []),
         ]
     )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
     assert ("oslom" in calls[0][0]) is not without_oslom
     assert ("marss" in calls[0][0]) is not without_marss
+    assert ("lesion" in calls[0][0]) is with_lesion
     assert calls[0][1]["cwd"] == root
     assert calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"] == str(root / ".nro-env")
     assert ("--without-oslom" in calls[1][0]) is without_oslom
@@ -564,6 +568,96 @@ def test_failed_download_never_replaces_target(tmp_path, monkeypatch, header, ch
         dependencies.download("https://example.org/file", target, checksum=checksum)
     assert target.read_bytes() == b"original"
     assert list(tmp_path.iterdir()) == [target]
+
+
+def test_lesion_resources_are_explicit_and_checkpointed(tmp_path, monkeypatch) -> None:
+    assert dependencies.required_images()["fastsurfer"].endswith(dependencies.FASTSURFER_OCI_DIGEST)
+    assert dependencies.required_images(with_lesion=True)["fastsurfer"].endswith(
+        dependencies.FASTSURFER_OCI_DIGEST
+    )
+
+    payload = b"pinned checkpoint"
+    digest = dependencies.hashlib.sha256(payload).hexdigest()
+    data = tmp_path / "lit-data"
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"fastsurfer_data": str(data)}, {}),
+    )
+    monkeypatch.setattr(dependencies, "NEUROLIT_CHECKPOINTS", {"model.pt": digest})
+    monkeypatch.setattr(
+        dependencies,
+        "NEUROLIT_URLS",
+        {"model.pt": "https://example.org/model.pt"},
+    )
+    calls = []
+
+    def acquire(url, target, *, checksum=None, md5=None):
+        calls.append((url, target, checksum, md5))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+
+    monkeypatch.setattr(dependencies, "download", acquire)
+    dependencies.install_neurolit_checkpoints()
+    dependencies.install_neurolit_checkpoints(offline=True)
+
+    target = data / "LIT" / "weights" / "model.pt"
+    assert target.read_bytes() == payload
+    assert calls == [("https://example.org/model.pt", target, digest, None)]
+
+
+def test_synthstroke_model_is_installed_for_offline_workers(tmp_path, monkeypatch) -> None:
+    payloads = {"config.json": b"config", "model.safetensors": b"weights"}
+    digests = {
+        name: dependencies.hashlib.sha256(payload).hexdigest() for name, payload in payloads.items()
+    }
+    data = tmp_path / "synthstroke"
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"synthstroke_data": str(data)}, {}),
+    )
+    monkeypatch.setattr(dependencies, "MASKER_RESOURCES", digests)
+    monkeypatch.setattr(
+        dependencies,
+        "SYNTHSTROKE_URLS",
+        {name: f"https://example.org/{name}" for name in payloads},
+    )
+    calls = []
+
+    def acquire(url, target, *, checksum=None, md5=None):
+        calls.append((url, target, checksum, md5))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payloads[target.name])
+
+    monkeypatch.setattr(dependencies, "download", acquire)
+    dependencies.install_synthstroke_model()
+    dependencies.install_synthstroke_model(offline=True)
+
+    assert calls == [
+        (f"https://example.org/{name}", data / name, digests[name], None) for name in payloads
+    ]
+
+
+def test_branch_setup_acquires_only_explicit_lesion_resources(monkeypatch) -> None:
+    from nro.bin import setup
+
+    calls: list[bool] = []
+    monkeypatch.setattr(setup, "installation_record", lambda: {"mode": "branch"})
+    monkeypatch.setattr(
+        setup,
+        "install_lesion_resources",
+        lambda *, offline=False: calls.append(offline),
+    )
+    monkeypatch.setattr(
+        setup,
+        "check_installation",
+        lambda **_kwargs: [{"ok": True, "required": True, "name": "test", "detail": "ok"}],
+    )
+
+    setup._main(["--resources-only", "--with-lesion", "--offline"])
+
+    assert calls == [True]
 
 
 def test_archive_escape_is_rejected(tmp_path):

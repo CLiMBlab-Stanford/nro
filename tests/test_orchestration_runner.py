@@ -755,6 +755,52 @@ def test_compound_step_commands_use_uniform_user_facing_log_labels(
     assert output.read_text() == "result"
 
 
+def test_streaming_child_heartbeat_names_step_without_repeating_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Process:
+        stderr = None
+        stdout = None
+
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def wait(self, *, timeout: float) -> int:
+            self.waits += 1
+            if self.waits == 1:
+                raise subprocess.TimeoutExpired(["expensive-tool", "--large-argument"], timeout)
+            return 0
+
+    logger = logging.getLogger("test.runner.heartbeat")
+    runner = Runner(
+        module_name="Heartbeat Module",
+        container=None,
+        binds=(),
+        logger=logger,
+        next_step=count(1).__next__,
+    )
+    output = tmp_path / "complete.txt"
+
+    def execute() -> None:
+        runner.run_child(["expensive-tool", "--large-argument"], stream_output=True)
+        output.write_text("complete")
+
+    runner.add_step(Step.python(name="Surface Reconstruction", outputs=(output,), action=execute))
+    times = iter((100.0, 161.0))
+    monkeypatch.setattr("nro.orchestration.runner.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("nro.orchestration.runner.subprocess.Popen", lambda *_a, **_k: Process())
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        with runner.run_context():
+            runner.execute()
+
+    heartbeat = next(line for line in caplog.messages if "still running after" in line)
+    assert heartbeat == "Surface Reconstruction still running after 61 seconds"
+    assert "expensive-tool" not in heartbeat
+
+
 def test_module_dag_contract_rejects_topology_change_for_same_signature(
     tmp_path: Path,
 ) -> None:
@@ -871,8 +917,8 @@ def test_module_dag_contract_ignores_source_capture_relocation(
         )
     )
     first.freeze()
-    # Emulate a version 3 contract written before captured source paths were
-    # normalized. The old capture need not remain on disk for comparison.
+    # Emulate a contract written from an older source capture. The old capture
+    # need not remain on disk for comparison.
     monkeypatch.delenv("NRO_EXECUTION_SOURCE_ROOT", raising=False)
     first.reconcile_contract(contract, signature="source-and-workflow")
 
@@ -1020,6 +1066,162 @@ def test_scientific_change_reruns_only_step_and_descendants(
 
     assert actions == ["first", "child"]
     assert list(states.values())[-1].value == "fresh"
+
+
+def test_interrupted_module_preserves_successful_step_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "current-steps.json"
+    contract = tmp_path / "runner-contract.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "same-work-item")
+    first_output = tmp_path / "first.txt"
+    second_output = tmp_path / "second.txt"
+    actions: list[str] = []
+
+    def construct(*, fail_second: bool) -> Runner:
+        runner = Runner(
+            module_name="Interrupted module",
+            container=None,
+            binds=(),
+            logger=logging.getLogger("test.runner.interrupted-module"),
+            next_step=count(1).__next__,
+        )
+
+        def first() -> None:
+            actions.append("first")
+            first_output.write_text("complete")
+
+        def second() -> None:
+            actions.append("second")
+            if fail_second:
+                raise RuntimeError("interrupted")
+            second_output.write_text("complete")
+
+        runner.add_step(Step.python(name="First", outputs=(first_output,), action=first))
+        runner.add_step(
+            Step.python(
+                name="Second",
+                inputs=(first_output,),
+                outputs=(second_output,),
+                action=second,
+            )
+        )
+        return runner
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        with construct(fail_second=True).run_context() as runner:
+            runner.execute()
+
+    partial = json.loads(contract.read_text())
+    assert partial["version"] == 4
+    assert [node["name"] for node in partial["nodes"]] == ["First"]
+
+    actions.clear()
+    with construct(fail_second=False).run_context() as runner:
+        runner.execute()
+
+    assert actions == ["second"]
+    completed = json.loads(contract.read_text())
+    assert [node["name"] for node in completed["nodes"]] == ["First", "Second"]
+
+
+def test_missing_contract_reason_does_not_claim_scientific_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ledger = tmp_path / "current-steps.json"
+    output = tmp_path / "existing.txt"
+    output.write_text("unverified")
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    logger = logging.getLogger("test.runner.missing-step-contract")
+    runner = Runner(
+        module_name="Missing contract",
+        container=None,
+        binds=(),
+        logger=logger,
+        next_step=count(1).__next__,
+    )
+    runner.add_step(
+        Step.python(
+            name="Rewrite unverified output",
+            outputs=(output,),
+            action=lambda: output.write_text("verified"),
+        )
+    )
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        with runner.run_context():
+            runner.execute()
+
+    assert "no successful step contract" in "\n".join(caplog.messages)
+    assert "scientific declaration changed" not in "\n".join(caplog.messages)
+
+
+def test_interruption_after_upstream_change_revokes_descendant_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "current-steps.json"
+    contract = tmp_path / "runner-contract.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "same-topology")
+    upstream = tmp_path / "upstream.txt"
+    downstream = tmp_path / "downstream.txt"
+    actions: list[str] = []
+
+    def construct(*, value: int, fail_downstream: bool = False) -> Runner:
+        runner = Runner(
+            module_name="Changed upstream",
+            container=None,
+            binds=(),
+            logger=logging.getLogger("test.runner.changed-upstream"),
+            next_step=count(1).__next__,
+        )
+
+        def write_upstream() -> None:
+            actions.append("upstream")
+            upstream.write_text(str(value))
+
+        def write_downstream() -> None:
+            actions.append("downstream")
+            if fail_downstream:
+                raise RuntimeError("downstream interrupted")
+            downstream.write_text(str(value))
+
+        runner.add_step(
+            Step.python(
+                name="Upstream",
+                outputs=(upstream,),
+                action=write_upstream,
+                parameters={"value": value},
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Downstream",
+                inputs=(upstream,),
+                outputs=(downstream,),
+                action=write_downstream,
+            )
+        )
+        return runner
+
+    with construct(value=1).run_context() as runner:
+        runner.execute()
+
+    actions.clear()
+    with pytest.raises(RuntimeError, match="downstream interrupted"):
+        with construct(value=2, fail_downstream=True).run_context() as runner:
+            runner.execute()
+
+    partial = json.loads(contract.read_text())
+    assert [node["name"] for node in partial["nodes"]] == ["Upstream"]
+
+    actions.clear()
+    with construct(value=2).run_context() as runner:
+        runner.execute()
+    assert actions == ["downstream"]
 
 
 def test_bound_module_contract_rejects_mutation_before_execution(

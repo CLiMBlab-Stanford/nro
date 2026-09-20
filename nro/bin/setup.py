@@ -14,8 +14,11 @@ from nro.engine.dependencies import (
     QUNEX_TERMS,
     check_installation,
     install_images,
+    install_lesion_resources,
+    install_neurolit_checkpoints,
     install_oslom,
     install_runtime,
+    install_synthstroke_model,
     install_templates,
     install_workbench,
 )
@@ -37,14 +40,20 @@ def _main(argv=None, *, prog="nro setup"):
     parser.add_argument("--non-interactive", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--without-oslom", action="store_true")
+    parser.add_argument("--with-lesion", action="store_true")
     parser.add_argument("--accept-qunex-license", action="store_true")
     parser.add_argument("--local", action="store_true")
     args = parser.parse_args(values)
     if installation_record().get("mode") == "branch":
         if args.maintain:
             parser.error("Branch installations cannot maintain shared resources")
+        if args.with_lesion:
+            install_lesion_resources(offline=args.offline)
         results = check_installation(
-            deep=False, with_oslom=not args.without_oslom, slurm=not args.local
+            deep=False,
+            with_oslom=not args.without_oslom,
+            with_lesion=args.with_lesion,
+            slurm=not args.local,
         )
         for result in results:
             print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
@@ -113,7 +122,10 @@ def _main(argv=None, *, prog="nro setup"):
             }:
                 raise RuntimeError("Resource setup cancelled")
         install_runtime(offline=args.offline)
-        install_images(offline=args.offline)
+        install_images(offline=args.offline, with_lesion=args.with_lesion)
+        if args.with_lesion:
+            install_synthstroke_model(offline=args.offline)
+            install_neurolit_checkpoints(offline=args.offline)
         install_workbench(offline=args.offline)
         install_templates(offline=args.offline)
         if not args.without_oslom:
@@ -123,6 +135,7 @@ def _main(argv=None, *, prog="nro setup"):
             with_oslom=not args.without_oslom,
             slurm=not args.local,
             container_execution=args.local,
+            with_lesion=args.with_lesion,
         )
         for result in results:
             print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")

@@ -159,7 +159,10 @@ def project_work_item_status(
         elif not item.get("recomputable") and not item.get("demanded"):
             state = "Unavailable"
         elif attempt == "error" and work_item_id in roots:
-            state = "Corrupt" if item["artifact_state"] == "corrupt" else "Error"
+            if item.get("error_type") == "Timeout":
+                state = "Timeout"
+            else:
+                state = "Corrupt" if item["artifact_state"] == "corrupt" else "Error"
         elif roots and item.get("demanded"):
             state = "Blocked"
         elif attempt == "cancel_requested":
@@ -177,7 +180,7 @@ def project_work_item_status(
         ):
             state = "Missing"
         elif attempt == "error":
-            state = "Error"
+            state = "Timeout" if item.get("error_type") == "Timeout" else "Error"
         elif item.get("demanded"):
             state = "Queued"
         elif attempt == "cancelled" and item.get("error_type") == "UserCancelled":

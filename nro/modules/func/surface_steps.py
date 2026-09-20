@@ -44,6 +44,7 @@ def _create_wb_metric_resample_step(
     current_sphere: Path,
     new_sphere: Path,
     out_metric: Path,
+    valid_roi_out: Path | None = None,
     env: dict[str, str],
     force: bool,
 ) -> Step:
@@ -56,11 +57,33 @@ def _create_wb_metric_resample_step(
         "BARYCENTRIC",
         str(out_metric),
     ]
+    if valid_roi_out is not None:
+        cmd.extend(("-valid-roi-out", str(valid_roi_out)))
     return Step.command_step(
         cmd,
-        outputs=(out_metric,),
+        outputs=(out_metric, *((valid_roi_out,) if valid_roi_out is not None else ())),
         inputs=(in_metric, current_sphere, new_sphere),
         force=force,
         env=env,
         prepare=lambda: ensure_directory(out_metric.parent),
+    )
+
+
+def _create_wb_metric_mask_step(
+    *,
+    metric: Path,
+    roi: Path,
+    output: Path,
+    env: dict[str, str],
+    force: bool,
+) -> Step:
+    """Mask a resampled metric to vertices supported by the source anatomy."""
+    return Step.command_step(
+        ["wb_command", "-metric-mask", str(metric), str(roi), str(output)],
+        name="Mask Resampled Surface to Valid Anatomical Domain",
+        outputs=(output,),
+        inputs=(metric, roi),
+        force=force,
+        env=env,
+        prepare=lambda: ensure_directory(output.parent),
     )

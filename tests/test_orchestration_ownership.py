@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from nro.bin.purge import _purge_work_items
+from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.store import ConfigStore
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.ownership import (
@@ -81,9 +82,8 @@ def _historical_store(tmp_path: Path) -> ConfigStore:
         yaml.safe_dump({"standardize": False})
     )
     (root / "workflows" / "retired_workflow.yml").write_text(yaml.safe_dump({"clean": "retired"}))
-    store = ConfigStore()
-    store.root = root
-    return store
+    refresh_manifest(root)
+    return ConfigStore(root)
 
 
 def test_work_item_ownership_survives_removed_workflow(tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ from nro.engine.io import atomic_output_path, atomic_write_text
 
 from .config import ALLOWED_TYPES, identifier
 from .errors import BidsificationError
+from .metadata import PUBLIC_FIELDS, enrich_metadata, policy_identity
 from .paths import secure_directory
 
 METADATA_FIELDS = {
@@ -51,7 +52,7 @@ METADATA_FIELDS = {
     "ManufacturersModelName",
     "ReceiveCoilName",
     "MRAcquisitionType",
-}
+} | PUBLIC_FIELDS
 
 
 def command(argv: list[str], *, env: dict | None = None) -> None:
@@ -216,12 +217,19 @@ def prepare_image(record: dict, item: dict, shared: Path, source) -> dict:
         k: item[k] for k in ("acquisition", "file_token", "bytes", "source_revision")
     }
     override = item.get("classification_override")
-    checkpoint_identity = {"source": source_identity, "override": override}
+    checkpoint_base = {
+        "source": source_identity,
+        "override": override,
+    }
     if marker.is_file():
         saved = json.loads(marker.read_text())
         from .publication import file_hash
 
         hashes = saved.get("hashes")
+        checkpoint_identity = {
+            **checkpoint_base,
+            "metadata_policy": policy_identity(saved.get("metadata", {})),
+        }
         if (
             saved.get("identity") == checkpoint_identity
             and isinstance(hashes, dict)
@@ -233,6 +241,9 @@ def prepare_image(record: dict, item: dict, shared: Path, source) -> dict:
             image = output / "image.nii.gz"
             if not hashes or np.isfinite(np.asanyarray(nib.load(image).dataobj)).all():
                 item.update(saved["classification"])
+                item["metadata_warnings"] = saved.get("metadata_warnings", [])
+                item["metadata_conflicts"] = saved.get("metadata_conflicts", [])
+                item["metadata_underivable"] = saved.get("metadata_underivable", {})
                 return saved["metadata"]
     root = temporary_raw(record) / identifier(item["id"])
     secure_directory(root)
@@ -253,10 +264,12 @@ def prepare_image(record: dict, item: dict, shared: Path, source) -> dict:
                 shutil.rmtree(directory)
         extract(raw, dicoms)
         converted.mkdir(exist_ok=True)
-        for path in dicoms.iterdir():
+        dicom_records = []
+        for path in sorted(dicoms.iterdir()):
             header = pydicom.dcmread(path, stop_before_pixels=True)
             if getattr(header, "Modality", "") != "MR":
                 raise BidsificationError("Only MR DICOM acquisitions are supported")
+            dicom_records.append((header, path))
         config = record["config"]
         converter = [value.replace("{staging}", str(root)) for value in config["dcm2niix"]]
         stripper = [value.replace("{staging}", str(root)) for value in config["synthstrip"]]
@@ -284,6 +297,11 @@ def prepare_image(record: dict, item: dict, shared: Path, source) -> dict:
             )
         original = images[0]
         metadata = json.loads(original.with_name(original.name[:-7] + ".json").read_text())
+        enrichment = enrich_metadata(metadata, dicom_records)
+        metadata = enrichment.metadata
+        item["metadata_warnings"] = list(enrichment.warnings)
+        item["metadata_conflicts"] = list(enrichment.conflicts)
+        item["metadata_underivable"] = dict(enrichment.underivable)
         classification = (
             {
                 "datatype": override[0],
@@ -331,10 +349,18 @@ def prepare_image(record: dict, item: dict, shared: Path, source) -> dict:
             marker,
             json.dumps(
                 {
-                    "identity": checkpoint_identity,
+                    "identity": {
+                        **checkpoint_base,
+                        "metadata_policy": policy_identity(sanitized),
+                    },
                     "metadata": sanitized,
                     "classification": classification,
                     "hashes": hashes,
+                    "metadata_derivations": enrichment.derivations,
+                    "metadata_warnings": list(enrichment.warnings),
+                    "metadata_conflicts": list(enrichment.conflicts),
+                    "metadata_underivable": enrichment.underivable,
+                    "hardware_profile": enrichment.hardware_profile,
                 }
             ),
             mode=0o660,

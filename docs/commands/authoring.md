@@ -108,10 +108,11 @@ during execution. Scientific changes may affect artifact freshness when the
 registry is next assessed; model-set changes alone do not.
 
 Saving uses an atomic replacement and checks that the stored content has not
-changed since editing began. Concurrent authoring commands use a per-file
-advisory lock. Direct editor writes do not honor that lock and should not race
-with publication. Permission errors do not trigger elevation or redirection to
-another store. Coordinate changes to shared definitions with other users.
+changed since editing began. Concurrent authoring commands use file and store
+locks. The saved definition and store manifest are published in one validated
+transaction. Direct edits are rejected on later reads. Permission errors do not
+trigger elevation or redirection to another store. Coordinate changes to
+shared definitions with other users.
 
 ## Local files and noninteractive use
 
@@ -165,11 +166,11 @@ nro create markup alternative
 ```
 
 Deleting an external class `main` override restores the packaged defaults.
-Deleting a named config warns about workflows that still select it; those
-workflows cannot resolve until the config is restored or their selections
-change. Deleting workflow `main` warns that default requests will need it
-recreated. Missing definitions can affect later artifact assessments, so
-coordinate shared-store resets with other users.
+Deleting a named config reports workflows that still select it. Full-store
+validation prevents publication until those references are changed in the same
+transaction or beforehand. Deleting workflow `main` warns that default
+requests will need it recreated. Missing definitions can affect later artifact
+assessments, so coordinate shared-store resets with other users.
 
 Deletion uses the authoring lock and snapshot check, and reports the path of a
 private recovery copy in the system temporary directory. Copy it elsewhere to

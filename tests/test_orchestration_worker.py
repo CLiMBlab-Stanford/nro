@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import sqlite3
 import stat
@@ -18,6 +19,7 @@ from nro.orchestration import completion
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.execution import ExecutionResult
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.publish import publish
 from nro.orchestration.registry import (
@@ -27,7 +29,24 @@ from nro.orchestration.registry import (
     discover_registry_projects,
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
-from nro.orchestration.worker import Worker
+from nro.orchestration.worker import Worker, _looks_like_oom
+
+
+def test_cuda_memory_failure_does_not_request_more_host_memory(tmp_path: Path) -> None:
+    log = tmp_path / "attempt.log"
+    log.write_text(
+        "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.69 GiB.\n",
+        encoding="utf-8",
+    )
+
+    assert not _looks_like_oom(log, 1)
+
+
+def test_host_memory_failure_requests_more_host_memory(tmp_path: Path) -> None:
+    log = tmp_path / "attempt.log"
+    log.write_text("worker terminated: out of memory\n", encoding="utf-8")
+
+    assert _looks_like_oom(log, 1)
 
 
 def _spec(
@@ -41,6 +60,7 @@ def _spec(
     dependencies: tuple[str, ...] = (),
     inputs: tuple[Path, ...] = (),
     project: str = "demo",
+    resource_class: str = "large",
 ) -> WorkItemSpec:
     directory_label = runtime_config.stem.rsplit("_", 1)[0]
     command = (
@@ -64,10 +84,179 @@ def _spec(
         input_paths=inputs,
         output_root=output.parent,
         output_prefix=None,
-        resource_class="large",
+        resource_class=resource_class,
         expected_outputs=(output,),
         processing=module_descriptor(module).processing_contract(),
     )
+
+
+def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    general = _spec(
+        key="anat:" + "0" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "anat.txt",
+    )
+
+    gpu = general.evolve(resource_class="gpu")
+
+    assert gpu.contract_fingerprint == general.contract_fingerprint
+    assert gpu.work_item_contract == general.work_item_contract
+
+
+def test_gpu_worker_claims_only_gpu_work(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    general = _spec(
+        key="anat:" + "1" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "general.txt",
+    )
+    gpu = _spec(
+        key="anat:" + "2" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "gpu.txt",
+        resource_class="gpu",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(general, gpu),
+        terminal_work_item_keys=(general.key, gpu.key),
+        concurrency=2,
+        partition=None,
+    )
+    registry.register_worker("gpu-worker", resource_class="gpu")
+
+    claimed = registry.claim_ready_work_item("gpu-worker", ("gpu",))
+
+    assert claimed is not None
+    assert claimed.work_item_key == gpu.key
+
+
+def test_gpu_worker_exits_without_claiming_general_work(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    general = _spec(
+        key="anat:" + "3" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "general.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(general,),
+        terminal_work_item_keys=(general.key,),
+        concurrency=1,
+        partition=None,
+    )
+
+    assert (
+        Worker(
+            registry,
+            resource_class="gpu",
+            idle_timeout=0,
+            poll_interval=0.01,
+        ).run()
+        == 0
+    )
+    with registry.connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 0
+
+
+def test_general_and_gpu_capacity_are_reserved_independently(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    general = _spec(
+        key="anat:" + "4" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "general.txt",
+    )
+    gpu = _spec(
+        key="anat:" + "5" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "gpu.txt",
+        resource_class="gpu",
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(general, gpu),
+        terminal_work_item_keys=(general.key, gpu.key),
+        concurrency=2,
+        partition=None,
+    )
+
+    gpu_reservations = registry.reserve_worker_submissions(
+        request_id=request, resource_class="gpu", memory_gb=32
+    )
+    general_reservations = registry.reserve_worker_submissions(
+        request_id=request, resource_class="large", memory_gb=32
+    )
+
+    assert len(gpu_reservations) == 1
+    assert len(general_reservations) == 1
+
+
+def test_higher_memory_gpu_work_is_visible_to_initial_supply(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    gpu = _spec(
+        key="anat:" + "6" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "gpu.txt",
+        resource_class="gpu",
+    ).evolve(memory_gb=64, max_memory_gb=256)
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(gpu,),
+        terminal_work_item_keys=(gpu.key,),
+        concurrency=1,
+        partition=None,
+    )
+
+    assert not registry.worker_capacity_needed(
+        request_id=request, resource_class="gpu", memory_gb=32
+    )
+    assert registry.worker_capacity_needed(request_id=request, resource_class="gpu", memory_gb=64)
 
 
 def test_work_item_private_paths_use_the_logical_digest() -> None:
@@ -1570,6 +1759,99 @@ def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> N
     requests = {row["user_name"]: row["state"] for row in registry.request_rows()}
     assert requests == {"alice": "cancelled", "bob": "active"}
     assert registry.work_item_rows()[0]["demanded"] == 1
+
+
+@pytest.mark.parametrize("launcher_cancelled", [False, True])
+def test_worker_walltime_sigterm_is_reported_as_timeout(
+    tmp_path: Path, launcher_cancelled: bool
+) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    output = tmp_path / "outputs" / "network.txt"
+    work_item = _spec(
+        key="networks:" + "0" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=output,
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("worker", resource_class="large")
+    claimed = registry.claim_ready_work_item("worker", ("large",))
+    assert claimed is not None
+
+    class TimedOutLauncher:
+        def terminate(self) -> None:
+            pass
+
+        def run(self, *args, **kwargs) -> ExecutionResult:
+            return ExecutionResult(-signal.SIGTERM, launcher_cancelled, False)
+
+    worker = Worker(
+        registry,
+        resource_class="large",
+        launcher=TimedOutLauncher(),
+        worker_id="worker",
+        walltime_seconds=1,
+    )
+    worker.deadline = time.monotonic()
+    worker._execute(claimed)
+
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Timeout"
+    assert row["error_type"] == "Timeout"
+    assert "longer --time allocation" in row["error_message"]
+
+
+def test_status_update_can_reconcile_an_existing_slurm_timeout(tmp_path: Path, monkeypatch) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "9" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("worker", resource_class="large", slurm_job_id="123")
+    claimed = registry.claim_ready_work_item("worker", ("large",))
+    assert claimed is not None
+    registry.finish_attempt(
+        claimed.attempt_id,
+        state="error",
+        error_type="CalledProcessError",
+        error_message="Derivative command exited with status -15: see work-item.log",
+    )
+    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda job_id: job_id == "123")
+
+    assert registry.reconcile_attempt_timeouts() == 1
+    assert registry.reconcile_attempt_timeouts() == 0
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Timeout"
+    assert row["error_type"] == "Timeout"
 
 
 def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -> None:

@@ -491,6 +491,7 @@ def _assess_direct_inputs(
     from nro.modules.func.contract import final_resampling_contract
     from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
     from nro.orchestration.catalog import module_descriptor
+    from nro.orchestration.dependencies import primary_dependency
 
     work_item_id = int(row["id"])
     project = str(row["project"])
@@ -506,6 +507,7 @@ def _assess_direct_inputs(
     source_markup = workspace.markups[markup_key]
     command = [str(value) for value in json.loads(row["command_json"])]
     descriptor = module_descriptor(row["module"])
+    aggregate_source = primary_dependency(row["module"], module_config)
     managed_direct_inputs = bool(descriptor.execution_module in command)
     expected_paths: tuple[Path, ...] | set[str] = ()
     direct_universe_error: str | None = None
@@ -661,7 +663,7 @@ def _assess_direct_inputs(
                     sort_keys=True,
                 )
                 for parent in parents
-                if workspace.by_id[parent]["module"] == descriptor.upstream_modules[0]
+                if workspace.by_id[parent]["module"] == aggregate_source
             }
             if expected_entities != recorded_entities:
                 multirun_error = (

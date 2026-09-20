@@ -173,13 +173,29 @@ def migrate_site_configuration(path: Path) -> Path:
         if changed:
             migrated_profiles[profile_path] = profile
     write_site_definition(definitions, protected, bidsify=bidsify)
-    for profile_path, profile in migrated_profiles.items():
-        atomic_write_text(
-            profile_path,
-            yaml.safe_dump(profile, sort_keys=False),
-            mode=0o644,
-            durable=True,
+    if migrated_profiles:
+        from nro.configuration.definition_migrations import (
+            MANIFEST,
+            normalize_managed_text,
+            update_store,
         )
+
+        updates = {
+            profile_path.relative_to(definitions): normalize_managed_text(
+                profile_path, yaml.safe_dump(profile, sort_keys=False)
+            ).encode("utf-8")
+            for profile_path, profile in migrated_profiles.items()
+        }
+        if (definitions / MANIFEST).is_file():
+            update_store(definitions, updates)
+        else:
+            for relative, value in updates.items():
+                atomic_write_text(
+                    definitions / relative,
+                    value.decode("utf-8"),
+                    mode=0o644,
+                    durable=True,
+                )
     _write_locator(path, definitions)
     return protected_path
 

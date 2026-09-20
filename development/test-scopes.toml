@@ -1,20 +1,20 @@
 version = 1
 
 [scope.shared_engine]
-paths = ["nro/engine/**", "tests/test_engine_*.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
-tests = ["tests/test_engine_primitives.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
+paths = ["nro/engine/**", "tests/test_engine_*.py", "tests/test_anatomical_domain.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
+tests = ["tests/test_engine_primitives.py", "tests/test_anatomical_domain.py", "tests/test_artifact_metadata.py", "tests/test_atomic_io.py", "tests/test_timecourse_io.py"]
 boundaries = ["tests/test_runner_contract.py", "tests/test_execution_invariance.py"]
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 
 [scope.orchestration]
-paths = ["nro/orchestration/**", "tests/test_orchestration_*.py", "tests/test_branch_*.py", "tests/test_scheduler_*.py", "tests/test_artifact_*.py", "tests/test_dependency_state.py", "tests/test_workflow_registry.py", "tests/test_assessment_protocol.py", "tests/test_attempt_entry.py", "tests/test_control_*.py", "tests/test_development_branches.py", "tests/test_execution_cache.py", "tests/test_execution_invariance.py", "tests/test_execution_shutdown.py", "tests/test_promotion.py", "tests/test_runner_*.py", "tests/test_source_snapshots.py", "tests/test_registry_migrations.py"]
-tests = ["tests/test_orchestration_planner.py", "tests/test_orchestration_runner.py", "tests/test_branch_registry.py", "tests/test_scheduler_service.py", "tests/test_registry_migrations.py"]
+paths = ["nro/orchestration/**", "tests/test_orchestration_*.py", "tests/test_branch_*.py", "tests/test_scheduler_*.py", "tests/test_artifact_*.py", "tests/test_contract_migrations.py", "tests/test_dependency_state.py", "tests/test_workflow_registry.py", "tests/test_assessment_protocol.py", "tests/test_attempt_entry.py", "tests/test_control_*.py", "tests/test_development_branches.py", "tests/test_execution_cache.py", "tests/test_execution_invariance.py", "tests/test_execution_shutdown.py", "tests/test_promotion.py", "tests/test_runner_*.py", "tests/test_source_snapshots.py", "tests/test_registry_migrations.py"]
+tests = ["tests/test_orchestration_planner.py", "tests/test_orchestration_runner.py", "tests/test_branch_registry.py", "tests/test_scheduler_service.py", "tests/test_registry_migrations.py", "tests/test_contract_migrations.py"]
 boundaries = ["tests/test_runner_contract.py", "tests/test_artifact_resolution.py", "tests/test_execution_invariance.py"]
 full = true
 
 [scope.configuration]
-paths = ["nro/configuration/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py"]
-tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_markup.py"]
+paths = ["nro/configuration/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py"]
+tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py"]
 boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invariance.py"]
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 
@@ -24,7 +24,7 @@ tests = ["tests/test_cli.py", "tests/test_user_commands.py"]
 boundaries = ["tests/test_orchestration_planner.py"]
 
 [scope.installation]
-paths = ["install", ".github/workflows/**", "nro/versioning.py", "nro/engine/bootstrap.py", "nro/engine/maintenance.py", "nro/engine/shared_installation.py", "nro/engine/site_setup.py", "nro/engine/user_launcher.py", "nro/engine/upgrade_rehearsal.py", "tests/test_installation*.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_upgrade_rehearsal.py", "tests/test_releases.py", "tests/test_user_launcher.py", "pyproject.toml", "uv.lock"]
+paths = ["install", ".github/workflows/**", "nro/versioning.py", "nro/configuration/definition_migrations/**", "nro/engine/bootstrap.py", "nro/engine/maintenance.py", "nro/engine/shared_installation.py", "nro/engine/site_setup.py", "nro/engine/user_launcher.py", "nro/engine/upgrade_rehearsal.py", "tests/test_installation*.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_upgrade_rehearsal.py", "tests/test_releases.py", "tests/test_user_launcher.py", "pyproject.toml", "uv.lock"]
 tests = ["tests/test_installation.py", "tests/test_installation_transition.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_user_launcher.py"]
 boundaries = ["tests/test_upgrade_rehearsal.py"]
 full = true
@@ -35,8 +35,8 @@ tests = ["tests/test_bidsify.py", "tests/test_bidsify_discovery.py", "tests/test
 boundaries = ["tests/test_scheduler_service.py"]
 
 [scope.anat]
-paths = ["nro/modules/anat/**", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
-tests = ["tests/test_anat_session_sources.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
+paths = ["nro/modules/anat/**", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_synthstroke_adapter.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
+tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
 boundaries = ["tests/test_branch_functional_execution.py", "tests/test_scene.py"]
 downstream = ["func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 

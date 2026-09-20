@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from nro.configuration import site
 from nro.configuration.hardware import (
     gradient_unwarping_configured,
+    resolve_acquisition_metadata,
     resolve_gradient_unwarping,
     validate_gradient_unwarping_catalog,
 )
@@ -13,8 +15,27 @@ from nro.configuration.hardware import (
 
 def write_catalog(root: Path, body: str) -> None:
     path = root / "hardware/gradient_unwarping.yml"
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
+
+
+def test_protected_site_fingerprint_covers_hardware_assertions(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(site, "protected_site", lambda _definitions: ({"bids": "/bids"}, {}))
+    write_catalog(tmp_path, "version: 1\nprofiles: {}\n")
+    first = site.protected_site_fingerprint(tmp_path)
+    write_catalog(
+        tmp_path,
+        """version: 1
+profiles:
+  ge:
+    match: {Manufacturer: GE}
+    action: already_corrected
+    acquisition_metadata:
+      nonlinear_gradient_correction: true
+      gradient_correction_mode: 2D
+""",
+    )
+    assert site.protected_site_fingerprint(tmp_path) != first
 
 
 def test_auto_is_off_without_a_matching_site_profile(tmp_path: Path) -> None:
@@ -121,3 +142,54 @@ profiles:
             mode="auto",
             definitions=tmp_path,
         )
+
+
+def test_hardware_profile_can_assert_missing_acquisition_metadata(tmp_path: Path) -> None:
+    write_catalog(
+        tmp_path,
+        """version: 1
+profiles:
+  ge_scanner:
+    match:
+      Manufacturer: GE
+      ManufacturersModelName: SIGNA UHP
+    action: already_corrected
+    acquisition_metadata:
+      nonlinear_gradient_correction: true
+      gradient_correction_mode: 2D
+      gradient_coil_model: SIGNA UHP gradient
+""",
+    )
+    profile, matched, assertions = resolve_acquisition_metadata(
+        {"Manufacturer": "GE", "ManufacturersModelName": "SIGNA UHP"},
+        definitions=tmp_path,
+    )
+    assert profile == "ge_scanner"
+    assert matched == {"Manufacturer": "GE", "ManufacturersModelName": "SIGNA UHP"}
+    assert assertions["gradient_correction_mode"] == "2D"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "gradient_correction_mode: unknown",
+        "nonlinear_gradient_correction: false\n      gradient_correction_mode: 2D",
+        "nonlinear_gradient_correction: true\n      gradient_correction_mode: none",
+    ],
+)
+def test_hardware_profile_rejects_inconsistent_correction_metadata(
+    tmp_path: Path, metadata: str
+) -> None:
+    write_catalog(
+        tmp_path,
+        f"""version: 1
+profiles:
+  invalid:
+    match: {{Manufacturer: GE}}
+    action: already_corrected
+    acquisition_metadata:
+      {metadata}
+""",
+    )
+    with pytest.raises(ValueError):
+        validate_gradient_unwarping_catalog(tmp_path)

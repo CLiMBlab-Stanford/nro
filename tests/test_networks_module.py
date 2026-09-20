@@ -7,7 +7,6 @@ import nibabel as nib
 import numpy as np
 import pytest
 import yaml
-from scipy import sparse
 
 import nro.modules.networks.__main__ as networks_main
 from nro.configuration.store import ConfigStore
@@ -22,6 +21,7 @@ from nro.modules.networks.clustering import clustering_membership
 from nro.modules.networks.config import (
     ClusteringConfig,
     ConnectivityConfig,
+    FeatureReductionConfig,
     IcaConfig,
     InputsConfig,
     LabelingConfig,
@@ -29,15 +29,19 @@ from nro.modules.networks.config import (
     OslomConfig,
     OutputConfig,
 )
+from nro.modules.networks.features import reduce_features
 from nro.modules.networks.ica import ica_membership
 from nro.modules.networks.labeling import (
     network_map_names,
     project_references_to_cifti,
     rank_reference_candidates,
 )
-from nro.modules.networks.module import _load_inputs, run
+from nro.modules.networks.module import _load_microparcellation_inputs, run
 from nro.modules.networks.references import REFERENCE_ATLASES, ReferenceAtlas
-from nro.modules.networks.targets import discover_microparcellation_targets
+from nro.modules.networks.targets import (
+    discover_dynconn_targets,
+    discover_microparcellation_targets,
+)
 
 
 def _fake_oslom(_graph, directory: Path, _config, *, runner):
@@ -54,11 +58,10 @@ def test_ica_membership_is_reproducible_and_normalized() -> None:
     adjacency = profiles @ profiles.T
     adjacency = np.maximum(adjacency, 0.0)
     np.fill_diagonal(adjacency, 0.0)
-    lower = sparse.tril(sparse.csr_matrix(adjacency), k=-1, format="csr")
     config = IcaConfig(n_networks=4, random_seed=7)
 
-    first = ica_membership(lower, config)
-    second = ica_membership(lower, config)
+    first = ica_membership(adjacency, config)
+    second = ica_membership(adjacency, config)
 
     assert first.shape == (80, 4)
     np.testing.assert_array_equal(first, second)
@@ -71,7 +74,6 @@ def test_clustering_membership_is_reproducible_and_minmax_normalized() -> None:
     adjacency[:20, :20] = 1.0
     adjacency[20:, 20:] = 1.0
     np.fill_diagonal(adjacency, 0.0)
-    lower = sparse.tril(sparse.csr_matrix(adjacency), k=-1, format="csr")
     config = ClusteringConfig(
         n_networks=2,
         repetitions=4,
@@ -83,8 +85,8 @@ def test_clustering_membership_is_reproducible_and_minmax_normalized() -> None:
         reassignment_ratio=0.01,
     )
 
-    first, first_inertias = clustering_membership(lower, config)
-    second, second_inertias = clustering_membership(lower, config)
+    first, first_inertias = clustering_membership(adjacency, config)
+    second, second_inertias = clustering_membership(adjacency, config)
 
     assert first.shape == (40, 2)
     assert first_inertias.shape == (4,)
@@ -133,6 +135,25 @@ def _manifest(root: Path, space: str, domain: str, smoothing_mm: int = 2) -> Pat
     return path
 
 
+def _micro_inputs(
+    manifest: Path,
+    microparcels: Path,
+    connectivity: Path,
+    *,
+    domain: str,
+    space: str,
+) -> InputsConfig:
+    return InputsConfig(
+        source="microparcellation",
+        source_manifest=manifest,
+        features=connectivity,
+        spatial_reference=microparcels,
+        source_representation="microparcel_connectivity",
+        domain=domain,
+        space=space,
+    )
+
+
 def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path) -> None:
     manifests = (
         _manifest(tmp_path, "fsnative", "surface"),
@@ -149,15 +170,120 @@ def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path)
     assert targets[1].source_surfaces == ()
 
 
+def test_low_rank_dynconn_discards_the_extra_synthetic_frame(tmp_path: Path) -> None:
+    random = np.random.default_rng(3)
+    features = random.normal(size=(12, 5)).astype(np.float32)
+    output = tmp_path / "features.npy"
+
+    summary = reduce_features(
+        features,
+        np.ones(12, dtype=bool),
+        FeatureReductionConfig(maximum_dimensions=1000),
+        output,
+        informative_dimensions=4,
+    )
+
+    assert np.load(output).shape == (12, 4)
+    assert summary["method"] == "randomized_svd"
+    assert summary["source_dimensions"] == 5
+    assert summary["informative_dimensions"] == 4
+    assert summary["fitted_dimensions"] == 4
+
+
+def test_dynconn_network_module_publishes_anatomically_indexed_maps(
+    tmp_path: Path, monkeypatch
+) -> None:
+    left = nib.cifti2.BrainModelAxis.from_surface(
+        np.arange(3), 3, name="CIFTI_STRUCTURE_CORTEX_LEFT"
+    )
+    right = nib.cifti2.BrainModelAxis.from_surface(
+        np.arange(2), 2, name="CIFTI_STRUCTURE_CORTEX_RIGHT"
+    )
+    brain_axis = left + right
+    series_axis = nib.cifti2.SeriesAxis(0.0, 1.0, 4)
+    timeseries = tmp_path / "dynconn.dtseries.nii"
+    data = np.asarray(
+        [
+            [-1.0, -0.5, 0.0, 0.5, 1.0],
+            [0.0, 0.5, 1.0, -1.0, -0.5],
+            [1.0, -1.0, 0.5, 0.0, -0.5],
+            [0.5, 1.0, -1.0, -0.5, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    nib.save(
+        nib.Cifti2Image(
+            data,
+            header=nib.cifti2.Cifti2Header.from_axes((series_axis, brain_axis)),
+        ),
+        timeseries,
+    )
+    manifest = tmp_path / "dynconn_manifest.yaml"
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "domain": "surface",
+                "space": "fsnative",
+                "smoothing_fwhm_mm": 2,
+                "representation": "low_rank",
+                "low_rank": {"dimensions": 3},
+                "outputs": {"timeseries": str(timeseries)},
+            }
+        )
+    )
+    surfaces = (tmp_path / "L.midthickness.surf.gii", tmp_path / "R.midthickness.surf.gii")
+    for surface in surfaces:
+        surface.touch()
+    target = discover_dynconn_targets((manifest,))[0]
+    assert target.timeseries == timeseries
+    memberships = np.asarray(
+        [[1.0, 0.0], [0.8, 0.2], [0.6, 0.4], [0.2, 0.8], [0.0, 1.0]],
+        dtype=np.float32,
+    )
+    monkeypatch.setattr(
+        "nro.modules.networks.module.clustering_membership",
+        lambda _features, _config: (memberships, np.asarray([1.0, 1.1])),
+    )
+    cfg = ModuleConfig(
+        inputs=InputsConfig(
+            source="dynconn",
+            source_manifest=manifest,
+            features=timeseries,
+            spatial_reference=timeseries,
+            source_representation="low_rank",
+            domain="surface",
+            space="fsnative",
+            source_surfaces=surfaces,
+        ),
+        output=OutputConfig(
+            directory=tmp_path / "networks",
+            work_directory=tmp_path / "work",
+            prefix="sub-01_space-fsnative_smoothing-2mm",
+        ),
+        connectivity_source="dynconn",
+        parcellation_strategy="clustering",
+        clustering=ClusteringConfig(n_networks=2, repetitions=2),
+        labeling=LabelingConfig(enabled=False),
+    )
+
+    outputs = run(cfg)
+
+    np.testing.assert_allclose(np.asarray(nib.load(outputs["membership"]).dataobj), memberships.T)
+    publication = yaml.safe_load(outputs["manifest"].read_text())
+    assert publication["connectivity_source"] == "dynconn"
+    assert publication["source_representation"] == "low_rank"
+    assert publication["feature_reduction"]["fitted_dimensions"] == 3
+    assert publication["n_microparcels"] is None
+    assert publication["n_edges"] is None
+
+
 def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, monkeypatch) -> None:
     subject = tmp_path / "project" / "derivatives" / "nro" / "microparcellation" / "main" / "sub-01"
     manifest = _manifest(subject, "fsnative", "surface")
     monkeypatch.setattr(networks_main, "BIDS_PATH", str(tmp_path))
     config = ConfigStore().load_configuration("networks", "main").values
-    config["microparcellation_directory"] = "main"
-
     target, cfg = networks_main.make_target_config(
-        "project", "01", "main", config, micro_manifest=manifest
+        "project", "01", "main", config, source_manifest=manifest
     )
 
     assert (target.space, target.smoothing_mm) == ("fsnative", 2)
@@ -184,14 +310,14 @@ def test_network_config_routes_branch_outputs(tmp_path):
     manifest = _manifest(tmp_path / "upstream", "ACPC", "volume")
     config = ConfigStore().load_configuration("networks", "main").values
     _, cfg = networks_main.make_target_config(
-        "demo", "01", "main", config, micro_manifest=manifest, execution_context=context
+        "demo", "01", "main", config, source_manifest=manifest, execution_context=context
     )
     context.require_output(cfg.output.directory)
     context.require_output(cfg.output.work_directory)
-    assert cfg.inputs.microparcellation_manifest == manifest
+    assert cfg.inputs.source_manifest == manifest
     config["output_dir"] = str(paths.bids / "demo/sub-01")
     _, repeated = networks_main.make_target_config(
-        "demo", "01", "main", config, micro_manifest=manifest, execution_context=context
+        "demo", "01", "main", config, source_manifest=manifest, execution_context=context
     )
     assert repeated.output.directory == cfg.output.directory
 
@@ -235,8 +361,8 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         ),
     )
     cfg = ConfigStore().load_configuration("networks", "main").values
-    cfg["microparcellation_directory"] = "main"
     cfg["labeling"]["enabled"] = False
+    cfg["source_directory"] = "main"
     monkeypatch.setattr(
         networks_main, "select_runtime_config", lambda **kw: tmp_path / "config.yml"
     )
@@ -370,20 +496,14 @@ def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> 
     manifest = tmp_path / "microparcellation_manifest.yaml"
     manifest.write_text("{}")
     cfg = ModuleConfig(
-        inputs=InputsConfig(
-            microparcellation_manifest=manifest,
-            microparcels=dlabel,
-            connectivity=pconn,
-            domain="volume",
-            space="ACPC",
-        ),
+        inputs=_micro_inputs(manifest, dlabel, pconn, domain="volume", space="ACPC"),
         output=OutputConfig(tmp_path / "out", tmp_path / "work", "sub-01_space-ACPC"),
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
     )
 
     with pytest.raises(ValueError, match="voxel mapping differ"):
-        _load_inputs(cfg)
+        _load_microparcellation_inputs(cfg)
 
 
 def test_projects_mni_reference_onto_volumetric_cifti(tmp_path: Path, monkeypatch) -> None:
@@ -486,12 +606,8 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
         yaml.safe_dump({"outputs": {"microparcels_volume": str(tmp_path / "microparcels.nii.gz")}})
     )
     cfg = ModuleConfig(
-        inputs=InputsConfig(
-            microparcellation_manifest=micro_manifest,
-            microparcels=microparcels,
-            connectivity=connectivity,
-            domain="volume",
-            space="ACPC",
+        inputs=_micro_inputs(
+            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
@@ -528,7 +644,7 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
     )
     shutil.rmtree(cfg.output.work_directory)
     monkeypatch.setattr(
-        "nro.modules.networks.module._load_inputs",
+        "nro.modules.networks.module._load_microparcellation_inputs",
         lambda _cfg: (_ for _ in ()).throw(
             AssertionError("fresh public outputs must not rematerialize purged WORK")
         ),
@@ -575,12 +691,8 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
         ),
     )
     cfg = ModuleConfig(
-        inputs=InputsConfig(
-            microparcellation_manifest=micro_manifest,
-            microparcels=microparcels,
-            connectivity=connectivity,
-            domain="volume",
-            space="ACPC",
+        inputs=_micro_inputs(
+            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
@@ -653,12 +765,8 @@ def test_volumetric_network_module_publishes_clustering_frequencies(
         ),
     )
     cfg = ModuleConfig(
-        inputs=InputsConfig(
-            microparcellation_manifest=micro_manifest,
-            microparcels=microparcels,
-            connectivity=connectivity,
-            domain="volume",
-            space="ACPC",
+        inputs=_micro_inputs(
+            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
@@ -713,12 +821,8 @@ def test_missing_public_network_metric_is_rebuilt(tmp_path: Path, monkeypatch) -
         yaml.safe_dump({"outputs": {"microparcels_volume": str(tmp_path / "microparcels.nii.gz")}})
     )
     cfg = ModuleConfig(
-        inputs=InputsConfig(
-            microparcellation_manifest=micro_manifest,
-            microparcels=microparcels,
-            connectivity=connectivity,
-            domain="volume",
-            space="ACPC",
+        inputs=_micro_inputs(
+            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",

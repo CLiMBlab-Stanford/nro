@@ -161,16 +161,18 @@ class Runner:
 
         ledger = os.environ.get("NRO_STEP_LEDGER")
         signature = os.environ.get("NRO_RUNNER_GRAPH_SIGNATURE", "direct")
-        changed_steps: frozenset[str] = frozenset()
+        contract_path: Path | None = None
+        contract_changes: dict[str, str] = {}
         if ledger:
             contract_path = Path(ledger).with_name("runner-contract.json")
-            changed_steps = graph.changed_steps(contract_path, signature=signature)
+            contract_changes = graph.step_contract_changes(contract_path, signature=signature)
+            graph.initialize_step_contract(contract_path, signature=signature)
 
         states: dict[str, NodeState] = {}
         completion = [step for step in graph.ordered_steps() if step.completion_boundary]
         if len(completion) > 1:
             raise RuntimeError("A module DAG may declare at most one completion boundary.")
-        if completion and not changed_steps:
+        if completion and not contract_changes:
             boundary = completion[0]
             boundary_run, boundary_reason = artifact_decision(
                 boundary.outputs,
@@ -197,22 +199,36 @@ class Runner:
                     graph.record_decision(step, should_run=False, reason=reason)
                     self._skip_declared_step(step, reason=reason)
                     states[step.id] = NodeState.FRESH
+                    if contract_path is not None:
+                        graph.record_step_contract(
+                            contract_path,
+                            signature=signature,
+                            step=step,
+                        )
                 return states
 
         for step in graph.ordered_steps():
             upstream_dirty = any(
                 states[parent] is NodeState.DIRTY for parent in graph.dependencies(step)
             )
-            declaration_changed = step.id in changed_steps
+            contract_change = contract_changes.get(step.id)
             should_run, reason = artifact_decision(
                 step.outputs,
-                step.force or upstream_dirty or declaration_changed,
+                step.force or upstream_dirty or contract_change is not None,
                 inputs=step.inputs,
             )
             if upstream_dirty:
                 reason = "Re-running because an upstream step produced new artifacts."
-            elif declaration_changed:
+            elif contract_change == "declaration_changed":
                 reason = "Re-running because this step's scientific declaration changed."
+            elif contract_change == "missing_contract":
+                reason = "Re-running because this existing output has no successful step contract."
+            elif contract_change == "unreadable_contract":
+                reason = "Re-running because the saved step contract is unreadable."
+            elif contract_change == "invalid_contract":
+                reason = "Re-running because the saved step contract is invalid."
+            elif contract_change == "unrecorded_step":
+                reason = "Re-running because this step did not complete under the saved contract."
             graph.record_decision(step, should_run=should_run, reason=reason)
 
             if not should_run and step.validate is not None:
@@ -227,11 +243,23 @@ class Runner:
                     )
 
             if should_run:
+                if contract_path is not None:
+                    graph.invalidate_step_contract(
+                        contract_path,
+                        signature=signature,
+                        step=step,
+                    )
                 self._execute_declared_step(step, reason=reason)
                 states[step.id] = NodeState.DIRTY
             else:
                 self._skip_declared_step(step, reason=reason)
                 states[step.id] = NodeState.FRESH
+            if contract_path is not None:
+                graph.record_step_contract(
+                    contract_path,
+                    signature=signature,
+                    step=step,
+                )
         return states
 
     def _skip_declared_step(self, step: Step, *, reason: str) -> None:
@@ -1330,6 +1358,7 @@ class Runner:
             raise RuntimeError("Child commands require an active artifact step")
         if capture_stdout and stream_output:
             raise ValueError("A child command cannot both return and stream stdout")
+        active_step_name = state.active_steps[-1][1]
         if self._container is None or direct:
             full_cmd = list(cmd)
             host_env = env
@@ -1368,9 +1397,9 @@ class Runner:
                                 proc.wait()
                             raise subprocess.TimeoutExpired(full_cmd, timeout_seconds)
                         self._logger.info(
-                            "Command still running after %.0f seconds: %s",
+                            "%s still running after %.0f seconds",
+                            active_step_name,
                             time.monotonic() - started_at,
-                            rendered,
                         )
                 if return_code:
                     raise subprocess.CalledProcessError(return_code, full_cmd)

@@ -37,6 +37,7 @@ def validate_store(
     *,
     require_site: bool = False,
     inherited_site: Path | None = None,
+    inherited_roots: tuple[Path, ...] = (),
 ) -> dict[str, int]:
     """Check every definition and reference without changing files or registry state.
 
@@ -46,10 +47,17 @@ def validate_store(
     scientific suitability, credentials, or availability of external resources.
     """
     from nro.bidsify.config import load_config
+    from nro.configuration.definition_migrations import validate_store_integrity
     from nro.modules.firstlevels.task_models import load_task_model, scientific_model
 
     root = Path(root).expanduser().resolve() if root is not None else definitions_root()
-    store = ConfigStore(root)
+    validate_store_integrity(root)
+    inherited_roots = tuple(Path(path).expanduser().resolve() for path in inherited_roots)
+    if inherited_site is not None:
+        inherited_site = Path(inherited_site).expanduser().resolve()
+        if inherited_site not in inherited_roots:
+            inherited_roots = (*inherited_roots, inherited_site)
+    store = ConfigStore(roots=(root, *inherited_roots))
     errors = []
     counts = dict(
         site=0,
@@ -76,7 +84,10 @@ def validate_store(
         directory = root / category
         # Markup and scan-plan parsing are optional site capabilities. Missing
         # directories preserve the default behavior for either capability.
-        if not directory.is_dir() and category not in {"markup", "hardware", "scanplans"}:
+        optional = {"markup", "hardware", "scanplans"}
+        if not require_site:
+            optional.add("site")
+        if not directory.is_dir() and category not in optional:
             errors.append(f"Missing directory: {directory}")
         paths = []
         if directory.is_symlink():
@@ -126,8 +137,7 @@ def validate_store(
         check(path, lambda: store.load_configuration(kind, path.name.removesuffix(suffix)))
         counts["configs"] += 1
 
-    if not (root / "workflows/main_workflow.yml").is_file():
-        errors.append("Missing main workflow")
+    check(root / "workflows/main_workflow.yml", lambda: store.resolve("main"))
     for path in files["workflows"]:
         if path.parent != root / "workflows" or not path.name.endswith("_workflow.yml"):
             errors.append(f"Unexpected workflow filename: {path}")
@@ -194,8 +204,8 @@ def validate_store(
                 errors.append(f"Unindexed event table: {path}")
         counts["event_tsvs"] = len(referenced)
 
-    if not (root / "bidsify/main.yml").is_file():
-        errors.append("Missing bidsify/main.yml")
+    if not any((candidate / "bidsify/main.yml").is_file() for candidate in store.roots):
+        errors.append("Missing bidsify/main.yml in the definitions chain")
     for path in files["bidsify"]:
         if path.parent != root / "bidsify" or path.suffix != ".yml":
             errors.append(f"Expected bidsify/PROFILE.yml: {path}")
@@ -268,32 +278,54 @@ def create_store(
         (staged / "gitignore").rename(staged / ".gitignore")
         for kind in CONFIGURATION_CLASSES:
             directory = staged / "configs" / kind
-            (directory / f"main_{kind}.yml").unlink()
+            if include_site:
+                (directory / f"main_{kind}.yml").unlink()
+            else:
+                for path in directory.glob("*.yml"):
+                    path.unlink()
             if not any(directory.iterdir()):
                 (directory / ".gitkeep").touch()
         for category in CATEGORIES:
             (staged / category).mkdir(exist_ok=True)
         for category in ("models", "events"):
             (staged / category / ".gitkeep").touch()
+        if not include_site:
+            for category in ("workflows", "markup", "hardware", "bidsify", "scanplans"):
+                directory = staged / category
+                for path in directory.iterdir():
+                    if path.is_file() and not path.name.startswith("."):
+                        path.unlink()
+                if not any(directory.iterdir()):
+                    (directory / ".gitkeep").touch()
         if include_site:
             if site_values is None:
                 from nro.configuration import site
 
                 site_values = site.settings()[0]
             write_site_definition(staged, site_values, bidsify=site_bidsify)
-        validate_store(
+        from nro.configuration.definition_migrations import migrate_store
+
+        inherited = (inherited_site,) if inherited_site is not None else ()
+        migrate_store(
             staged,
-            require_site=include_site,
-            inherited_site=inherited_site,
+            validate=lambda candidate: validate_store(
+                candidate,
+                require_site=include_site,
+                inherited_site=inherited_site,
+                inherited_roots=inherited,
+            ),
         )
         _publish(staged, destination)
     return destination
 
 
 def ensure_store(root: Path | None = None) -> Path:
-    """Create a missing installation store, or validate an existing one without overwriting it."""
+    """Create a missing store, or migrate and validate an existing store."""
     root = Path(root).expanduser().absolute() if root is not None else definitions_root()
     if not root.exists():
         return create_store(root)
+    from nro.configuration.definition_migrations import migrate_store
+
+    migrate_store(root, validate=lambda candidate: validate_store(candidate, require_site=True))
     validate_store(root, require_site=True)
     return root

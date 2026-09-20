@@ -18,18 +18,23 @@ NETWORK_MANIFEST_FIELDS = {
     "domain": "string",
     "space": "nullable_string",
     "smoothing_fwhm_mm": "integer",
+    "connectivity_source": "string",
+    "source_representation": "string",
+    "source_manifest": "string",
+    "source_features": "string",
+    "feature_reduction": "nullable_mapping",
+    "n_source_locations": "integer",
     "n_spatial_nodes": "integer",
     "n_surface_vertices": "nullable_number",
     "hemisphere_vertex_counts": "list",
     "n_active_vertices": "nullable_number",
     "n_gray_matter_voxels": "nullable_number",
-    "n_microparcels": "integer",
-    "n_edges": "integer",
+    "n_microparcels": "nullable_number",
+    "n_edges": "nullable_number",
     "parcellation_strategy": "string",
     "reference_run": "nullable_number",
     "n_reference_networks": "integer",
     "source_surfaces": "string_list",
-    "microparcellation_manifest": "string",
     "anatomical_labeling_provenance": "nullable_mapping",
     "outputs": "mapping",
     "outputs.membership": "string",
@@ -46,7 +51,7 @@ NETWORK_MANIFEST_FIELDS = {
 def networks_output_contract() -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     return {
-        "layout": "subject-networks-v5",
+        "layout": "subject-networks-v6",
         "map_index_metadata": INDEXED_CIFTI_SCHEMA,
         "publication_manifest_fields": dict(NETWORK_MANIFEST_FIELDS),
         "label_metadata_fields": dict(NETWORK_LABEL_METADATA_FIELDS),
@@ -69,3 +74,16 @@ def validate_network_manifest(document: Mapping[str, object]) -> None:
         NETWORK_MANIFEST_FIELDS,
         label="Networks publication manifest",
     )
+    source = document["connectivity_source"]
+    if source not in {"microparcellation", "dynconn"}:
+        raise ValueError(f"Unsupported networks connectivity source: {source}")
+    if source == "microparcellation":
+        if document["n_microparcels"] is None or document["n_edges"] is None:
+            raise ValueError("Microparcellation-backed networks require parcel and edge counts")
+    elif document["n_microparcels"] is not None or document["n_edges"] is not None:
+        raise ValueError("Dynconn-backed networks cannot report microparcel graph counts")
+    strategy = document["parcellation_strategy"]
+    if source == "dynconn" and strategy == "oslom":
+        raise ValueError("OSLOM requires microparcellation-backed networks")
+    if (strategy == "oslom") != (document["feature_reduction"] is None):
+        raise ValueError("Networks feature-reduction metadata differs from its estimator")

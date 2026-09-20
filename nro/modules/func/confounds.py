@@ -134,6 +134,29 @@ def _expanded_signal_columns(base: str, signal: np.ndarray) -> dict[str, np.ndar
     }
 
 
+def _cosine_drift(
+    n_frames: int,
+    *,
+    repetition_time: float,
+    high_pass_hz: float,
+) -> np.ndarray:
+    """Return the nonconstant DCT-II drift regressors used by fMRIPrep."""
+    if n_frames < 1:
+        raise ValueError("Cosine drift generation requires at least one frame")
+    if not np.isfinite(repetition_time) or repetition_time <= 0:
+        raise ValueError("Repetition time must be a finite positive number")
+    if not np.isfinite(high_pass_hz) or high_pass_hz <= 0:
+        raise ValueError("Cosine high-pass frequency must be a finite positive number")
+    order = min(n_frames - 1, int(np.floor(2 * n_frames * high_pass_hz * repetition_time)))
+    if order == 0:
+        return np.empty((n_frames, 0), dtype=np.float64)
+    samples = np.arange(n_frames, dtype=np.float64) + 0.5
+    frequencies = np.arange(1, order + 1, dtype=np.float64)
+    return np.sqrt(2.0 / n_frames) * np.cos(
+        np.pi * samples[:, None] * frequencies[None, :] / n_frames
+    )
+
+
 def _acompcor_dense(
     *,
     epi_4d: np.ndarray,
@@ -351,6 +374,7 @@ def get_confounds(
     brain_mask_in_epi: Optional[Path] = None,
     n_acompcor: Optional[int] = None,
     acompcor_max_voxels: Optional[int] = None,
+    cosine_high_pass_hz: Optional[float] = None,
     fd_radius_mm: Optional[float] = None,
     motion_outlier_fd_thresh: Optional[float] = None,
     dvars_statistical_alpha: Optional[float] = None,
@@ -374,6 +398,9 @@ def get_confounds(
     n_acompcor = int(cfg.n_acompcor if n_acompcor is None else n_acompcor)
     acompcor_max_voxels = int(
         cfg.acompcor_max_voxels if acompcor_max_voxels is None else acompcor_max_voxels
+    )
+    cosine_high_pass_hz = float(
+        cfg.cosine_high_pass_hz if cosine_high_pass_hz is None else cosine_high_pass_hz
     )
     fd_radius_mm = float(cfg.fd_radius_mm if fd_radius_mm is None else fd_radius_mm)
     motion_outlier_fd_thresh = float(
@@ -407,6 +434,7 @@ def get_confounds(
     if len(epi_mean_img.shape) != 3:
         raise SystemExit(f"--epi-mean must be 3D, got shape {epi_mean_img.shape}")
     t = int(epi_img.shape[3])
+    repetition_time = float(epi_img.header.get_zooms()[3])
 
     par = np.loadtxt(str(mcflirt_par), dtype=np.float64)
     if par.ndim == 1:
@@ -478,6 +506,13 @@ def get_confounds(
 
     for i in range(acomps.shape[1]):
         cols[f"a_comp_cor_{i:02d}"] = acomps[:, i]
+    cosine_drift = _cosine_drift(
+        t,
+        repetition_time=repetition_time,
+        high_pass_hz=cosine_high_pass_hz,
+    )
+    for i in range(cosine_drift.shape[1]):
+        cols[f"cosine{i:02d}"] = cosine_drift[:, i]
 
     fd = _fd_power(par, radius_mm=float(fd_radius_mm))
     cols["framewise_displacement"] = fd
@@ -514,7 +549,7 @@ def get_confounds(
             f"Missing dependency: pandas is required to write the confounds TSV.\nImport error: {e}"
         )
 
-    # Stable column ordering: 36P signals first, then aCompCor/FD/spikes.
+    # Stable column ordering: 36P signals first, then aCompCor/cosine/FD/spikes.
     ordered: list[str] = []
     for base in [f"trans_{a}" for a in "xyz"] + [f"rot_{a}" for a in "xyz"]:
         ordered.append(base)
@@ -527,6 +562,7 @@ def get_confounds(
         ordered.append(base + "_power2")
         ordered.append(base + "_derivative1_power2")
     ordered += [f"a_comp_cor_{i:02d}" for i in range(acomps.shape[1])]
+    ordered += [f"cosine{i:02d}" for i in range(cosine_drift.shape[1])]
     ordered += ["framewise_displacement", "dvars", "dvars_p_value", "dvars_delta_percent"]
     ordered += sorted([k for k in cols.keys() if k.startswith("non_steady_state_outlier")])
     ordered += sorted([k for k in cols.keys() if k.startswith("extreme_fd_outlier")])
@@ -558,6 +594,8 @@ def get_confounds(
             "dvars_power": float(dvars_power),
             "n_acompcor": int(n_acompcor),
             "acompcor_max_voxels": int(acompcor_max_voxels),
+            "cosine_high_pass_hz": float(cosine_high_pass_hz),
+            "repetition_time": repetition_time,
             "nonsteady_max_vols": int(nonsteady_max_vols),
             "nonsteady_rel_thresh": float(nonsteady_rel_thresh),
             "nonsteady_stable_run": int(nonsteady_stable_run),
@@ -579,6 +617,7 @@ def get_confounds(
             "white_matter and csf are mean signals from FreeSurfer aseg tissue labels resampled to the EPI grid.",
             "The six motion and three mean-signal regressors include derivative1, power2, and derivative1_power2 expansions for the Satterthwaite 36-parameter model.",
             "aCompCor is computed from WM+CSF voxels using FreeSurfer aseg labels and nearest-neighbor resampling to EPI grid, using randomized SVD for the top components.",
+            "cosine* columns are nonconstant DCT-II drift regressors using the fMRIPrep/Nilearn convention.",
             "get_confounds loads the full 4D EPI exactly once to avoid repeated .nii.gz decompression.",
         ],
     }
@@ -629,6 +668,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         type=int,
         default=cfg.acompcor_max_voxels,
         help="Max voxels for PCA (default: 20000)",
+    )
+    ap.add_argument(
+        "--cosine-high-pass-hz",
+        type=float,
+        default=cfg.cosine_high_pass_hz,
+        help="High-pass cutoff for DCT-II cosine drift regressors (default: %(default)s Hz)",
     )
     ap.add_argument(
         "--fd-radius-mm",
@@ -693,6 +738,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         out_json=resolve_project_path(args.out_json, project=project),
         n_acompcor=int(args.n_acompcor),
         acompcor_max_voxels=int(args.acompcor_max_voxels),
+        cosine_high_pass_hz=float(args.cosine_high_pass_hz),
         fd_radius_mm=float(args.fd_radius_mm),
         motion_outlier_fd_thresh=float(args.motion_outlier_fd_thresh),
         dvars_statistical_alpha=float(args.dvars_statistical_alpha),

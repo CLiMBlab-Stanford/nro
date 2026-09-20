@@ -5,6 +5,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -174,6 +175,20 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
     return parser
 
 
+def _store_validator(store: ConfigStore) -> Callable[[Path], None]:
+    """Build full-store validation with the active inheritance chain."""
+    from nro.configuration.definitions import validate_store
+
+    inherited = store.roots[1:]
+    shared = inherited[-1] if inherited else None
+    return lambda candidate: validate_store(
+        candidate,
+        require_site=(candidate / "site/site.yml").is_file(),
+        inherited_site=shared,
+        inherited_roots=inherited,
+    )
+
+
 def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, yes: bool) -> None:
     print(f"Delete {target.kind} {target.identifier}: {target.path}")
     if target.kind == "config":
@@ -208,7 +223,12 @@ def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, ye
         if input("Delete this definition? [y/N] ").strip().lower() not in {"y", "yes"}:
             print("Cancelled; the stored definition is unchanged.")
             return
-    backup = delete_definition(target.path, expected=expected)
+    backup = delete_definition(
+        target.path,
+        expected=expected,
+        store_root=store.root,
+        validate_store=_store_validator(store),
+    )
     print(
         f"Deleted {target.path}\nRecovery copy: {backup} (temporary; copy elsewhere to retain it)"
     )
@@ -287,6 +307,8 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
             validate=validate,
             source=args.file,
             yes=args.yes,
+            store_root=store.root,
+            validate_store=_store_validator(store),
         )
     except (KeyboardInterrupt, EOFError):
         print("Cancelled; no definition was changed.", file=sys.stderr)

@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 
 from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import definitions_root
+from nro.configuration.site import definitions_roots
 from nro.configuration.store import validate_config_id
 from nro.engine.events import validate_events
 
@@ -37,14 +37,26 @@ class EventFile:
 class EventStore:
     """Read the task-organized standard-events catalog; never modify it during ingestion."""
 
-    def __init__(self, root: Path | None = None):
-        """Use the installation's configuration store unless another absolute root is supplied."""
-        self.root = Path(root) if root is not None else definitions_root() / "events"
-        if not self.root.is_absolute() or not self.root.is_dir():
-            raise ValueError(f"Event store must be an existing absolute directory: {self.root}")
-        self.root = self.root.resolve()
+    def __init__(self, root: Path | tuple[Path, ...] | list[str] | None = None):
+        """Use inherited event catalogs unless explicit catalog roots are supplied."""
+        roots = (
+            tuple(Path(path) for path in root)
+            if isinstance(root, (tuple, list))
+            else (Path(root),)
+            if root is not None
+            else tuple(store / "events" for store in definitions_roots())
+        )
+        if not roots or any(not path.is_absolute() or not path.is_dir() for path in roots):
+            raise ValueError(
+                "Event stores must be existing absolute directories: " + ", ".join(map(str, roots))
+            )
+        self.roots = tuple(path.resolve() for path in roots)
+        self.root = self.roots[0]
 
     def _entries(self, index: Path) -> tuple[list[str], list[EventFile]]:
+        catalog = index.parent.parent.resolve()
+        if catalog not in self.roots:
+            raise ValueError(f"Event index is outside the catalog chain: {index}")
         value = parse_mapping(index.read_text(), source=str(index))
         if (
             set(value) != {"tasks", "files"}
@@ -67,11 +79,11 @@ class EventStore:
             ):
                 raise ValueError(f"Event path and source names must be strings: {index}")
             relative = Path(entry["path"])
-            path = (self.root / relative).resolve()
+            path = (catalog / relative).resolve()
             if (
                 relative.is_absolute()
                 or ".." in relative.parts
-                or not path.is_relative_to(self.root)
+                or not path.is_relative_to(catalog)
                 or path.suffix != ".tsv"
                 or not path.is_file()
             ):
@@ -86,7 +98,11 @@ class EventStore:
         if not task_key(task):
             return []
         matches = []
-        for index in sorted(self.root.glob("*/index.yml")):
+        indices = {}
+        for root in self.roots:
+            for index in sorted(root.glob("*/index.yml")):
+                indices.setdefault(index.parent.name, index)
+        for index in indices.values():
             tasks, entries = self._entries(index)
             if task_key(task) in {task_key(name) for name in tasks}:
                 matches.extend(entries)
@@ -99,9 +115,11 @@ class EventStore:
         task, variant = identifier.split("/")
         validate_config_id(task, kind="event task")
         validate_config_id(variant, kind="event variant")
-        index = self.root / task / "index.yml"
-        if index.is_file():
-            for entry in self._entries(index)[1]:
-                if entry.identifier == identifier:
-                    return entry
+        for root in self.roots:
+            index = root / task / "index.yml"
+            if index.is_file():
+                for entry in self._entries(index)[1]:
+                    if entry.identifier == identifier:
+                        return entry
+                break
         raise ValueError(f"Unknown event ID: {identifier}")

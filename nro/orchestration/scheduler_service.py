@@ -21,6 +21,7 @@ from nro.orchestration.branch_reconciliation import candidates_locked, resolve_p
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
+from nro.orchestration.resources import SCHEDULABLE_RESOURCE_CLASSES
 from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
 from nro.orchestration.scheduler_operations import (
     installation_activity,
@@ -315,15 +316,55 @@ def _commit_worker_event(registry, message: dict) -> None:
         )
 
 
-def _worker_script(registry, *, memory_gb: int, profile: str | None) -> Path:
+def _worker_script(registry, *, resource_class: str, memory_gb: int, profile: str | None) -> Path:
     suffix = f"-{profile}" if profile else ""
-    exact = registry.paths.workers / f"worker-large-{memory_gb}gb{suffix}.sbatch"
+    exact = registry.paths.workers / f"worker-{resource_class}-{memory_gb}gb{suffix}.sbatch"
     if exact.is_file():
         return exact
-    candidates = sorted(registry.paths.workers.glob(f"worker-large-{memory_gb}gb-*.sbatch"))
+    candidates = sorted(
+        registry.paths.workers.glob(f"worker-{resource_class}-{memory_gb}gb-*.sbatch")
+    )
     if candidates:
         return candidates[-1]
-    raise ValueError(f"No prepared {memory_gb} GB worker script is available")
+    raise ValueError(f"No prepared {resource_class} {memory_gb} GB worker script is available")
+
+
+def _worker_script_tiers(
+    registry, *, resource_class: str, memory_gb: int, profile: str | None
+) -> tuple[tuple[int, Path], ...]:
+    """Return one request profile's worker scripts in ascending memory order."""
+    if not profile:
+        return (
+            (
+                memory_gb,
+                _worker_script(
+                    registry,
+                    resource_class=resource_class,
+                    memory_gb=memory_gb,
+                    profile=None,
+                ),
+            ),
+        )
+    prefix = f"worker-{resource_class}-"
+    suffix = f"gb-{profile}.sbatch"
+    scripts = []
+    for candidate in registry.paths.workers.glob(f"{prefix}*{suffix}"):
+        value = candidate.name.removeprefix(prefix).removesuffix(suffix)
+        if value.isdigit():
+            scripts.append((int(value), candidate))
+    if scripts:
+        return tuple(sorted(scripts))
+    return (
+        (
+            memory_gb,
+            _worker_script(
+                registry,
+                resource_class=resource_class,
+                memory_gb=memory_gb,
+                profile=profile,
+            ),
+        ),
+    )
 
 
 def _submit_reserved(
@@ -475,17 +516,26 @@ def _apply_worker_operation(registry, message: dict) -> object:
                 registry.finish_artifact_assessment()
         return len(cancelled)
     if action == "required_memory":
-        return registry.required_memory_above(int(message["memory_gb"]))
+        return registry.required_memory_above(
+            int(message["memory_gb"]),
+            resource_classes=tuple(message.get("resource_classes", ())),
+        )
     if action == "request_capacity":
         memory = int(message["memory_gb"])
         kind = message["kind"]
+        resource_class = str(message["resource_class"])
         if kind == "successor":
             reservation = registry.reserve_worker_successor(
-                worker_id=worker_id, resource_class="large", memory_gb=memory
+                worker_id=worker_id, resource_class=resource_class, memory_gb=memory
             )
             if reservation is None:
                 return None
-            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
+            script = _worker_script(
+                registry,
+                resource_class=resource_class,
+                memory_gb=memory,
+                profile=message.get("profile"),
+            )
             with registry.connection() as db:
                 row = db.execute(
                     "SELECT slurm_job_id FROM workers WHERE id=?", (worker_id,)
@@ -494,22 +544,40 @@ def _apply_worker_operation(registry, message: dict) -> object:
                 registry, reservation[0], script, dependency=row[0] if row else None
             )
         if kind == "adaptive":
-            reservation = registry.reserve_adaptive_worker(resource_class="large", memory_gb=memory)
+            reservation = registry.reserve_adaptive_worker(
+                resource_class=resource_class, memory_gb=memory
+            )
             if reservation is None:
                 return None
-            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
+            script = _worker_script(
+                registry,
+                resource_class=resource_class,
+                memory_gb=memory,
+                profile=message.get("profile"),
+            )
             return _submit_reserved(registry, reservation[0], script)
         if kind == "expand":
-            reservations = registry.reserve_worker_submissions(
-                request_id=None, resource_class="large", memory_gb=memory
-            )
-            if not reservations:
-                return []
-            script = _worker_script(registry, memory_gb=memory, profile=message.get("profile"))
-            return [
-                _submit_reserved(registry, submission_id, script)
-                for submission_id, _token in reservations
-            ]
+            submitted = []
+            for candidate_class in SCHEDULABLE_RESOURCE_CLASSES:
+                for candidate_memory, script in _worker_script_tiers(
+                    registry,
+                    resource_class=candidate_class,
+                    memory_gb=memory,
+                    profile=message.get("profile"),
+                ):
+                    reservations = registry.reserve_worker_submissions(
+                        request_id=None,
+                        resource_class=candidate_class,
+                        memory_gb=candidate_memory,
+                    )
+                    if not reservations:
+                        continue
+                    submitted.extend(
+                        _submit_reserved(registry, submission_id, script)
+                        for submission_id, _token in reservations
+                    )
+                    break
+            return submitted
         raise ValueError("Unknown capacity request")
     if action == "close":
         registry.close_worker(worker_id, state=message["state"])

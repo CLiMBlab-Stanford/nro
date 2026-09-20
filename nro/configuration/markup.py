@@ -9,11 +9,11 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
 from nro.configuration.parsing import DefinitionError, parse_mapping
-from nro.configuration.site import definitions_root
+from nro.configuration.site import definitions_roots
 from nro.configuration.store import validate_config_id
 
 SOURCE_MARKUP_ENV = "NRO_SOURCE_MARKUP"
-_FIELDS = frozenset({"T1w", "T2w", "exclude"})
+_FIELDS = frozenset({"T1w", "T2w", "exclude", "lesion"})
 
 
 def _paths(value, *, location: str, list_only: bool = False) -> tuple[str, ...]:
@@ -51,6 +51,7 @@ class SubjectMarkup:
     t1w: tuple[Path, ...] = ()
     t2w: tuple[Path, ...] = ()
     excluded: tuple[Path, ...] = ()
+    lesion: bool = False
 
     def is_excluded(self, path: Path) -> bool:
         """Return whether a path equals or descends from an excluded BIDS path."""
@@ -70,25 +71,34 @@ class SubjectMarkup:
             "T1w": [str(path) for path in self.t1w],
             "T2w": [str(path) for path in self.t2w],
             "exclude": [str(path) for path in self.excluded],
+            "lesion": self.lesion,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping) -> "SubjectMarkup":
         """Validate and restore a captured subject selection."""
-        if not isinstance(value, Mapping) or set(value) != {
+        required = {
             "id",
             "project",
             "subject_dir",
             "T1w",
             "T2w",
             "exclude",
-        }:
+        }
+        if (
+            not isinstance(value, Mapping)
+            or not required.issubset(value)
+            or set(value) - (required | {"lesion"})
+        ):
             raise ValueError("Invalid captured source markup")
         if value["id"] is not None and not isinstance(value["id"], str):
             raise ValueError("Invalid captured markup ID")
         if not isinstance(value["project"], str) or not value["project"]:
             raise ValueError("Invalid captured markup project")
         subject_dir = Path(value["subject_dir"]).expanduser().absolute()
+        lesion = value.get("lesion", False)
+        if not isinstance(lesion, bool):
+            raise ValueError("Invalid captured markup lesion flag")
         groups = {}
         for key in ("T1w", "T2w", "exclude"):
             if not isinstance(value[key], list) or any(
@@ -106,29 +116,42 @@ class SubjectMarkup:
             groups["T1w"],
             groups["T2w"],
             groups["exclude"],
+            lesion,
         )
 
 
 class MarkupStore:
-    """Load named markup documents from a definitions store."""
+    """Load named markup documents through the definitions inheritance chain."""
 
-    def __init__(self, root: Path | None = None) -> None:
-        """Select an explicit definitions root or the configured site root."""
-        self.root = Path(root).expanduser().resolve() if root is not None else definitions_root()
+    def __init__(self, root: Path | None = None, *, roots: tuple[Path, ...] | None = None) -> None:
+        """Select active inherited stores or one explicit store for validation."""
+        if root is not None and roots is not None:
+            raise ValueError("Specify either root or roots, not both")
+        self.roots = (
+            tuple(Path(path).expanduser().resolve() for path in roots)
+            if roots is not None
+            else (Path(root).expanduser().resolve(),)
+            if root is not None
+            else definitions_roots()
+        )
+        self.root = self.roots[0]
 
     def path(self, markup_id: str) -> Path:
         """Return the required path for a named markup document."""
         identifier = validate_config_id(markup_id, kind="markup")
-        path = self.root / "markup" / f"{identifier}_markup.yml"
-        if path.is_file():
-            return path
+        paths = [root / "markup" / f"{identifier}_markup.yml" for root in self.roots]
+        for path in paths:
+            if path.is_file():
+                return path
         if identifier == "main":
             packaged = Path(__file__).parent / "starters" / "markup" / "main_markup.yml"
             if packaged.is_file():
                 return packaged
-        raise FileNotFoundError(f"Markup file was not found: {path}")
+        raise FileNotFoundError(
+            "Markup file was not found in the definitions chain: " + ", ".join(map(str, paths))
+        )
 
-    def load(self, markup_id: str) -> dict[str, dict[str, dict[str, tuple[str, ...]]]]:
+    def load(self, markup_id: str) -> dict[str, dict[str, dict[str, object]]]:
         """Compile one document into canonical participant records."""
         path = self.path(markup_id)
         try:
@@ -152,12 +175,13 @@ class MarkupStore:
             tuple(root / path for path in record.get("T1w", ())),
             tuple(root / path for path in record.get("T2w", ())),
             tuple(root / path for path in record.get("exclude", ())),
+            bool(record.get("lesion", False)),
         )
 
 
 def compile_markup(
     document: Mapping, *, source: str | Path = "markup"
-) -> dict[str, dict[str, dict[str, tuple[str, ...]]]]:
+) -> dict[str, dict[str, dict[str, object]]]:
     """Validate and normalize one parsed markup document."""
     path = str(source)
     if not isinstance(document, Mapping):
@@ -200,6 +224,10 @@ def compile_markup(
                 )
                 for key in ("T1w", "T2w", "exclude")
             }
+            lesion = raw_record.get("lesion", False)
+            if not isinstance(lesion, bool):
+                raise DefinitionError(f"{project}.sub-{subject}.lesion must be a boolean")
+            record["lesion"] = lesion
             overlap = [
                 anatomical
                 for anatomical in (*record["T1w"], *record["T2w"])

@@ -18,8 +18,7 @@ from nro.configuration.store import ConfigStore, configuration_fingerprint, fing
 def store(tmp_path):
     store = ConfigStore()
     shutil.copytree(store.root, tmp_path / "store")
-    store.root = tmp_path / "store"
-    return store
+    return ConfigStore(tmp_path / "store")
 
 
 @pytest.mark.parametrize("kind", SCHEMAS)
@@ -73,6 +72,11 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
             "networks",
             {"parcellation_strategy": "oslom", "oslom": {"initialization": "file"}},
             "initial_partition",
+        ),
+        (
+            "networks",
+            {"connectivity_source": "dynconn", "parcellation_strategy": "oslom"},
+            "microparcellation",
         ),
         ("microparcellation", {"mask": 42}, "mask"),
         ("microparcellation", {"input_filter": {"task": False}}, "task"),
@@ -174,12 +178,17 @@ def test_scientific_fingerprint_tolerates_safe_schema_evolution(store):
 def test_func_classifier_vocabulary_ignores_unselected_backend_settings(store):
     values = store.load_configuration("func", "main").values
     current = scientific_values("func", values)
-    assert current["ica_classifier"] == "ica_aroma"
-    assert current["ica_regression"] == "aggressive"
+    assert current["ica_classifier"] == "none"
+    assert "ica_regression" not in current
+    assert "ica_aroma_cmd" not in current
     assert "cicada_cmd" not in current
     assert "cicada_tolerance" not in current
     assert "cicada_smoothing_retention_mode" not in current
 
+    aroma = scientific_values("func", {**values, "ica_classifier": "ica_aroma"})
+    assert aroma["ica_classifier"] == "ica_aroma"
+    assert aroma["ica_regression"] == "aggressive"
+    assert "cicada_cmd" not in aroma
     cicada = scientific_values("func", {**values, "ica_classifier": "cicada"})
     assert cicada["ica_classifier"] == "cicada"
     assert cicada["ica_regression"] == "aggressive"
@@ -196,6 +205,33 @@ def test_func_classifier_vocabulary_ignores_unselected_backend_settings(store):
     )
 
 
+def test_networks_scientific_vocabulary_ignores_unselected_source_and_estimators(store):
+    values = store.load_configuration("networks", "main").values
+    micro_ica = scientific_values("networks", values)
+    assert "connectivity" in micro_ica
+    assert "feature_reduction" in micro_ica
+    assert "ica" in micro_ica
+    assert "clustering" not in micro_ica
+    assert "oslom" not in micro_ica
+    assert "consensus" not in micro_ica
+
+    dynconn_ica = scientific_values("networks", {**values, "connectivity_source": "dynconn"})
+    assert "connectivity" not in dynconn_ica
+    changed_unused = {
+        **values,
+        "connectivity_source": "dynconn",
+        "connectivity": {**values["connectivity"], "minimum_weight": 0.5},
+    }
+    assert scientific_values("networks", changed_unused) == dynconn_ica
+
+    oslom = scientific_values("networks", {**values, "parcellation_strategy": "oslom"})
+    assert "feature_reduction" not in oslom
+    assert "ica" not in oslom
+    assert "clustering" not in oslom
+    assert "oslom" in oslom
+    assert "consensus" in oslom
+
+
 def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     original = store.load_configuration("networks", "main")
     updated = store.load_configuration(
@@ -210,15 +246,14 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     assert original.fingerprint != updated.fingerprint
     assert original.scientific_fingerprint == updated.scientific_fingerprint
     # Clustering batch size changes its stochastic fit; it is not an I/O block size.
-    changed = store.load_configuration(
-        "networks",
-        "main",
-        document={
-            **original.values,
-            "clustering": {**original.values["clustering"], "batch_size": 512},
-        },
+    clustering = {**original.values, "parcellation_strategy": "clustering"}
+    changed_clustering = {
+        **clustering,
+        "clustering": {**original.values["clustering"], "batch_size": 512},
+    }
+    assert scientific_values("networks", clustering) != scientific_values(
+        "networks", changed_clustering
     )
-    assert original.scientific_fingerprint != changed.scientific_fingerprint
     values = store.load_configuration("firstlevels", "main").values
     assert values["input_filter"] == {}
     assert values["aggregation_weighting"] == "precision"

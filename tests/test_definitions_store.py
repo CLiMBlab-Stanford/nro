@@ -12,6 +12,7 @@ import yaml
 
 from nro.bin.definitions import main
 from nro.configuration import site
+from nro.configuration.definition_migrations import refresh_manifest, update_store
 from nro.configuration.definitions import _publish, create_store, ensure_store, validate_store
 from nro.configuration.site import read_site_definition
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
@@ -23,8 +24,8 @@ def test_create_has_only_generic_starters(tmp_path):
     counts = validate_store(root)
     assert counts == dict(
         site=1,
-        configs=2,
-        workflows=3,
+        configs=3,
+        workflows=4,
         models=0,
         event_ids=0,
         event_tsvs=0,
@@ -63,7 +64,7 @@ def test_create_never_overwrites(tmp_path, existing):
 def test_ensure_reuses_without_changing_bytes(tmp_path):
     root = ensure_store(tmp_path / "store")
     config = root / "configs/clean/alternative_clean.yml"
-    config.write_text("standardize: false\n")
+    update_store(root, {config.relative_to(root): b"standardize: false\n"})
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
     assert ensure_store(root) == root
     assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}
@@ -85,6 +86,7 @@ def test_validation_checks_all_variants(tmp_path, relative, text, match):
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+    refresh_manifest(root)
     with pytest.raises(ValueError, match=match):
         validate_store(root)
 
@@ -95,12 +97,15 @@ def test_validation_checks_events_and_references(tmp_path):
     task.mkdir()
     index = {"tasks": ["task"], "files": {"main": {"path": "task/main.tsv", "source_names": []}}}
     (task / "index.yml").write_text(yaml.safe_dump(index))
+    refresh_manifest(root)
     with pytest.raises(ValueError, match="missing"):
         validate_store(root)
     (task / "main.tsv").write_text("onset\tduration\n0\t-1\n")
+    refresh_manifest(root)
     with pytest.raises(ValueError, match="nonnegative"):
         validate_store(root)
     (task / "main.tsv").write_text("onset\tduration\n0\t1\n")
+    refresh_manifest(root)
     assert validate_store(root)["event_tsvs"] == 1
 
 
@@ -152,7 +157,7 @@ def test_shared_filesystem_publication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: SimpleNamespace(renameat2=unsupported))
     root = create_store(tmp_path / "store")
-    assert validate_store(root)["configs"] == 2
+    assert validate_store(root)["configs"] == 3
     assert not (root / ".nro-incomplete").exists()
     with pytest.raises(FileExistsError):
         _publish(tmp_path / "anything", root)
@@ -206,6 +211,6 @@ def test_setup_creates_selected_store_and_preserves_edits(tmp_path, monkeypatch)
     setup.main(args)
     assert validate_store(root)["models"] == 0
     path = root / "configs/clean/development_clean.yml"
-    path.write_text("standardize: false\n")
+    update_store(root, {path.relative_to(root): b"standardize: false\n"})
     setup.main(args)
-    assert path.read_text() == "standardize: false\n"
+    assert path.read_text().endswith("standardize: false\n")

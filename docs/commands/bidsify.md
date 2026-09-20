@@ -225,8 +225,6 @@ Unknown keys and missing required keys are rejected. Each request saves its
 resolved profile, so later edits apply to new requests. Changes to a selected
 scan-plan file are detected and reparsed when the request resumes.
 
-| Key | Purpose |
-| --- | --- |
 | Protected site key | Purpose |
 | --- | --- |
 | `servers` | Named `host`, `credential_env`, and `projects` lists. No credential values. |
@@ -248,6 +246,24 @@ scan-plan file are detected and reparsed when the request resumes.
 
 The standard event catalog is always `DEFINITIONS/events`. Requests record its
 resolved path as runtime metadata, alongside the selected event snapshots.
+
+### Vendor metadata enrichment
+
+Preparation keeps valid dcm2niix metadata and fills approved missing fields
+from bounded vendor protocol data. It never silently replaces a converter
+value. Conflicting converter, DICOM, series, or site values block publication;
+an optional field that cannot be derived produces a warning and remains absent.
+
+For GE data, fractional `NEX` supplies phase-direction `PartialFourier` when
+fractional echo is absent. `PHASEFOV` describes spatial coverage and is not used
+in that calculation. A fractional-echo acquisition is left without a derived
+fraction because exported metadata do not establish its readout fraction.
+
+GE `THREEDGW` supplies `GradientCorrectionMode` when present. Otherwise, a
+matching [hardware profile](../definitions.md#gradient-unwarping-hardware) may
+assert the mode. The public values are `2D`, `3D`, and `none`; unknown modes are
+omitted. Private preparation records retain bounded field provenance and the
+reason for underivable values without retaining vendor protocol text.
 
 ### Default source projects
 

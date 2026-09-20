@@ -16,6 +16,11 @@ container:
 selection_strategy: first
 mni_template: site:mni_template
 synthstrip_container: site:synthstrip
+freesurfer_container: site:fastsurfer
+lesion:
+  masker_command: null
+  fastsurfer_image: site:fastsurfer
+  use_gpu: true
 freesurfer_subjects_dir: null
 fs_subject: null
 overwrite: false

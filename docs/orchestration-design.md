@@ -211,13 +211,17 @@ module may clear a directory it owns exclusively; when several space/smoothing
 work items share a subject directory, it clears and validates only files owned
 by the target prefix before writing a target-specific breadcrumb.
 
-The persisted runner contract is loaded before execution. Nodes and edges
-cannot vary with artifact freshness. Each node also records its explicit
-scientific parameters and a normalized signature for an external command.
-When one node's scientific declaration changes, the runner reruns that node
-and follows the graph to invalidate its descendants. Independent nodes remain
-fresh. Presentation changes, such as a new step label or equivalent long-option
-spelling, do not invalidate outputs.
+The persisted runner contract separates declared topology from successful step
+records. The runner saves topology before execution, then commits each step's
+record after that step completes or passes its freshness checks. An interrupted
+module therefore retains proof for its completed steps without treating failed
+or unvisited steps as complete. Nodes and edges cannot vary with artifact
+freshness. Each successful node records its explicit scientific parameters and
+a normalized signature for an external command. When one node's scientific
+declaration changes, the runner reruns that node and follows the graph to
+invalidate its descendants. Independent nodes remain fresh. Presentation
+changes, such as a new step label or equivalent long-option spelling, do not
+invalidate outputs.
 
 A changed source-BIDS state may establish a new topology contract; a code edit
 alone cannot. Module completion is rejected if a planned node was not executed

@@ -63,6 +63,10 @@ and types are defined in the [clean contract](../autoapi/nro/modules/clean/contr
 [definitions stores](../definitions.md#source-markup); `null` ignores markup.
 `confounds_regex` controls continuous nuisance selection; `temporal_mask_regex`
 controls censoring. `nuisance_variance_explained` is a fraction, not a percentage.
+The default nuisance candidates are global signal, FD, six base motion
+parameters, five aCompCor components, cosine drifts, and outlier columns. The
+outlier columns also define the temporal mask, so they are zero throughout the
+retained fitting rows and are discarded before nuisance PCA.
 `minimum_temporal_rank` and `minimum_temporal_rank_fraction` constrain nuisance
 PCA; they are not connectivity admission thresholds. `min_trs` rejects inputs
 with too few original frames before graph construction. `gm_mask_threshold`

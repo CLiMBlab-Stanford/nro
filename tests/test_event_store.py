@@ -65,6 +65,19 @@ def test_identical_events_in_distinct_tasks_are_independent(tmp_path):
     assert second.snapshot()[0] == EVENTS
 
 
+def test_event_catalogs_inherit_by_task_directory(tmp_path):
+    child, parent = tmp_path / "child", tmp_path / "parent"
+    child.mkdir()
+    parent.mkdir()
+    add_task(parent, "inherited", {"main": EVENTS})
+    add_task(parent, "overridden", {"main": EVENTS})
+    add_task(child, "overridden", {"main": EVENTS.replace("A", "child")})
+
+    store = EventStore((child, parent))
+    assert store.resolve("inherited/main").path.is_relative_to(parent)
+    assert "child" in store.resolve("overridden/main").snapshot()[0]
+
+
 @pytest.mark.parametrize("symlink", [False, True])
 def test_index_cannot_share_another_tasks_file(tmp_path, symlink):
     add_task(tmp_path, "task", {"main": EVENTS})

@@ -1,8 +1,11 @@
 """Development definition edits cannot change shared or neighboring stores."""
 
+from pathlib import Path
+
 import pytest
 
 from nro.configuration import branch_definitions, site
+from nro.configuration.definition_migrations import update_store
 from nro.configuration.definitions import create_store
 from nro.engine.definition_editor import save_definition
 from nro.orchestration import branches
@@ -47,6 +50,7 @@ def test_default_read_only_and_explicit_private_selection(stores):
         site.require_definition_write()
     branch_definitions.select_definitions(store, checkout, shared, private)
     assert site.definitions_root() == private
+    assert site.definitions_roots() == (private, shared)
     site.require_definition_write(private / "configs" / "new.yml")
     with pytest.raises(ValueError, match="outside"):
         site.require_definition_write(shared / "configs" / "new.yml")
@@ -54,6 +58,62 @@ def test_default_read_only_and_explicit_private_selection(stores):
     assert branch_definitions.selected_definitions(store.control, dict(record), shared) == private
     branch_definitions.select_definitions(store, checkout, shared, None)
     assert site.definitions_root() == shared
+
+
+def test_child_inherits_parent_private_definitions(stores, tmp_path, monkeypatch):
+    from nro.configuration import store as store_module
+    from nro.configuration.store import ConfigStore
+
+    branch_store, checkout, shared, parent, _ = stores
+    branch_definitions.select_definitions(branch_store, checkout, shared, parent)
+    child = create_store(
+        tmp_path / "child-definitions",
+        include_site=False,
+        inherited_site=shared,
+    )
+    feature_checkout = tmp_path / "feature-source"
+
+    def identity(path):
+        path = Path(path)
+        return (
+            (feature_checkout, "feature", "b" * 40)
+            if path == feature_checkout
+            else (checkout, "dev", "a" * 40)
+        )
+
+    monkeypatch.setattr(branches, "checkout_identity", identity)
+    monkeypatch.setattr(branch_definitions, "checkout_identity", identity)
+    snapshot = branch_store.read()
+    registered = branch_store.register(
+        "feature", "dev", checkout=feature_checkout, revision=snapshot.revision
+    )
+    branch_definitions.select_definitions(branch_store, feature_checkout, shared, child)
+    record = {
+        "mode": "branch",
+        "ready": True,
+        "branch": "feature",
+        "checkout": str(feature_checkout),
+        "registry_id": registered.topology.records["feature"].registry_id,
+    }
+    monkeypatch.setattr(site, "installation_record", lambda: record)
+
+    roots = site.definitions_roots()
+    assert roots == (child, parent, shared)
+
+    update_store(
+        parent,
+        {
+            Path("workflows/parent_workflow.yml"): b"clean: parent\n",
+            Path("configs/clean/parent_clean.yml"): b"min_trs: 37\n",
+        },
+    )
+    monkeypatch.setattr(store_module, "definitions_roots", lambda: roots)
+    resolved = ConfigStore().resolve("parent")
+    assert resolved.configuration("clean").values["min_trs"] == 37
+
+    update_store(child, {Path("configs/clean/parent_clean.yml"): b"min_trs: 42\n"})
+    resolved = ConfigStore().resolve("parent")
+    assert resolved.configuration("clean").values["min_trs"] == 42
 
 
 def test_private_store_cannot_define_protected_site_settings(stores):

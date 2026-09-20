@@ -11,6 +11,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from nro.configuration.definition_migrations import (
+    SCHEMA_VERSION as DEFINITIONS_SCHEMA_VERSION,
+)
+from nro.configuration.definition_migrations import (
+    store_schema,
+)
 from nro.engine.site_setup import save_settings
 from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
 from nro.orchestration.control_paths import ControlPaths
@@ -97,14 +103,53 @@ def _initialize_control(
     )
 
 
-def _prepare_pool(checkout: Path, site: Path, control: Path, bids: Path, python: Path) -> None:
-    """Run candidate installation maintenance from its synthetic shared checkout."""
+def _initialize_definitions(
+    checkout: Path,
+    site: Path,
+    definitions: Path,
+    python: Path,
+) -> None:
+    """Create a definitions store with the baseline release implementation."""
     code = (
         "import sys\n"
         "from pathlib import Path\n"
+        "from nro.configuration.definitions import create_store\n"
+        "create_store(Path(sys.argv[1]))\n"
+    )
+    environment = {
+        **os.environ,
+        "NRO_SITE_CONFIG": str(site),
+        "PYTHONPATH": str(checkout),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    subprocess.run(
+        [str(python), "-B", "-c", code, str(definitions)],
+        cwd=checkout,
+        env=environment,
+        check=True,
+    )
+
+
+def _prepare_pool(
+    checkout: Path,
+    site: Path,
+    control: Path,
+    bids: Path,
+    definitions: Path,
+    python: Path,
+) -> None:
+    """Run candidate definitions and registry maintenance from the shared checkout."""
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from nro.configuration.definitions import ensure_store\n"
         "from nro.engine.shared_installation import prepare_pool\n"
+        "from nro.engine.site_setup import migrate_site_configuration\n"
         "from nro.orchestration.registry import Registry\n"
-        "control, bids, checkout = map(Path, sys.argv[1:])\n"
+        "control, bids, checkout, definitions, site = map(Path, sys.argv[1:])\n"
+        "migrate_site_configuration(site)\n"
+        "ensure_store(definitions)\n"
+        "migrate_site_configuration(site)\n"
         "registry = Registry.for_project('', bids_root=bids, registry_path=control, "
         "installation_maintenance=True)\n"
         "result = prepare_pool(registry, checkout=checkout, confirm=lambda _: 'stop', "
@@ -125,7 +170,17 @@ def _prepare_pool(checkout: Path, site: Path, control: Path, bids: Path, python:
     ):
         environment.pop(key, None)
     subprocess.run(
-        [str(python), "-B", "-c", code, str(control), str(bids), str(checkout)],
+        [
+            str(python),
+            "-B",
+            "-c",
+            code,
+            str(control),
+            str(bids),
+            str(checkout),
+            str(definitions),
+            str(site),
+        ],
         cwd=checkout,
         env=environment,
         check=True,
@@ -166,7 +221,8 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         definitions = temporary / "definitions"
         control = temporary / "control"
         for path in (bids, work, development, definitions):
-            path.mkdir()
+            if path != definitions:
+                path.mkdir()
         site = temporary / "site.toml"
         save_settings(
             site,
@@ -179,6 +235,7 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
                 "binds": [],
             },
         )
+        _initialize_definitions(synthetic, site, definitions, python)
         environment = python.parent.parent
         release = {
             "version": "0.0.0",
@@ -214,7 +271,7 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         scientific_path = ControlPaths(control).branch("main") / "registry.sqlite3"
 
         _copy_candidate(checkout, synthetic)
-        _prepare_pool(synthetic, site, control, bids, python)
+        _prepare_pool(synthetic, site, control, bids, definitions, python)
         with sqlite3.connect(database_path) as database:
             rebuilt_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
         if rebuilt_schema != SCHEMA_VERSION:
@@ -223,12 +280,16 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
             scientific_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
         if scientific_schema != SCIENTIFIC_SCHEMA_VERSION:
             raise RuntimeError("Rehearsal did not produce the candidate scientific schema")
+        definitions_schema = store_schema(definitions)
+        if definitions_schema != DEFINITIONS_SCHEMA_VERSION:
+            raise RuntimeError("Rehearsal did not produce the candidate definitions schema")
         if json.loads(implementation_path(control).read_text()) != binding:
             raise RuntimeError("Maintenance changed the active implementation before publication")
         return {
             "baseline": baseline,
             "baseline_source": baseline_source.digest,
             "candidate_source": source_store.capture(synthetic).digest,
+            "definitions_schema": definitions_schema,
         }
 
 

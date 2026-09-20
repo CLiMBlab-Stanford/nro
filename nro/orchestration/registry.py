@@ -46,6 +46,7 @@ from nro.orchestration.registry_schema import (
     SCHEMA as SCHEMA_DEFINITION,
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
+from nro.orchestration.resources import WORK_ITEM_RESOURCE_CLASSES, compatible_work_item_classes
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 if TYPE_CHECKING:
@@ -359,6 +360,24 @@ class RegistryLock:
             return None
         states = [line.split("|", 1)[0].strip().upper() for line in result.stdout.splitlines()]
         return any(state.startswith("OUT_OF_MEMORY") for state in states)
+
+    @staticmethod
+    def _slurm_timed_out(job_id: str) -> bool | None:
+        """Return whether Slurm accounting identifies a wall-time expiry."""
+        if not shutil.which("sacct"):
+            return None
+        try:
+            result = subprocess.run(
+                ["sacct", "--jobs", str(job_id), "--noheader", "--parsable2", "--format", "State"],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        states = [line.split("|", 1)[0].strip().upper() for line in result.stdout.splitlines()]
+        return any(state.startswith("TIMEOUT") for state in states)
 
     def _owner_definitively_dead(self, owner: dict | None) -> bool:
         if owner is None:
@@ -1554,8 +1573,7 @@ class Registry(WorkflowRegistry):
         memory_gb: int = 32,
     ) -> "ExecutionEnvelope | None":
         """Claim one demanded, nonfresh work item whose upstream work items are fresh."""
-        if not resource_classes:
-            return None
+        resource_classes = tuple(resource_classes) or WORK_ITEM_RESOURCE_CLASSES
         placeholders = ",".join("?" for _ in resource_classes)
         now = utcnow()
         with self.connection(write=True) as db:
@@ -2278,8 +2296,9 @@ class Registry(WorkflowRegistry):
             dependency_state.synchronize(db, now=utcnow())
             from nro.bidsify.index import IngestionIndex
 
-            ingestion_active, ingestion_ready, ingestion_limit = IngestionIndex(self).summary(
-                memory_gb
+            supports_ingestion = resource_class == "large"
+            ingestion_active, ingestion_ready, ingestion_limit = (
+                IngestionIndex(self).summary(memory_gb) if supports_ingestion else (0, 0, 0)
             )
             if request_id is None:
                 request = db.execute(
@@ -2293,15 +2312,15 @@ class Registry(WorkflowRegistry):
                     "SELECT COALESCE(MAX(concurrency), 0) FROM requests WHERE state='active'"
                 ).fetchone()[0]
             )
-            compatible = {
-                "large": ("large", "medium", "small"),
-                "medium": ("medium", "small"),
-                "small": ("small",),
-            }.get(resource_class, (resource_class,))
+            compatible = compatible_work_item_classes(resource_class)
             placeholders = ",".join("?" for _ in compatible)
             active_work_items = int(
                 db.execute(
-                    "SELECT COUNT(*) FROM attempts WHERE state IN ('queued', 'running', 'cancel_requested')"
+                    f"""SELECT COUNT(*) FROM attempts a
+                        JOIN work_items t ON t.id=a.work_item_id
+                        WHERE a.state IN ('queued', 'running', 'cancel_requested')
+                          AND t.resource_class IN ({placeholders})""",
+                    compatible,
                 ).fetchone()[0]
             )
             ready_work_items = int(
@@ -2349,27 +2368,44 @@ class Registry(WorkflowRegistry):
                     (*compatible, memory_gb),
                 ).fetchone()[0]
             )
+            global_limit = max(desired, ingestion_limit)
             desired = min(
-                max(desired, ingestion_limit),
+                global_limit,
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
             live_workers = int(
                 db.execute(
                     """SELECT COUNT(*) FROM workers
                        WHERE state IN ('idle', 'running') AND lease_expires_at>?
-                         AND memory_gb>=?""",
-                    (time.time(), memory_gb),
+                         AND resource_class=? AND memory_gb>=?""",
+                    (time.time(), resource_class, memory_gb),
                 ).fetchone()[0]
             )
             pending = int(
                 db.execute(
                     """SELECT COUNT(*) FROM scheduler_submissions
                        WHERE state IN ('prepared', 'submitted')
-                         AND predecessor_worker_id IS NULL AND memory_gb>=?""",
-                    (memory_gb,),
+                         AND predecessor_worker_id IS NULL
+                         AND resource_class=? AND memory_gb>=?""",
+                    (resource_class, memory_gb),
                 ).fetchone()[0]
             )
-            count = max(0, desired - live_workers - pending)
+            global_workers = int(
+                db.execute(
+                    """SELECT COUNT(*) FROM workers
+                       WHERE state IN ('idle', 'running') AND lease_expires_at>?""",
+                    (time.time(),),
+                ).fetchone()[0]
+            )
+            global_pending = int(
+                db.execute(
+                    """SELECT COUNT(*) FROM scheduler_submissions
+                       WHERE state IN ('prepared', 'submitted')
+                         AND predecessor_worker_id IS NULL"""
+                ).fetchone()[0]
+            )
+            available = max(0, global_limit - global_workers - global_pending)
+            count = min(max(0, desired - live_workers - pending), available)
             if ingestion_ready:
                 # Cloud credentials belong to the submitting user. Idle
                 # workers belonging to someone else cannot fulfill this demand.
@@ -2444,6 +2480,47 @@ class Registry(WorkflowRegistry):
                 )
         return len(changes)
 
+    def reconcile_attempt_timeouts(self) -> int:
+        """Classify SIGTERM failures whose Slurm allocations reached wall time."""
+        with self.connection() as db:
+            candidates = [
+                dict(row)
+                for row in db.execute(
+                    """
+                    SELECT attempt.id, worker.slurm_job_id
+                    FROM attempts attempt
+                    JOIN workers worker ON worker.id=attempt.worker_id
+                    WHERE attempt.state='error'
+                      AND attempt.error_type='CalledProcessError'
+                      AND attempt.error_message LIKE 'Derivative command exited with status -15:%'
+                      AND worker.slurm_job_id IS NOT NULL
+                    """
+                )
+            ]
+        timed_out = [
+            row
+            for row in candidates
+            if RegistryLock._slurm_timed_out(str(row["slurm_job_id"])) is True
+        ]
+        if not timed_out:
+            return 0
+        with self.connection(write=True) as db:
+            db.executemany(
+                """
+                UPDATE attempts SET error_type='Timeout', error_message=?
+                WHERE id=? AND error_type='CalledProcessError'
+                """,
+                (
+                    (
+                        f"Worker allocation {row['slurm_job_id']} reached its Slurm wall-time "
+                        "limit; resume this work with a longer --time allocation",
+                        row["id"],
+                    )
+                    for row in timed_out
+                ),
+            )
+        return len(timed_out)
+
     def reserve_worker_successor(
         self,
         *,
@@ -2491,13 +2568,19 @@ class Registry(WorkflowRegistry):
             )
             return submission_id, token
 
-    def required_memory_above(self, memory_gb: int) -> int | None:
+    def required_memory_above(
+        self, memory_gb: int, *, resource_classes: Sequence[str] = ()
+    ) -> int | None:
         """Return the smallest ready work-item tier this worker cannot satisfy."""
+        if not resource_classes:
+            return None
+        placeholders = ",".join("?" for _ in resource_classes)
         with self.connection() as db:
             row = db.execute(
                 f"""
                 SELECT MIN(t.memory_gb) AS memory_gb FROM work_items t
                 WHERE t.memory_gb> ? AND t.artifact_state!='fresh'
+                  AND t.resource_class IN ({placeholders})
                   AND {dependency_state.WRITE_READY}
                   AND EXISTS (
                       SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
@@ -2512,7 +2595,7 @@ class Registry(WorkflowRegistry):
                       AND a.state IN ('queued', 'running', 'cancel_requested')
                   )
                 """,
-                (memory_gb,),
+                (memory_gb, *resource_classes),
             ).fetchone()
             return int(row["memory_gb"]) if row and row["memory_gb"] is not None else None
 
@@ -2532,16 +2615,17 @@ class Registry(WorkflowRegistry):
             capable_worker = db.execute(
                 """
                 SELECT 1 FROM workers WHERE state IN ('idle', 'running')
-                  AND lease_expires_at>? AND memory_gb>=? LIMIT 1
+                  AND lease_expires_at>? AND resource_class=? AND memory_gb>=? LIMIT 1
                 """,
-                (time.time(), memory_gb),
+                (time.time(), resource_class, memory_gb),
             ).fetchone()
             capable_submission = db.execute(
                 """
                 SELECT 1 FROM scheduler_submissions
-                WHERE state IN ('prepared', 'submitted') AND memory_gb>=? LIMIT 1
+                WHERE state IN ('prepared', 'submitted')
+                  AND resource_class=? AND memory_gb>=? LIMIT 1
                 """,
-                (memory_gb,),
+                (resource_class, memory_gb),
             ).fetchone()
             if capable_worker or capable_submission:
                 return None
@@ -2575,6 +2659,7 @@ class Registry(WorkflowRegistry):
             ]
         dead: list[str] = []
         oom_workers: set[str] = set()
+        timed_out_workers: set[str] = set()
         local_host = socket.gethostname()
         for worker in expired:
             is_dead = False
@@ -2622,6 +2707,11 @@ class Registry(WorkflowRegistry):
                     and RegistryLock._slurm_out_of_memory(str(worker["slurm_job_id"])) is True
                 ):
                     oom_workers.add(worker_id)
+                elif (
+                    worker.get("slurm_job_id")
+                    and RegistryLock._slurm_timed_out(str(worker["slurm_job_id"])) is True
+                ):
+                    timed_out_workers.add(worker_id)
         if not dead:
             return 0
         recovered = 0
@@ -2643,6 +2733,24 @@ class Registry(WorkflowRegistry):
                             message=(
                                 f"Slurm reported OUT_OF_MEMORY for worker job "
                                 f"{next(item['slurm_job_id'] for item in expired if item['id'] == worker_id)}"
+                            ),
+                        )
+                        recovered += 1
+                        continue
+                    if worker_id in timed_out_workers:
+                        job_id = next(
+                            item["slurm_job_id"] for item in expired if item["id"] == worker_id
+                        )
+                        db.execute(
+                            """
+                            UPDATE attempts SET state='error', completed_at=?, error_type='Timeout',
+                                error_message=? WHERE id=?
+                            """,
+                            (
+                                utcnow(),
+                                f"Worker allocation {job_id} reached its Slurm wall-time limit; "
+                                "resume this work with a longer --time allocation",
+                                attempt["id"],
                             ),
                         )
                         recovered += 1

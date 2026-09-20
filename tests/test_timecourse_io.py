@@ -19,6 +19,7 @@ configure(
             "aseg_in_epi": None,
             "n_acompcor": 10,
             "acompcor_max_voxels": 20000,
+            "cosine_high_pass_hz": 1.0 / 128.0,
             "fd_radius_mm": 50.0,
             "motion_outlier_fd_thresh": 1.0,
             "dvars_statistical_alpha": 0.05,
@@ -125,6 +126,7 @@ def test_confounds_loads_epi_once(
                     "aseg_in_epi": None,
                     "n_acompcor": 10,
                     "acompcor_max_voxels": 20000,
+                    "cosine_high_pass_hz": 1.0 / 128.0,
                     "fd_radius_mm": 50.0,
                     "motion_outlier_fd_thresh": 1.0,
                     "dvars_statistical_alpha": 0.05,
@@ -137,7 +139,7 @@ def test_confounds_loads_epi_once(
             }
         ),
     )
-    epi_data = rng.normal(100.0, 3.0, size=(8, 8, 4, 12)).astype(np.float32)
+    epi_data = rng.normal(100.0, 3.0, size=(8, 8, 4, 130)).astype(np.float32)
     epi_image = _ProxyImage(epi_data)
     mean_image = nib.Nifti1Image(epi_data.mean(axis=3), np.eye(4))
     aseg_data = np.full(epi_data.shape[:3], 2, dtype=np.int16)
@@ -189,17 +191,30 @@ def test_confounds_loads_epi_once(
     clean_config = yaml.safe_load(clean_config_path.read_text(encoding="utf-8"))
     selected = confounds.filter(regex=str(clean_config["confounds_regex"]))
 
-    bases = [f"trans_{axis}" for axis in "xyz"]
-    bases += [f"rot_{axis}" for axis in "xyz"]
-    bases += ["white_matter", "csf", "global_signal"]
-    suffixes = ["", "_derivative1", "_power2", "_derivative1_power2"]
-    expected = {f"{base}{suffix}" for base in bases for suffix in suffixes}
-    assert set(selected.columns) == expected
-    assert selected.shape[1] == 36
-    assert not any("outlier" in column for column in selected.columns)
-    assert "framewise_displacement" not in selected.columns
-    assert not any(column.startswith("a_comp_cor") for column in selected.columns)
+    required = {f"trans_{axis}" for axis in "xyz"}
+    required |= {f"rot_{axis}" for axis in "xyz"}
+    required |= {"global_signal", "framewise_displacement"}
+    required |= {f"a_comp_cor_{index:02d}" for index in range(2)}
+    assert required.issubset(selected.columns)
+    assert any(column.startswith("cosine") for column in selected.columns)
+    assert not any("derivative" in column or "power2" in column for column in selected.columns)
+    assert "white_matter" not in selected.columns
+    assert "csf" not in selected.columns
+    assert {"a_comp_cor_00", "a_comp_cor_01"}.issubset(confounds.columns)
+    assert any(column.startswith("cosine") for column in confounds.columns)
     assert {"dvars", "dvars_p_value", "dvars_delta_percent"}.issubset(confounds.columns)
+
+
+def test_cosine_drift_matches_the_nonconstant_dct_basis() -> None:
+    drift = get_confounds_module._cosine_drift(
+        130,
+        repetition_time=1.0,
+        high_pass_hz=1.0 / 128.0,
+    )
+
+    assert drift.shape == (130, 2)
+    np.testing.assert_allclose(drift.mean(axis=0), 0.0, atol=1e-15)
+    np.testing.assert_allclose(drift.T @ drift, np.eye(2), atol=1e-14)
 
 
 def test_dvars_marks_both_frames_around_an_anomalous_difference() -> None:

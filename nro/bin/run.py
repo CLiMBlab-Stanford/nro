@@ -21,13 +21,18 @@ from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.manifests import assess_registry
 from nro.orchestration.planner import Planner, PlanningResult, RegisteredTarget
 from nro.orchestration.registry import Registry
+from nro.orchestration.resources import (
+    GPU_RESOURCE_CLASS,
+    SCHEDULABLE_RESOURCE_CLASSES,
+    memory_tiers,
+)
 from nro.orchestration.selection import discover_bids_inventory
 from nro.orchestration.submission import _submit_workers, _write_worker_script
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
 DEFAULT_CONCURRENCY = 50
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
-_RESUMABLE_STATUSES = frozenset({"Queued", "Waiting", "Stopped", "Error"})
+_RESUMABLE_STATUSES = frozenset({"Queued", "Waiting", "Stopped", "Timeout", "Error"})
 _DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Corrupt", "Blocked"})
 
 
@@ -527,6 +532,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         modules = tuple(normalize_module(value) for value in selection.modules)
     store = ConfigStore()
     workflows = {workflow_id: store.resolve(workflow_id) for workflow_id in selection.workflows}
+    if not args.resume and args.module is None:
+        modules = tuple(
+            dict.fromkeys(
+                module for workflow in workflows.values() for module in terminal_modules(workflow)
+            )
+        )
     registered_workflows = {
         workflow_id: registry.register_workflow(workflow)
         for workflow_id, workflow in workflows.items()
@@ -681,6 +692,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if args.local:
         from nro.orchestration.scheduler_implementation import run_local_worker
 
+        for tier in memory_tiers(args.memory, args.max_memory):
+            if registry.worker_capacity_needed(
+                request_id=request_ids[0] if request_ids else None,
+                resource_class=GPU_RESOURCE_CLASS,
+                memory_gb=tier,
+            ):
+                raise SystemExit("Lesion-aware GPU anatomy requires a scheduled GPU worker")
         run_local_worker(
             registry,
             memory_gb=args.memory,
@@ -688,24 +706,34 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             cpus=args.cpus,
         )
     elif not args.no_submit:
-        tier = args.memory
-        scripts: dict[int, Path] = {}
-        while True:
-            scripts[tier] = _write_worker_script(
-                registry,
-                bids_root=bids_root,
-                partition=args.partition,
-                account=args.account,
-                hours=args.time,
-                memory_gb=tier,
-                cpus=args.cpus,
-                idle_timeout=args.worker_idle_timeout,
-                drain_seconds=args.drain_minutes * 60,
-            )
-            if tier >= args.max_memory:
-                break
-            tier = min(args.max_memory, tier * 2)
-        submitted = _submit_workers(registry, request_ids[0], scripts[args.memory], args.memory)
+        scripts: dict[tuple[str, int], Path] = {}
+        for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+            for tier in memory_tiers(args.memory, args.max_memory):
+                scripts[(resource_class, tier)] = _write_worker_script(
+                    registry,
+                    bids_root=bids_root,
+                    partition=args.partition,
+                    account=args.account,
+                    hours=args.time,
+                    memory_gb=tier,
+                    cpus=args.cpus,
+                    resource_class=resource_class,
+                    idle_timeout=args.worker_idle_timeout,
+                    drain_seconds=args.drain_minutes * 60,
+                )
+        for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+            class_submitted: list[str] = []
+            for tier in memory_tiers(args.memory, args.max_memory):
+                class_submitted = _submit_workers(
+                    registry,
+                    request_ids[0],
+                    scripts[(resource_class, tier)],
+                    tier,
+                    resource_class=resource_class,
+                )
+                if class_submitted:
+                    break
+            submitted.extend(class_submitted)
     result = {
         "requests": request_ids,
         "projects": list(planned_projects),

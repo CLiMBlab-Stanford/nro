@@ -23,6 +23,14 @@ from pathlib import Path
 from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
+from nro.modules.anat.lesion_policy import (
+    FASTSURFER_OCI_DIGEST,
+    MASKER_MODEL,
+    MASKER_RESOURCES,
+    MASKER_REVISION,
+    NEUROLIT_CHECKPOINTS,
+)
+from nro.modules.anat.policy import FREESURFER_BUILD
 
 IMAGES = {
     "qunex": "docker://qunex/qunex_suite@sha256:a06befbb64f93ab289bbef94d1d00bf957c7cdff920f35e107f90b186ff9f09d",
@@ -30,14 +38,60 @@ IMAGES = {
     "synbold": "docker://ytzero/synbold-disco@sha256:18814dd2f419dfe8375632cf9239a0fb31a1300a2bfe66d234e599450af66555",
     "gradient_unwarp": GRADIENT_UNWARP_IMAGE,
 }
+FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
+NEUROLIT_URLS = {
+    name: f"https://zenodo.org/api/records/14510136/files/{name}/content"
+    for name in NEUROLIT_CHECKPOINTS
+}
+SYNTHSTROKE_URLS = {
+    name: f"https://huggingface.co/{MASKER_MODEL}/resolve/{MASKER_REVISION}/{name}?download=true"
+    for name in MASKER_RESOURCES
+}
 
 
-def required_images() -> dict[str, str]:
+def required_images(*, with_lesion: bool = False) -> dict[str, str]:
     """Return images needed by the site's configured scientific features."""
     images = dict(IMAGES)
+    images["fastsurfer"] = FASTSURFER_IMAGE
     if not gradient_unwarping_configured():
         images.pop("gradient_unwarp")
     return images
+
+
+def install_neurolit_checkpoints(*, offline: bool = False) -> None:
+    """Acquire and verify the pinned NeuroLIT inpainting checkpoints."""
+    values, _ = settings()
+    root = Path(values["fastsurfer_data"]) / "LIT" / "weights"
+    for name, expected in NEUROLIT_CHECKPOINTS.items():
+        target = root / name
+        if target.is_file() and sha256(target) == expected:
+            print(f"Reuse NeuroLIT checkpoint: {target}")
+            continue
+        if offline:
+            raise RuntimeError(f"Offline setup cannot obtain NeuroLIT checkpoint: {target}")
+        with resource_lock(target):
+            if target.is_file() and sha256(target) == expected:
+                continue
+            print(f"Downloading NeuroLIT checkpoint {name}", flush=True)
+            download(NEUROLIT_URLS[name], target, checksum=expected)
+
+
+def install_synthstroke_model(*, offline: bool = False) -> None:
+    """Acquire and verify the pinned SynthStroke model for offline workers."""
+    values, _ = settings()
+    root = Path(values["synthstroke_data"])
+    for name, expected in MASKER_RESOURCES.items():
+        target = root / name
+        if target.is_file() and sha256(target) == expected:
+            print(f"Reuse SynthStroke resource: {target}")
+            continue
+        if offline:
+            raise RuntimeError(f"Offline setup cannot obtain SynthStroke resource: {target}")
+        with resource_lock(target):
+            if target.is_file() and sha256(target) == expected:
+                continue
+            print(f"Downloading SynthStroke resource {name}", flush=True)
+            download(SYNTHSTROKE_URLS[name], target, checksum=expected)
 
 
 LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html and set license=/path/to/license.txt"
@@ -173,6 +227,38 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verify_sha256(path: Path, expected: str, label: str) -> None:
+    """Require one file to exist and match its pinned SHA-256 digest."""
+    if not path.is_file() or sha256(path) != expected:
+        raise RuntimeError(f"Missing or invalid {label}: {path}")
+
+
+def verify_fastsurfer_image(runtime: str, path: Path) -> None:
+    """Require the pinned FastSurfer image and embedded FreeSurfer build."""
+    result = subprocess.run(
+        [runtime, "inspect", "--json", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    document = json.loads(result.stdout)
+    labels = document["data"]["attributes"]["labels"]
+    if labels.get("org.opencontainers.image.base.digest") != FASTSURFER_OCI_DIGEST:
+        raise RuntimeError("FastSurfer image has an unexpected OCI base digest")
+    if labels.get("org.opencontainers.image.revision") != "cdfccea":
+        raise RuntimeError("FastSurfer image has an unexpected source revision")
+    build = subprocess.run(
+        [runtime, "exec", "--cleanenv", str(path), "cat", "/opt/freesurfer/build-stamp.txt"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    ).stdout.strip()
+    if build != FREESURFER_BUILD:
+        raise RuntimeError(f"FastSurfer image contains an unexpected FreeSurfer build: {build}")
+
+
 def download(
     url: str, target: Path, *, checksum: str | None = None, md5: str | None = None
 ) -> None:
@@ -237,6 +323,7 @@ def check_installation(
     slurm=True,
     quick=False,
     container_execution=True,
+    with_lesion=False,
 ) -> list[dict]:
     """Return named dependency checks with ok, required, and detail fields.
 
@@ -318,12 +405,37 @@ def check_installation(
 
         check(name, import_check)
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
-    images = required_images()
+    images = required_images(with_lesion=with_lesion)
     for key in images:
         check(key, lambda key=key: file(key))
     check("FreeSurfer license", lambda: file("license"))
     check("Workbench", lambda: run_probe([executable(values["workbench"]), "-version"]))
     check("MNI template", lambda: file("mni_template"))
+    if with_lesion:
+        for name, expected in MASKER_RESOURCES.items():
+            resource = Path(values["synthstroke_data"]) / name
+            check(
+                f"SynthStroke resource {name}",
+                lambda resource=resource, expected=expected: verify_sha256(
+                    resource, expected, "SynthStroke resource"
+                ),
+            )
+        for name, expected in NEUROLIT_CHECKPOINTS.items():
+            checkpoint = Path(values["fastsurfer_data"]) / "LIT" / "weights" / name
+
+            check(
+                f"NeuroLIT checkpoint {name}",
+                lambda checkpoint=checkpoint, expected=expected: verify_sha256(
+                    checkpoint, expected, "NeuroLIT checkpoint"
+                ),
+            )
+    if deep:
+        check(
+            "FreeSurfer container identity",
+            lambda: verify_fastsurfer_image(
+                executable(values["runtime"]), Path(values["fastsurfer"])
+            ),
+        )
     for space, pattern in (
         ("MNI152NLin2009cAsym", "*_label-GM_probseg.nii*"),
         ("fsaverage", "*_hemi-L_den-41k_midthickness.surf.gii"),
@@ -422,6 +534,8 @@ def check_installation(
             ),
         )
         probe_images = ["synthstrip", "synbold"]
+        if with_lesion:
+            probe_images.append("fastsurfer")
         if "gradient_unwarp" in images:
             probe_images.append("gradient_unwarp")
         for key in probe_images:
@@ -440,43 +554,55 @@ def check_installation(
     return results
 
 
-def install_images(*, offline=False) -> None:
+def _install_image(key: str, source: str, *, offline: bool) -> None:
+    """Acquire one configured container image under its resource lock."""
+    values, _ = settings()
+    path = Path(values[key])
+    if path.is_file() and path.stat().st_size:
+        print(f"Reuse {key}: {path}")
+        return
+    if offline:
+        raise RuntimeError(f"Offline setup cannot obtain {key}: {path}")
+    if not shutil.which(values["runtime"]):
+        raise RuntimeError(
+            "Install or load Singularity/Apptainer, then set runtime with nro paths."
+        )
+    with resource_lock(path):
+        if path.is_file() and path.stat().st_size:
+            return
+        print(f"Downloading {key} from {source}", flush=True)
+        with atomic_output_path(path) as staged:
+            if source.startswith("docker://"):
+                subprocess.run([values["runtime"], "pull", str(staged), source], check=True)
+            else:
+                download(source, staged)
+            run_probe([values["runtime"], "inspect", str(staged)])
+            digest = sha256(staged)
+        atomic_write_json(
+            path.with_name(path.name + ".receipt.json"),
+            {
+                "source": source,
+                "sha256": digest,
+                "verification": "HTTPS or container transport, runtime inspect; SHA-256 recorded after acquisition",
+            },
+        )
+
+
+def install_images(*, offline=False, with_lesion=False) -> None:
     """Acquire missing configured container images under resource locks.
 
     Stage and inspect downloads before publishing; write acquisition receipts.
     Existing nonempty images are reused. Offline mode rejects missing images.
     """
-    values, _ = settings()
-    for key, source in required_images().items():
-        path = Path(values[key])
-        if path.is_file() and path.stat().st_size:
-            print(f"Reuse {key}: {path}")
-            continue
-        if offline:
-            raise RuntimeError(f"Offline setup cannot obtain {key}: {path}")
-        if not shutil.which(values["runtime"]):
-            raise RuntimeError(
-                "Install or load Singularity/Apptainer, then set runtime with nro paths."
-            )
-        with resource_lock(path):
-            if path.is_file() and path.stat().st_size:
-                continue
-            print(f"Downloading {key} from {source}", flush=True)
-            with atomic_output_path(path) as staged:
-                if source.startswith("docker://"):
-                    subprocess.run([values["runtime"], "pull", str(staged), source], check=True)
-                else:
-                    download(source, staged)
-                run_probe([values["runtime"], "inspect", str(staged)])
-                digest = sha256(staged)
-            atomic_write_json(
-                path.with_name(path.name + ".receipt.json"),
-                {
-                    "source": source,
-                    "sha256": digest,
-                    "verification": "HTTPS or container transport, runtime inspect; SHA-256 recorded after acquisition",
-                },
-            )
+    for key, source in required_images(with_lesion=with_lesion).items():
+        _install_image(key, source, offline=offline)
+
+
+def install_lesion_resources(*, offline: bool = False) -> None:
+    """Install only the pinned resources selected by the lesion feature."""
+    _install_image("fastsurfer", FASTSURFER_IMAGE, offline=offline)
+    install_synthstroke_model(offline=offline)
+    install_neurolit_checkpoints(offline=offline)
 
 
 def extract_zip(archive: Path, destination: Path) -> None:

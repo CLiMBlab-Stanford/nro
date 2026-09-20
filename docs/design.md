@@ -13,8 +13,8 @@ work items from the site-wide registry. Within each work item, a shared `Runner`
 owns a graph of `Step` declarations and executes them in dependency order.
 
 ```text
-anat ──► func ──┬─► clean ──┬─► dynconn
-  │             │           └─► microparcellation ──► networks
+anat ──► func ──┬─► clean ──┬─► dynconn ────────────┐
+  │             │           └─► microparcellation ──┴─► networks
   │             └─► firstlevels
   └── direct anatomical inputs ──► {clean, microparcellation, networks, firstlevels}
 ```
@@ -26,6 +26,10 @@ The module pages specify how `clean`, `microparcellation`, `networks`, and
 `firstlevels` use their direct anatomy dependencies. Microparcellation needs
 that dependency only for targets whose native geometry or mask comes from the
 participant anatomy.
+
+A networks configuration selects either dynconn or microparcellation as its
+source. Workflow compilation fixes that choice before planning; it does not
+create a runtime-dependent graph or demand the unselected source.
 
 `firstlevels` follows a separate path from `func`, with a direct `anat`
 dependency for geometry. One participant/model/space/smoothing work item fits its

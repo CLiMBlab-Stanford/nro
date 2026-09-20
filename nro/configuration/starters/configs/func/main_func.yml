@@ -24,7 +24,7 @@ output_grid: t1_epi_vox
 topup_config: auto
 ica_aroma_cmd: null
 cicada_cmd: site:pycicada
-ica_classifier: ica_aroma
+ica_classifier: none
 ica_regression: aggressive
 cicada_tolerance: 5
 cicada_smoothing_retention_mode: revised
@@ -58,6 +58,7 @@ confounds:
   brain_mask_in_epi: null
   n_acompcor: 10
   acompcor_max_voxels: 20000
+  cosine_high_pass_hz: 0.0078125
   fd_radius_mm: 50.0
   motion_outlier_fd_thresh: 1.0
   dvars_statistical_alpha: 0.05

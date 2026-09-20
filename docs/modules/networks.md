@@ -1,30 +1,42 @@
 # Individualized networks
 
-`networks` consumes matching CIFTI microparcel labels, parcel connectivity, and
-their manifest. It also depends directly on anatomy for reference-atlas
-projection.
+`networks` estimates individualized maps from one configured source. The default
+uses `microparcellation` connectivity. Set `connectivity_source: dynconn` to use
+vertex- or voxel-level dynamic-connectivity time series instead. The selected
+source is a static workflow dependency, so requesting `networks` plans only that
+source. Anatomy remains a direct dependency for reference-atlas projection.
 
 ## Common input preparation
 
-Load the CIFTI parcel axis and validate it against the microparcellation labels.
-Transform connectivity weights with `connectivity.transform`, remove weights
-at or below `minimum_weight`, and apply `percentile_cutoff`. The default clips
-negative weights and applies the 90th percentile of transformed off-diagonal
-weights, including zeros. Ties at the threshold are retained, so the resulting
-edge fraction is not necessarily exactly 10%.
-The sparse adjacency stores one triangle; algorithms symmetrize where needed.
-Reported edge counts must be interpreted according to that representation.
+Both sources become a matrix with spatial locations on rows. A
+`microparcellation` source supplies continuous parcel-connectivity profiles.
+The loader validates the CIFTI parcel axis against the dlabel, applies
+`connectivity.transform`, removes weights at or below `minimum_weight`, and
+applies `percentile_cutoff`. The default clips negative weights and retains the
+top decile of transformed off-diagonal weights. Ties can make the retained
+fraction differ from exactly 10%. A `dynconn` source supplies its dtseries or
+four-dimensional volume directly; it never creates a dense vertex-by-vertex
+connectome.
 
-The same input, output, and labeling stages surround all
-`parcellation_strategy` choices. `main` selects `ica`; `clustering` and `oslom`
-workflows select the corresponding configuration overrides.
+`feature_reduction.maximum_dimensions` bounds the feature columns used by ICA
+and clustering. Inputs at or below the bound pass through unchanged. Wider
+inputs are projected onto leading randomized-SVD scores. Low-rank dynconn uses
+the rank declared in its manifest rather than treating the extra synthetic
+frame as an independent dimension. `oversampling`, `power_iterations`, and
+`random_seed` control this reduction. The publication manifest records source,
+input and fitted dimensions, seed, and retained variance.
+
+The same output and labeling stages surround every `parcellation_strategy`.
+`main` selects ICA from microparcellation. `clustering` and `oslom` select the
+corresponding estimator, while `dynconn-networks` selects dynconn-backed ICA.
+OSLOM is valid only with a microparcellation source.
 
 ## ICA
 
-Randomized SVD reduces the symmetric sparse adjacency to `ica.n_networks`
-dimensions. scikit-learn FastICA fits the resulting spatial scores with
-unit-variance whitening. This is ICA of microparcel connectivity profiles,
-not temporal ICA of the original BOLD frames.
+scikit-learn FastICA fits the bounded feature matrix with unit-variance
+whitening. For microparcellation, this is ICA of parcel-connectivity profiles.
+For dynconn, it is spatial ICA: locations are observations and retained time or
+low-rank dimensions are features.
 
 For each component, flip the sign if its median loading is positive. Clip
 negative loadings to zero and positive loadings at the `upper_quantile`
@@ -34,28 +46,29 @@ at a vertex. The convention assumes a network's positive tail occupies a
 minority of the spatial domain. Components without a positive finite tail fail
 validation. Reaching the iteration limit logs a convergence warning.
 
-`n_networks` defaults to 50 and must be smaller than the number of microparcels.
-`random_seed`, `max_iterations`, and `tolerance` control FastICA;
-`svd_oversamples` and `svd_power_iterations` control the approximation.
+`n_networks` defaults to 50 and must be smaller than both the spatial and fitted
+feature dimensions. `random_seed`, `max_iterations`, and `tolerance` control
+FastICA.
 
 ## Repeated clustering
 
-Binarize the symmetric retained connectivity profiles and fit MiniBatchKMeans
-repeatedly. Each repetition uses an offset random seed. Sort fits by inertia;
+Fit MiniBatchKMeans repeatedly to the continuous bounded feature matrix. This
+preserves retained connectivity magnitudes for microparcellation instead of
+binarizing edges. Each repetition uses an offset random seed. Sort fits by inertia;
 the lowest-inertia fit defines initial network identities. Align subsequent
 hard partitions one-to-one to accumulated memberships using spatial correlation
 and the Hungarian assignment algorithm. Average assignments, then min-max
 normalize each network map. Final scores no longer necessarily sum to one
 across networks after that normalization.
 
-This adapts the [Shain and Fedorenko procedure](../methods/software.md) to sparse
-microparcel profiles. `n_networks`, `repetitions`, `random_seed`, `n_init`,
+This adapts the [Shain and Fedorenko procedure](../methods/software.md) to either
+source representation. `n_networks`, `repetitions`, `random_seed`, `n_init`,
 `max_iterations`, `batch_size`, `max_no_improvement`, and `reassignment_ratio`
 are the network count, repeat policy, and scikit-learn fitting controls.
 
 ## OSLOM
 
-Write the retained graph for the configured OSLOM executable. Initialization
+For microparcellation input, write the retained graph for the configured OSLOM executable. Initialization
 can use Leiden, an explicit partition, or no seed partition, as validated by
 the config. Leiden resolution, iterations, and seed affect initialization,
 not a separate network result. `weighted`, `directed`, and `significance`
@@ -97,7 +110,7 @@ One map can therefore resolve from several labels such as `network005`,
 `lana002`, and `dna003`. Downstream code can use
 `nro.engine.cifti.load_indexed_cifti_map` instead of parsing display names. Use
 `nro scene -m networks` to build a linked or portable view. The network artifact
-does not copy the upstream microparcel connectivity matrix. See the
+does not copy the upstream feature source. See the
 [path contract](../autoapi/nro/modules/networks/paths/index.rst).
 
 `nro render -m networks` writes one static image for each named map; see the

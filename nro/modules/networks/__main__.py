@@ -18,17 +18,21 @@ from nro.engine.paths import (
     module_work_root,
     optional_path,
 )
+from nro.engine.surface_geometry import anatomical_surface_paths
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
     DEFAULT_SPACE,
+    is_surface_space,
     supported_output_spaces,
     target_output_names,
 )
+from nro.modules.dynconn.contract import dynconn_output_paths
 from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.modules.networks.config import (
     ClusteringConfig,
     ConnectivityConfig,
     ConsensusConfig,
+    FeatureReductionConfig,
     IcaConfig,
     InputsConfig,
     LabelingConfig,
@@ -39,7 +43,9 @@ from nro.modules.networks.config import (
 from nro.modules.networks.module import build_module
 from nro.modules.networks.paths import fixed_output_paths
 from nro.modules.networks.targets import (
+    DynconnTarget,
     MicroparcellationTarget,
+    discover_dynconn_targets,
     discover_microparcellation_targets,
 )
 from nro.orchestration.execution_context import ExecutionContext
@@ -53,7 +59,7 @@ from nro.orchestration.runtime import (
 
 
 def _target_module_config(
-    target: MicroparcellationTarget,
+    target: MicroparcellationTarget | DynconnTarget,
     output: Path,
     work: Path,
     prefix: str,
@@ -63,6 +69,7 @@ def _target_module_config(
     anatomical_manifest: Path | None,
     anatomical_reference: Path | None,
     mni_to_acpc_transform: Path | None,
+    source_surfaces: tuple[Path, ...],
 ) -> ModuleConfig:
     oslom = config["oslom"].copy()
     oslom["executable"] = optional_path(oslom.get("executable"))
@@ -70,13 +77,27 @@ def _target_module_config(
     oslom["extra_args"] = tuple(oslom["extra_args"])
     return ModuleConfig(
         inputs=InputsConfig(
-            microparcellation_manifest=target.manifest,
-            microparcels=target.microparcels,
-            connectivity=target.connectivity,
+            source=config["connectivity_source"],
+            source_manifest=target.manifest,
+            features=(
+                target.connectivity
+                if isinstance(target, MicroparcellationTarget)
+                else target.timeseries
+            ),
+            spatial_reference=(
+                target.microparcels
+                if isinstance(target, MicroparcellationTarget)
+                else target.timeseries
+            ),
+            source_representation=(
+                "microparcel_connectivity"
+                if isinstance(target, MicroparcellationTarget)
+                else target.representation
+            ),
             domain=target.domain,
             space=target.space,
             smoothing_mm=target.smoothing_mm,
-            source_surfaces=target.source_surfaces,
+            source_surfaces=source_surfaces,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
             mni_to_acpc_transform=mni_to_acpc_transform,
@@ -87,8 +108,10 @@ def _target_module_config(
             prefix=prefix,
             overwrite=config["overwrite"] if overwrite is None else overwrite,
         ),
+        connectivity_source=str(config["connectivity_source"]),
         connectivity=ConnectivityConfig(**config["connectivity"]),
         parcellation_strategy=str(config["parcellation_strategy"]),
+        feature_reduction=FeatureReductionConfig(**config["feature_reduction"]),
         ica=IcaConfig(**config["ica"]),
         clustering=ClusteringConfig(**config["clustering"]),
         oslom=OslomConfig(**oslom),
@@ -104,7 +127,7 @@ def make_target_config(
     config,
     *,
     overwrite=None,
-    micro_manifest=None,
+    source_manifest=None,
     anatomical_reference=None,
     mni_to_acpc_transform=None,
     anatomical_manifest=None,
@@ -114,12 +137,48 @@ def make_target_config(
     subject_id = f"sub-{participant}"
     if execution_context is not None and execution_context.project != project:
         raise ValueError("Networks project differs from its execution context")
-    if micro_manifest is None:
-        raise ValueError("micro_manifest must be derived from the requested space and smoothing")
-    targets = discover_microparcellation_targets((micro_manifest,))
+    if source_manifest is None:
+        raise ValueError("source_manifest must be derived from the requested space and smoothing")
+    source = str(config["connectivity_source"])
+    targets = (
+        discover_microparcellation_targets((source_manifest,))
+        if source == "microparcellation"
+        else discover_dynconn_targets((source_manifest,))
+    )
     if len(targets) != 1:
-        raise ValueError(f"Expected one microparcellation target, found {len(targets)}")
+        raise ValueError(f"Expected one {source} target, found {len(targets)}")
     target = targets[0]
+    if target.domain == "surface":
+        if isinstance(target, MicroparcellationTarget):
+            source_surfaces = target.source_surfaces
+        elif target.space == "fsnative":
+            if anatomical_manifest is None:
+                raise ValueError("Native dynconn networks require an anatomical manifest")
+            source_surfaces = anatomical_surface_paths(
+                anatomical_manifest.parent, participant, "midthickness", target.space
+            )
+        else:
+            import nibabel as nib
+
+            from nro.engine.templates import find_fsaverage_surface
+
+            image = nib.load(str(target.timeseries))
+            axis = image.header.get_axis(1)
+            if not isinstance(axis, nib.cifti2.BrainModelAxis):
+                raise ValueError(f"Expected dynconn CIFTI brain models: {target.timeseries}")
+            structures = tuple(axis.iter_structures())
+            if len(structures) != 2:
+                raise ValueError("Surface dynconn must contain ordered left and right cortex")
+            source_surfaces = tuple(
+                find_fsaverage_surface(
+                    hemi=hemi,
+                    surface="midthickness",
+                    n_vertices=len(structure_axis),
+                )
+                for hemi, (_, _, structure_axis) in zip(("L", "R"), structures)
+            )
+    else:
+        source_surfaces = ()
     output_base = module_derivatives_root(
         "networks",
         networks_id,
@@ -152,6 +211,7 @@ def make_target_config(
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
             mni_to_acpc_transform=mni_to_acpc_transform,
+            source_surfaces=source_surfaces,
         ),
     )
 
@@ -176,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, execution_context: ExecutionContext | None = None):
-    """Execute networks with fixed microparcellation and anatomy selections."""
+    """Execute networks with one configured feature source and anatomy selection."""
     args = build_parser().parse_args(argv)
     if execution_context is not None and execution_context.project != args.project:
         raise ValueError("Networks project differs from its execution context")
@@ -196,8 +256,9 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     networks_id, config = load_runtime_configuration(runtime_config, "networks")
     snapshot = load_runtime_workflow_snapshot(runtime_config)
     configurations = snapshot["configurations"]
-    micro_configuration = configurations["microparcellation"]
-    micro_config = micro_configuration.get("resolved") or {}
+    source_module = str(config["connectivity_source"])
+    source_configuration = configurations[source_module]
+    source_config = source_configuration.get("resolved") or {}
     participant_id = f"sub-{participant}"
     load_source_markup(
         config["markup"],
@@ -244,35 +305,39 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     source_runs = tuple(
         run
         for run in discover_raw_runs(bids_root / args.project / participant_id)
-        if matches_filter(run.entities, micro_config.get("input_filter"))
+        if matches_filter(run.entities, source_config.get("input_filter"))
     )
-    micro_base = module_derivatives_root(
-        "microparcellation",
-        config["microparcellation_directory"],
+    source_base = module_derivatives_root(
+        source_module,
+        config["source_directory"],
         project=args.project,
         bids_root=bids_root,
     )
-    micro_target, micro_target_prefix = target_output_names(
+    _source_target, source_target_prefix = target_output_names(
         participant_id, args.space, smoothing_mm
     )
-    micro_subject = micro_base / participant_id
-    micro_paths = microparcellation_output_paths(micro_subject, micro_target_prefix)
-    micro_manifest = micro_paths["manifest"]
-    publication_index = micro_paths["index"]
+    source_subject = source_base / participant_id
+    if source_module == "microparcellation":
+        source_paths = microparcellation_output_paths(source_subject, source_target_prefix)
+    else:
+        domain = "surface" if is_surface_space(args.space) else "volume"
+        source_paths = dynconn_output_paths(source_subject, source_target_prefix, domain)
+    source_manifest = source_paths["manifest"]
+    publication_index = source_paths["index"]
     if execution_context is not None:
-        micro_manifest = execution_context.input_path(micro_manifest)
+        source_manifest = execution_context.input_path(source_manifest)
         publication_index = execution_context.input_path(publication_index)
     if not publication_index.is_file():
-        raise FileNotFoundError(f"Missing microparcellation publication index: {publication_index}")
+        raise FileNotFoundError(f"Missing {source_module} publication index: {publication_index}")
     index = json.loads(publication_index.read_text(encoding="utf-8"))
     if (
         index.get("space") != args.space
         or index.get("smoothing_fwhm_mm") != smoothing_mm
         or str(Path(str(index.get("target_manifest", ""))).resolve())
-        != str(micro_manifest.resolve())
+        != str(source_manifest.resolve())
     ):
         raise ValueError(
-            "Microparcellation publication manifest does not match the requested "
+            f"{source_module} publication manifest does not match the requested "
             f"space-{args.space} smoothing-{smoothing_mm}mm target: {publication_index}"
         )
     target, cfg = make_target_config(
@@ -281,14 +346,14 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         networks_id,
         config,
         overwrite=True if args.overwrite else None,
-        micro_manifest=micro_manifest,
+        source_manifest=source_manifest,
         anatomical_manifest=anat_manifest_path,
         anatomical_reference=anatomical_reference,
         mni_to_acpc_transform=mni_to_acpc_transform,
         execution_context=execution_context,
     )
     stderr(
-        f"Planned networks for {target.domain} space-{target.space} "
+        f"Planned {source_module}-backed networks for {target.domain} space-{target.space} "
         f"smoothing-{target.smoothing_mm}mm\n"
     )
     runner = Runner(

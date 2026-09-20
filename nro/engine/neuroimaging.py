@@ -281,10 +281,12 @@ def create_n4_bias_correction_step(
     env: dict[str, str],
     force: bool,
     mask: Path | None = None,
+    bias_field: Path | None = None,
     validate_gzip: bool = False,
     step_name: str | None = None,
 ) -> Step:
     """Create a tracked N4 bias-correction step."""
+    output_spec = str(out_img) if bias_field is None else f"[{out_img},{bias_field}]"
     command = [
         "N4BiasFieldCorrection",
         "-d",
@@ -292,15 +294,17 @@ def create_n4_bias_correction_step(
         "-i",
         str(in_img),
         "-o",
-        str(out_img),
+        output_spec,
     ]
     inputs = [in_img]
     if mask is not None:
         command.extend(["-x", str(mask)])
         inputs.append(mask)
 
+    outputs = (out_img,) if bias_field is None else (out_img, bias_field)
+
     def validate() -> tuple[bool, str]:
-        invalid = invalid_gzip_files((out_img,))
+        invalid = invalid_gzip_files(outputs)
         if invalid:
             return False, f"N4 output is not a readable gzip NIfTI: {invalid[0]}"
         return True, "N4 output is readable."
@@ -308,15 +312,21 @@ def create_n4_bias_correction_step(
     return Step.command_step(
         command,
         name=step_name,
-        outputs=(out_img,),
+        outputs=outputs,
         inputs=tuple(inputs),
         force=force,
         env=env,
         prepare=lambda: (
             out_img.parent.mkdir(parents=True, exist_ok=True),
             out_img.unlink(missing_ok=True),
+            bias_field.unlink(missing_ok=True) if bias_field is not None else None,
         ),
         validate=validate if validate_gzip else None,
+        parameters={
+            "method": "N4BiasFieldCorrection",
+            "mask_guided": mask is not None,
+            "bias_field_retained": bias_field is not None,
+        },
     )
 
 

@@ -133,6 +133,24 @@ def test_bound_scheduler_reuses_snapshot_published_at_activation(central, monkey
     assert source.digest == record["source_digest"]
 
 
+def test_scheduler_site_excludes_version_specific_scientific_resources(central, monkeypatch):
+    registry, root, _ = central
+    implementation.activate(registry, root)
+    original = implementation.settings
+
+    def settings_with_future_resource(*args, **kwargs):
+        values, sources = original(*args, **kwargs)
+        return {**values, "future_scientific_image": "/images/future.sif"}, sources
+
+    monkeypatch.setattr(implementation, "settings", settings_with_future_resource)
+    _, site_path, _ = implementation.capture_worker_implementation(
+        registry.paths.control, registry.paths.bids_root
+    )
+
+    assert "future_scientific_image" not in site_path.read_text()
+    assert f'registry = "{registry.paths.control}"' in site_path.read_text()
+
+
 def test_activation_requires_quiescence_and_changed_commit_never_falls_back(central):
     registry, root, _ = central
     registry.register_worker("active", resource_class="large")

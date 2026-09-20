@@ -7,7 +7,9 @@ from pathlib import Path
 from nro.configuration.parsing import parse_mapping
 from nro.configuration.site import (
     definitions_root,
+    definitions_roots,
     read_site_definition,
+    resolve_definition,
     settings,
     site_definition_path,
 )
@@ -35,8 +37,13 @@ def load_config(
     An explicit root supports validating a store before selecting it. Empty
     server mappings are valid for new stores but cannot submit ingestion work.
     """
-    root = Path(root) if root is not None else definitions_root()
-    source = path or root / "bidsify/main.yml"
+    explicit_root = root is not None
+    root = Path(root) if explicit_root else definitions_root()
+    source = path or (
+        root / "bidsify/main.yml" if explicit_root else resolve_definition("bidsify/main.yml")
+    )
+    if source is None:
+        raise ValueError("No bidsify/main.yml was found in the definitions chain")
     value = parse_mapping(source.read_text(), source=str(source))
     expected = {
         "staging",
@@ -73,7 +80,11 @@ def load_config(
     if not isinstance(profile_scanplans, dict) or set(profile_scanplans) != {"parser"}:
         raise ValueError("bidsify profile scanplans requires only parser")
     value["scanplans"] = {**scanplan_policy, **profile_scanplans}
-    value["event_store"] = str(root / "events")
+    value["event_store"] = (
+        str(root / "events")
+        if path is not None or explicit_root
+        else [str(store / "events") for store in definitions_roots()]
+    )
     value["staging"] = (
         str(Path(site_settings["work"]) / "bidsify")
         if value["staging"] is None
@@ -97,7 +108,7 @@ def load_config(
     if isinstance(location, str) and "://" not in location:
         path = Path(location).expanduser()
         if not path.is_absolute():
-            path = root / path
+            path = source.parent.parent / path
         scanplans["location"] = str(path.resolve())
     elif isinstance(location, str) and not re.match(
         r"^https://drive\.google\.com/drive/(?:u/\d+/)?folders/[A-Za-z0-9_-]+",
@@ -110,7 +121,7 @@ def load_config(
             raise ValueError("scanplans.parser must be a Python file path or null")
         path = Path(parser).expanduser()
         if not path.is_absolute():
-            path = root / path
+            path = source.parent.parent / path
         scanplans["parser"] = str(path.resolve())
     credential_env = scanplans["credential_env"]
     if credential_env is not None and (

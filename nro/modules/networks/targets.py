@@ -1,4 +1,4 @@
-"""Discovery of subject-level microparcellation targets for network estimation."""
+"""Discover subject-level feature sources for network estimation."""
 
 from __future__ import annotations
 
@@ -20,6 +20,18 @@ class MicroparcellationTarget:
     microparcels: Path
     connectivity: Path
     source_surfaces: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class DynconnTarget:
+    """Dynamic time series and provenance for one network input target."""
+
+    domain: str
+    space: str
+    smoothing_mm: int
+    manifest: Path
+    timeseries: Path
+    representation: str
 
 
 def _output_path(value: str, manifest_path: Path) -> Path:
@@ -108,4 +120,70 @@ def discover_microparcellation_targets(
             targets,
             key=lambda target: (target.domain, target.space, target.smoothing_mm),
         )
+    )
+
+
+def discover_dynconn_targets(manifests: Iterable[Path]) -> tuple[DynconnTarget, ...]:
+    """Load exact dynamic-connectivity manifests derived by the caller."""
+
+    targets = []
+    manifest_paths = tuple(Path(path) for path in manifests)
+    if not manifest_paths:
+        raise FileNotFoundError("No source/config-defined dynamic-connectivity targets")
+    for manifest_path in manifest_paths:
+        if not manifest_path.is_file():
+            raise FileNotFoundError(
+                f"Missing dynamic-connectivity publication manifest: {manifest_path}"
+            )
+        manifest = yaml.safe_load(manifest_path.read_text()) or {}
+        domain = manifest.get("domain")
+        if domain not in {"surface", "volume"}:
+            continue
+        space = str(manifest.get("space") or "").strip()
+        smoothing = manifest.get("smoothing_fwhm_mm")
+        representation = str(manifest.get("representation") or "").strip()
+        if not space or smoothing is None or representation not in {"full", "low_rank"}:
+            raise ValueError(
+                "Dynamic-connectivity manifest must declare domain, space, smoothing, "
+                f"and representation: {manifest_path}"
+            )
+        value = (manifest.get("outputs") or {}).get("timeseries")
+        if not value:
+            raise ValueError(
+                f"Dynamic-connectivity manifest lacks outputs.timeseries: {manifest_path}"
+            )
+        timeseries = _output_path(value, manifest_path)
+        expected_suffix = ".dtseries.nii" if domain == "surface" else ".nii"
+        if not timeseries.name.endswith(expected_suffix):
+            raise ValueError(
+                f"Dynamic-connectivity {domain} input has the wrong format: {timeseries}"
+            )
+        if not timeseries.is_file():
+            raise FileNotFoundError(f"Missing dynamic-connectivity time series: {timeseries}")
+        targets.append(
+            DynconnTarget(
+                domain=str(domain),
+                space=space,
+                smoothing_mm=int(smoothing),
+                manifest=manifest_path,
+                timeseries=timeseries,
+                representation=representation,
+            )
+        )
+    if not targets:
+        raise FileNotFoundError(
+            "No dynamic-connectivity targets were found in the configured manifest sequence"
+        )
+    identities = [(target.domain, target.space, target.smoothing_mm) for target in targets]
+    duplicates = sorted({identity for identity in identities if identities.count(identity) > 1})
+    if duplicates:
+        formatted = ", ".join(
+            f"{domain}/space-{space}/smoothing-{smoothing}mm"
+            for domain, space, smoothing in duplicates
+        )
+        raise ValueError(
+            f"Multiple dynamic-connectivity manifests represent the same target: {formatted}"
+        )
+    return tuple(
+        sorted(targets, key=lambda target: (target.domain, target.space, target.smoothing_mm))
     )

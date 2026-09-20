@@ -36,6 +36,7 @@ from typing import Any, Optional, Sequence
 from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.runtime import SETTINGS
 from nro.configuration.site import settings as site_settings
+from nro.engine.anatomical_domain import load_anatomical_domain
 from nro.engine.bids import (
     bids_entity,
     bids_readout_time,
@@ -61,7 +62,6 @@ from nro.engine.images import (
 from nro.engine.io import read_json, write_json
 from nro.engine.manifests import (
     create_json_step,
-    require_manifest_output,
     require_nested_manifest_output,
 )
 from nro.engine.neuroimaging import (
@@ -180,6 +180,7 @@ from .step_support import (
     _with_suffix,
 )
 from .surface_steps import (
+    _create_wb_metric_mask_step,
     _create_wb_metric_resample_step,
     _create_wb_volume_to_surface_mapping_step,
 )
@@ -278,31 +279,15 @@ def build_module(
             "Anatomical preprocessing must be completed before functional preprocessing.\n"
             f"Missing anatomical manifest: {anat_manifest}"
         )
-    anat_info = read_json(anat_manifest)
-    if not bool(anat_info.get("complete")):
-        raise SystemExit(
-            "Anatomical preprocessing must be completed before functional preprocessing.\n"
-            f"Anatomical manifest is present but not marked complete: {anat_manifest}"
-        )
-    subjects_dir_raw = str(anat_info.get("freesurfer_subjects_dir", "")).strip()
-    if not subjects_dir_raw:
-        raise SystemExit(f"Anatomical manifest is missing freesurfer_subjects_dir: {anat_manifest}")
-    subjects_dir = Path(subjects_dir_raw)
-    fs_subject = str(anat_info.get("fs_subject") or opts.sub_id).strip()
-    if not fs_subject:
-        raise SystemExit(f"Anatomical manifest is missing fs_subject: {anat_manifest}")
-    anat_t1 = require_manifest_output(
-        anat_info,
-        "acpc_t1w",
-        manifest_path=anat_manifest,
-        manifest_name="Anatomical",
-    )
-    anat_brain_mask = require_manifest_output(
-        anat_info,
-        "brain_mask",
-        manifest_path=anat_manifest,
-        manifest_name="Anatomical",
-    )
+    try:
+        anatomical_domain, anat_info = load_anatomical_domain(anat_manifest)
+    except (OSError, ValueError, TypeError) as error:
+        raise SystemExit(str(error)) from error
+    subjects_dir = anatomical_domain.subjects_dir
+    fs_subject = anatomical_domain.fs_subject
+    anat_t1 = anatomical_domain.observed_t1w
+    registration_t1 = anatomical_domain.registration_t1w
+    anat_brain_mask = anatomical_domain.brain_mask
     anat_mni_template = Path(str(anat_info.get("mni_template", "")).strip())
     require_existing_path(anat_mni_template, "MNI template from anatomical manifest")
     t1_to_mni_xfm = require_nested_manifest_output(
@@ -320,13 +305,7 @@ def build_module(
         manifest_name="Anatomical",
     )
     fsnative_surfaces = {
-        f"{hemi}.{surface}": require_nested_manifest_output(
-            anat_info,
-            "surfaces",
-            f"{source_hemi}.{surface}",
-            manifest_path=anat_manifest,
-            manifest_name="Anatomical",
-        )
+        f"{hemi}.{surface}": anatomical_domain.surfaces[f"{source_hemi}.{surface}"]
         for hemi, source_hemi in (("L", "lh"), ("R", "rh"))
         for surface in ("white", "pial", "midthickness")
     }
@@ -353,6 +332,7 @@ def build_module(
             *se1_metadata_sources,
             *se2_metadata_sources,
             anat_t1,
+            registration_t1,
             anat_brain_mask,
             opts.ica_aroma_cmd,
             opts.cicada_cmd if classifier == "cicada" else None,
@@ -763,12 +743,18 @@ def build_module(
                 )
             synbold_work = opts.work_dir / "synbold_disco"
             t1_brain = synbold_work / "T1_brain.nii.gz"
-            t1_brain_cmd = ["fslmaths", str(anat_t1), "-mas", str(anat_brain_mask), str(t1_brain)]
+            t1_brain_cmd = [
+                "fslmaths",
+                str(registration_t1),
+                "-mas",
+                str(anat_brain_mask),
+                str(t1_brain),
+            ]
             runner.add_step(
                 Step.command_step(
                     t1_brain_cmd,
                     outputs=(t1_brain,),
-                    inputs=(anat_t1, anat_brain_mask),
+                    inputs=(registration_t1, anat_brain_mask),
                     force=opts.overwrite,
                     env=env,
                     name="Prepare SynBOLD-DisCo T1",
@@ -781,7 +767,7 @@ def build_module(
             synbold_rigid_step = _create_synbold_rigid_registration_step(
                 run_child=runner.run_child,
                 distorted_reference=reg_ref_dist_ref,
-                anatomical_t1=anat_t1,
+                anatomical_t1=registration_t1,
                 anatomical_mask=anat_brain_mask,
                 work_dir=synbold_work / "rigid_registration",
                 env=env,
@@ -1390,7 +1376,7 @@ def build_module(
         t1_ref = reg_dir / f"{run_stem}_t1_grid_epi_vox.nii.gz"
         runner.add_step(
             _create_t1_epi_vox_target_step(
-                t1_image=anat_t1,
+                t1_image=registration_t1,
                 source_epi=inputs.epi,
                 out_target=t1_ref,
                 env=env,
@@ -1401,7 +1387,7 @@ def build_module(
         t1_ref = reg_dir / f"{run_stem}_t1_native.nii.gz"
         runner.add_step(
             _create_t1_native_target_step(
-                t1_image=anat_t1,
+                t1_image=registration_t1,
                 out_target=t1_ref,
                 env=env,
                 force=opts.overwrite,
@@ -2594,16 +2580,46 @@ def build_module(
                 )
             )
             if want_fsaverage:
-                runner.add_step(
-                    _create_wb_metric_resample_step(
-                        in_metric=fsnative_metric_outputs[hemi],
-                        current_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.current"],
-                        new_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.new"],
-                        out_metric=preproc_fsaverage[hemi],
-                        env=env,
-                        force=opts.overwrite,
+                if anatomical_domain.lesion_aware:
+                    resampled = surf_dir / _with_suffix(
+                        f"{run_base}_space-{fsaverage_space}_hemi-{hemi}",
+                        "_desc-preproc_unmasked.func.gii",
                     )
-                )
+                    valid_roi = surf_dir / _with_suffix(
+                        f"{run_base}_space-{fsaverage_space}_hemi-{hemi}",
+                        "_desc-validAnatomicalDomain_roi.shape.gii",
+                    )
+                    runner.add_step(
+                        _create_wb_metric_resample_step(
+                            in_metric=fsnative_metric_outputs[hemi],
+                            current_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.current"],
+                            new_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.new"],
+                            out_metric=resampled,
+                            valid_roi_out=valid_roi,
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                    runner.add_step(
+                        _create_wb_metric_mask_step(
+                            metric=resampled,
+                            roi=valid_roi,
+                            output=preproc_fsaverage[hemi],
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
+                else:
+                    runner.add_step(
+                        _create_wb_metric_resample_step(
+                            in_metric=fsnative_metric_outputs[hemi],
+                            current_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.current"],
+                            new_sphere=fsnative_to_fsaverage_spheres[f"{hemi}.new"],
+                            out_metric=preproc_fsaverage[hemi],
+                            env=env,
+                            force=opts.overwrite,
+                        )
+                    )
 
     clean_inputs: dict[str, object] = {
         "desc-preproc": {
@@ -2691,6 +2707,11 @@ def build_module(
         },
         "output_metadata_contract": functional_output_contract(),
     }
+    if anatomical_domain.lesion_aware:
+        publication_inputs = publication_identity["inputs"]
+        assert isinstance(publication_inputs, dict)
+        publication_inputs["anatomical_registration_image"] = str(registration_t1)
+        publication_inputs["anatomical_lesion_mask"] = str(anatomical_domain.lesion_mask)
 
     def publication_payload() -> dict[str, object]:
         selection = read_json(selected_reference_metadata)

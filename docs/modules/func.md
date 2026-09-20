@@ -150,19 +150,24 @@ dependency by default. Pass `--without-marss` only when all functional
 configurations use `marss_mode: off` or `diagnose`.
 
 `ica_classifier` accepts `none`, `ica_aroma`, or `cicada`; the default is
-`ica_aroma`. CICADA reuses nro's MELODIC decomposition and requires the MNI
+`none`. ICA-AROMA and CICADA remain available for explicit comparison
+configurations. Both classifiers require a MELODIC decomposition; the default
+path skips it. CICADA requires the MNI
 functional output while this integration is under evaluation. The site setting
 `resources.pycicada` supplies its external executable. CICADA-specific settings
 do not affect AROMA or no-classifier artifact identity.
 
 `confounds.aseg_in_epi` and `brain_mask_in_epi` override confound extraction
 masks. `n_acompcor` and `acompcor_max_voxels` bound aCompCor extraction.
+`cosine_high_pass_hz` sets the cutoff for the exported nonconstant DCT-II
+cosine drift regressors; its default is 1/128 Hz.
 `fd_radius_mm` converts rotational motion to displacement;
 `motion_outlier_fd_thresh` is the extreme-motion threshold in mm.
 `dvars_statistical_alpha`, `dvars_practical_threshold_percent`, and
 `dvars_power` control DVARS inference.
-`nonsteady_*` controls initial-volume stabilization detection. aCompCor and FD
-are available as confounds but are not selected by the default clean regex.
+`nonsteady_*` controls initial-volume stabilization detection. The default clean
+configuration selects global signal, FD, base motion parameters, the first five
+aCompCor components, cosine drifts, and outlier columns.
 
 ```{literalinclude} ../../nro/configuration/starters/configs/func/main_func.yml
 :language: yaml

@@ -29,7 +29,8 @@ The main processing graph contains these modules:
   dynamic-connectivity viewing.
 - `microparcellation` divides the brain into small regions and measures their
   connectivity.
-- `networks` groups those regions into individualized functional networks.
+- `networks` estimates individualized functional networks from either
+  microparcel connectivity or dynamic-connectivity time series.
 - `firstlevels` estimates task effects from `func` outputs. Registered task
   models specify run, session, and subject contrasts; volume and surface
   results include effect, variance, t, and degrees-of-freedom maps.
@@ -37,11 +38,13 @@ The main processing graph contains these modules:
 The arrows show dependencies:
 
 ```text
-[anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn]
-                    │              └──► [microparcellation] ──► [networks]
+[anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn] ────────────┐
+                    │              └──► [microparcellation] ──┴──► [networks]
                     └──► [firstlevels]
 
 [anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, firstlevels}
+
+Only one of the two configured inputs to `networks` is active in a workflow.
 ```
 
 nro follows
@@ -105,8 +108,9 @@ nro run -p 01 -P example -m networks \
   --space fsnative ACPC --smoothing 0 2
 ```
 
-The `main` workflow estimates networks with ICA. Select repeated connectivity
-clustering with `-w clustering`, or the slower OSLOM backend with `-w oslom`.
+The `main` workflow estimates networks from microparcellation with ICA. Select
+repeated clustering with `-w clustering`, the slower OSLOM backend with
+`-w oslom`, or dynconn-backed ICA with `-w dynconn-networks`.
 
 Request task-effect maps separately:
 

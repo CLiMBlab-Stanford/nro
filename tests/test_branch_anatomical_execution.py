@@ -12,6 +12,7 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.anat import module as anat
 from nro.modules.anat.inputs import AnatImage
+from nro.modules.anat.lesion_policy import NEUROLIT_CHECKPOINTS
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import ContainerSpec, Runner
@@ -160,6 +161,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         ),
         synthstrip,
         False,
+        freesurfer_image=synthstrip,
     )
     inputs = anat.Inputs(
         "sub-1",
@@ -220,3 +222,84 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
             for p in s.outputs
         )
     assert not base.exists()
+
+
+def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
+    context, tmp_path, monkeypatch
+):
+    source = context.paths.source_project("demo") / "sub-1/ses-1/anat/sub-1_ses-1_T1w.nii.gz"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"source")
+    template = tmp_path / "template.nii.gz"
+    template.write_bytes(b"template")
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    masker = tmp_path / "synthstroke"
+    masker.write_bytes(b"command")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    fastsurfer_data = tmp_path / "fastsurfer-data"
+    for name in NEUROLIT_CHECKPOINTS:
+        checkpoint = fastsurfer_data / "LIT" / "weights" / name
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_text("model")
+    monkeypatch.setattr(
+        anat,
+        "neuroimaging_environment",
+        lambda **kwargs: {"FS_LICENSE": str(license_file)},
+    )
+    monkeypatch.setattr(
+        anat,
+        "find_fsaverage_template_surface",
+        lambda **kwargs: tmp_path / f"{kwargs['hemi']}.sphere.surf.gii",
+    )
+    base = context.paths.source_project("demo") / "derivatives/nro/anat/main"
+    options = anat.Options(
+        "demo",
+        "main",
+        base / "sub-1/anat",
+        context.paths.work / "demo/derivatives/nro/anat/main/sub-1",
+        base / "code/freesurfer",
+        "sub-1",
+        "fsaverage6",
+        "first",
+        "off",
+        tmp_path / "gradient.sif",
+        "singularity",
+        template,
+        ContainerSpec(image=image, engine="true"),
+        image,
+        False,
+        freesurfer_image=image,
+        lesion=True,
+        lesion_masker_command=masker,
+        fastsurfer_image=image,
+        fastsurfer_data=fastsurfer_data,
+    )
+
+    graph = anat.build_module(
+        anat.Inputs("sub-1", (AnatImage(source, None, "T1w", "ses-1", {}, "series", 1.0),), ()),
+        options,
+        execution_context=context,
+    )._graph.freeze()
+    names = {step.name for step in graph.steps}
+
+    assert "FastSurfer-LIT Reconstruction" in names
+    assert "FreeSurfer Recon-All" not in names
+    assert "Automatic Lesion Masking" in names
+    assert "Render Lesion Mask QC" in names
+    assert "Cut Lesion from Cortical Surfaces" in names
+    mask_step = next(step for step in graph.steps if step.name == "Automatic Lesion Masking")
+    fastsurfer_step = next(
+        step for step in graph.steps if step.name == "FastSurfer-LIT Reconstruction"
+    )
+    assert "desc-preproc_T1w" in mask_step.inputs[0].name
+    assert "desc-fastSurferInput_T1w" in fastsurfer_step.inputs[0].name
+    assert fastsurfer_step.scientific_signature
+    assert any("selectedFullHead" in path.name for step in graph.steps for path in step.outputs)
+    manifest = next(step for step in graph.steps if step.completion_boundary)
+    assert any("desc-inpainted_T1w" in str(path) for path in manifest.inputs)
+    assert any("desc-lesionQC.png" in str(path) for path in manifest.inputs)
+    assert any("surfaceVertexMapping" in str(path) for path in manifest.inputs)
+    assert any("surfaceValidity" in str(path) for path in manifest.inputs)
+    assert any("lesionReconstruction_summary" in str(path) for path in manifest.inputs)

@@ -37,13 +37,10 @@ from nro.orchestration.registry import (
     ensure_shared_directory,
     utcnow,
 )
+from nro.orchestration.resources import WORKER_COMPATIBILITY
 from nro.orchestration.scheduler_implementation import validate_worker_script
 
-COMPATIBLE = {
-    "large": ("large", "medium", "small"),
-    "medium": ("medium", "small"),
-    "small": ("small",),
-}
+COMPATIBLE = WORKER_COMPATIBILITY
 HEARTBEAT_INTERVAL = 30.0
 OUTPUT_VISIBILITY_TIMEOUT = 180.0
 OUTPUT_VISIBILITY_POLL_INTERVAL = 1.0
@@ -307,6 +304,8 @@ def _looks_like_oom(log_path: Path, return_code: int) -> bool:
         text = log_path.read_text(encoding="utf-8", errors="replace")[-200_000:].lower()
     except OSError:
         return False
+    if "cuda out of memory" in text or "torch.outofmemoryerror" in text:
+        return False
     return any(
         marker in text for marker in ("out of memory", "out_of_memory", "oom_kill", "oom-kill")
     )
@@ -345,6 +344,15 @@ class Worker:
         )
         self.launcher = launcher or SubprocessExecutionLauncher()
         self.stop_requested = False
+
+    def _allocation_timed_out(self, return_code: int) -> bool:
+        """Identify SIGTERM delivered at the worker allocation deadline."""
+        if return_code != -signal.SIGTERM or self.deadline is None:
+            return False
+        # The deadline starts a few seconds after the Slurm allocation. Allow
+        # for that skew and for one launcher polling interval.
+        tolerance = max(60.0, self.poll_interval * 2)
+        return time.monotonic() >= self.deadline - tolerance
 
     def _log(self, message: str) -> None:
         """Write a concise lifecycle record to the Slurm worker stream."""
@@ -394,7 +402,10 @@ class Worker:
             return
         if hasattr(self.registry, "request_capacity"):
             self.registry.request_capacity(
-                "successor", memory_gb=self.memory_gb, profile=self.profile
+                "successor",
+                resource_class=self.resource_class,
+                memory_gb=self.memory_gb,
+                profile=self.profile,
             )
             return
         script = self.registry.paths.workers / f"worker-{self.resource_class}.sbatch"
@@ -436,7 +447,12 @@ class Worker:
         if not os.environ.get("SLURM_JOB_ID"):
             return
         if hasattr(self.registry, "request_capacity"):
-            self.registry.request_capacity("adaptive", memory_gb=memory_gb, profile=self.profile)
+            self.registry.request_capacity(
+                "adaptive",
+                resource_class=self.resource_class,
+                memory_gb=memory_gb,
+                profile=self.profile,
+            )
             return
         profile_suffix = f"-{self.profile}" if self.profile else ""
         script = self.registry.paths.workers / (
@@ -490,7 +506,12 @@ class Worker:
         if not os.environ.get("SLURM_JOB_ID"):
             return
         if hasattr(self.registry, "request_capacity"):
-            self.registry.request_capacity("expand", memory_gb=self.memory_gb, profile=self.profile)
+            self.registry.request_capacity(
+                "expand",
+                resource_class=self.resource_class,
+                memory_gb=self.memory_gb,
+                profile=self.profile,
+            )
             return
         profile_suffix = f"-{self.profile}" if self.profile else ""
         script = self.registry.paths.workers / (
@@ -636,6 +657,29 @@ class Worker:
                 cancelled = result.cancelled
                 scheduler_cancelled = result.scheduler_cancelled
                 return_code = result.return_code
+            if not scheduler_cancelled and self._allocation_timed_out(return_code):
+                message = (
+                    "Worker allocation reached its Slurm wall-time limit; "
+                    "resume this work with a longer --time allocation"
+                )
+                self.registry.finish_attempt(
+                    attempt_id,
+                    state="error",
+                    error_type="Timeout",
+                    error_message=message,
+                )
+                self._cancel_failed_descendants(work_item)
+                _append_event(
+                    self.registry,
+                    work_item,
+                    {
+                        "event": "attempt_timed_out",
+                        "attempt_id": attempt_id,
+                        "return_code": return_code,
+                        "error": message,
+                    },
+                )
+                return
             if cancelled:
                 # Registry-issued cancellations already carry their durable
                 # cause.  A worker-level signal is infrastructure interruption
@@ -1018,17 +1062,22 @@ class Worker:
                     if not hasattr(self.registry, "claim_ingestion"):
                         from nro.bidsify.index import IngestionIndex
 
-                    ingestion = (
-                        self.registry.claim_ingestion(self.memory_gb)
-                        if hasattr(self.registry, "claim_ingestion")
-                        else IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
-                    )
+                    ingestion = None
+                    if self.resource_class == "large":
+                        ingestion = (
+                            self.registry.claim_ingestion(self.memory_gb)
+                            if hasattr(self.registry, "claim_ingestion")
+                            else IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
+                        )
                     if ingestion is not None:
                         idle_since = time.monotonic()
                         idle_announced = False
                         self._execute_ingestion(ingestion)
                         continue
-                    required_memory = self.registry.required_memory_above(self.memory_gb)
+                    required_memory = self.registry.required_memory_above(
+                        self.memory_gb,
+                        resource_classes=COMPATIBLE[self.resource_class],
+                    )
                     if required_memory is not None:
                         self._submit_adaptive_worker(required_memory)
                     self.registry.heartbeat_worker(self.worker_id, state="idle")
@@ -1069,6 +1118,14 @@ class Worker:
             final_state = "terminated" if self.stop_requested else "exited"
             self.registry.close_worker(self.worker_id, state=final_state)
             self.registry.mark_submission_complete(os.environ.get("SLURM_JOB_ID"))
+            if not self.stop_requested:
+                try:
+                    self._expand_ready_pool()
+                except BaseException as error:
+                    print(
+                        f"WARNING: could not supply capacity after worker exit: {error}",
+                        file=sys.stderr,
+                    )
             self._log(f"stopped (state={final_state})")
             if hasattr(self.registry, "cleanup_cache"):
                 self.registry.cleanup_cache()

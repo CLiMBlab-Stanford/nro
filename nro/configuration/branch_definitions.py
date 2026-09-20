@@ -83,6 +83,57 @@ def selected_definitions(control: Path, installation: dict, shared: Path) -> Pat
     return selected
 
 
+def inherited_definitions(control: Path, installation: dict, shared: Path) -> tuple[Path, ...]:
+    """Return private definition stores in nearest-first inheritance order.
+
+    The shared store is always the final source. Branches without a private
+    selection contribute no layer, so a child can inherit directly through
+    any number of uncustomized ancestors.
+    """
+    paths = ControlPaths(control)
+    paths.require_current_layout()
+    root, name, _ = checkout_identity(Path(installation["checkout"]))
+    records = json.loads(paths.catalog.read_text())
+    record = records.get(name)
+    if (
+        name != installation.get("branch")
+        or not isinstance(record, dict)
+        or record.get("retired")
+        or str(root) not in record.get("checkouts", ())
+        or record.get("registry_id") != installation.get("registry_id")
+    ):
+        raise ValueError("Installation does not match an active branch registration")
+
+    roots: list[Path] = []
+    visited: set[str] = set()
+    current: str | None = name
+    while current is not None:
+        if current in visited:
+            raise ValueError("Branch definitions inheritance contains a cycle")
+        visited.add(current)
+        current_record = records.get(current)
+        if not isinstance(current_record, dict) or current_record.get("retired"):
+            raise ValueError(f"Definitions parent is not an active branch: {current}")
+        selected = read_selection(control, current, current_record.get("registry_id"))
+        if selected is not None:
+            if not _disjoint(selected, shared.resolve()):
+                raise ValueError(
+                    "Development definitions must not overlap the shared definitions store"
+                )
+            require_protected_site(shared.resolve(), selected)
+            if selected not in roots:
+                roots.append(selected)
+        parent = current_record.get("parent")
+        if parent is not None and not isinstance(parent, str):
+            raise ValueError(f"Invalid definitions parent for branch {current}")
+        current = parent
+
+    shared = shared.resolve()
+    if shared not in roots:
+        roots.append(shared)
+    return tuple(roots)
+
+
 def require_private_store(control: Path, shared: Path, destination: Path, *, owner: str) -> None:
     """Reject overlap with shared definitions, control state, or another branch's store."""
     destination = destination.expanduser().absolute()
@@ -124,8 +175,20 @@ def select_definitions(store, checkout: Path, shared: Path, destination: Path | 
             return shared.resolve()
         destination = destination.expanduser().absolute()
         require_private_store(store.control, shared, destination, owner=name)
-        validate_store(destination, inherited_site=shared)
+        inherited = []
+        for ancestor in tree.ancestors(name)[1:]:
+            ancestor_record = tree.records[ancestor]
+            selected = read_selection(store.control, ancestor, ancestor_record.registry_id)
+            if selected is not None:
+                inherited.append(selected)
+        if shared.resolve() not in inherited:
+            inherited.append(shared.resolve())
         require_protected_site(shared.resolve(), destination)
+        validate_store(
+            destination,
+            inherited_site=shared,
+            inherited_roots=tuple(inherited),
+        )
         atomic_write_json(
             path,
             {"registry_id": record.registry_id, "definitions": str(destination)},
