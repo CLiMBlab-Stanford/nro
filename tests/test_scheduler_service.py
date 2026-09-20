@@ -163,6 +163,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         options={
             "local": True,
             "memory": 32,
+            "max_memory": 128,
             "cpus": 2,
             "drain_minutes": 0,
             "worker_poll_interval": 0.01,
@@ -272,6 +273,7 @@ def test_real_service_admits_runs_and_reports_foreign_catalog(tmp_path, monkeypa
         options={
             "local": True,
             "memory": 32,
+            "max_memory": 128,
             "cpus": 2,
             "drain_minutes": 0,
             "worker_poll_interval": 0.01,

@@ -135,6 +135,13 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     template.write_bytes(b"template")
     synthstrip = tmp_path / "synthstrip.sif"
     synthstrip.write_bytes(b"image")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    monkeypatch.setattr(
+        anat,
+        "neuroimaging_environment",
+        lambda **kwargs: {"FS_LICENSE": str(license_file)},
+    )
     monkeypatch.setattr(
         anat,
         "find_fsaverage_template_surface",

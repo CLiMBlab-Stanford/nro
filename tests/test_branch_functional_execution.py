@@ -44,6 +44,16 @@ def functional_case(tmp_path, monkeypatch):
                 "fsaverage_template": "fsaverage6",
                 "selection_strategy": "first",
                 "gradient_unwarping": {"enabled": False},
+                "bias_correction": {
+                    "method": "N4BiasFieldCorrection",
+                    "mask": "synthstrip_pre_n4",
+                    "bias_field_retained": True,
+                },
+                "surface_reconstruction": {
+                    "backend": "freesurfer",
+                    "version": "7.4.1",
+                    "skull_strip": "synthstrip",
+                },
                 "inputs": {"t1w": [str(image)], "t2w": []},
                 "copied_session_files": [],
                 "freesurfer_subjects_dir": str(subjects),
