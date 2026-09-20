@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -51,6 +53,27 @@ from .constants import (
     _FREESURFER_GRAY_MATTER_SEGMENTATIONS,
     _FREESURFER_SUBCORTICAL_SEGMENTATIONS,
 )
+from .lesion_policy import (
+    BOUNDARY_MARGIN_MM,
+    FASTSURFER_OCI_DIGEST,
+    FASTSURFER_SOURCE_REVISION,
+    FASTSURFER_VERSION,
+    MASKER_MODEL,
+    MASKER_REVISION,
+    NEUROLIT_CHECKPOINTS,
+    NEUROLIT_VERSION,
+    PROBABILITY_THRESHOLD,
+    TEST_TIME_AUGMENTATION,
+)
+from .lesions import (
+    create_cut_surfaces_step,
+    create_fastsurfer_lit_step,
+    create_inpainted_metadata_step,
+    create_lesion_excluded_mask_step,
+    create_lesion_mask_step,
+    create_lesion_qc_step,
+)
+from .policy import bias_correction_contract, surface_reconstruction_contract
 from .steps import (
     _aseg_label_ids,
     _brain_extract_anat_copy,
@@ -59,6 +82,7 @@ from .steps import (
     _create_acpc_qc_step,
     _create_acpc_registration_step,
     _create_acpc_resampling_step,
+    _create_apply_brain_mask_step,
     _create_copy_or_average_step,
     _create_inverse_affine_step,
     _create_label_mask_step,
@@ -117,6 +141,13 @@ class Options:
     container: Optional[ContainerSpec]
     synthstrip_image: Optional[Path]
     overwrite: bool
+    freesurfer_image: Optional[Path] = None
+    lesion: bool = False
+    lesion_masker_command: Optional[Path] = None
+    synthstroke_data: Optional[Path] = None
+    fastsurfer_image: Optional[Path] = None
+    fastsurfer_data: Optional[Path] = None
+    lesion_use_gpu: bool = True
 
 
 def build_module(
@@ -154,6 +185,42 @@ def build_module(
     if opts.synthstrip_image is None:
         raise SystemExit("Missing SynthStrip image path.")
     require_nonempty_file(opts.synthstrip_image, "SynthStrip image")
+    if opts.freesurfer_image is None:
+        raise SystemExit("Missing FreeSurfer container path.")
+    require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
+    if opts.lesion:
+        if not inputs.t1w:
+            raise SystemExit("Lesion-aware anatomy requires at least one T1w image.")
+        if opts.lesion_masker_command is None:
+            lesion_masker_command = Path(sys.executable)
+            lesion_masker_module = "nro.modules.anat.synthstroke"
+            if opts.synthstroke_data is None:
+                raise SystemExit("Lesion-aware anatomy requires installed SynthStroke data.")
+            for name in ("config.json", "model.safetensors"):
+                require_nonempty_file(
+                    opts.synthstroke_data / name,
+                    f"SynthStroke resource {name}",
+                )
+            synthstroke_data = opts.synthstroke_data
+        else:
+            lesion_masker_command = opts.lesion_masker_command
+            lesion_masker_module = None
+            require_nonempty_file(lesion_masker_command, "lesion masker command")
+            synthstroke_data = None
+        if opts.fastsurfer_image is None:
+            raise SystemExit("Lesion-aware anatomy requires a configured FastSurfer image.")
+        require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
+        if opts.fastsurfer_data is None:
+            raise SystemExit("Lesion-aware anatomy requires configured FastSurfer-LIT data.")
+        for checkpoint in NEUROLIT_CHECKPOINTS:
+            require_nonempty_file(
+                opts.fastsurfer_data / "LIT" / "weights" / checkpoint,
+                f"FastSurfer-LIT checkpoint {checkpoint}",
+            )
+    else:
+        lesion_masker_command = None
+        lesion_masker_module = None
+        synthstroke_data = None
     require_nonempty_file(opts.mni_template, "MNI template")
     mni_brain_template = Path(
         str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
@@ -176,6 +243,7 @@ def build_module(
     public_inputs.extend(source for item in all_images for source in item.metadata_sources)
     public_inputs = list(dict.fromkeys(public_inputs))
     env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
+    require_nonempty_file(Path(env["FS_LICENSE"]), "FreeSurfer license")
     binds = collect_bind_directories(
         [
             *(item.image for item in all_images),
@@ -191,6 +259,11 @@ def build_module(
             else None,
             *(resolution.coefficients for resolution in gradient_resolutions.values()),
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
+            lesion_masker_command,
+            synthstroke_data,
+            opts.freesurfer_image,
+            opts.fastsurfer_image if opts.lesion else None,
+            opts.fastsurfer_data if opts.lesion else None,
         ]
     )
     runner = Runner(
@@ -232,6 +305,16 @@ def build_module(
         "mni_template": str(opts.mni_template),
         "synthstrip_image": str(opts.synthstrip_image),
     }
+    if opts.lesion:
+        configuration["lesion"] = {
+            "enabled": opts.lesion,
+            "masker_model": MASKER_MODEL,
+            "masker_revision": MASKER_REVISION,
+            "probability_threshold": PROBABILITY_THRESHOLD,
+            "test_time_augmentation": TEST_TIME_AUGMENTATION,
+            "fastsurfer_version": FASTSURFER_VERSION,
+            "boundary_margin_mm": BOUNDARY_MARGIN_MM,
+        }
     configuration_snapshot = opts.work_dir / "configuration.json"
 
     def validate_configuration() -> tuple[bool, str]:
@@ -260,24 +343,22 @@ def build_module(
     dependency_check = opts.work_dir / "dependencies.complete"
 
     def check_dependencies() -> None:
-        runner.require_cmds(
-            [
-                "mri_binarize",
-                "mri_convert",
-                "mri_vol2vol",
-                "mri_robust_template",
-                "N4BiasFieldCorrection",
-                "recon-all",
-                "mris_convert",
-                "flirt",
-                "fslmaths",
-                "wb_command",
-                "tkregister2",
-                "convert_xfm",
-                "antsRegistration",
-                "antsApplyTransforms",
-            ]
-        )
+        commands = [
+            "mri_binarize",
+            "mri_convert",
+            "mri_vol2vol",
+            "mri_robust_template",
+            "N4BiasFieldCorrection",
+            "mris_convert",
+            "flirt",
+            "fslmaths",
+            "wb_command",
+            "tkregister2",
+            "convert_xfm",
+            "antsRegistration",
+            "antsApplyTransforms",
+        ]
+        runner.require_cmds(commands)
         write_completion_breadcrumb(dependency_check, "Anatomical dependencies available\n")
 
     runner.add_step(
@@ -296,6 +377,7 @@ def build_module(
         sub_id=inputs.sub_id,
         execution_context=execution_context,
     )
+    full_head_sources: dict[Path, Path] = {}
     for plan in session_plans:
         runner.add_step(
             create_copy_file_step(
@@ -329,25 +411,44 @@ def build_module(
                     force=opts.overwrite,
                 )
             )
+        full_head_sources[plan.source.image] = n4_input
         plan.metadata["GradientDistortionCorrection"] = gradient_resolution.scientific_record()
+        preliminary_brain = plan.staged_preprocessed.with_name(
+            plan.staged_preprocessed.name.replace("_desc-preproc_", "_desc-preN4Brain_")
+        )
+        bias_field = plan.staged_preprocessed.with_name(
+            plan.staged_preprocessed.name.replace("_desc-preproc_", "_desc-biasField_")
+        )
+        runner.add_step(
+            _brain_extract_anat_copy(
+                opts.synthstrip_image,
+                env=env,
+                source=n4_input,
+                dst=preliminary_brain,
+                mask=plan.mask,
+                force=opts.overwrite,
+            )
+        )
         runner.add_step(
             create_n4_bias_correction_step(
                 env=env,
                 in_img=n4_input,
                 out_img=plan.staged_preprocessed,
+                mask=plan.mask,
+                bias_field=bias_field,
                 force=opts.overwrite,
                 validate_gzip=True,
                 step_name="N4 Bias Field Correction",
             )
         )
+        plan.metadata["BiasCorrectionMask"] = str(plan.mask)
     for plan in session_plans:
         runner.add_step(
-            _brain_extract_anat_copy(
-                opts.synthstrip_image,
-                env=env,
+            _create_apply_brain_mask_step(
                 source=plan.staged_preprocessed,
-                dst=plan.output,
                 mask=plan.mask,
+                output=plan.output,
+                env=env,
                 force=opts.overwrite,
             )
         )
@@ -375,6 +476,19 @@ def build_module(
     copied_session_files = [str(plan.output) for plan in session_plans]
     copied_t1 = [item for item in copied_images if item.modality == "T1w"]
     copied_t2 = [item for item in copied_images if item.modality == "T2w"]
+    full_head_t1 = [
+        AnatImage(
+            image=full_head_sources[plan.source.image],
+            json=plan.source.json,
+            modality="T1w",
+            entities=dict(plan.source.entities),
+            session_id=plan.source.session_id,
+            time_kind=plan.source.time_kind,
+            time_value=plan.source.time_value,
+        )
+        for plan in session_plans
+        if plan.source.modality == "T1w"
+    ]
     reference_work = opts.work_dir / "subject_reference"
     subj_t1_selected = (
         reference_work / f"{inputs.sub_id}_desc-selected_T1w.nii.gz" if copied_t1 else None
@@ -387,17 +501,79 @@ def build_module(
         "sources": [],
         "strategy": opts.selection_strategy,
     }
+    lesion_full_t1_selected: Optional[Path] = None
+    lesion_raw_t1_selected: Optional[Path] = None
+    lesion_selected_t1_mask: Optional[Path] = None
     if subj_t1_selected is not None:
-        t1_step, t1_meta = _create_copy_or_average_step(
-            env=env,
-            images=copied_t1,
-            modality="T1w",
-            strategy=opts.selection_strategy,
-            out_img=subj_t1_selected,
-            work_dir=opts.work_dir,
-            force=opts.overwrite,
-        )
-        runner.add_step(t1_step)
+        if opts.lesion:
+            lesion_raw_t1_selected = reference_work / f"{inputs.sub_id}_desc-selectedRaw_T1w.nii.gz"
+            lesion_full_t1_selected = (
+                reference_work / f"{inputs.sub_id}_desc-selectedFullHead_T1w.nii.gz"
+            )
+            full_t1_step, t1_meta = _create_copy_or_average_step(
+                env=env,
+                images=full_head_t1,
+                modality="T1w",
+                strategy=opts.selection_strategy,
+                out_img=lesion_raw_t1_selected,
+                work_dir=opts.work_dir,
+                force=opts.overwrite,
+            )
+            t1_meta["sources"] = [
+                str(plan.source.image) for plan in session_plans if plan.source.modality == "T1w"
+            ]
+            runner.add_step(full_t1_step)
+            lesion_selected_t1_mask = (
+                reference_work / f"{inputs.sub_id}_desc-selectedT1w_mask.nii.gz"
+            )
+            lesion_preliminary_brain = (
+                reference_work / f"{inputs.sub_id}_desc-selectedPreN4Brain_T1w.nii.gz"
+            )
+            lesion_bias_field = (
+                reference_work / f"{inputs.sub_id}_desc-selectedBiasField_T1w.nii.gz"
+            )
+            runner.add_step(
+                _brain_extract_anat_copy(
+                    opts.synthstrip_image,
+                    env=env,
+                    source=lesion_raw_t1_selected,
+                    dst=lesion_preliminary_brain,
+                    mask=lesion_selected_t1_mask,
+                    force=opts.overwrite,
+                )
+            )
+            runner.add_step(
+                create_n4_bias_correction_step(
+                    env=env,
+                    in_img=lesion_raw_t1_selected,
+                    out_img=lesion_full_t1_selected,
+                    mask=lesion_selected_t1_mask,
+                    bias_field=lesion_bias_field,
+                    force=opts.overwrite,
+                    validate_gzip=True,
+                    step_name="Bias Correct Selected Full-Head T1w",
+                )
+            )
+            runner.add_step(
+                _create_apply_brain_mask_step(
+                    source=lesion_full_t1_selected,
+                    mask=lesion_selected_t1_mask,
+                    output=subj_t1_selected,
+                    env=env,
+                    force=opts.overwrite,
+                )
+            )
+        else:
+            t1_step, t1_meta = _create_copy_or_average_step(
+                env=env,
+                images=copied_t1,
+                modality="T1w",
+                strategy=opts.selection_strategy,
+                out_img=subj_t1_selected,
+                work_dir=opts.work_dir,
+                force=opts.overwrite,
+            )
+            runner.add_step(t1_step)
     t2_meta: dict[str, object] = {
         "modality": "T2w",
         "sources": [],
@@ -415,21 +591,24 @@ def build_module(
         )
         runner.add_step(t2_step)
 
-    pose_source = subj_t1_selected or subj_t2_selected
+    pose_source = lesion_full_t1_selected or subj_t1_selected or subj_t2_selected
     if pose_source is None:
         raise SystemExit("No subject-level anatomical image available after selection.")
     pose_modality = "T1w" if subj_t1_selected is not None else "T2w"
-    pose_mask = reference_work / f"{inputs.sub_id}_desc-selected{pose_modality}_mask.nii.gz"
-    runner.add_step(
-        Step.command_step(
-            ["fslmaths", str(pose_source), "-bin", str(pose_mask)],
-            name="Construct Preliminary Anatomical Mask",
-            outputs=(pose_mask,),
-            inputs=(pose_source,),
-            force=opts.overwrite,
-            env=env,
-        )
+    pose_mask = lesion_selected_t1_mask or (
+        reference_work / f"{inputs.sub_id}_desc-selected{pose_modality}_mask.nii.gz"
     )
+    if lesion_selected_t1_mask is None:
+        runner.add_step(
+            Step.command_step(
+                ["fslmaths", str(pose_source), "-bin", str(pose_mask)],
+                name="Construct Preliminary Anatomical Mask",
+                outputs=(pose_mask,),
+                inputs=(pose_source,),
+                force=opts.overwrite,
+                env=env,
+            )
+        )
     acpc_work = opts.work_dir / "acpc_alignment"
     acpc_prefix = acpc_work / f"{inputs.sub_id}_"
     source_to_acpc = acpc_work / f"{inputs.sub_id}_0GenericAffine.mat"
@@ -499,6 +678,22 @@ def build_module(
             force=opts.overwrite,
         )
     )
+    lesion_fastsurfer_t1: Optional[Path] = None
+    if opts.lesion:
+        assert lesion_raw_t1_selected is not None
+        lesion_fastsurfer_t1 = (
+            reference_work / f"{inputs.sub_id}_space-ACPC_desc-fastSurferInput_T1w.nii.gz"
+        )
+        runner.add_step(
+            _create_acpc_resampling_step(
+                source=lesion_raw_t1_selected,
+                reference=acpc_grid,
+                transform=source_to_acpc,
+                output=lesion_fastsurfer_t1,
+                env=env,
+                force=opts.overwrite,
+            )
+        )
     acpc_qc = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-poseQC_metrics.json"
     runner.add_step(
         _create_acpc_qc_step(
@@ -622,17 +817,125 @@ def build_module(
     subject_anat = pose_output
 
     subject_dir = opts.freesurfer_subjects_dir / opts.fs_subject
-    runner.add_step(
-        _create_recon_all_step(
-            run_child=runner.run_child,
-            env=env,
-            t1w=subj_t1,
-            t2w=subj_t2,
-            subjects_dir=opts.freesurfer_subjects_dir,
-            fs_subject=opts.fs_subject,
-            force=opts.overwrite,
+    lesion_mask: Optional[Path] = None
+    lesion_probability: Optional[Path] = None
+    lesion_metadata: Optional[Path] = None
+    lesion_qc: Optional[Path] = None
+    inpainted_t1: Optional[Path] = None
+    lesion_reconstruction_summary: Optional[Path] = None
+    if opts.lesion:
+        assert subj_t1 is not None
+        assert lesion_fastsurfer_t1 is not None
+        assert lesion_masker_command is not None
+        assert opts.fastsurfer_image is not None
+        lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesion_mask.nii.gz"
+        lesion_probability = (
+            opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesion_probability.nii.gz"
         )
-    )
+        lesion_metadata = lesion_mask.with_suffix("").with_suffix(".json")
+        runner.add_step(
+            create_lesion_mask_step(
+                run_child=runner.run_child,
+                command=lesion_masker_command,
+                module=lesion_masker_module,
+                source=subj_t1,
+                probability=lesion_probability,
+                mask=lesion_mask,
+                metadata=lesion_metadata,
+                model_directory=synthstroke_data,
+                model=MASKER_MODEL,
+                revision=MASKER_REVISION,
+                threshold=PROBABILITY_THRESHOLD,
+                test_time_augmentation=TEST_TIME_AUGMENTATION,
+                use_gpu=opts.lesion_use_gpu,
+                force=opts.overwrite,
+            )
+        )
+        lesion_qc = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesionQC.png"
+        runner.add_step(
+            create_lesion_qc_step(
+                source=subj_t1,
+                mask=lesion_mask,
+                output=lesion_qc,
+                force=opts.overwrite,
+            )
+        )
+        runner.add_step(
+            create_fastsurfer_lit_step(
+                run_child=runner.run_child,
+                runtime=opts.gradient_unwarp_runtime,
+                image=opts.fastsurfer_image,
+                data_directory=opts.fastsurfer_data,
+                t1w=lesion_fastsurfer_t1,
+                lesion_mask=lesion_mask,
+                subjects_dir=opts.freesurfer_subjects_dir,
+                subject=opts.fs_subject,
+                license_file=Path(env["FS_LICENSE"]),
+                version=FASTSURFER_VERSION,
+                use_gpu=opts.lesion_use_gpu,
+                threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
+                force=opts.overwrite,
+            )
+        )
+        inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-inpainted_T1w.nii.gz"
+        runner.add_step(
+            Step.command_step(
+                [
+                    "mri_vol2vol",
+                    "--mov",
+                    str(subject_dir / "mri" / "inpainted.lit.nii.gz"),
+                    "--targ",
+                    str(subj_t1),
+                    "--regheader",
+                    "--o",
+                    str(inpainted_t1),
+                    "--no-save-reg",
+                ],
+                name="Publish Inpainted Anatomical Alternative",
+                inputs=(subject_dir / "mri" / "inpainted.lit.nii.gz", subj_t1),
+                outputs=(inpainted_t1,),
+                env=env,
+                force=opts.overwrite,
+                parameters={"interpolation": "trilinear", "synthetic_tissue": True},
+            )
+        )
+        runner.add_step(
+            create_inpainted_metadata_step(
+                image=inpainted_t1,
+                observed_t1w=subj_t1,
+                lesion_mask=lesion_mask,
+                lesion_metadata=lesion_metadata,
+                reconstruction_summary=subject_dir / "stats" / "lesion_impact_summary.yaml",
+                output=inpainted_t1.with_suffix("").with_suffix(".json"),
+                force=opts.overwrite,
+            )
+        )
+        lesion_reconstruction_summary = (
+            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
+        )
+        runner.add_step(
+            create_copy_file_step(
+                src=subject_dir / "stats" / "lesion_impact_summary.yaml",
+                dst=lesion_reconstruction_summary,
+                force=opts.overwrite,
+                step_name="Publish Lesion Reconstruction Summary",
+            )
+        )
+    else:
+        runner.add_step(
+            _create_recon_all_step(
+                run_child=runner.run_child,
+                env=env,
+                t1w=subj_t1,
+                t2w=subj_t2,
+                subjects_dir=opts.freesurfer_subjects_dir,
+                fs_subject=opts.fs_subject,
+                runtime=opts.gradient_unwarp_runtime,
+                image=opts.freesurfer_image,
+                license_file=Path(env["FS_LICENSE"]),
+                force=opts.overwrite,
+            )
+        )
     aseg_mgz = subject_dir / "mri" / "aseg.mgz"
     subcortical_masks: dict[str, str] = {}
     for structure, segmentations in _FREESURFER_SUBCORTICAL_SEGMENTATIONS.items():
@@ -642,6 +945,13 @@ def build_module(
             opts.work_dir
             / "subcortical_masks"
             / (f"{inputs.sub_id}_desc-{structure}_mask_fs.nii.gz")
+        )
+        resampled = (
+            opts.work_dir
+            / "subcortical_masks"
+            / f"{inputs.sub_id}_desc-{structure}_mask_scaffold.nii.gz"
+            if opts.lesion
+            else output
         )
         runner.add_step(
             _create_label_mask_step(
@@ -658,17 +968,31 @@ def build_module(
                 env=env,
                 src=temporary,
                 ref_image=subject_anat,
-                dst=output,
+                dst=resampled,
                 force=opts.overwrite,
             )
         )
+        if opts.lesion:
+            assert lesion_mask is not None
+            runner.add_step(
+                create_lesion_excluded_mask_step(
+                    scaffold_mask=resampled,
+                    lesion_mask=lesion_mask,
+                    output=output,
+                    force=opts.overwrite,
+                )
+            )
         runner.add_step(
             _write_json_step(
                 output.with_suffix("").with_suffix(".json"),
                 {
                     "Type": "ROI mask",
                     "Structure": structure,
-                    "Sources": [str(aseg_mgz), str(subject_anat)],
+                    "Sources": [
+                        str(aseg_mgz),
+                        str(subject_anat),
+                        *([str(lesion_mask)] if lesion_mask is not None else []),
+                    ],
                     "FreeSurferLabels": labels,
                     "FreeSurferSegmentations": list(segmentations),
                     "ReferenceImage": str(subject_anat),
@@ -684,6 +1008,21 @@ def build_module(
     brain_temporary = core_work / f"{inputs.sub_id}_desc-brain_mask_fs.nii.gz"
     gray_temporary = core_work / f"{inputs.sub_id}_desc-grayMatter_mask_fs.nii.gz"
     ribbon_temporary = core_work / f"{inputs.sub_id}_desc-ribbon_mask_fs.nii.gz"
+    brain_resampled = (
+        core_work / f"{inputs.sub_id}_desc-brain_mask_scaffold.nii.gz"
+        if opts.lesion
+        else brain_mask
+    )
+    gray_resampled = (
+        core_work / f"{inputs.sub_id}_desc-grayMatter_mask_scaffold.nii.gz"
+        if opts.lesion
+        else gray_mask
+    )
+    ribbon_resampled = (
+        core_work / f"{inputs.sub_id}_desc-ribbon_mask_scaffold.nii.gz"
+        if opts.lesion
+        else ribbon_mask
+    )
     brainmask_mgz = subject_dir / "mri" / "brainmask.mgz"
     ribbon_mgz = subject_dir / "mri" / "ribbon.mgz"
     runner.add_step(
@@ -699,16 +1038,30 @@ def build_module(
             env=env,
             src=brain_temporary,
             ref_image=subject_anat,
-            dst=brain_mask,
+            dst=brain_resampled,
             force=opts.overwrite,
         )
     )
+    if opts.lesion:
+        assert lesion_mask is not None
+        runner.add_step(
+            create_lesion_excluded_mask_step(
+                scaffold_mask=brain_resampled,
+                lesion_mask=lesion_mask,
+                output=brain_mask,
+                force=opts.overwrite,
+            )
+        )
     runner.add_step(
         _write_json_step(
             brain_mask.with_suffix("").with_suffix(".json"),
             {
                 "Type": "brain mask",
-                "Sources": [str(brainmask_mgz), str(subject_anat)],
+                "Sources": [
+                    str(brainmask_mgz),
+                    str(subject_anat),
+                    *([str(lesion_mask)] if lesion_mask is not None else []),
+                ],
                 "ReferenceImage": str(subject_anat),
             },
         )
@@ -729,16 +1082,30 @@ def build_module(
             env=env,
             src=gray_temporary,
             ref_image=subject_anat,
-            dst=gray_mask,
+            dst=gray_resampled,
             force=opts.overwrite,
         )
     )
+    if opts.lesion:
+        assert lesion_mask is not None
+        runner.add_step(
+            create_lesion_excluded_mask_step(
+                scaffold_mask=gray_resampled,
+                lesion_mask=lesion_mask,
+                output=gray_mask,
+                force=opts.overwrite,
+            )
+        )
     runner.add_step(
         _write_json_step(
             gray_mask.with_suffix("").with_suffix(".json"),
             {
                 "Type": "gray matter mask",
-                "Sources": [str(aseg_mgz), str(subject_anat)],
+                "Sources": [
+                    str(aseg_mgz),
+                    str(subject_anat),
+                    *([str(lesion_mask)] if lesion_mask is not None else []),
+                ],
                 "FreeSurferLabels": gray_labels,
                 "FreeSurferSegmentations": list(_FREESURFER_GRAY_MATTER_SEGMENTATIONS),
                 "ReferenceImage": str(subject_anat),
@@ -758,16 +1125,30 @@ def build_module(
             env=env,
             src=ribbon_temporary,
             ref_image=subject_anat,
-            dst=ribbon_mask,
+            dst=ribbon_resampled,
             force=opts.overwrite,
         )
     )
+    if opts.lesion:
+        assert lesion_mask is not None
+        runner.add_step(
+            create_lesion_excluded_mask_step(
+                scaffold_mask=ribbon_resampled,
+                lesion_mask=lesion_mask,
+                output=ribbon_mask,
+                force=opts.overwrite,
+            )
+        )
     runner.add_step(
         _write_json_step(
             ribbon_mask.with_suffix("").with_suffix(".json"),
             {
                 "Type": "cortical ribbon mask",
-                "Sources": [str(ribbon_mgz), str(subject_anat)],
+                "Sources": [
+                    str(ribbon_mgz),
+                    str(subject_anat),
+                    *([str(lesion_mask)] if lesion_mask is not None else []),
+                ],
                 "ReferenceImage": str(subject_anat),
             },
         )
@@ -837,6 +1218,9 @@ def build_module(
         )
     )
     exported_surfaces: dict[str, str] = {}
+    lesion_scaffold_surfaces: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
+    lesion_scaffold_metrics: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
+    lesion_scaffold_anatomy: dict[str, dict[str, Path]] = {"lh": {}, "rh": {}}
     for hemi in ("lh", "rh"):
         hemi_label = _hemi_label(hemi)
         hemi_paths: dict[str, Path] = {}
@@ -847,12 +1231,15 @@ def build_module(
                 f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_{bids_suffix}.surf.gii"
             )
             output = opts.out_dir / output_name
+            generated_output = (
+                surface_work_dir / "lesion_scaffold" / output_name if opts.lesion else output
+            )
             is_sphere = source_name in {"sphere", "sphere.reg"}
             if is_sphere:
                 runner.add_step(
                     _create_mri_conversion_step(
                         source=source,
-                        output=output,
+                        output=generated_output,
                         env=env,
                         force=opts.overwrite,
                         name="Convert FreeSurfer Sphere",
@@ -887,7 +1274,7 @@ def build_module(
                 runner.add_step(
                     _strip_freesurfer_volgeom_metadata(
                         surf_in=affined,
-                        surf_out=output,
+                        surf_out=generated_output,
                         force=opts.overwrite,
                     )
                 )
@@ -905,7 +1292,10 @@ def build_module(
                 )
             )
             exported_surfaces[f"{hemi}.{source_name}"] = str(output)
-            hemi_paths[source_name] = output
+            hemi_paths[source_name] = generated_output
+            if opts.lesion:
+                lesion_scaffold_surfaces[hemi][generated_output] = output
+                lesion_scaffold_anatomy[hemi][source_name] = generated_output
 
         for metric_name, (bids_suffix, metric_description) in _metric_names().items():
             metric_source = surface_dir / f"{hemi}.{metric_name}"
@@ -913,11 +1303,16 @@ def build_module(
                 opts.out_dir
                 / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_{bids_suffix}.shape.gii"
             )
+            generated_metric_output = (
+                surface_work_dir / "lesion_scaffold" / metric_output.name
+                if opts.lesion
+                else metric_output
+            )
             runner.add_step(
                 _create_metric_conversion_step(
                     metric=metric_source,
                     surface=white_source,
-                    output=metric_output,
+                    output=generated_metric_output,
                     description=metric_description,
                     env=env,
                     force=opts.overwrite,
@@ -936,6 +1331,8 @@ def build_module(
                 )
             )
             exported_surfaces[f"{hemi}.{metric_name}"] = str(metric_output)
+            if opts.lesion:
+                lesion_scaffold_metrics[hemi][generated_metric_output] = metric_output
 
         white = hemi_paths["white"]
         pial = hemi_paths["pial"]
@@ -943,11 +1340,16 @@ def build_module(
             opts.out_dir
             / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_midthickness.surf.gii"
         )
+        generated_midthickness = (
+            surface_work_dir / "lesion_scaffold" / midthickness.name
+            if opts.lesion
+            else midthickness
+        )
         runner.add_step(
             _create_midthickness_step(
                 white=white,
                 pial=pial,
-                output=midthickness,
+                output=generated_midthickness,
                 env=env,
                 force=opts.overwrite,
             )
@@ -965,6 +1367,9 @@ def build_module(
             )
         )
         exported_surfaces[f"{hemi}.midthickness"] = str(midthickness)
+        if opts.lesion:
+            lesion_scaffold_surfaces[hemi][generated_midthickness] = midthickness
+            lesion_scaffold_anatomy[hemi]["midthickness"] = generated_midthickness
 
     fsaverage_space = opts.fsaverage_template
     fsaverage_xfms: dict[str, str] = {}
@@ -980,6 +1385,9 @@ def build_module(
             opts.out_dir
             / f"{opts.fs_subject}_from-fsnative_to-{fsaverage_space}_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
         )
+        generated_forward = (
+            surface_work_dir / "lesion_scaffold" / forward.name if opts.lesion else forward
+        )
         inverse = (
             opts.out_dir
             / f"{opts.fs_subject}_from-{fsaverage_space}_to-fsnative_hemi-{hemi_label}_mode-surface_xfm.surf.gii"
@@ -987,7 +1395,7 @@ def build_module(
         runner.add_step(
             _create_mri_conversion_step(
                 source=subject_registration,
-                output=forward,
+                output=generated_forward,
                 name=f"Export Hemisphere {hemi_label} fsnative-to-{fsaverage_space} Sphere",
                 env=env,
                 force=opts.overwrite,
@@ -1031,6 +1439,88 @@ def build_module(
             )
         fsaverage_xfms[f"hemi-{hemi_label}_fsnative_to_{fsaverage_space}"] = str(forward)
         fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_fsnative"] = str(inverse)
+        if opts.lesion:
+            lesion_scaffold_surfaces[hemi][generated_forward] = forward
+
+    lesion_vertex_mappings: dict[str, str] = {}
+    lesion_surface_validity: dict[str, str] = {}
+    if opts.lesion:
+        assert lesion_mask is not None
+        for hemi in ("lh", "rh"):
+            hemi_label = _hemi_label(hemi)
+            lesion_metric = (
+                surface_work_dir / "lesion_scaffold" / f"hemi-{hemi_label}_lesion.shape.gii"
+            )
+            runner.add_step(
+                Step.command_step(
+                    [
+                        "wb_command",
+                        "-volume-to-surface-mapping",
+                        str(lesion_mask),
+                        str(lesion_scaffold_anatomy[hemi]["midthickness"]),
+                        str(lesion_metric),
+                        "-ribbon-constrained",
+                        str(lesion_scaffold_anatomy[hemi]["white"]),
+                        str(lesion_scaffold_anatomy[hemi]["pial"]),
+                    ],
+                    name=f"Project Lesion to Hemisphere {hemi_label}",
+                    inputs=(
+                        lesion_mask,
+                        lesion_scaffold_anatomy[hemi]["midthickness"],
+                        lesion_scaffold_anatomy[hemi]["white"],
+                        lesion_scaffold_anatomy[hemi]["pial"],
+                    ),
+                    outputs=(lesion_metric,),
+                    env=env,
+                    force=opts.overwrite,
+                    parameters={"mapping": "ribbon_constrained"},
+                )
+            )
+            projected_metric = lesion_metric
+            if BOUNDARY_MARGIN_MM > 0:
+                dilated = lesion_metric.with_name(
+                    lesion_metric.name.replace("_lesion.", "_lesionDilated.")
+                )
+                runner.add_step(
+                    Step.command_step(
+                        [
+                            "wb_command",
+                            "-metric-dilate",
+                            str(lesion_metric),
+                            str(lesion_scaffold_anatomy[hemi]["midthickness"]),
+                            str(BOUNDARY_MARGIN_MM),
+                            str(dilated),
+                        ],
+                        name=f"Dilate Hemisphere {hemi_label} Lesion Boundary",
+                        inputs=(lesion_metric, lesion_scaffold_anatomy[hemi]["midthickness"]),
+                        outputs=(dilated,),
+                        env=env,
+                        force=opts.overwrite,
+                        parameters={"distance_mm": BOUNDARY_MARGIN_MM},
+                    )
+                )
+                projected_metric = dilated
+            mapping = (
+                opts.out_dir
+                / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_desc-surfaceVertexMapping.tsv"
+            )
+            validity = (
+                opts.out_dir
+                / f"{opts.fs_subject}_space-fsnative_hemi-{hemi_label}_desc-surfaceValidity.json"
+            )
+            runner.add_step(
+                create_cut_surfaces_step(
+                    scaffold_surface=lesion_scaffold_anatomy[hemi]["midthickness"],
+                    lesion_metric=projected_metric,
+                    surfaces=lesion_scaffold_surfaces[hemi],
+                    metrics=lesion_scaffold_metrics[hemi],
+                    mapping=mapping,
+                    summary=validity,
+                    force=opts.overwrite,
+                )
+            )
+            lesion_vertex_mappings[hemi] = str(mapping)
+            lesion_surface_validity[hemi] = str(validity)
 
     t1_fsaverage_xfms: dict[str, str] = {}
     for hemi_label in ("L", "R"):
@@ -1213,6 +1703,16 @@ def build_module(
             str(path): resolution.scientific_record()
             for path, resolution in gradient_resolutions.items()
         },
+        "bias_correction": bias_correction_contract(),
+        "surface_reconstruction": (
+            {
+                "backend": "FastSurfer-LIT",
+                "version": FASTSURFER_VERSION,
+                "source_revision": FASTSURFER_SOURCE_REVISION,
+            }
+            if opts.lesion
+            else surface_reconstruction_contract()
+        ),
         "inputs": {
             "t1w": [str(item.image) for item in inputs.t1w],
             "t2w": [str(item.image) for item in inputs.t2w],
@@ -1257,9 +1757,48 @@ def build_module(
             },
             "configuration_fingerprint": selected_configuration_fingerprint(),
         },
-        "output_metadata_contract": anatomical_output_contract(),
+        "output_metadata_contract": anatomical_output_contract(lesion=opts.lesion),
         "complete": True,
     }
+    if opts.lesion:
+        assert lesion_mask is not None
+        assert lesion_probability is not None
+        assert lesion_metadata is not None
+        assert lesion_qc is not None
+        assert inpainted_t1 is not None
+        assert lesion_reconstruction_summary is not None
+        manifest["lesion"] = {
+            "enabled": True,
+            "masker": {
+                "backend": "SynthStroke",
+                "model": MASKER_MODEL,
+                "revision": MASKER_REVISION,
+                "probability_threshold": PROBABILITY_THRESHOLD,
+                "test_time_augmentation": TEST_TIME_AUGMENTATION,
+            },
+            "reconstruction": {
+                "backend": "FastSurfer-LIT",
+                "version": FASTSURFER_VERSION,
+                "source_revision": FASTSURFER_SOURCE_REVISION,
+                "oci_digest": FASTSURFER_OCI_DIGEST,
+                "neurolit_version": NEUROLIT_VERSION,
+                "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
+            },
+            "boundary_margin_mm": BOUNDARY_MARGIN_MM,
+        }
+        manifest_outputs = manifest["outputs"]
+        assert isinstance(manifest_outputs, dict)
+        manifest_outputs.update(
+            inpainted_acpc_t1w=str(inpainted_t1),
+            inpainted_acpc_t1w_metadata=str(inpainted_t1.with_suffix("").with_suffix(".json")),
+            lesion_mask=str(lesion_mask),
+            lesion_metadata=str(lesion_metadata),
+            lesion_probability=str(lesion_probability),
+            lesion_qc=str(lesion_qc),
+            lesion_reconstruction_summary=str(lesion_reconstruction_summary),
+            surface_vertex_mappings=lesion_vertex_mappings,
+            surface_validity=lesion_surface_validity,
+        )
     manifest_path = anatomical_manifest_path(
         inputs.sub_id,
         project=opts.project,
@@ -1345,6 +1884,15 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--mni-template", type=Path, default=cfg.mni_template)
     p.add_argument("--synthstrip-container", type=Path, default=cfg.synthstrip_container)
+    p.add_argument("--freesurfer-container", type=Path, default=cfg.freesurfer_container)
+    p.add_argument("--lesion", action="store_true")
+    p.add_argument("--lesion-masker-command", type=Path, default=cfg.lesion.masker_command)
+    p.add_argument("--fastsurfer-image", type=Path, default=cfg.lesion.fastsurfer_image)
+    p.add_argument(
+        "--lesion-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=cfg.lesion.use_gpu,
+    )
     p.add_argument("--freesurfer-subjects-dir", type=Path, default=cfg.freesurfer_subjects_dir)
     p.add_argument("--out-dir", type=Path, default=cfg.out_dir)
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
@@ -1392,7 +1940,12 @@ def main(
     synthstrip_image = resolve_project_path(args.synthstrip_container, project=project)
     if synthstrip_image is None:
         raise SystemExit("Missing --synthstrip-container path.")
+    freesurfer_image = resolve_project_path(args.freesurfer_container, project=project)
+    if freesurfer_image is None:
+        raise SystemExit("Missing --freesurfer-container path.")
     site, _ = site_settings()
+    lesion_masker_command = resolve_project_path(args.lesion_masker_command, project=project)
+    fastsurfer_image = resolve_project_path(args.fastsurfer_image, project=project)
     container = build_container(
         ContainerSettings.from_args(args),
         work_directory=work_dir,
@@ -1415,7 +1968,14 @@ def main(
             mni_template=mni_template,
             container=container,
             synthstrip_image=synthstrip_image,
+            freesurfer_image=freesurfer_image,
             overwrite=bool(args.overwrite),
+            lesion=bool(args.lesion),
+            lesion_masker_command=lesion_masker_command,
+            synthstroke_data=Path(site["synthstroke_data"]),
+            fastsurfer_image=fastsurfer_image,
+            fastsurfer_data=Path(site["fastsurfer_data"]),
+            lesion_use_gpu=bool(args.lesion_use_gpu),
         ),
         execution_context=execution_context,
     )

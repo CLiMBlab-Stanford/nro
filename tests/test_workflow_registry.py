@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.runtime import load_runtime_configuration
 from nro.configuration.store import (
     CONFIGURATION_CLASSES,
@@ -37,9 +38,8 @@ def _write_yaml(path: Path, value: dict) -> None:
 def _test_store(path: Path) -> ConfigStore:
     repository_store = ConfigStore().root
     shutil.copytree(repository_store, path, dirs_exist_ok=True)
-    store = ConfigStore()
-    store.root = path
-    return store
+    refresh_manifest(path)
+    return ConfigStore(path)
 
 
 def _register_main_concurrently(bids_root: str) -> tuple[int, int]:
@@ -423,7 +423,7 @@ def test_all_lineage_directories_are_content_addressed(tmp_path: Path) -> None:
     assert clean["func_directory"] == registered.directories["func"]
     assert clean["anat_directory"] == registered.directories["anat"]
     assert micro["clean_directory"] == registered.directories["clean"]
-    assert networks["microparcellation_directory"] == registered.directories["microparcellation"]
+    assert networks["source_directory"] == registered.directories["microparcellation"]
 
 
 def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -> None:

@@ -14,6 +14,22 @@ Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
 dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
+Ordinary setup acquires the pinned FastSurfer image because its FreeSurfer 7.4.1
+installation performs conventional anatomical reconstruction. This does not run
+the FastSurfer reconstruction pipeline.
+Pass `--with-lesion` to install PyTorch, MONAI, safetensors, and SOCKS proxy
+support used by lesion-aware anatomy. It also acquires the pinned SynthStroke
+model and three NeuroLIT 0.6.1 checkpoints for the installed FastSurfer image. The
+SynthStroke model lives in `synthstroke_data`; the NeuroLIT checkpoints total
+about 711 MiB and live in `fastsurfer_data`. Both are site-managed paths rather
+than user caches. Setup verifies every model file against a pinned SHA-256, and
+workers perform no model downloads. This optional stack is omitted from
+ordinary installations. Shared installations use
+`./install --maintain --with-lesion`; development branches use
+`./install --with-lesion` from their checkout.
+When lesion GPU execution is enabled, the scheduler submits a dedicated worker
+with `--gres=gpu:1`. The cluster must provide a GPU through that generic Slurm
+resource. GPU workers do not remain idle after their ready lesion work ends.
 The installer includes the pinned official MARSS package. Pass `--without-marss`
 to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
 it whenever the multiband-factor threshold calls for correction.
@@ -248,12 +264,18 @@ Interactive and noninteractive setup use the same resolved defaults.
 The `definitions` locator selects the site-owned repository. It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic
-starters and validates an existing store without replacing its files. New stores
+starters and validates an existing store. New stores
 have no task models, event tables, or configured Flywheel servers. During the
 first maintenance run after this layout is introduced, setup moves old TOML
 settings and protected ingestion fields into `site/site.yml`, then reduces the
 TOML file to its locator. Commit the migrated definitions repository after
 review.
+
+Definitions stores have their own schema. Shared maintenance applies required
+migrations to a staged copy, validates it, and then rewrites affected files in
+place. This preserves readable files and the definitions repository's Git
+history. A branch installation may migrate only its selected private overlay;
+shared and parent stores are read-only and must already use the current schema.
 
 Accept all defaults to keep the displayed settings. If declined, the editor
 prompts for each setting independently. Enter keeps that value; Tab completes
@@ -281,7 +303,8 @@ The path editor accepts `definitions`, `bids`, `work`, `development`,
 `oslom`, `license`, `runtime`, `partition`, `viewing_partition`, `account`,
 `flywheel_server`, `flywheel_project`, and `binds`.
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
-`synthstrip`, `synbold`, `gradient_unwarp`, and `mni_template` can override
+`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `fastsurfer_data`, and
+`mni_template` can override
 individual resources otherwise derived from their parent directories. `binds`
 is a TOML list.
 Generic defaults omit CLIMBLAB's `/juice6` bind.
@@ -318,6 +341,15 @@ Python requirements are declared in `pyproject.toml` and resolved in `uv.lock`.
 Maintainers regenerate the lock when changing dependencies. Normal setup uses
 the existing lock and does not upgrade dependencies implicitly.
 
+The `lesion` extra provides nro's built-in SynthStroke adapter. nro owns this
+adapter so the anatomical graph does not depend on an unversioned site wrapper.
+The adapter checks the pinned model configuration and weight hashes, performs
+inference on a canonical 1 mm grid, and restores the lesion probability map to
+the exact source grid before thresholding. Setup downloads these files once to
+the configured `synthstroke_data` directory. A site may still set
+`lesion.masker_command` to an executable that implements the same command
+interface.
+
 Setup obtains QuNex 1.5.1, SynthStrip 1.7, and SynBOLD-DISCO 1.4 from pinned
 OCI digests. A site with an active gradient-unwarping profile also gets the
 pinned HCP base image that provides the correction tools. Sites without such a
@@ -326,6 +358,13 @@ reused and tested. Downloads use temporary paths and resource locks, then
 publish completed files atomically. Image receipts record the source and the
 generated SIF's SHA-256. A receipt documents acquisition, not historical
 provenance for pre-existing resources.
+
+With `--with-lesion`, setup also obtains FastSurfer 2.5.4 from its pinned OCI
+digest, the pinned SynthStroke model revision from Hugging Face, and NeuroLIT
+0.6.1 checkpoints from the official Zenodo record. Every file is checked
+against a pinned SHA-256 before publication. Workers use these site-managed
+resources read-only, so a scientific job never downloads or silently replaces
+model weights.
 
 Workbench 2.2.1 is installed from its official Linux archive when absent;
 the archive is checked against a pinned SHA-256 before extraction.

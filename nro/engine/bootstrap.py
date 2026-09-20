@@ -181,6 +181,36 @@ def check_branch_environment(site: Path, environment: Path) -> None:
     )
 
 
+def prepare_branch_definitions(site: Path, record: dict) -> None:
+    """Migrate only this branch's private layer and validate inherited stores."""
+    from nro.configuration.branch_definitions import inherited_definitions, read_selection
+    from nro.configuration.definition_migrations import (
+        migrate_store,
+        validate_store_integrity,
+    )
+    from nro.configuration.definitions import validate_store
+
+    values = settings(path=site)[0]
+    control = Path(values["registry"])
+    shared = Path(values["definitions"]).resolve()
+    validate_store_integrity(shared)
+    selected = read_selection(control, record["branch"], record["registry_id"])
+    roots = inherited_definitions(control, record, shared)
+    if selected is not None:
+        inherited = roots[1:]
+
+        def validate(candidate: Path) -> None:
+            validate_store(
+                candidate,
+                inherited_site=shared,
+                inherited_roots=inherited,
+            )
+
+        migrate_store(selected, validate=validate)
+    for inherited in roots[1:] if selected is not None else roots:
+        validate_store_integrity(inherited)
+
+
 def _fixed_launcher_record(text: str) -> dict | None:
     lines = text.splitlines()
     if len(lines) != 5 or lines[:3] != [
@@ -360,6 +390,11 @@ def _main(argv=None) -> None:
         help="Install Flywheel, dcm2bids, and DICOM Python dependencies",
     )
     parser.add_argument(
+        "--with-lesion",
+        action="store_true",
+        help="Install the SynthStroke dependencies used by lesion-aware anatomy",
+    )
+    parser.add_argument(
         "--without-marss",
         action="store_true",
         help="Omit the MARSS simultaneous-slice correction dependency",
@@ -391,6 +426,7 @@ def _main(argv=None) -> None:
             args.offline,
             args.without_oslom,
             args.with_bidsify,
+            args.with_lesion,
             args.without_marss,
             args.dev,
             args.accept_qunex_license,
@@ -563,6 +599,7 @@ def _main(argv=None) -> None:
             "ready": False,
             "with_oslom": not args.without_oslom,
             "with_bidsify": args.with_bidsify or bool(existing and existing.get("with_bidsify")),
+            "with_lesion": args.with_lesion or bool(existing and existing.get("with_lesion")),
             "with_marss": not args.without_marss,
             "dev": args.dev or bool(existing and existing.get("dev")),
             "local": args.local or bool(existing and existing.get("local")),
@@ -586,6 +623,8 @@ def _main(argv=None) -> None:
             sync += ["--extra", "oslom"]
         if record["with_bidsify"]:
             sync += ["--extra", "bidsify"]
+        if record["with_lesion"]:
+            sync += ["--extra", "lesion"]
         if record["with_marss"]:
             sync += ["--extra", "marss"]
         if not record["dev"]:
@@ -621,6 +660,8 @@ def _main(argv=None) -> None:
             command += ["--offline"]
         if not record["with_oslom"]:
             command += ["--without-oslom"]
+        if record["with_lesion"]:
+            command += ["--with-lesion"]
         if args.accept_qunex_license:
             command += ["--accept-qunex-license"]
         if record["local"]:
@@ -642,6 +683,7 @@ def _main(argv=None) -> None:
             subprocess.run(command, cwd=ROOT, env=env, check=True)
             binding = json.loads(paths.catalog.read_text())[branch_name]
             record.update(registry_id=binding["registry_id"], branch_catalog=str(paths.catalog))
+            prepare_branch_definitions(site, record)
         record["ready"] = True
         if mode == "shared":
             from nro.engine.shared_installation import publish

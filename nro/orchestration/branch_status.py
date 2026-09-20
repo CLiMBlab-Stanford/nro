@@ -25,12 +25,7 @@ def refresh(rows: list[dict], selection) -> None:
     scientific = BranchStore(Path(values["registry"])).registry_for_checkout(CHECKOUT)
     revisions = {row.key: row.revision for row in scientific.work_items()}
     store = ConfigStore()
-    workflows = {
-        path.name.removesuffix("_workflow.yml"): store.resolve(
-            path.name.removesuffix("_workflow.yml")
-        )
-        for path in (store.root / "workflows").glob("*_workflow.yml")
-    }
+    workflows = {identifier: store.resolve(identifier) for identifier in store.workflow_ids()}
     registered = {}
     planner = Planner(scientific, bids_root=Path(values["bids"]))
     targets = []

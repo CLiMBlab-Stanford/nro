@@ -23,7 +23,7 @@ class SkipSession(Exception):
 
 def event_candidates(config: dict, task: str) -> tuple[list[EventFile], list[str]]:
     """Return catalog entries and additional path candidates without choosing a variant."""
-    entries = EventStore(Path(config["event_store"])).candidates(task)
+    entries = EventStore(config["event_store"]).candidates(task)
     paths = sorted(
         {p for r in config["event_rules"] if r["task"] == task for p in glob.glob(r["pattern"])}
     )
@@ -59,6 +59,10 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
         if item.get("scanplan_include") is False:
             continue
         name = item["id"]
+        for conflict in item.get("metadata_conflicts", []):
+            field = conflict.get("field", "metadata")
+            reason = conflict.get("reason", "sources disagree")
+            unresolved.append(f"{name}: {field} metadata conflict ({reason})")
         kind = item["datatype"], item["suffix"]
         if not item.get("confirmed") or kind not in ALLOWED_TYPES:
             unresolved.append(f"{name}: acquisition classification needs review")
@@ -171,7 +175,7 @@ def _entities(answer: str) -> dict:
 
 def _events(record: dict, item: dict) -> str | None:
     config = record["config"]
-    catalog = EventStore(Path(config["event_store"]))
+    catalog = EventStore(config["event_store"])
     task = item["entities"].get("task", "")
     metadata = item.get("metadata", {})
     shape = metadata.get("_shape", [])
@@ -315,6 +319,16 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
         print(f"\nAcquisition {index + 1}: {item['id']}")
         if prepared:
             print(json.dumps(item.get("metadata", {}), indent=2))
+            for warning in item.get("metadata_warnings", []):
+                print("Metadata warning: " + warning)
+            for conflict in item.get("metadata_conflicts", []):
+                print(
+                    "Metadata conflict: "
+                    + str(conflict.get("field", "metadata"))
+                    + " ("
+                    + str(conflict.get("reason", "sources disagree"))
+                    + ")"
+                )
             classification = item.get("classification", {})
             guess = classification.get("bids_guess")
             print(

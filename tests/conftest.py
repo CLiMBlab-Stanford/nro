@@ -14,6 +14,7 @@ from nro.orchestration import scheduler_implementation
 
 @pytest.fixture(scope="session")
 def definitions_fixture(tmp_path_factory):
+    from nro.configuration.definition_migrations import refresh_manifest
     from nro.configuration.definitions import create_store
     from nro.configuration.site import read_site_definition, write_site_definition
 
@@ -33,6 +34,9 @@ def definitions_fixture(tmp_path_factory):
             }
         )
     )
+    # Test fixtures populate synthetic definitions directly. Record that
+    # controlled setup before exercising the public authoring paths.
+    refresh_manifest(root)
     settings, bidsify = read_site_definition(root)
     bidsify["servers"] = {
         "cni": {

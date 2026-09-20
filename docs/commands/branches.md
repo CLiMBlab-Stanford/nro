@@ -85,11 +85,19 @@ nro branch definitions --definitions /path/to/development-definitions
 
 The directory must already contain a valid private nro definitions store and
 must not contain `site/site.yml`. It inherits that protected document from the
-shared repository. Alternatively, `nro definitions create
+shared repository. Other definitions resolve through the registered branch
+tree: current branch, nearest parent first, then the shared repository. A
+private store therefore needs to contain only its overrides. Alternatively,
+`nro definitions create
 /path/to/development-definitions` creates a suitable starter store without
 selecting it or copying the lab's definitions. Selection is central:
 every installed checkout of the same branch uses the selected directory. No
 files are copied or Git operations performed by the selection command.
+
+Create and publish branch-specific definitions through nro's authoring commands.
+Direct edits are rejected by the store manifest. Installing the branch may
+migrate its selected private store in place, but it never modifies the shared
+store or a parent's private overlay.
 
 The selected store must not overlap shared definitions, private control state,
 or another branch's selected store. nro also rejects symbolic-link redirection
@@ -105,9 +113,9 @@ nro branch definitions --shared
 Selection does not change scientific observations. Subsequent planning compares
 compiled definitions by content, using the existing freshness rules. Changing a
 store path alone does not mark artifacts stale. Source capture records the
-selected branch definitions path; the execution-site snapshot always resolves
-from the shared protected document. Neither mechanism copies a definitions
-directory.
+nearest branch definitions path; parent lookup follows the centrally registered
+branch tree. The execution-site snapshot always resolves from the shared
+protected document. Neither mechanism copies a definitions directory.
 
 ## Storage and safeguards
 

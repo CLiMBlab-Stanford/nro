@@ -25,6 +25,14 @@ database records that branch's compiled scientific contracts, workflow
 lineages, and artifact observations. All projects and branches therefore share
 worker capacity without requiring the scheduler to import development code.
 
+The worker pool has separate general and GPU resource classes. General workers
+claim ordinary work. GPU workers claim only work that explicitly requires a
+GPU, currently lesion-aware anatomy with `lesion.use_gpu: true`. A GPU worker
+runs consecutive ready GPU work items, but exits as soon as none is ready. A
+general worker that completes an upstream dependency asks the scheduler to
+submit a new GPU worker when that completion makes GPU work ready. Both classes
+count against the same site-wide concurrency limit.
+
 ## Requests
 
 The common selector interface narrows projects, participants, modules,
@@ -37,9 +45,11 @@ nro run -p t20 -P nptl -m networks -w main -s fsnative -S 2
 
 The planner compiles the requested terminal work items and their dependency
 closure. Selecting an endpoint together with an upstream dependency does not
-duplicate demand. A bare invocation selects every endpoint of the default
-workflow, currently `dynconn`, `networks`, and `firstlevels`; firstlevels uses
-model set `main` unless the request selects another model or set.
+duplicate demand. A bare invocation derives the endpoints from each selected
+workflow. In `main`, these are `dynconn`, `networks`, and `firstlevels`;
+firstlevels uses model set `main` unless the request selects another model or
+set. A networks configuration can select dynconn or microparcellation as its
+source without making graph construction runtime-dependent.
 
 From `clean` onward, space and smoothing are independent work item entities.
 Multiple values request their cross-product. The planner does not register

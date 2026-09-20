@@ -1,7 +1,7 @@
 markup: main
 min_trs: 50
 gm_mask_threshold: 0.2
-confounds_regex: '^(global_signal|csf|white_matter|trans_[xyz]|rot_[xyz])(?:_derivative1)?(?:_power2)?$'
+confounds_regex: '^(global_signal|framewise_displacement|trans_[xyz]|rot_[xyz]|a_comp_cor_0[0-4]|cosine.*|.*_outlier.*)$'
 nuisance_variance_explained: 0.99
 minimum_temporal_rank: 30
 minimum_temporal_rank_fraction: 0.5

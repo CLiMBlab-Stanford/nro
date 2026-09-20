@@ -83,6 +83,8 @@ def main(argv: list[str] | None = None, *, execution_context=None) -> None:
         module_argv.extend(("--t1w", str(path)))
     for path in t2w:
         module_argv.extend(("--t2w", str(path)))
+    if markup.lesion:
+        module_argv.append("--lesion")
     run_anat(module_argv, **({"execution_context": execution_context} if execution_context else {}))
 
 

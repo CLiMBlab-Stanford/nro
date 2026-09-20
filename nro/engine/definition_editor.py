@@ -52,7 +52,14 @@ def _file_lock(path: Path, expected: bytes | None):
         yield
 
 
-def save_definition(path: Path, text: str, *, expected: bytes | None) -> None:
+def save_definition(
+    path: Path,
+    text: str,
+    *,
+    expected: bytes | None,
+    store_root: Path | None = None,
+    validate_store: Callable[[Path], None] | None = None,
+) -> None:
     """Atomically publish text if the target still matches its snapshot.
 
     Serialize cooperating writers with a persistent sibling lock. Direct edits
@@ -60,6 +67,15 @@ def save_definition(path: Path, text: str, *, expected: bytes | None) -> None:
     Existing permissions are preserved. New files are readable by other users.
     """
     with _definition_lock(path, expected):
+        if store_root is not None:
+            from nro.configuration.definition_migrations import update_store
+
+            update_store(
+                store_root,
+                {path.relative_to(store_root): text.encode("utf-8")},
+                validate=validate_store,
+            )
+            return
         mode = stat.S_IMODE(path.stat().st_mode) if expected is not None else 0o644
         with tempfile.TemporaryDirectory(prefix=".definition-", dir=path.parent) as directory:
             staged = Path(directory) / "definition.yml"
@@ -74,7 +90,13 @@ def save_definition(path: Path, text: str, *, expected: bytes | None) -> None:
                 os.replace(staged, path)
 
 
-def delete_definition(path: Path, *, expected: bytes) -> Path:
+def delete_definition(
+    path: Path,
+    *,
+    expected: bytes,
+    store_root: Path | None = None,
+    validate_store: Callable[[Path], None] | None = None,
+) -> Path:
     """Remove an unchanged definition and return a private recovery-copy path.
 
     Use the same lock as authoring writes. Only the named file is removed;
@@ -88,7 +110,16 @@ def delete_definition(path: Path, *, expected: bytes) -> Path:
             stream.write(expected)
             stream.flush()
             os.fsync(stream.fileno())
-        path.unlink()
+        if store_root is None:
+            path.unlink()
+        else:
+            from nro.configuration.definition_migrations import update_store
+
+            update_store(
+                store_root,
+                {path.relative_to(store_root): None},
+                validate=validate_store,
+            )
         return backup
 
 
@@ -100,6 +131,8 @@ def review_definition(
     validate: Callable[[str], None],
     source: Path | None = None,
     yes: bool = False,
+    store_root: Path | None = None,
+    validate_store: Callable[[Path], None] | None = None,
 ) -> bool:
     """Edit a private draft, validate it, show a diff, and confirm publication.
 
@@ -133,6 +166,11 @@ def review_definition(
             if command:
                 subprocess.run([*command, str(draft)], check=True)
             text = draft.read_text(encoding="utf-8")
+            if store_root is not None:
+                from nro.configuration.definition_migrations import normalize_managed_text
+
+                text = normalize_managed_text(path, text)
+                draft.write_text(text, encoding="utf-8")
             try:
                 validate(text)
             except ValueError as error:
@@ -164,7 +202,13 @@ def review_definition(
             if not yes and input(f"Save {path}? [y/N] ").strip().lower() not in {"y", "yes"}:
                 print("Cancelled; the stored definition is unchanged.")
                 return False
-            save_definition(path, text, expected=expected)
+            save_definition(
+                path,
+                text,
+                expected=expected,
+                store_root=store_root,
+                validate_store=validate_store,
+            )
             saved = True
             print(f"Saved {path}")
             return True

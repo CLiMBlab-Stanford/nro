@@ -44,6 +44,11 @@ The scientific and scheduler databases have independent schema markers. These
 are storage-format checks, not scientific freshness inputs.
 They evolve through the [registry migration contract](registry-migrations.md).
 
+Scientific artifact contracts evolve through a separate
+[contract-migration chain](artifact-contract-migrations.md). Any added setting must
+declare both its current default and its historical meaning. Do not use the current
+default to guess how an older derivative was produced.
+
 ### Requests and execution
 
 Once [a main scheduler is installed and active](commands/releases.md), branch

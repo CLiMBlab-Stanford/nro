@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import definitions_root
+from nro.configuration.site import definitions_roots
 from nro.engine.io import atomic_write_text
 
 
@@ -20,11 +20,18 @@ def model_path(identifier: str, root: Path | None = None) -> Path:
     parts = identifier.split("/")
     if len(parts) != 2 or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", p) for p in parts):
         raise ValueError("Model ID must be TASK/VARIANT using letters, digits and hyphens")
-    directory = Path(root) if root is not None else definitions_root() / "models"
-    path = directory / parts[0] / f"{parts[1]}.yml"
-    if not path.resolve().is_relative_to(directory.resolve()):
-        raise ValueError(f"Model escapes the model directory: {path}")
-    return path
+    directories = (
+        (Path(root),)
+        if root is not None
+        else tuple(store / "models" for store in definitions_roots())
+    )
+    paths = [directory / parts[0] / f"{parts[1]}.yml" for directory in directories]
+    for directory, path in zip(directories, paths, strict=True):
+        if not path.resolve().is_relative_to(directory.resolve()):
+            raise ValueError(f"Model escapes the model directory: {path}")
+        if path.is_file():
+            return path
+    return paths[0]
 
 
 def validate_task_model(value: dict) -> dict:
@@ -126,23 +133,34 @@ def model_contract(entities: dict) -> dict:
 def _selected_models(
     *, tasks=(), models=(), model_sets=None, root: Path | None = None
 ) -> dict[str, dict]:
-    root = Path(root) if root is not None else definitions_root() / "models"
-    if not root.is_dir():
-        raise ValueError(f"Model directory does not exist: {root}; validate the definitions store")
+    roots = (
+        (Path(root),)
+        if root is not None
+        else tuple(store / "models" for store in definitions_roots())
+    )
+    if not any(directory.is_dir() for directory in roots):
+        raise ValueError(
+            "Model directory does not exist in the definitions chain: " + ", ".join(map(str, roots))
+        )
     sets = ("main",) if model_sets is None and not models else tuple(model_sets or ())
     selected = {}
-    for path in sorted(root.glob("*/*.yml")):
-        identifier = f"{path.parent.name}/{path.stem}"
-        model_path(identifier, root)
-        if tasks and path.parent.name not in tasks:
-            continue
-        if models and path.stem not in models and identifier not in models:
-            continue
-        model = parse_mapping(path.read_text(), source=str(path))
-        memberships = model_memberships(model)
-        if sets and not set(sets).intersection(memberships):
-            continue
-        selected[identifier] = model
+    seen = set()
+    for directory in roots:
+        for path in sorted(directory.glob("*/*.yml")):
+            identifier = f"{path.parent.name}/{path.stem}"
+            if identifier in seen:
+                continue
+            seen.add(identifier)
+            model_path(identifier, directory)
+            if tasks and path.parent.name not in tasks:
+                continue
+            if models and path.stem not in models and identifier not in models:
+                continue
+            model = parse_mapping(path.read_text(), source=str(path))
+            memberships = model_memberships(model)
+            if sets and not set(sets).intersection(memberships):
+                continue
+            selected[identifier] = model
     return selected
 
 

@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import definitions_root, settings
+from nro.configuration.site import resolve_definition, settings
 
 CATALOG_RELATIVE_PATH = Path("hardware/gradient_unwarping.yml")
 SUPPORTED_ACTIONS = frozenset({"unwarp", "already_corrected"})
+GRADIENT_CORRECTION_MODES = frozenset({"2D", "3D", "none"})
 GRADIENT_UNWARP_METHOD = "HCP GradientDistortionUnwarp.sh"
 GRADIENT_UNWARP_IMAGE = (
     "docker://flywheel/hcp-base@"
@@ -57,15 +58,20 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_catalog(root: Path | None = None) -> tuple[Path, dict[str, Any]]:
-    base = definitions_root() if root is None else Path(root).expanduser().resolve()
-    path = base / CATALOG_RELATIVE_PATH
-    if root is None and not path.is_file():
-        shared = Path(settings()[0]["definitions"]).expanduser().resolve()
-        shared_path = shared / CATALOG_RELATIVE_PATH
-        if shared_path.is_file():
-            path = shared_path
-    if not path.is_file():
+def _load_catalog(root: Path | tuple[Path, ...] | None = None) -> tuple[Path, dict[str, Any]]:
+    path = (
+        resolve_definition(CATALOG_RELATIVE_PATH)
+        if root is None
+        else next(
+            (
+                Path(candidate).expanduser().resolve() / CATALOG_RELATIVE_PATH
+                for candidate in (root if isinstance(root, tuple) else (root,))
+                if (Path(candidate).expanduser().resolve() / CATALOG_RELATIVE_PATH).is_file()
+            ),
+            None,
+        )
+    )
+    if path is None or not path.is_file():
         packaged = Path(__file__).parent / "starters" / CATALOG_RELATIVE_PATH
         path = packaged
     document = parse_mapping(path.read_text(encoding="utf-8"), source=str(path))
@@ -106,6 +112,7 @@ def _validate_profile(identifier: str, value: object, *, source: Path) -> dict[s
         "action",
         "coefficients",
         "override_existing_correction",
+        "acquisition_metadata",
     }
     if unknown:
         raise ValueError(
@@ -135,15 +142,84 @@ def _validate_profile(identifier: str, value: object, *, source: Path) -> dict[s
         raise ValueError(
             f"{source}: profile {identifier!r} override_existing_correction must be boolean"
         )
+    acquisition_metadata = value.get("acquisition_metadata", {})
+    if not isinstance(acquisition_metadata, dict):
+        raise ValueError(f"{source}: profile {identifier!r} acquisition_metadata must be a mapping")
+    unknown_metadata = set(acquisition_metadata) - {
+        "nonlinear_gradient_correction",
+        "gradient_correction_mode",
+        "gradient_coil_model",
+    }
+    if unknown_metadata:
+        raise ValueError(
+            f"{source}: profile {identifier!r} has unknown acquisition metadata: "
+            + ", ".join(sorted(unknown_metadata))
+        )
+    nonlinear = acquisition_metadata.get("nonlinear_gradient_correction")
+    if nonlinear is not None and not isinstance(nonlinear, bool):
+        raise ValueError(
+            f"{source}: profile {identifier!r} nonlinear_gradient_correction must be boolean"
+        )
+    correction_mode = acquisition_metadata.get("gradient_correction_mode")
+    if correction_mode is not None and correction_mode not in GRADIENT_CORRECTION_MODES:
+        raise ValueError(
+            f"{source}: profile {identifier!r} gradient_correction_mode must be 2D, 3D, or none"
+        )
+    if correction_mode in {"2D", "3D"} and nonlinear is not True:
+        raise ValueError(
+            f"{source}: profile {identifier!r} {correction_mode} correction requires "
+            "nonlinear_gradient_correction: true"
+        )
+    if correction_mode == "none" and nonlinear is not False:
+        raise ValueError(
+            f"{source}: profile {identifier!r} correction mode none requires "
+            "nonlinear_gradient_correction: false"
+        )
+    coil_model = acquisition_metadata.get("gradient_coil_model")
+    if coil_model is not None and (not isinstance(coil_model, str) or not coil_model.strip()):
+        raise ValueError(
+            f"{source}: profile {identifier!r} gradient_coil_model must be a nonempty string"
+        )
     return {
         "match": dict(match),
         "action": action,
         "coefficients": coefficients,
         "override_existing_correction": override,
+        "acquisition_metadata": dict(acquisition_metadata),
     }
 
 
-def validate_gradient_unwarping_catalog(root: Path | None = None) -> int:
+def resolve_acquisition_metadata(
+    metadata: Mapping[str, object],
+    *,
+    definitions: Path | tuple[Path, ...] | None = None,
+) -> tuple[str | None, dict[str, object], dict[str, object]]:
+    """Return the single matching site's acquisition metadata assertion.
+
+    The first mapping contains the fields used to match the scanner. The second
+    contains optional facts that cannot always be recovered from exported
+    DICOMs. An acquisition that matches multiple profiles is ambiguous and is
+    rejected even when the asserted values agree.
+    """
+    source, raw_profiles = _load_catalog(definitions)
+    matches: list[tuple[str, dict[str, Any], dict[str, object]]] = []
+    for identifier, raw_profile in raw_profiles.items():
+        profile = _validate_profile(identifier, raw_profile, source=source)
+        matched = {key: metadata.get(key) for key in profile["match"]}
+        if all(_matches(expected, matched[key]) for key, expected in profile["match"].items()):
+            matches.append((identifier, profile, matched))
+    if len(matches) > 1:
+        raise ValueError(
+            "Acquisition metadata matches multiple hardware profiles: "
+            + ", ".join(identifier for identifier, _, _ in matches)
+        )
+    if not matches:
+        return None, {}, {}
+    identifier, profile, matched = matches[0]
+    return identifier, matched, dict(profile["acquisition_metadata"])
+
+
+def validate_gradient_unwarping_catalog(root: Path | tuple[Path, ...] | None = None) -> int:
     """Validate the selected hardware catalog and return its profile count."""
     source, profiles = _load_catalog(root)
     for identifier, profile in profiles.items():
@@ -151,7 +227,7 @@ def validate_gradient_unwarping_catalog(root: Path | None = None) -> int:
     return len(profiles)
 
 
-def gradient_unwarping_configured(root: Path | None = None) -> bool:
+def gradient_unwarping_configured(root: Path | tuple[Path, ...] | None = None) -> bool:
     """Report whether the site catalog contains a profile that applies correction."""
     source, profiles = _load_catalog(root)
     return any(
@@ -160,7 +236,7 @@ def gradient_unwarping_configured(root: Path | None = None) -> bool:
     )
 
 
-def gradient_unwarping_catalog_path(root: Path | None = None) -> Path:
+def gradient_unwarping_catalog_path(root: Path | tuple[Path, ...] | None = None) -> Path:
     """Return the external catalog when present, otherwise the packaged empty catalog."""
     return _load_catalog(root)[0]
 
@@ -170,7 +246,7 @@ def gradient_unwarping_records(
     *,
     mode: str,
     markup=None,
-    definitions: Path | None = None,
+    definitions: Path | tuple[Path, ...] | None = None,
     coefficient_root: Path | None = None,
 ) -> tuple[list[dict[str, object]], dict[Path, GradientUnwarpingResolution]]:
     """Resolve path-independent processing records for selected BIDS images."""
@@ -181,7 +257,7 @@ def gradient_unwarping_records(
     records: list[dict[str, object]] = []
     resolutions: dict[Path, GradientUnwarpingResolution] = {}
     sources = sorted({Path(image).expanduser().absolute() for image in images})
-    selected_definitions = definitions_root() if definitions is None else definitions
+    selected_definitions = None if definitions is None else definitions
     selected_coefficients = (
         Path(settings()[0]["gradient_coefficients"])
         if coefficient_root is None
@@ -207,7 +283,7 @@ def resolve_gradient_unwarping(
     metadata: Mapping[str, object],
     *,
     mode: str,
-    definitions: Path | None = None,
+    definitions: Path | tuple[Path, ...] | None = None,
     coefficient_root: Path | None = None,
 ) -> GradientUnwarpingResolution:
     """Resolve one acquisition or reject ambiguous and unsupported metadata."""

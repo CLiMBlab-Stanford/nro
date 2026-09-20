@@ -10,6 +10,7 @@ from nro.engine.artifact_metadata import (
     metadata_value,
     validate_metadata_fields,
 )
+from nro.modules.func.contract import functional_output_contract
 from nro.orchestration import catalog
 
 
@@ -56,6 +57,13 @@ def test_metadata_contract_rejects_changed_defaults_and_new_requirements() -> No
         recorded,
         {"manifest_fields": {"Optional": "integer"}},
     )
+
+
+def test_functional_confounds_schema_invalidates_incomplete_historical_outputs() -> None:
+    current = functional_output_contract()
+    recorded = {key: value for key, value in current.items() if key != "confounds"}
+
+    assert not metadata_contract_compatible(recorded, current)
 
 
 def test_metadata_numbers_must_be_finite() -> None:

@@ -6,7 +6,9 @@ import sys
 from typing import TYPE_CHECKING, Mapping
 
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
-from nro.engine.targets import smoothing_entity_value
+from nro.engine.targets import is_surface_space, smoothing_entity_value
+from nro.modules.dynconn.contract import dynconn_output_paths
+from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.modules.networks.paths import fixed_output_paths
 from nro.modules.networks.references import reference_paths
 from nro.orchestration.contracts import WorkItemSpec
@@ -25,6 +27,7 @@ def plan_work_items(
     lineage = context.registered.lineages[descriptor.configuration_class]
     directory_label = context.registered.directories[descriptor.configuration_class]
     values = context.workflow.configuration("networks").values
+    source_module = str(values["connectivity_source"])
     output_base = module_derivatives_root(
         "networks",
         directory_label,
@@ -40,10 +43,8 @@ def plan_work_items(
         entities = {"space": space, "smoothing": str(smoothing)}
         output_root = output_base / context.sub_id
         prefix = f"{base_prefix}_space-{space}_smoothing-{smoothing_entity_value(smoothing)}"
-        micro = next(
-            work_item
-            for work_item in upstream["microparcellation"]
-            if work_item.entities == entities
+        source = next(
+            work_item for work_item in upstream[source_module] if work_item.entities == entities
         )
         result.append(
             WorkItemSpec.create(
@@ -78,9 +79,24 @@ def plan_work_items(
                     "--smoothing",
                     str(smoothing),
                 ),
-                dependencies=(micro.key, anat.key),
+                dependencies=(source.key, anat.key),
                 input_paths=(
                     *context.aggregate_source_inputs,
+                    *(
+                        (
+                            dynconn_output_paths(
+                                source.output_root,
+                                source.output_prefix,
+                                "surface" if is_surface_space(space) else "volume",
+                            )["manifest"],
+                        )
+                        if source_module == "dynconn"
+                        else (
+                            microparcellation_output_paths(
+                                source.output_root, source.output_prefix
+                            )["manifest"],
+                        )
+                    ),
                     anatomical_manifest_path(
                         context.sub_id,
                         project=context.project,

@@ -425,6 +425,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
                 ("Queued", False),
                 ("Waiting", False),
                 ("Stopped", False),
+                ("Timeout", False),
                 ("Error", False),
                 ("Missing", False),
                 ("Stale", False),
@@ -445,6 +446,7 @@ def test_resume_uses_demand_only_for_incomplete_artifact_states() -> None:
         ("Queued", False),
         ("Waiting", False),
         ("Stopped", False),
+        ("Timeout", False),
         ("Error", False),
         ("Missing", True),
         ("Stale", True),
@@ -492,19 +494,11 @@ def test_run_can_disable_ancestor_reuse() -> None:
     assert build_parser().parse_args(["--no-inherit"]).no_inherit
 
 
-def test_run_default_targets_follow_catalog(monkeypatch) -> None:
-    from dataclasses import replace
-
+def test_run_default_targets_follow_catalog() -> None:
     from nro.orchestration import catalog
 
-    consumer = replace(
-        catalog.module_descriptor("firstlevels"),
-        name="consumer",
-        upstream_modules=("firstlevels",),
-    )
-    monkeypatch.setitem(catalog.MODULE_CATALOG, consumer.name, consumer)
     selection = core_selection(build_parser().parse_args([]))
-    assert selection.modules == ("dynconn", "networks", "consumer")
+    assert selection.modules == catalog.terminal_modules()
     explicit = core_selection(build_parser().parse_args(["-m", "func"]))
     assert explicit.modules == ("func",)
 
@@ -1245,7 +1239,7 @@ def test_run_requests_each_selected_branch_across_projects(
     definition = "conditions: trial_type\ncontrasts:\n  S: {S: 1}\n"
     _write(models / "main.yml", "model_set: main\n" + definition)
     _write(models / "development.yml", "model_set: development\n" + definition)
-    monkeypatch.setattr(task_models, "definitions_root", lambda: tmp_path / "config")
+    monkeypatch.setattr(task_models, "definitions_roots", lambda: (tmp_path / "config",))
     bids = tmp_path / "bids"
     for project in ("alpha", "beta"):
         for participant, task in (("01", "langlocSN"), ("02", "rest")):
@@ -1577,3 +1571,61 @@ def test_worker_script_records_memory_tier(tmp_path: Path) -> None:
     assert other != script
     assert "#SBATCH --partition=sphinx" in script.read_text()
     assert "#SBATCH --partition=john" in other.read_text()
+
+
+def test_gpu_worker_script_requests_one_gpu_and_never_lingers(tmp_path: Path) -> None:
+    from nro.orchestration.scheduler_service import _worker_script_tiers
+
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+
+    script = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=12,
+        memory_gb=64,
+        cpus=2,
+        resource_class="gpu",
+        idle_timeout=30,
+    )
+    general = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=12,
+        memory_gb=64,
+        cpus=2,
+        resource_class="large",
+        idle_timeout=30,
+    )
+    smaller_gpu = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=12,
+        memory_gb=32,
+        cpus=2,
+        resource_class="gpu",
+        idle_timeout=30,
+    )
+
+    text = script.read_text()
+    assert script.name.startswith("worker-gpu-64gb-")
+    assert script.stem.rsplit("-", 1)[-1] == general.stem.rsplit("-", 1)[-1]
+    assert "#SBATCH --job-name=nro-gpu-worker" in text
+    assert "#SBATCH --gres=gpu:1" in text
+    assert "--resource-class gpu" in text
+    assert "--idle-timeout 0" in text
+    assert "#SBATCH --gres=gpu:1" not in general.read_text()
+    assert "--idle-timeout 30" in general.read_text()
+    assert _worker_script_tiers(
+        registry,
+        resource_class="gpu",
+        memory_gb=64,
+        profile=script.stem.rsplit("-", 1)[-1],
+    ) == ((32, smaller_gpu), (64, script))

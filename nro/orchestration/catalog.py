@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Mapping
 
 from nro.modules import MODULE_NAMES
-from nro.modules.anat.contract import anatomical_output_contract, pose_normalization_contract
+from nro.modules.anat.contract import (
+    anatomical_output_contract,
+    bias_correction_contract,
+    pose_normalization_contract,
+    surface_reconstruction_contract,
+)
 from nro.modules.anat.planning import plan_work_items as plan_anat_work_items
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.clean.planning import plan_work_items as plan_clean_work_items
@@ -26,6 +31,7 @@ from nro.modules.microparcellation.planning import (
 )
 from nro.modules.networks.contract import networks_output_contract
 from nro.modules.networks.planning import plan_work_items as plan_networks_work_items
+from nro.orchestration.dependencies import direct_dependencies
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec
@@ -41,8 +47,10 @@ ProcessingContractFunction = Callable[[], Mapping[str, object]]
 
 def _anat_processing_contract() -> Mapping[str, object]:
     return {
+        "bias_correction": bias_correction_contract(),
         "output_metadata": anatomical_output_contract(),
         "pose_normalization": pose_normalization_contract(),
+        "surface_reconstruction": surface_reconstruction_contract(),
     }
 
 
@@ -81,7 +89,6 @@ class ModuleDescriptor:
     scope: str
     output_format: str
     resource_class: str
-    upstream_modules: tuple[str, ...]
     plan: PlanFunction
     processing_contract: ProcessingContractFunction
     select_runs: Callable | None = None
@@ -110,6 +117,11 @@ class ModuleDescriptor:
             **(self.work_item_processing(entities) if self.work_item_processing else {}),
         }
 
+    def dependencies_for(self, configuration: Mapping[str, object]) -> tuple[str, ...]:
+        """Return direct dependencies for one resolved configuration."""
+
+        return direct_dependencies(self.name, configuration)
+
 
 BUILTIN_MODULES = (
     ModuleDescriptor(
@@ -117,17 +129,19 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="BIDS-like anatomical images, surfaces, transforms, and module manifest",
         resource_class="large",
-        upstream_modules=(),
         plan=plan_anat_work_items,
         processing_contract=_anat_processing_contract,
-        dynamic_processing_keys=("gradient_unwarping",),
+        dynamic_processing_keys=(
+            "gradient_unwarping",
+            "lesion_reconstruction",
+            "surface_reconstruction",
+        ),
     ),
     ModuleDescriptor(
         name="func",
         scope="run",
         output_format="BIDS-like functional images, confounds, transforms, and module manifest",
         resource_class="large",
-        upstream_modules=("anat",),
         plan=plan_func_work_items,
         processing_contract=_func_processing_contract,
         dynamic_processing_keys=("gradient_unwarping", "final_resampling"),
@@ -137,7 +151,6 @@ BUILTIN_MODULES = (
         scope="run",
         output_format="BIDS cleaned functional images and module manifest",
         resource_class="medium",
-        upstream_modules=("func", "anat"),
         plan=plan_clean_work_items,
         processing_contract=_clean_processing_contract,
     ),
@@ -146,7 +159,6 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="Full or low-rank dynamic-connectivity time series and metadata",
         resource_class="large",
-        upstream_modules=("clean",),
         plan=plan_dynconn_work_items,
         processing_contract=_dynconn_processing_contract,
     ),
@@ -155,7 +167,6 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="Subject-level BIDS-like CIFTI microparcellation products",
         resource_class="large",
-        upstream_modules=("clean", "anat"),
         plan=plan_microparcellation_work_items,
         processing_contract=_microparcellation_processing_contract,
     ),
@@ -164,7 +175,6 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="Subject-level BIDS-like CIFTI network maps, labels, and metadata",
         resource_class="medium",
-        upstream_modules=("microparcellation", "anat"),
         plan=plan_networks_work_items,
         processing_contract=_networks_processing_contract,
     ),
@@ -173,7 +183,6 @@ BUILTIN_MODULES = (
         scope="subject",
         output_format="Task/model run, session and subject GLM maps and compact covariance",
         resource_class="medium",
-        upstream_modules=("func", "anat"),
         plan=plan_firstlevels_work_items,
         processing_contract=_firstlevels_processing_contract,
         select_runs=select_model_runs,
@@ -196,20 +205,29 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
     """Normalize recorded scientific syntax without consulting mutable definitions."""
     from nro.configuration.store import configuration_fingerprint
     from nro.engine.artifact_metadata import metadata_contract_compatible
+    from nro.orchestration.contract_migrations import migrate_contract
 
+    recorded_contract = contract
+    resolved = configuration.get("resolved") if isinstance(configuration, dict) else None
+    contract, migrated_configuration = migrate_contract(recorded_contract, resolved)
     descriptor = module_descriptor(contract["module"])
     if isinstance(configuration, dict) and contract.get("configuration") == configuration.get(
         "fingerprint"
     ):
         kind = descriptor.configuration_class
-        values = configuration.get("resolved")
+        values = resolved
         identifier = configuration.get("id")
         if isinstance(values, dict) and isinstance(identifier, str):
             if configuration_fingerprint(kind, identifier, values) == configuration["fingerprint"]:
+                assert migrated_configuration is not None
                 contract = {
                     **contract,
                     "configuration": configuration_fingerprint(
-                        kind, identifier, values, scientific=True
+                        kind,
+                        identifier,
+                        migrated_configuration,
+                        scientific=True,
+                        complete_snapshot=True,
                     ),
                 }
     processing = contract.get("processing")
@@ -227,15 +245,23 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
     return {**contract, "processing": processing}
 
 
-def terminal_modules() -> tuple[str, ...]:
-    """Return modules with no downstream consumers, in catalog order.
+def terminal_modules(workflow=None) -> tuple[str, ...]:
+    """Return modules with no downstream consumers for one resolved workflow."""
 
-    Workflows select configurations for this shared graph; they do not change
-    its topology. Requesting these endpoints covers every branch.
-    """
-    upstream = {
-        name for descriptor in MODULE_CATALOG.values() for name in descriptor.upstream_modules
-    }
+    if workflow is None:
+        upstream = {
+            name
+            for descriptor in MODULE_CATALOG.values()
+            for name in descriptor.dependencies_for({})
+        }
+    else:
+        upstream = {
+            name
+            for descriptor in MODULE_CATALOG.values()
+            for name in descriptor.dependencies_for(
+                workflow.configuration(descriptor.configuration_class).values
+            )
+        }
     return tuple(name for name in MODULE_CATALOG if name not in upstream)
 
 
@@ -254,8 +280,8 @@ def normalize_module(value: str) -> str:
     return module_descriptor(value).name
 
 
-def modules_through(target: str) -> tuple[ModuleDescriptor, ...]:
-    """Return the dependency closure of a target in catalog order."""
+def modules_through(target: str, workflow) -> tuple[ModuleDescriptor, ...]:
+    """Return one workflow's dependency closure in catalog order."""
     target = normalize_module(target)
     required: set[str] = set()
 
@@ -263,7 +289,8 @@ def modules_through(target: str) -> tuple[ModuleDescriptor, ...]:
         if name in required:
             return
         descriptor = module_descriptor(name)
-        for upstream in descriptor.upstream_modules:
+        configuration = workflow.configuration(descriptor.configuration_class).values
+        for upstream in descriptor.dependencies_for(configuration):
             visit(upstream)
         required.add(name)
 

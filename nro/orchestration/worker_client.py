@@ -178,14 +178,34 @@ class WorkerSchedulerClient:
         """Reassess demanded artifacts and cancel obsolete attempts."""
         return int(self._call("refresh"))
 
-    def required_memory_above(self, memory_gb: int) -> int | None:
+    def required_memory_above(
+        self, memory_gb: int, *, resource_classes: Sequence[str] = ()
+    ) -> int | None:
         """Return the smallest ready memory tier above this worker's capacity."""
-        value = self._call("required_memory", memory_gb=memory_gb, durable=False)
+        value = self._call(
+            "required_memory",
+            memory_gb=memory_gb,
+            resource_classes=list(resource_classes),
+            durable=False,
+        )
         return None if value is None else int(value)
 
-    def request_capacity(self, kind: str, *, memory_gb: int, profile: str | None = None) -> None:
+    def request_capacity(
+        self,
+        kind: str,
+        *,
+        resource_class: str,
+        memory_gb: int,
+        profile: str | None = None,
+    ) -> None:
         """Ask the controller to supply eligible worker capacity."""
-        self._call("request_capacity", kind=kind, memory_gb=memory_gb, profile=profile)
+        self._call(
+            "request_capacity",
+            kind=kind,
+            resource_class=resource_class,
+            memory_gb=memory_gb,
+            profile=profile,
+        )
 
     def close_worker(self, worker_id: str, *, state: str = "exited") -> None:
         """Publish this worker's terminal state."""

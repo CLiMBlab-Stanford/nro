@@ -100,7 +100,7 @@ def plan_work_items(
             images,
             mode=gradient_mode,
             markup=context.source_markup,
-            definitions=context.definitions_root,
+            definitions=context.definitions_roots,
             coefficient_root=context.gradient_coefficients_root,
         )
         bold_resolution = gradient_resolutions.get(run.path.expanduser().absolute())

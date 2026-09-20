@@ -5,6 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from nro.engine.artifact_metadata import validate_metadata_fields
+from nro.modules.anat.policy import (
+    bias_correction_contract as bias_correction_contract,
+)
+from nro.modules.anat.policy import (
+    surface_reconstruction_contract as surface_reconstruction_contract,
+)
 
 ANATOMICAL_MANIFEST_FIELDS = {
     "subject": "string",
@@ -12,6 +18,8 @@ ANATOMICAL_MANIFEST_FIELDS = {
     "fsaverage_template": "string",
     "selection_strategy": "string",
     "gradient_unwarping": "mapping",
+    "bias_correction": "mapping",
+    "surface_reconstruction": "mapping",
     "inputs": "mapping",
     "inputs.t1w": "string_list",
     "inputs.t2w": "string_list",
@@ -39,6 +47,23 @@ ANATOMICAL_MANIFEST_FIELDS = {
     "complete": "boolean",
 }
 
+LESION_MANIFEST_FIELDS = {
+    "lesion": "mapping",
+    "lesion.enabled": "boolean",
+    "lesion.masker": "mapping",
+    "lesion.reconstruction": "mapping",
+    "lesion.boundary_margin_mm": "number",
+    "outputs.inpainted_acpc_t1w": "string",
+    "outputs.inpainted_acpc_t1w_metadata": "string",
+    "outputs.lesion_mask": "string",
+    "outputs.lesion_metadata": "string",
+    "outputs.lesion_probability": "string",
+    "outputs.lesion_qc": "string",
+    "outputs.lesion_reconstruction_summary": "string",
+    "outputs.surface_vertex_mappings": "mapping",
+    "outputs.surface_validity": "mapping",
+}
+
 
 def pose_normalization_contract() -> dict[str, object]:
     """Describe the substantive ACPC pose-normalization method."""
@@ -50,15 +75,22 @@ def pose_normalization_contract() -> dict[str, object]:
     }
 
 
-def anatomical_output_contract() -> dict[str, object]:
+def anatomical_output_contract(*, lesion: bool = False) -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
-    return {"publication_manifest_fields": dict(ANATOMICAL_MANIFEST_FIELDS)}
+    fields = dict(ANATOMICAL_MANIFEST_FIELDS)
+    if lesion:
+        fields.update(LESION_MANIFEST_FIELDS)
+    return {"publication_manifest_fields": fields}
 
 
 def validate_anatomical_manifest(document: Mapping[str, object]) -> None:
     """Validate required metadata field types and structure; reject an incomplete publication contract."""
+    lesion = document.get("lesion")
+    fields = dict(ANATOMICAL_MANIFEST_FIELDS)
+    if isinstance(lesion, Mapping) and lesion.get("enabled") is True:
+        fields.update(LESION_MANIFEST_FIELDS)
     validate_metadata_fields(
         document,
-        ANATOMICAL_MANIFEST_FIELDS,
+        fields,
         label="Anatomical publication manifest",
     )

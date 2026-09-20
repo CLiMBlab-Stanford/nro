@@ -28,6 +28,7 @@ from .constants import (
     _FREESURFER_ASEG_LABELS,
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
+from .policy import FREESURFER_BUILD, FREESURFER_VERSION
 
 
 def _robust_template_command(
@@ -177,6 +178,27 @@ def _brain_extract_anat_copy(
         finalize=finalize,
         validate=validate,
         parameters={"brain_extraction": "mri_synthstrip", "image": synthstrip_image},
+    )
+
+
+def _create_apply_brain_mask_step(
+    *,
+    source: Path,
+    mask: Path,
+    output: Path,
+    env: dict[str, str],
+    force: bool,
+) -> Step:
+    """Apply a tracked binary brain mask without estimating it again."""
+    return Step.command_step(
+        ["fslmaths", str(source), "-mas", str(mask), str(output)],
+        name="Apply Anatomical Brain Mask",
+        outputs=(output,),
+        inputs=(source, mask),
+        force=force,
+        env=env,
+        prepare=lambda: output.parent.mkdir(parents=True, exist_ok=True),
+        parameters={"mask_application": "binary_multiplication"},
     )
 
 
@@ -521,7 +543,6 @@ def _write_json_step(
         for value in payload.get("Sources", [])
         if isinstance(value, str)
         for candidate in (Path(value),)
-        if candidate.exists()
     )
     return create_json_step(
         step_name=step_name,
@@ -672,6 +693,9 @@ def _create_recon_all_step(
     t2w: Optional[Path],
     subjects_dir: Path,
     fs_subject: str,
+    runtime: str,
+    image: Path,
+    license_file: Path,
     force: bool,
 ) -> Step:
     if t1w is None and t2w is None:
@@ -682,20 +706,100 @@ def _create_recon_all_step(
     recon_done = subject_dir / "scripts" / "recon-all.done"
     breadcrumb = _recon_breadcrumb(subject_dir)
 
+    def container_command(command: Sequence[str]) -> list[str]:
+        binds = [
+            f"{subjects_dir}:/subjects",
+            f"{license_file}:/license.txt:ro",
+        ]
+        inputs = [path for path in (t1w, t2w) if path is not None]
+        mounted: dict[Path, str] = {}
+        for index, path in enumerate(inputs, start=1):
+            parent = path.parent.resolve()
+            if parent not in mounted:
+                mounted[parent] = f"/input-{index}"
+                binds.append(f"{parent}:{mounted[parent]}:ro")
+
+        def translated(path: Path) -> str:
+            return f"{mounted[path.parent.resolve()]}/{path.name}"
+
+        translated_command = [
+            translated(Path(item[4:])) if item.startswith("NRO:/") else item for item in command
+        ]
+        setup = (
+            "export FREESURFER_HOME=/opt/freesurfer; "
+            "export SUBJECTS_DIR=/subjects; export FS_LICENSE=/license.txt; "
+            'source /opt/freesurfer/SetUpFreeSurfer.sh >/dev/null; exec "$@"'
+        )
+        return [
+            runtime,
+            "exec",
+            "--cleanenv",
+            "--bind",
+            ",".join(binds),
+            str(image),
+            "bash",
+            "-lc",
+            setup,
+            "bash",
+            *translated_command,
+        ]
+
     def validate() -> tuple[bool, str]:
         if _recon_valid(subject_dir):
             return True, "FreeSurfer recon-all outputs are complete."
         return False, _recon_invalid_reason(subject_dir)
 
     def action() -> None:
-        cmd = ["recon-all", "-sd", str(subjects_dir), "-subjid", fs_subject]
-        if t1w is not None:
-            cmd += ["-i", str(t1w)]
-        elif t2w is not None:
-            cmd += ["-i", str(t2w)]
-        if t2w is not None:
-            cmd += ["-T2", str(t2w), "-T2pial"]
-        run_child(cmd + ["-all"], env=env, stream_output=True)
+        primary = t1w or t2w
+        assert primary is not None
+        primary_arg = f"NRO:{primary}"
+        first = [
+            "recon-all",
+            "-sd",
+            "/subjects",
+            "-subjid",
+            fs_subject,
+            "-i",
+            primary_arg,
+            "-autorecon1",
+            "-noskullstrip",
+        ]
+        run_child(container_command(first), direct=True, env=env, stream_output=True)
+        brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
+        conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
+        run_child(
+            container_command(
+                [
+                    "mri_vol2vol",
+                    "--mov",
+                    primary_arg,
+                    "--targ",
+                    conformed_t1,
+                    "--regheader",
+                    "--o",
+                    brainmask_auto,
+                    "--no-save-reg",
+                ]
+            ),
+            direct=True,
+            env=env,
+            stream_output=True,
+        )
+        shutil.copy2(
+            subject_dir / "mri" / "brainmask.auto.mgz",
+            subject_dir / "mri" / "brainmask.mgz",
+        )
+        second = [
+            "recon-all",
+            "-sd",
+            "/subjects",
+            "-subjid",
+            fs_subject,
+        ]
+        if t2w is not None and t1w is not None:
+            second += ["-T2", f"NRO:{t2w}", "-T2pial"]
+        second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
+        run_child(container_command(second), direct=True, env=env, stream_output=True)
         if not _recon_valid(subject_dir):
             raise SystemExit(f"recon-all completed without a valid output set under: {subject_dir}")
 
@@ -703,12 +807,18 @@ def _create_recon_all_step(
         name="FreeSurfer Recon-All",
         directory=subject_dir,
         breadcrumb=breadcrumb,
-        inputs=tuple(path for path in (t1w, t2w) if path is not None),
+        inputs=(*tuple(path for path in (t1w, t2w) if path is not None), image, license_file),
         outputs=(*_recon_required_outputs(subject_dir), recon_done),
         action=action,
         validate=validate,
         force=force,
         breadcrumb_text="recon-all complete\n",
+        parameters={
+            "backend": "FreeSurfer",
+            "version": FREESURFER_VERSION,
+            "build": FREESURFER_BUILD,
+            "skull_stripping": "SynthStrip_external_mask",
+        },
     )
 
 

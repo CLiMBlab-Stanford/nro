@@ -10,6 +10,8 @@ from nro.configuration.hardware import gradient_unwarping_records
 from nro.configuration.markup import SubjectMarkup
 from nro.engine.image_paths import image_source_paths
 from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
+from nro.modules.anat.contract import anatomical_output_contract
+from nro.modules.anat.lesion_policy import lesion_reconstruction_contract
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
@@ -76,13 +78,26 @@ def plan_work_items(
         raise ParticipantUnavailableError(f"No T1w or T2w images found under {context.subject_dir}")
     entities: dict[str, str] = {}
     config = context.workflow.configuration(descriptor.configuration_class).values
+    lesion_config = config.get("lesion") or {}
+    resource_class = (
+        "gpu"
+        if context.source_markup.lesion and bool(lesion_config.get("use_gpu", True))
+        else descriptor.resource_class
+    )
     gradient_records, _ = gradient_unwarping_records(
         list(raw_anatomical_images(context.subject_dir, context.source_markup)),
         mode=str(config["gradient_unwarping"]),
         markup=context.source_markup,
-        definitions=context.definitions_root,
+        definitions=context.definitions_roots,
         coefficient_root=context.gradient_coefficients_root,
     )
+    processing_values: dict[str, object] = {
+        "gradient_unwarping": gradient_records,
+        "output_metadata": anatomical_output_contract(lesion=context.source_markup.lesion),
+    }
+    if context.source_markup.lesion:
+        processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()
+        processing_values["surface_reconstruction"] = lesion_reconstruction_contract()
     return (
         WorkItemSpec.create(
             key=work_item_key(
@@ -122,7 +137,7 @@ def plan_work_items(
             ),
             output_prefix=context.sub_id,
             output_format=descriptor.output_format,
-            resource_class=descriptor.resource_class,
+            resource_class=resource_class,
             memory_gb=context.memory_gb,
             max_memory_gb=context.max_memory_gb,
             expected_outputs=(
@@ -133,9 +148,6 @@ def plan_work_items(
                     bids_root=context.bids_root,
                 ),
             ),
-            processing=context.processing_contract(
-                descriptor,
-                gradient_unwarping=gradient_records,
-            ),
+            processing=context.processing_contract(descriptor, **processing_values),
         ),
     )

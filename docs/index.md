@@ -53,6 +53,7 @@ api
 development
 development-spheres
 registry-migrations
+artifact-contract-migrations
 architecture-map
 autoapi/nro/index
 ```

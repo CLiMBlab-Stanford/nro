@@ -8,15 +8,25 @@ import pytest
 import yaml
 
 import nro.modules.func.planning as func_planning
+from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.hardware import resolve_gradient_unwarping
+from nro.configuration.markup import SubjectMarkup
 from nro.configuration.store import ConfigStore
-from nro.modules.anat.contract import anatomical_output_contract, pose_normalization_contract
+from nro.modules.anat import planning as anat_planning
+from nro.modules.anat.contract import (
+    anatomical_output_contract,
+    bias_correction_contract,
+    pose_normalization_contract,
+    surface_reconstruction_contract,
+)
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.networks.contract import networks_output_contract
+from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planner import Planner, RegisteredTarget, build_subject_work_items
+from nro.orchestration.planning_context import SubjectPlanningContext
 from nro.orchestration.registry import Registry
 from nro.orchestration.worker import _runner_graph_signature
 
@@ -62,6 +72,38 @@ def _plan_modules(registry, tmp_path, modules, workflow_ids=("main",)):
         memory_gb=32,
         max_memory_gb=256,
     )
+
+
+def test_lesion_anatomy_requests_a_gpu_worker(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    context = SubjectPlanningContext(
+        project="demo",
+        participant="01",
+        sub_id="sub-01",
+        bids_root=bids,
+        project_root=bids / "demo",
+        subject_dir=subject,
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        runs=(),
+        aggregate_source_inputs=(),
+        target_pairs=(),
+        memory_gb=32,
+        max_memory_gb=256,
+        definitions_roots=(),
+        gradient_coefficients_root=tmp_path / "gradients",
+        source_markup=SubjectMarkup("main", "demo", subject, lesion=True),
+    )
+
+    work_item = anat_planning.plan_work_items(context, {}, module_descriptor("anat"))[0]
+
+    assert work_item.resource_class == "gpu"
 
 
 def test_request_pins_execution_without_changing_scientific_contract(branch_registry, tmp_path):
@@ -191,6 +233,54 @@ def test_upstream_targets_collapse_to_endpoint(branch_registry, tmp_path, module
     assert len(branch_registry.request_rows()) == 1
     branch_registry.request_cancellation(modules=("networks",))
     assert not any(row["demanded"] for row in branch_registry.work_item_rows())
+
+
+def test_dynconn_backed_networks_select_only_the_configured_source(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    definitions = tmp_path / "definitions"
+    shutil.copytree(ConfigStore().root, definitions)
+    _write(
+        definitions / "configs/networks/dynconn_networks.yml",
+        "connectivity_source: dynconn\n",
+    )
+    _write(definitions / "workflows/dynconn_workflow.yml", "networks: dynconn\n")
+    refresh_manifest(definitions)
+    store = ConfigStore(definitions)
+    workflow = store.resolve("dynconn")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(workflow)
+    main_registered = registry.register_workflow(store.resolve("main"))
+
+    work_items = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="networks",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+        spaces=("fsnative",),
+        smoothing_levels=(2,),
+    )
+    by_module = {item.module: item for item in work_items}
+
+    assert set(by_module) == {"anat", "func", "clean", "dynconn", "networks"}
+    assert (
+        registered.lineage_fingerprints["networks"]
+        != main_registered.lineage_fingerprints["networks"]
+    )
+    assert by_module["networks"].dependencies == (
+        by_module["dynconn"].key,
+        by_module["anat"].key,
+    )
+    assert any(
+        "dynamicConnectivity_manifest" in path.name for path in by_module["networks"].input_paths
+    )
+    assert not any("microparcellation" in str(path) for path in by_module["networks"].input_paths)
 
 
 def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_path):
@@ -552,8 +642,8 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     (configs / "configs" / "microparcellation" / "rest_microparcellation.yml").write_text(
         yaml.safe_dump({"input_filter": {"task": "rest"}})
     )
-    store = ConfigStore()
-    store.root = configs
+    refresh_manifest(configs)
+    store = ConfigStore(configs)
     workflow = store.resolve("rest")
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(workflow)
@@ -586,6 +676,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     assert len(by_module["clean"]) == 1
     assert len(by_module["microparcellation"]) == 1
     assert len(by_module["networks"]) == 1
+    assert by_module["anat"][0].resource_class == "large"
     source_markup = {
         "id": "main",
         "project": "demo",
@@ -593,6 +684,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "T1w": [],
         "T2w": [],
         "exclude": [],
+        "lesion": False,
     }
     no_gradient_match = resolve_gradient_unwarping({}, mode="auto").scientific_record()
     assert by_module["anat"][0].work_item_contract["processing"] == {
@@ -602,8 +694,10 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
                 **no_gradient_match,
             }
         ],
+        "bias_correction": bias_correction_contract(),
         "output_metadata": anatomical_output_contract(),
         "pose_normalization": pose_normalization_contract(),
+        "surface_reconstruction": surface_reconstruction_contract(),
         "source_markup": source_markup,
     }
     assert by_module["func"][0].work_item_contract["processing"] == {

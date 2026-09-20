@@ -12,17 +12,21 @@ databases, logs, and generated derivatives outside this repository.
 * `models/TASK/VARIANT.yml`: task predictors, contrasts, and model-set membership.
 * `markup/ID_markup.yml`: optional anatomical selections and source exclusions,
   grouped first by BIDS project and then by participant.
-* `hardware/gradient_unwarping.yml`: acquisition matching and gradient-correction
-  policy for scanners and coils known to the site.
+* `hardware/gradient_unwarping.yml`: acquisition matching, gradient-unwarping
+  policy, and optional scanner metadata assertions.
 * `events/TASK/`: standard event tables and an `index.yml` listing their IDs.
 * `bidsify/PROFILE.yml`: conversion rules and ingestion worker settings.
 * `scanplans/parser.py`: optional site parser for arbitrary scan-plan files.
 
-Run `nro definitions validate PATH` before adopting edits. Select this directory
+Use nro commands to generate, edit, delete, or import definitions. Managed YAML
+and Python files warn against direct editing, and the store manifest detects
+changes made outside those commands. Run `nro definitions validate PATH` to
+check the store. Select this directory
 with `nro paths set definitions=PATH`; shared installations require `--maintain`.
 Use `nro create`, `nro edit`, and `nro delete` for configs, workflows, models,
 and source markup.
-Edit event indexes and ingestion profiles directly, then validate the store.
+Use `nro definitions apply --file RELATIVE_PATH=LOCAL_FILE` for event catalogs,
+ingestion profiles, hardware policy, and scan-plan parsers.
 
 New shared stores have no task models, event tables, or configured Flywheel
 servers. Development stores inherit `site/site.yml` from the shared store and

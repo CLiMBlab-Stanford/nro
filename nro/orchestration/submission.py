@@ -11,6 +11,7 @@ from nro.engine.io import atomic_write_text
 
 from .execution_cache import cache_publication
 from .registry import Registry
+from .resources import GENERAL_RESOURCE_CLASS, GPU_RESOURCE_CLASS
 
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
 
@@ -25,12 +26,14 @@ def _write_worker_script(
     hours: int,
     memory_gb: int,
     cpus: int,
+    resource_class: str = GENERAL_RESOURCE_CLASS,
     idle_timeout: int = DEFAULT_WORKER_IDLE_TIMEOUT,
     drain_seconds: int = 15 * 60,
 ) -> Path:
     from nro.orchestration.scheduler_implementation import capture_worker_implementation
 
     source, site_path, python = capture_worker_implementation(registry.paths.control, bids_root)
+    effective_idle_timeout = 0 if resource_class == GPU_RESOURCE_CLASS else idle_timeout
     profile_payload = json.dumps(
         {
             "bids_root": str(bids_root),
@@ -41,13 +44,16 @@ def _write_worker_script(
             "account": account,
             "hours": hours,
             "cpus": cpus,
+            # One run request prepares paired general and GPU scripts.  Keep
+            # their profile common so either worker class can expand the other
+            # after a dependency finishes.
             "idle_timeout": idle_timeout,
             "drain_seconds": drain_seconds,
         },
         sort_keys=True,
     )
     profile = hashlib.sha256(profile_payload.encode("utf-8")).hexdigest()[:12]
-    path = registry.paths.workers / f"worker-large-{memory_gb}gb-{profile}.sbatch"
+    path = registry.paths.workers / f"worker-{resource_class}-{memory_gb}gb-{profile}.sbatch"
     command = [
         str(python),
         "-m",
@@ -55,11 +61,11 @@ def _write_worker_script(
         "--bids-root",
         str(bids_root),
         "--resource-class",
-        "large",
+        resource_class,
         "--memory-gb",
         str(memory_gb),
         "--idle-timeout",
-        str(idle_timeout),
+        str(effective_idle_timeout),
         "--walltime-seconds",
         str(hours * 60 * 60),
         "--drain-seconds",
@@ -67,9 +73,10 @@ def _write_worker_script(
         "--profile",
         profile,
     ]
+    job_name = "nro-gpu-worker" if resource_class == GPU_RESOURCE_CLASS else "nro-worker"
     lines = [
         "#!/usr/bin/env bash",
-        "#SBATCH --job-name=nro-worker",
+        f"#SBATCH --job-name={job_name}",
         f"#SBATCH --partition={partition}",
         f"#SBATCH --time={hours}:00:00",
         f"#SBATCH --mem={memory_gb}G",
@@ -78,6 +85,8 @@ def _write_worker_script(
     ]
     if account:
         lines.append(f"#SBATCH --account={account}")
+    if resource_class == GPU_RESOURCE_CLASS:
+        lines.append("#SBATCH --gres=gpu:1")
     lines.extend(
         (
             "set -euo pipefail",
@@ -97,6 +106,8 @@ def _submit_workers(
     request_id: str | None,
     script: Path,
     memory_gb: int,
+    *,
+    resource_class: str = GENERAL_RESOURCE_CLASS,
 ) -> list[str]:
     from nro.orchestration.scheduler_implementation import validate_worker_script
 
@@ -104,7 +115,7 @@ def _submit_workers(
     submitted: list[str] = []
     registry.reconcile_scheduler_submissions()
     for submission_id, _token in registry.reserve_worker_submissions(
-        request_id=request_id, resource_class="large", memory_gb=memory_gb
+        request_id=request_id, resource_class=resource_class, memory_gb=memory_gb
     ):
         try:
             result = subprocess.run(

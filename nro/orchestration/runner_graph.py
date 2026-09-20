@@ -480,6 +480,25 @@ class RunnerGraph:
         key = step if isinstance(step, str) else step.id
         return self._dependencies[key]
 
+    def descendants(self, step: Step | str) -> frozenset[str]:
+        """Return every transitive dependent of one step."""
+        if not self._frozen:
+            raise RuntimeError("Runner graph must be frozen before reading descendants.")
+        root = step if isinstance(step, str) else step.id
+        dependents: dict[str, set[str]] = defaultdict(set)
+        for child, parents in self._dependencies.items():
+            for parent in parents:
+                dependents[parent].add(child)
+        found: set[str] = set()
+        pending = list(dependents[root])
+        while pending:
+            current = pending.pop()
+            if current in found:
+                continue
+            found.add(current)
+            pending.extend(dependents[current])
+        return frozenset(found)
+
     def record_decision(self, step: Step, *, should_run: bool, reason: str) -> None:
         """Record the first freshness decision for a step.
 
@@ -616,18 +635,46 @@ class RunnerGraph:
         return contract
 
     def contract_payload(self, *, signature: str) -> dict[str, object]:
-        """Serialize frozen topology and the supplied substantive signature.
+        """Serialize a fully completed step contract.
 
-        Runtime decisions are excluded; calling before freeze raises RuntimeError.
+        Runtime decisions are excluded. Every node is included because this
+        method records successful completion of the whole graph. Calling before
+        freeze raises RuntimeError.
         """
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before serialization.")
         return {
-            "version": 3,
+            "version": 4,
             "module": self.module_name,
             "signature": str(signature),
+            "topology": self._contract_topology(),
             "nodes": [self._contract_step(step) for step in self.ordered_steps()],
         }
+
+    def _contract_topology(self) -> list[dict[str, object]]:
+        """Return structural declarations for the current frozen graph."""
+        structural_fields = ("id", "kind", "inputs", "outputs", "dependencies")
+        return [
+            {key: node.get(key) for key in structural_fields}
+            for step in self.ordered_steps()
+            for node in (self._contract_step(step),)
+        ]
+
+    @staticmethod
+    def _stored_topology(contract: Mapping[str, object]) -> object:
+        """Read topology from a current or legacy runner contract."""
+        if int(contract.get("version", 0) or 0) >= 4:
+            nodes = contract.get("topology")
+        else:
+            nodes = contract.get("nodes")
+        if not isinstance(nodes, list):
+            return nodes
+        structural_fields = ("id", "kind", "inputs", "outputs", "dependencies")
+        return [
+            {key: _canonical_contract_node(node).get(key) for key in structural_fields}
+            for node in nodes
+            if isinstance(node, dict)
+        ]
 
     def bind_contract(self, path: Path, *, signature: str) -> None:
         """Validate immutable topology against its prior work-item contract."""
@@ -644,27 +691,71 @@ class RunnerGraph:
             # execution adopt node-level contracts without treating the
             # contract-format migration as a scientific topology change.
             return
-        current = self.contract_payload(signature=signature)
-        structural_fields = {"id", "kind", "inputs", "outputs", "dependencies"}
-
-        def topology(nodes: object) -> object:
-            if not isinstance(nodes, list):
-                return nodes
-            result = []
-            for node in nodes:
-                if not isinstance(node, dict):
-                    continue
-                normalized = _canonical_contract_node(node)
-                result.append({key: normalized.get(key) for key in structural_fields})
-            return result
-
-        if existing.get("module") != current["module"] or topology(
-            existing.get("nodes")
-        ) != topology(current["nodes"]):
+        current_topology = self._contract_topology()
+        if (
+            existing.get("module") != self.module_name
+            or self._stored_topology(existing) != current_topology
+        ):
             raise RuntimeError(
                 "Module DAG topology changed under an immutable source/workflow "
                 f"contract ({signature})."
             )
+
+    def step_contract_changes(self, path: Path, *, signature: str) -> dict[str, str]:
+        """Return why existing outputs lack a matching successful step contract."""
+        if not self._frozen:
+            raise RuntimeError("Runner graph must be frozen before comparing contracts.")
+
+        existing_output_steps = {
+            step.id
+            for step in self.ordered_steps()
+            if any(output.exists() for output in step.outputs)
+        }
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {step_id: "missing_contract" for step_id in existing_output_steps}
+        except (OSError, json.JSONDecodeError):
+            return {step_id: "unreadable_contract" for step_id in existing_output_steps}
+        if not isinstance(existing, dict):
+            return {step_id: "invalid_contract" for step_id in existing_output_steps}
+        if existing.get("signature") == signature:
+            self.bind_contract(path, signature=signature)
+        old_nodes = existing.get("nodes")
+        if not isinstance(old_nodes, list):
+            return {step_id: "invalid_contract" for step_id in existing_output_steps}
+        previous_version = int(existing.get("version", 0) or 0)
+        if previous_version < 3:
+            # Version 2 cannot identify the scientific parameters of one node.
+            # Existing artifact and completion validators govern its adoption.
+            return {}
+        previous = {
+            str(node.get("id")): node
+            for node in old_nodes
+            if isinstance(node, dict) and node.get("id")
+        }
+        changed: dict[str, str] = {}
+        for step in self.ordered_steps():
+            old = previous.get(step.id)
+            if old is None:
+                if step.id in existing_output_steps:
+                    changed[step.id] = "unrecorded_step"
+                continue
+            current = self._contract_step(step)
+            # Names are presentation. Commands contribute only their normalized
+            # signature; factories separately declare parameters used by Python
+            # actions and compound command steps.
+            comparable_old = {
+                key: value for key, value in _canonical_contract_node(old).items() if key != "name"
+            }
+            comparable_current = {
+                key: value
+                for key, value in _canonical_contract_node(current).items()
+                if key != "name"
+            }
+            if comparable_old != comparable_current:
+                changed[step.id] = "declaration_changed"
+        return changed
 
     def changed_steps(self, path: Path, *, signature: str) -> frozenset[str]:
         """Return nodes whose scientific declarations changed from the prior contract.
@@ -678,59 +769,65 @@ class RunnerGraph:
         their descendants. The enclosing signature is intentionally not a
         node-level freshness input.
         """
+        return frozenset(self.step_contract_changes(path, signature=signature))
+
+    def initialize_step_contract(self, path: Path, *, signature: str) -> dict[str, object]:
+        """Persist topology without claiming that any unrecorded step succeeded."""
         if not self._frozen:
-            raise RuntimeError("Runner graph must be frozen before comparing contracts.")
-
-        def existing_outputs() -> frozenset[str]:
-            return frozenset(
-                step.id
-                for step in self.ordered_steps()
-                if any(output.exists() for output in step.outputs)
-            )
-
+            raise RuntimeError("Runner graph must be frozen before binding its contract.")
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return existing_outputs()
-        if not isinstance(existing, dict):
-            return existing_outputs()
-        if existing.get("signature") == signature:
+            existing = None
+        if isinstance(existing, dict):
             self.bind_contract(path, signature=signature)
-        old_nodes = existing.get("nodes")
-        if not isinstance(old_nodes, list):
-            return existing_outputs()
-        previous_version = int(existing.get("version", 0) or 0)
-        if previous_version < 3:
-            # Version 2 cannot identify the scientific parameters of one node.
-            # Adopt the new contract without guessing. Existing artifact and
-            # completion validators still govern this transition.
-            return frozenset()
-        previous = {
-            str(node.get("id")): node
-            for node in old_nodes
+            old_nodes = existing.get("nodes")
+            nodes = (
+                [dict(node) for node in old_nodes if isinstance(node, dict)]
+                if isinstance(old_nodes, list)
+                else []
+            )
+        else:
+            nodes = []
+        contract = {
+            "version": 4,
+            "module": self.module_name,
+            "signature": str(signature),
+            "topology": self._contract_topology(),
+            "nodes": nodes,
+        }
+        atomic_write_json(path, contract, sort_keys=True)
+        return contract
+
+    def record_step_contract(self, path: Path, *, signature: str, step: Step) -> None:
+        """Atomically record one successfully validated or completed step."""
+        contract = self.initialize_step_contract(path, signature=signature)
+        nodes = {
+            str(node.get("id")): dict(node)
+            for node in contract["nodes"]
             if isinstance(node, dict) and node.get("id")
         }
-        changed: set[str] = set()
-        for step in self.ordered_steps():
-            current = self._contract_step(step)
-            old = previous.get(step.id)
-            if old is None:
-                changed.add(step.id)
-                continue
-            # Names are presentation. Commands contribute only their normalized
-            # signature; factories separately declare parameters used by Python
-            # actions and compound command steps.
-            comparable_old = {
-                key: value for key, value in _canonical_contract_node(old).items() if key != "name"
-            }
-            comparable_current = {
-                key: value
-                for key, value in _canonical_contract_node(current).items()
-                if key != "name"
-            }
-            if comparable_old != comparable_current:
-                changed.add(step.id)
-        return frozenset(changed)
+        nodes[step.id] = self._contract_step(step)
+        order = {item.id: index for index, item in enumerate(self.ordered_steps())}
+        contract["nodes"] = sorted(nodes.values(), key=lambda node: order.get(str(node["id"]), -1))
+        atomic_write_json(path, contract, sort_keys=True)
+
+    def invalidate_step_contract(
+        self,
+        path: Path,
+        *,
+        signature: str,
+        step: Step,
+    ) -> None:
+        """Revoke success records for a step and all of its descendants."""
+        contract = self.initialize_step_contract(path, signature=signature)
+        invalidated = {step.id, *self.descendants(step)}
+        contract["nodes"] = [
+            node
+            for node in contract["nodes"]
+            if isinstance(node, dict) and str(node.get("id")) not in invalidated
+        ]
+        atomic_write_json(path, contract, sort_keys=True)
 
     def reconcile_contract(self, path: Path, *, signature: str) -> dict[str, object]:
         """Validate prior topology, atomically save the contract, and return its payload."""

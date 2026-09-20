@@ -26,22 +26,12 @@ from nro.configuration.schema import (
     normalize_fields,
     scientific_values,
 )
-from nro.configuration.site import definitions_root, resolve_resources
+from nro.configuration.site import definitions_roots, resolve_resources
 from nro.modules import MODULE_NAMES
 
 PACKAGED_CONFIGS = Path(__file__).parent / "starters/configs"
 
 CONFIGURATION_CLASSES = MODULE_NAMES
-
-UPSTREAM_CLASS: dict[str, str | None] = {
-    "anat": None,
-    "func": "anat",
-    "clean": "func",
-    "dynconn": "clean",
-    "microparcellation": "clean",
-    "networks": "microparcellation",
-    "firstlevels": "func",
-}
 
 
 class WorkflowError(DefinitionError):
@@ -121,11 +111,19 @@ class ResolvedConfiguration:
 
 
 def configuration_fingerprint(
-    kind: str, identifier: str, values: dict, *, scientific: bool = False
+    kind: str,
+    identifier: str,
+    values: dict,
+    *,
+    scientific: bool = False,
+    complete_snapshot: bool = False,
 ) -> str:
     """Hash a named snapshot; optionally compare only its scientific settings."""
     if scientific:
-        values = scientific_values(kind, _compile_scientific_snapshot(kind, values))
+        values = scientific_values(
+            kind,
+            _compile_scientific_snapshot(kind, values, complete=complete_snapshot),
+        )
     return fingerprint({"module": kind, "config_id": identifier, "values": values})
 
 
@@ -141,15 +139,13 @@ def _scientific_defaults(kind: str) -> dict:
     )
 
 
-def _compile_scientific_snapshot(kind: str, values: dict) -> dict:
+def _compile_scientific_snapshot(kind: str, values: dict, *, complete: bool = False) -> dict:
     """Normalize a current or historical snapshot against today's declared defaults.
 
     Configuration files are strict when authored: misspelled and retired keys are
-    errors. Stored artifact snapshots need different semantics. A field introduced
-    with a packaged default had that default implicitly before it was recorded, and
-    a field removed from the schema no longer describes scientific output. Project
-    only recognized fields onto the current packaged defaults before validation so
-    those two safe schema changes do not make equivalent artifacts stale.
+    errors. Stored artifact snapshots need different semantics. Contract migrations
+    first reconstruct introduced scientific fields explicitly; this function then
+    projects only recognized fields and validates the reconstructed snapshot.
     """
 
     defaults = _scientific_defaults(kind)
@@ -161,14 +157,21 @@ def _compile_scientific_snapshot(kind: str, values: dict) -> dict:
                 continue
             value = snapshot[key]
             if isinstance(rule, dict) and isinstance(value, Mapping):
-                result[key] = project(rule, baseline[key], value)
+                nested_baseline = baseline.get(key, {})
+                if not isinstance(nested_baseline, Mapping):
+                    nested_baseline = {}
+                result[key] = project(rule, nested_baseline, value)
             else:
                 result[key] = deepcopy(value)
         return result
 
     if not isinstance(values, Mapping):
         raise DefinitionError(f"{kind}: configuration snapshot must be a mapping")
-    return compile_configuration(kind, project(SCHEMAS[kind], defaults, values))
+    if complete:
+        projected = project(SCHEMAS[kind], {}, values)
+    else:
+        projected = project(SCHEMAS[kind], defaults, values)
+    return compile_configuration(kind, projected)
 
 
 @dataclass(frozen=True)
@@ -190,17 +193,30 @@ class ResolvedWorkflow:
 
 
 class ConfigStore:
-    """Resolve IDs from one external definitions store."""
+    """Resolve IDs through the active definitions inheritance chain."""
 
-    def __init__(self, root: Path | None = None) -> None:
-        """Use the selected definitions root, or an explicit root for validation and drafts."""
-        self.root = Path(root).expanduser().resolve() if root is not None else definitions_root()
-        if not self.root.is_dir():
-            raise WorkflowError(
-                f"Definitions store does not exist: {self.root}; use nro definitions create"
-            )
-        if (self.root / ".nro-incomplete").exists():
-            raise WorkflowError(f"Definitions publication is incomplete: {self.root}")
+    def __init__(self, root: Path | None = None, *, roots: tuple[Path, ...] | None = None) -> None:
+        """Use active inherited stores, or one explicit store for drafts and validation."""
+        if root is not None and roots is not None:
+            raise ValueError("Specify either root or roots, not both")
+        self.roots = (
+            tuple(Path(path).expanduser().resolve() for path in roots)
+            if roots is not None
+            else (Path(root).expanduser().resolve(),)
+            if root is not None
+            else definitions_roots()
+        )
+        self.root = self.roots[0]
+        from nro.configuration.definition_migrations import validate_store_integrity
+
+        for candidate in self.roots:
+            if not candidate.is_dir():
+                raise WorkflowError(
+                    f"Definitions store does not exist: {candidate}; use nro definitions create"
+                )
+            if (candidate / ".nro-incomplete").exists():
+                raise WorkflowError(f"Definitions publication is incomplete: {candidate}")
+            validate_store_integrity(candidate)
 
     @property
     def configs(self) -> Path:
@@ -210,19 +226,28 @@ class ConfigStore:
     def workflow_ids(self) -> tuple[str, ...]:
         """Return defined workflow IDs with ``main`` first when present."""
         suffix = "_workflow.yml"
-        identifiers = sorted(
-            path.name[: -len(suffix)] for path in (self.root / "workflows").glob(f"*{suffix}")
-        )
+        identifiers = {
+            path.name[: -len(suffix)]
+            for root in self.roots
+            for path in (root / "workflows").glob(f"*{suffix}")
+        }
         return tuple(sorted(identifiers, key=lambda value: (value != "main", value)))
 
     def _find(self, filename: str, *, category: str) -> Path:
-        organized = (self.root if category == "workflows" else self.configs) / category / filename
-        if not organized.resolve().is_relative_to(self.root):
-            raise WorkflowError(f"Definition escapes the store: {organized}")
-        if organized.is_file():
-            return organized
+        relative = (
+            Path("workflows") / filename
+            if category == "workflows"
+            else Path("configs") / category / filename
+        )
+        for root in self.roots:
+            organized = root / relative
+            if not organized.resolve().is_relative_to(root):
+                raise WorkflowError(f"Definition escapes the store: {organized}")
+            if organized.is_file():
+                return organized
         raise WorkflowError(
-            f"Configuration file {str(Path(category) / filename)!r} was not found in store: {self.root}"
+            f"Configuration file {str(Path(category) / filename)!r} was not found in "
+            f"definitions chain: {', '.join(map(str, self.roots))}"
         )
 
     @staticmethod
@@ -244,18 +269,20 @@ class ConfigStore:
             raise WorkflowError(f"Unknown configuration class: {configuration_class}")
         config_id = validate_config_id(config_id, kind=f"{configuration_class} configuration")
         filename = f"{config_id}_{configuration_class}.yml"
-        external = self.configs / configuration_class / filename
-        if not external.resolve().is_relative_to(self.root):
-            raise WorkflowError(f"Definition escapes the store: {external}")
-        if external.is_file():
-            return external
+        relative = Path("configs") / configuration_class / filename
+        for root in self.roots:
+            external = root / relative
+            if not external.resolve().is_relative_to(root):
+                raise WorkflowError(f"Definition escapes the store: {external}")
+            if external.is_file():
+                return external
         if config_id == "main":
             packaged = PACKAGED_CONFIGS / configuration_class / filename
             if packaged.is_file():
                 return packaged
         raise WorkflowError(
             f"Configuration file {str(Path(configuration_class) / filename)!r} was not found "
-            f"in store or packaged defaults: {self.root}"
+            f"in the definitions chain or packaged defaults: {', '.join(map(str, self.roots))}"
         )
 
     def _merge_configuration(
@@ -324,7 +351,15 @@ class ConfigStore:
         if not default_path.is_file():
             raise WorkflowError(f"Packaged defaults are missing: {default_path}")
         config_id = validate_config_id(config_id, kind=f"{configuration_class} configuration")
-        external_main = self.configs / configuration_class / f"main_{configuration_class}.yml"
+        main_filename = f"main_{configuration_class}.yml"
+        external_main = next(
+            (
+                root / "configs" / configuration_class / main_filename
+                for root in self.roots
+                if (root / "configs" / configuration_class / main_filename).is_file()
+            ),
+            self.configs / configuration_class / main_filename,
+        )
         target = self.configs / configuration_class / f"{config_id}_{configuration_class}.yml"
         path = (
             self.configuration_path(configuration_class, config_id) if document is None else target
@@ -359,7 +394,7 @@ class ConfigStore:
             from nro.configuration.markup import MarkupStore
 
             try:
-                MarkupStore(self.root).path(markup_id)
+                MarkupStore(roots=self.roots).path(markup_id)
             except (FileNotFoundError, ValueError) as error:
                 raise WorkflowError(f"{path}: {error}") from error
         return ResolvedConfiguration(

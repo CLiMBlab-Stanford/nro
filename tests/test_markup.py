@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from nro.configuration.definition_migrations import update_store
 from nro.configuration.definitions import create_store, validate_store
 from nro.configuration.markup import MarkupStore, SubjectMarkup, compile_markup
 from nro.configuration.parsing import DefinitionError
@@ -35,7 +36,25 @@ def test_markup_compiler_uses_project_and_subject_hierarchy() -> None:
 
     assert result["nptl"]["t20"]["T1w"] == ("ses-anat/anat/sub-t20_ses-anat_T1w.nii.gz",)
     assert result["nptl"]["t20"]["T2w"] == ()
-    assert result["nptl"]["t12"] == {"T1w": (), "T2w": (), "exclude": ()}
+    assert result["nptl"]["t12"] == {
+        "T1w": (),
+        "T2w": (),
+        "exclude": (),
+        "lesion": False,
+    }
+
+
+def test_markup_compiler_accepts_only_boolean_lesion_flags() -> None:
+    assert compile_markup({"nptl": {"t20": {"lesion": True}}})["nptl"]["t20"]["lesion"] is True
+    with pytest.raises(DefinitionError, match="lesion must be a boolean"):
+        compile_markup({"nptl": {"t20": {"lesion": "true"}}})
+
+
+def test_captured_markup_defaults_historical_missing_lesion_to_false(tmp_path: Path) -> None:
+    value = SubjectMarkup("main", "nptl", tmp_path / "sub-01").as_dict()
+    value.pop("lesion")
+
+    assert SubjectMarkup.from_dict(value).lesion is False
 
 
 def test_missing_markup_fields_retain_automatic_discovery(tmp_path: Path) -> None:
@@ -67,6 +86,16 @@ def test_missing_project_or_subject_produces_empty_markup(tmp_path: Path) -> Non
     markup = MarkupStore(root).subject("main", "nptl", subject)
 
     assert markup == SubjectMarkup("main", "nptl", subject)
+
+
+def test_markup_uses_nearest_definition_in_inheritance_chain(tmp_path: Path) -> None:
+    child, parent = tmp_path / "child", tmp_path / "parent"
+    _write(parent / "markup/main_markup.yml", "nptl:\n  t20:\n    lesion: true\n")
+    subject = tmp_path / "BIDS/nptl/sub-t20"
+
+    assert MarkupStore(roots=(child, parent)).subject("main", "nptl", subject).lesion
+    _write(child / "markup/main_markup.yml", "{}\n")
+    assert not MarkupStore(roots=(child, parent)).subject("main", "nptl", subject).lesion
 
 
 def test_captured_markup_rejects_paths_outside_subject(tmp_path: Path) -> None:
@@ -108,8 +137,7 @@ def test_excluded_metadata_is_absent_from_planning_and_execution(
 
 def test_existing_store_may_omit_empty_main_markup(tmp_path: Path) -> None:
     root = create_store(tmp_path / "definitions")
-    (root / "markup/main_markup.yml").unlink()
-    (root / "markup").rmdir()
+    update_store(root, {Path("markup/main_markup.yml"): None})
 
     assert validate_store(root)["markup"] == 0
     assert MarkupStore(root).subject("main", "nptl", tmp_path / "sub-t20").t1w == ()
@@ -117,9 +145,14 @@ def test_existing_store_may_omit_empty_main_markup(tmp_path: Path) -> None:
 
 def test_workflow_rejects_mixed_markup_views(tmp_path: Path) -> None:
     root = create_store(tmp_path / "definitions")
-    _write(root / "markup/alternate_markup.yml", "{}\n")
-    _write(root / "configs/anat/alternate_anat.yml", "markup: alternate\n")
-    _write(root / "workflows/mixed_workflow.yml", "anat: alternate\n")
+    update_store(
+        root,
+        {
+            Path("markup/alternate_markup.yml"): b"{}\n",
+            Path("configs/anat/alternate_anat.yml"): b"markup: alternate\n",
+            Path("workflows/mixed_workflow.yml"): b"anat: alternate\n",
+        },
+    )
 
     with pytest.raises(WorkflowError, match="same markup"):
         ConfigStore(root).resolve("mixed")

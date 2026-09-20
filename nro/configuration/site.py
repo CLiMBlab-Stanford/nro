@@ -75,6 +75,9 @@ DERIVED = {
     "synthstrip": ("images", "synthstrip_1.7.sif"),
     "synbold": ("images", "synbold-disco_v1.4.sif"),
     "gradient_unwarp": ("images", "hcp-base_1.0.3_4.3.0.sif"),
+    "fastsurfer": ("images", "fastsurfer-cu118_2.5.4.sif"),
+    "fastsurfer_data": ("images", "fastsurfer-lit-0.6.1"),
+    "synthstroke_data": ("images", "synthstroke-synth-plus-e9774354"),
     "mni_template": (
         "templates",
         "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
@@ -107,6 +110,9 @@ SITE_SECTIONS = {
         "synthstrip",
         "synbold",
         "gradient_unwarp",
+        "fastsurfer",
+        "fastsurfer_data",
+        "synthstroke_data",
         "mni_template",
     ),
     "execution": ("runtime", "partition", "viewing_partition", "account", "binds"),
@@ -329,8 +335,17 @@ def write_site_definition(
     path = site_definition_path(definitions)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = make_site_document(settings_values, bidsify=bidsify)
-    text = yaml.safe_dump(document, sort_keys=False)
+    from nro.configuration.definition_migrations import (
+        MANIFEST,
+        normalize_managed_text,
+        update_store,
+    )
+
+    text = normalize_managed_text(path, yaml.safe_dump(document, sort_keys=False))
     if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return path
+    if (definitions / MANIFEST).is_file():
+        update_store(definitions, {path.relative_to(definitions): text.encode("utf-8")})
         return path
     atomic_write_text(
         path,
@@ -352,9 +367,21 @@ def protected_site(definitions: Path | None = None) -> tuple[dict, dict]:
 
 def protected_site_fingerprint(definitions: Path | None = None) -> str:
     """Identify the canonical site-wide settings admitted by the scheduler."""
+    definitions = (
+        Path(settings()[0]["definitions"])
+        if definitions is None
+        else Path(definitions).expanduser().resolve()
+    )
     site_settings, bidsify = protected_site(definitions)
+    hardware = definitions / "hardware/gradient_unwarping.yml"
     payload = json.dumps(
-        {"settings": site_settings, "bidsify": bidsify},
+        {
+            "settings": site_settings,
+            "bidsify": bidsify,
+            "hardware_sha256": (
+                hashlib.sha256(hardware.read_bytes()).hexdigest() if hardware.is_file() else None
+            ),
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -442,25 +469,49 @@ def bids_root() -> Path:
 
 
 def definitions_root() -> Path:
-    """Resolve the selected definitions directory without creating it or reading its files."""
+    """Return the nearest writable or shared definitions directory."""
+    return definitions_roots()[0]
+
+
+def definitions_roots() -> tuple[Path, ...]:
+    """Return definition stores in nearest-first lookup order.
+
+    Development branches inherit private stores from their registered parents,
+    followed by the shared site store. Shared and standalone installations use
+    one store.
+    """
     cache = _READ_CACHE.get()
-    cache_key = ("definitions", "active")
+    cache_key = ("definitions", "active-roots")
     if cache is not None and cache_key in cache:
-        return Path(cache[cache_key])
+        return tuple(Path(path) for path in cache[cache_key])
     values = settings()[0]
-    root = Path(values["definitions"]).resolve()
+    shared = Path(values["definitions"]).resolve()
+    roots = (shared,)
     record = installation_record()
     if record.get("mode") == "branch" and record.get("ready"):
-        from nro.configuration.branch_definitions import selected_definitions
+        from nro.configuration.branch_definitions import inherited_definitions
 
-        root = selected_definitions(Path(values["registry"]), record, root) or root
-    if (root / ".nro-incomplete").exists():
-        raise ValueError(
-            f"Definitions publication is incomplete: {root}; inspect or recreate the store"
-        )
+        roots = inherited_definitions(Path(values["registry"]), record, shared)
+    for root in roots:
+        if (root / ".nro-incomplete").exists():
+            raise ValueError(
+                f"Definitions publication is incomplete: {root}; inspect or recreate the store"
+            )
     if cache is not None:
-        cache[cache_key] = root
-    return root
+        cache[cache_key] = tuple(roots)
+    return tuple(roots)
+
+
+def resolve_definition(relative: str | Path) -> Path | None:
+    """Return the nearest definition matching a safe relative path."""
+    relative = Path(relative)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"Definition path must be relative: {relative}")
+    for root in definitions_roots():
+        candidate = root / relative
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def require_execution_support(
@@ -517,8 +568,8 @@ def require_definition_write(path: Path | None = None, *, creating_store: bool =
 def definition_write(path: Path):
     """Keep branch selection fixed while publishing or deleting one definition.
 
-    This lock serializes branch selection with cooperating nro writers. Direct
-    filesystem edits do not take the lock and remain the developer's responsibility.
+    This lock serializes branch selection with nro writers. The store manifest
+    rejects direct filesystem edits made outside this interface.
     """
     record = installation_record()
     if record.get("mode") == "branch" and record.get("ready"):

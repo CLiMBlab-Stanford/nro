@@ -9,10 +9,10 @@ import yaml
 
 from nro.configuration.store import (
     CONFIGURATION_CLASSES,
-    UPSTREAM_CLASS,
     ResolvedWorkflow,
     fingerprint,
 )
+from nro.orchestration.dependencies import primary_dependency
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,8 @@ class WorkflowRegistry:
                 values["clean_directory"] = directories["clean"]
             elif configuration_class == "networks":
                 values["anat_directory"] = directories["anat"]
-                values["microparcellation_directory"] = directories["microparcellation"]
+                source = str(values["connectivity_source"])
+                values["source_directory"] = directories[source]
             suffix = CONFIGURATION_FILE_SUFFIX[configuration_class]
             directory = directories[configuration_class]
             runtime_path = runtime_directory / f"{directory}_{suffix}.yml"
@@ -220,7 +221,7 @@ class WorkflowRegistry:
 
                 for configuration_class in CONFIGURATION_CLASSES:
                     resolved = workflow.configurations[configuration_class]
-                    upstream_class = UPSTREAM_CLASS[configuration_class]
+                    upstream_class = primary_dependency(configuration_class, resolved.values)
                     upstream_id = lineages.get(upstream_class) if upstream_class else None
                     upstream_lineage = (
                         lineage_fingerprints[upstream_class] if upstream_class else None

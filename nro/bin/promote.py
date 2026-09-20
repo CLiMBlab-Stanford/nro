@@ -20,7 +20,10 @@ def main(argv=None, *, prog="nro promote"):
     """Compile target contracts, review transfers, and publish without requesting computation."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     add_core_selection_arguments(
-        parser, module_choices=MODULES, planner_defaults=True, default_modules=terminal_modules()
+        parser,
+        module_choices=MODULES,
+        planner_defaults=True,
+        default_modules=terminal_modules(),
     )
     parser.add_argument(
         "--from", dest="source", required=True, help="Development branch supplying artifacts"
@@ -48,6 +51,13 @@ def main(argv=None, *, prog="nro promote"):
         control, bids = Path(values["registry"]), Path(values["bids"])
         scientific = BranchStore(control).registry_for_checkout(CHECKOUT)
         workflows = {name: ConfigStore().resolve(name) for name in selection.workflows}
+        modules = tuple(
+            selection.modules
+            if args.module is not None
+            else dict.fromkeys(
+                module for workflow in workflows.values() for module in terminal_modules(workflow)
+            )
+        )
         registered = {
             name: scientific.register_workflow(workflow) for name, workflow in workflows.items()
         }
@@ -55,7 +65,7 @@ def main(argv=None, *, prog="nro promote"):
         plan = Planner(scientific, bids_root=bids).plan(
             projects=selection.projects or tuple(discover_bids_inventory(bids)),
             requested_participants=selection.participants,
-            modules=selection.modules,
+            modules=modules,
             workflows=workflows,
             registered_workflows=registered,
             selectors=selection.runs,

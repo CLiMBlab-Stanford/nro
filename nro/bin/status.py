@@ -40,6 +40,7 @@ _STATUS_COLORS = {
     "Queued": _BLUE,
     "Waiting": _BLUE,
     "Blocked": _YELLOW,
+    "Timeout": _YELLOW + _BOLD,
     "Error": _RED + _BOLD,
     "Corrupt": _RED + _BOLD,
     "Missing": _MAGENTA,
@@ -366,7 +367,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             continue
         entities = json.loads(row["entities_json"])
         root_ids = tuple(int(value) for value in row["root_failure_ids"])
-        if row["status"] in {"Corrupt", "Error"}:
+        if row["status"] in {"Corrupt", "Timeout", "Error"}:
             critical_errors[(project, int(row["id"]))] = _failure_detail(row, project=project)
         for root_id in root_ids:
             critical_errors[(project, root_id)] = _failure_detail(by_id[root_id], project=project)

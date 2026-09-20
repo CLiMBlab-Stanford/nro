@@ -46,11 +46,13 @@ def main(argv=None, *, prog="nro doctor"):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     selected = installation_details()
+    record = site.installation_record()
     results = selected + check_installation(
         deep=args.deep,
         with_oslom=not args.without_oslom,
         slurm=not args.local,
         quick=not args.deep,
+        with_lesion=bool(record.get("with_lesion")),
     )
     if args.json:
         print(json.dumps(results, indent=2))

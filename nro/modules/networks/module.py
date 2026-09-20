@@ -38,6 +38,12 @@ from .contract import (
     validate_network_label_metadata,
     validate_network_manifest,
 )
+from .features import (
+    dynconn_features,
+    informative_dimensions,
+    load_reduced_features,
+    reduce_features,
+)
 from .ica import ica_membership
 from .labeling import (
     network_map_names,
@@ -52,12 +58,12 @@ from .references import REFERENCE_ATLASES, reference_paths
 LOG = logging.getLogger(__name__)
 
 
-def _load_inputs(cfg: ModuleConfig):
+def _load_microparcellation_inputs(cfg: ModuleConfig):
     import nibabel as nib
 
-    labels, vertex_counts = load_dlabel(cfg.inputs.microparcels)
-    dlabel = nib.load(str(cfg.inputs.microparcels))
-    pconn = nib.load(str(cfg.inputs.connectivity))
+    labels, vertex_counts = load_dlabel(cfg.inputs.spatial_reference)
+    dlabel = nib.load(str(cfg.inputs.spatial_reference))
+    pconn = nib.load(str(cfg.inputs.features))
     brain_axis = dlabel.header.get_axis(1)
     parcel_axes = (pconn.header.get_axis(0), pconn.header.get_axis(1))
     if parcel_axes[0] != parcel_axes[1]:
@@ -120,6 +126,31 @@ def _load_inputs(cfg: ModuleConfig):
     return labels, active, vertex_counts, n_microparcels
 
 
+def _write_volume_brain_model_reference(source: Path, output: Path, active: np.ndarray) -> None:
+    """Write a private CIFTI reference for active locations in a dynconn volume."""
+
+    import nibabel as nib
+
+    image = nib.load(str(source))
+    shape = tuple(int(value) for value in image.shape[:3])
+    mask = np.asarray(active, dtype=bool).reshape(shape)
+    brain_axis = nib.cifti2.BrainModelAxis.from_mask(mask, affine=image.affine)
+    scalar_axis = nib.cifti2.ScalarAxis(["spatial reference"])
+    header = nib.cifti2.Cifti2Header.from_axes((scalar_axis, brain_axis))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    from nro.engine.io import atomic_output_path
+
+    with atomic_output_path(output) as staged:
+        nib.save(
+            nib.Cifti2Image(
+                np.zeros((1, len(brain_axis)), dtype=np.float32),
+                header=header,
+                dtype=np.float32,
+            ),
+            str(staged),
+        )
+
+
 NetworkOutputs = dict[str, Path | tuple[Path, ...] | list[Path | tuple[Path, Path]]]
 
 
@@ -139,9 +170,9 @@ def build_module(
     source_inputs = tuple(
         dict.fromkeys(
             (
-                cfg.inputs.microparcellation_manifest,
-                cfg.inputs.microparcels,
-                cfg.inputs.connectivity,
+                cfg.inputs.source_manifest,
+                cfg.inputs.features,
+                cfg.inputs.spatial_reference,
                 *cfg.inputs.source_surfaces,
                 *(
                     (cfg.inputs.anatomical_manifest,)
@@ -217,18 +248,26 @@ def build_module(
         )
 
     adjacency_path = work / f"{cfg.output.prefix}_adjacency.npz"
+    feature_path = work / f"{cfg.output.prefix}_features.npy"
+    feature_summary_path = work / f"{cfg.output.prefix}_feature_reduction.json"
+    volume_reference_path = work / f"{cfg.output.prefix}_spatial_reference.dscalar.nii"
+    spatial_reference_path = (
+        volume_reference_path
+        if cfg.inputs.source == "dynconn" and cfg.inputs.domain == "volume"
+        else cfg.inputs.spatial_reference
+    )
     input_state_path = work / f"{cfg.output.prefix}_input_state.npz"
     network_validation_path = work / f"{cfg.output.prefix}_network_validation.json"
     network_state_path = work / f"{cfg.output.prefix}_network_membership.npz"
     labeling_path = work / f"{cfg.output.prefix}_network_labels.json"
     strategy_outputs: list[Path] = []
-    private_outputs = [
-        adjacency_path,
-        input_state_path,
-        network_validation_path,
-        network_state_path,
-        labeling_path,
-    ]
+    private_outputs = [input_state_path, network_validation_path, network_state_path, labeling_path]
+    if cfg.inputs.source == "microparcellation":
+        private_outputs.append(adjacency_path)
+    if cfg.parcellation_strategy != "oslom":
+        private_outputs.extend((feature_path, feature_summary_path))
+    if spatial_reference_path == volume_reference_path:
+        private_outputs.append(volume_reference_path)
 
     initialization_breadcrumb = work / "initialized.complete"
     validation_path = work / f"{cfg.output.prefix}_validated_config.json"
@@ -275,15 +314,45 @@ def build_module(
     )
 
     def transform_inputs() -> None:
-        labels, mask, vertex_counts, n_microparcels_local = _load_inputs(cfg)
-        adjacency_local, percentile_weight_local = pconn_to_adjacency(
-            cfg.inputs.connectivity,
-            transform=cfg.connectivity.transform,
-            minimum_weight=cfg.connectivity.minimum_weight,
-            percentile_cutoff=cfg.connectivity.percentile_cutoff,
-        )
-        LOG.info("Saving sparse network adjacency to %s", adjacency_path)
-        save_adjacency(adjacency_path, adjacency_local)
+        if cfg.inputs.source == "microparcellation":
+            labels, mask, vertex_counts, n_microparcels_local = _load_microparcellation_inputs(cfg)
+            adjacency_local, percentile_weight_local = pconn_to_adjacency(
+                cfg.inputs.features,
+                transform=cfg.connectivity.transform,
+                minimum_weight=cfg.connectivity.minimum_weight,
+                percentile_cutoff=cfg.connectivity.percentile_cutoff,
+            )
+            LOG.info("Saving sparse network adjacency to %s", adjacency_path)
+            save_adjacency(adjacency_path, adjacency_local)
+            feature_matrix = adjacency_local + adjacency_local.T
+            feature_active = np.ones(n_microparcels_local, dtype=bool)
+            n_source_locations = n_microparcels_local
+        else:
+            feature_matrix, feature_active, vertex_counts = dynconn_features(
+                cfg.inputs.features, cfg.inputs.domain
+            )
+            percentile_weight_local = None
+            n_microparcels_local = -1
+            n_source_locations = int(feature_matrix.shape[0])
+            if cfg.inputs.domain == "surface":
+                mask = feature_active
+                labels = np.full(len(mask), -1, dtype=np.int64)
+                labels[mask] = np.arange(int(mask.sum()), dtype=np.int64)
+            else:
+                _write_volume_brain_model_reference(
+                    cfg.inputs.spatial_reference, volume_reference_path, feature_active
+                )
+                labels = np.arange(int(feature_active.sum()), dtype=np.int64)
+                mask = np.ones(len(labels), dtype=bool)
+        if cfg.parcellation_strategy != "oslom":
+            summary = reduce_features(
+                feature_matrix,
+                feature_active,
+                cfg.feature_reduction,
+                feature_path,
+                informative_dimensions=informative_dimensions(cfg),
+            )
+            atomic_write_text(feature_summary_path, json.dumps(summary, indent=2) + "\n")
         atomic_save_npz(
             input_state_path,
             compressed=True,
@@ -291,56 +360,99 @@ def build_module(
             mask=np.asarray(mask, dtype=np.uint8),
             vertex_counts=np.asarray(vertex_counts, dtype=np.int64),
             n_microparcels=np.asarray([n_microparcels_local], dtype=np.int64),
+            n_source_locations=np.asarray([n_source_locations], dtype=np.int64),
             percentile_weight=np.asarray(
                 [np.nan if percentile_weight_local is None else percentile_weight_local],
                 dtype=np.float64,
             ),
         )
 
+    transform_outputs = [input_state_path]
+    if cfg.inputs.source == "microparcellation":
+        transform_outputs.append(adjacency_path)
+    if cfg.parcellation_strategy != "oslom":
+        transform_outputs.extend((feature_path, feature_summary_path))
+    if spatial_reference_path == volume_reference_path:
+        transform_outputs.append(volume_reference_path)
     runner.add_step(
         Step.python(
             name="Load and Transform Network Inputs",
-            outputs=(adjacency_path, input_state_path),
+            outputs=tuple(transform_outputs),
             inputs=source_inputs + (initialization_breadcrumb,),
             force=bool(cfg.output.overwrite),
             action=transform_inputs,
-            parameters=config_payload["connectivity"],
+            parameters={
+                "connectivity_source": cfg.connectivity_source,
+                "source_representation": cfg.inputs.source_representation,
+                **(
+                    {"connectivity": config_payload["connectivity"]}
+                    if cfg.inputs.source == "microparcellation"
+                    else {}
+                ),
+                **(
+                    {"feature_reduction": config_payload["feature_reduction"]}
+                    if cfg.parcellation_strategy != "oslom"
+                    else {}
+                ),
+            },
         )
     )
 
-    def validate_network_adjacency() -> None:
+    def validate_network_inputs() -> None:
         with np.load(input_state_path, allow_pickle=False) as state:
             n_microparcels = int(state["n_microparcels"][0])
+            n_source_locations = int(state["n_source_locations"][0])
             percentile_value = float(state["percentile_weight"][0])
         percentile_weight = None if np.isnan(percentile_value) else percentile_value
-        possible_edges = n_microparcels * (n_microparcels - 1) // 2
-        edge_count = int(load_adjacency(adjacency_path).nnz)
-        if percentile_weight is not None:
+        edge_count = None
+        possible_edges = None
+        if cfg.inputs.source == "microparcellation":
+            possible_edges = n_microparcels * (n_microparcels - 1) // 2
+            edge_count = int(load_adjacency(adjacency_path).nnz)
+            if percentile_weight is not None:
+                LOG.info(
+                    "Connectivity percentile cutoff P%g corresponds to weight >= %.9g",
+                    cfg.connectivity.percentile_cutoff,
+                    percentile_weight,
+                )
             LOG.info(
-                "Connectivity percentile cutoff P%g corresponds to weight >= %.9g",
-                cfg.connectivity.percentile_cutoff,
-                percentile_weight,
+                "Sparsified network adjacency has %d nodes and %d edges (%.2f%% density)",
+                n_microparcels,
+                edge_count,
+                100.0 * edge_count / possible_edges if possible_edges else 0.0,
             )
-        LOG.info(
-            "Sparsified network adjacency has %d nodes and %d edges (%.2f%% density)",
-            n_microparcels,
-            edge_count,
-            100.0 * edge_count / possible_edges if possible_edges else 0.0,
-        )
-        if edge_count == 0:
-            raise ValueError("No graph edges survived connectivity thresholding")
+            if edge_count == 0:
+                raise ValueError("No graph edges survived connectivity thresholding")
+        if cfg.parcellation_strategy != "oslom":
+            features = load_reduced_features(feature_path)
+            requested_networks = (
+                cfg.ica.n_networks
+                if cfg.parcellation_strategy == "ica"
+                else cfg.clustering.n_networks
+            )
+            if min(features.shape) <= requested_networks:
+                raise ValueError("Too few active spatial locations for network estimation")
         atomic_write_text(
             network_validation_path,
-            json.dumps({"edge_count": edge_count, "possible_edges": possible_edges}) + "\n",
+            json.dumps(
+                {
+                    "connectivity_source": cfg.connectivity_source,
+                    "source_representation": cfg.inputs.source_representation,
+                    "source_locations": n_source_locations,
+                    "edge_count": edge_count,
+                    "possible_edges": possible_edges,
+                }
+            )
+            + "\n",
         )
 
     runner.add_step(
         Step.python(
-            name="Validate Network Adjacency",
+            name="Validate Network Inputs",
             outputs=(network_validation_path,),
-            inputs=(adjacency_path, input_state_path),
+            inputs=tuple(transform_outputs),
             force=bool(cfg.output.overwrite),
-            action=validate_network_adjacency,
+            action=validate_network_inputs,
         )
     )
     if cfg.parcellation_strategy == "ica":
@@ -349,7 +461,7 @@ def build_module(
             with np.load(input_state_path, allow_pickle=False) as state:
                 labels = np.asarray(state["labels"], dtype=np.int64)
                 mask = np.asarray(state["mask"], dtype=bool)
-            membership = ica_membership(load_adjacency(adjacency_path), cfg.ica)
+            membership = ica_membership(load_reduced_features(feature_path), cfg.ica)
             vertex_membership = np.zeros((len(labels), membership.shape[1]), dtype=np.float32)
             vertex_membership[mask] = membership[labels[mask]]
             atomic_save_npz(
@@ -365,7 +477,7 @@ def build_module(
             Step.python(
                 name="Estimate ICA Networks",
                 outputs=(network_state_path,),
-                inputs=(adjacency_path, input_state_path, network_validation_path),
+                inputs=(feature_path, input_state_path, network_validation_path),
                 force=bool(cfg.output.overwrite),
                 action=compute_ica,
                 parameters=config_payload["ica"],
@@ -380,7 +492,7 @@ def build_module(
                 labels = np.asarray(state["labels"], dtype=np.int64)
                 mask = np.asarray(state["mask"], dtype=bool)
             membership, inertias = clustering_membership(
-                load_adjacency(adjacency_path), cfg.clustering
+                load_reduced_features(feature_path), cfg.clustering
             )
             vertex_membership = np.zeros((len(labels), membership.shape[1]), dtype=np.float32)
             vertex_membership[mask] = membership[labels[mask]]
@@ -408,7 +520,7 @@ def build_module(
             Step.python(
                 name="Estimate Clustered Networks",
                 outputs=(network_state_path, clustering_evaluation_path),
-                inputs=(adjacency_path, input_state_path, network_validation_path),
+                inputs=(feature_path, input_state_path, network_validation_path),
                 force=bool(cfg.output.overwrite),
                 action=compute_clustering,
                 parameters=config_payload["clustering"],
@@ -626,7 +738,7 @@ def build_module(
             vertex_stability = np.asarray(consensus["vertex_stability"], dtype=np.float32)
         if cfg.labeling.enabled:
             references = project_references_to_cifti(
-                cfg.inputs.microparcels,
+                spatial_reference_path,
                 space=cfg.inputs.space,
                 source_surfaces=cfg.inputs.source_surfaces,
                 anatomical_reference=cfg.inputs.anatomical_reference,
@@ -659,7 +771,7 @@ def build_module(
                 dict.fromkeys(
                     (
                         network_state_path,
-                        cfg.inputs.microparcels,
+                        spatial_reference_path,
                         *cfg.inputs.source_surfaces,
                         *(
                             (cfg.inputs.anatomical_manifest,)
@@ -724,7 +836,13 @@ def build_module(
             vertex_overlap = np.asarray(consensus["vertex_overlap"], dtype=np.float32)
             ref_idx = int(consensus["ref_idx"][0])
         network_validation = json.loads(network_validation_path.read_text(encoding="utf-8"))
-        edge_count = int(network_validation["edge_count"])
+        edge_value = network_validation["edge_count"]
+        edge_count = int(edge_value) if edge_value is not None else None
+        feature_reduction = (
+            json.loads(feature_summary_path.read_text(encoding="utf-8"))
+            if cfg.parcellation_strategy != "oslom"
+            else None
+        )
         labeling = json.loads(labeling_path.read_text(encoding="utf-8"))
         map_names = [str(value) for value in labeling["map_names"]]
         label_records = list(labeling["candidates"])
@@ -744,9 +862,7 @@ def build_module(
                 continue
             if old_path.is_file() or old_path.is_symlink():
                 old_path.unlink()
-        write_cifti_dense_scalar(
-            membership_path, cfg.inputs.microparcels, network_arrays, map_names
-        )
+        write_cifti_dense_scalar(membership_path, spatial_reference_path, network_arrays, map_names)
         candidate_by_network: dict[int, list[dict]] = {}
         for record in label_records:
             candidate_by_network.setdefault(int(record["network"]), []).append(record)
@@ -766,6 +882,10 @@ def build_module(
             "Module": "networks",
             "Space": cfg.inputs.space,
             "SmoothingFWHMmm": cfg.inputs.smoothing_mm,
+            "ConnectivitySource": cfg.connectivity_source,
+            "SourceRepresentation": cfg.inputs.source_representation,
+            "ParcellationStrategy": cfg.parcellation_strategy,
+            "FeatureReduction": feature_reduction,
         }
         write_indexed_cifti_sidecar(
             membership_path,
@@ -776,7 +896,7 @@ def build_module(
         if cfg.parcellation_strategy == "oslom" and cfg.oslom.repetitions > 1:
             write_cifti_dense_scalar(
                 stability_path,
-                cfg.inputs.microparcels,
+                spatial_reference_path,
                 [vertex_stability[:, index] for index in range(vertex_stability.shape[1])],
                 map_names,
             )
@@ -788,7 +908,7 @@ def build_module(
             )
             write_cifti_dense_scalar(
                 homeless_path,
-                cfg.inputs.microparcels,
+                spatial_reference_path,
                 [
                     vertex_homeless,
                     (vertex_homeless > cfg.consensus.homeless_threshold).astype(np.float32),
@@ -806,7 +926,7 @@ def build_module(
             )
             write_cifti_dense_scalar(
                 overlap_path,
-                cfg.inputs.microparcels,
+                spatial_reference_path,
                 [vertex_overlap],
                 ["Overlap stability"],
             )
@@ -855,13 +975,18 @@ def build_module(
             else [],
             "n_active_vertices": int(mask.sum()) if cfg.inputs.domain == "surface" else None,
             "n_gray_matter_voxels": n_vertices if cfg.inputs.domain == "volume" else None,
-            "n_microparcels": n_microparcels,
+            "connectivity_source": cfg.connectivity_source,
+            "source_representation": cfg.inputs.source_representation,
+            "source_manifest": str(cfg.inputs.source_manifest),
+            "source_features": str(cfg.inputs.features),
+            "feature_reduction": feature_reduction,
+            "n_source_locations": int(network_validation["source_locations"]),
+            "n_microparcels": n_microparcels if n_microparcels >= 0 else None,
             "n_edges": edge_count,
             "parcellation_strategy": cfg.parcellation_strategy,
             "reference_run": (ref_idx + 1 if cfg.parcellation_strategy == "oslom" else None),
             "n_reference_networks": vertex_stability.shape[1],
             "source_surfaces": [str(path) for path in cfg.inputs.source_surfaces],
-            "microparcellation_manifest": str(cfg.inputs.microparcellation_manifest),
             "anatomical_labeling_provenance": (
                 {
                     "manifest": str(cfg.inputs.anatomical_manifest),
@@ -948,8 +1073,12 @@ def build_module(
             reset_directory=False,
             completion_boundary=completion_boundary,
             parameters={
-                "consensus": config_payload["consensus"],
                 "parcellation_strategy": cfg.parcellation_strategy,
+                **(
+                    {"consensus": config_payload["consensus"]}
+                    if cfg.parcellation_strategy == "oslom"
+                    else {}
+                ),
             },
         )
     )

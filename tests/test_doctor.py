@@ -32,7 +32,15 @@ def test_doctor_reports_selected_installation(tmp_path, monkeypatch, capsys):
     assert f"SELECTED checkout: {tmp_path / 'checkout'}" in output
     assert "SELECTED branch: dev" in output
     assert f"SELECTED executable: {sys.executable}" in output
-    assert calls == [{"deep": False, "with_oslom": True, "slurm": True, "quick": True}]
+    assert calls == [
+        {
+            "deep": False,
+            "with_oslom": True,
+            "slurm": True,
+            "quick": True,
+            "with_lesion": False,
+        }
+    ]
 
 
 def test_deep_doctor_uses_full_checks_and_keeps_json_list(tmp_path, monkeypatch, capsys):
@@ -50,7 +58,15 @@ def test_deep_doctor_uses_full_checks_and_keeps_json_list(tmp_path, monkeypatch,
 
     output = json.loads(capsys.readouterr().out)
     assert output[0]["category"] == "installation"
-    assert calls == [{"deep": True, "with_oslom": True, "slurm": True, "quick": False}]
+    assert calls == [
+        {
+            "deep": True,
+            "with_oslom": True,
+            "slurm": True,
+            "quick": False,
+            "with_lesion": False,
+        }
+    ]
 
 
 def test_shared_installation_is_reported_as_main(tmp_path, monkeypatch):

@@ -15,6 +15,38 @@ from nro.orchestration.execution_pins import capture_site
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore, source_fingerprint
 
+# The installed scheduler and worker shell need only this stable site protocol.
+# Scientific subprocesses receive a separate, complete execution-site snapshot
+# captured with their own source version.
+_COORDINATION_SITE_KEYS = frozenset(
+    {
+        "definitions",
+        "bids",
+        "work",
+        "development",
+        "registry",
+        "images",
+        "gradient_coefficients",
+        "templates",
+        "workbench",
+        "oslom",
+        "pycicada",
+        "license",
+        "runtime",
+        "partition",
+        "viewing_partition",
+        "account",
+        "flywheel_server",
+        "flywheel_project",
+        "binds",
+    }
+)
+
+
+def _coordination_site(values: dict) -> dict:
+    """Exclude version-specific scientific resources from scheduler settings."""
+    return {key: values[key] for key in _COORDINATION_SITE_KEYS if key in values}
+
 
 def implementation_path(control: Path) -> Path:
     """Locate the explicit central installation binding, not a code archive."""
@@ -186,7 +218,7 @@ def capture_worker_implementation(control: Path, bids_root: Path, *, check_check
         raise ValueError("The designated scheduler source snapshot is unavailable")
     if not (source.root / "nro/orchestration/source_launcher.py").is_file():
         raise ValueError("The designated scheduler source snapshot is incomplete")
-    site = capture_site(paths.execution_sites, values)
+    site = capture_site(paths.execution_sites, _coordination_site(values))
     return source, site, Path(record["python"])
 
 

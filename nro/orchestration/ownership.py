@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 import yaml
 
-from nro.configuration.store import CONFIGURATION_CLASSES, UPSTREAM_CLASS, fingerprint
+from nro.configuration.store import CONFIGURATION_CLASSES, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root, module_namespace_root
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.workflow_registry import lineage_directory_label
 
@@ -448,7 +449,7 @@ def _validate_lineage_record(
     upstream = record.get("upstream")
     if not isinstance(upstream, list):
         raise ValueError("upstream lineage list is missing")
-    expected_parent = UPSTREAM_CLASS[configuration_class]
+    expected_parent = primary_dependency(configuration_class, configuration["resolved"])
     parent_fingerprints = [
         str(item.get("lineage_fingerprint")) for item in upstream if isinstance(item, Mapping)
     ]

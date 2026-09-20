@@ -18,6 +18,8 @@ the model format. FitLins is not a dependency.
 | ANTs | N4 correction, SyN registration, transform application. | [ANTs](https://github.com/ANTsX/ANTs) |
 | FreeSurfer | Recon-all, segmentations, surfaces, boundary registration. | [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/fswiki/FreeSurferWiki) |
 | SynthStrip | Anatomical brain extraction. | [SynthStrip](https://surfer.nmr.mgh.harvard.edu/docs/synthstrip/) |
+| SynthStroke | Automatic stroke-lesion probability maps. | [SynthStroke](https://github.com/liamchalcroft/SynthStroke) |
+| FastSurfer-LIT | Lesion inpainting and cortical surface reconstruction. | [FastSurfer](https://github.com/Deep-MI/FastSurfer), [NeuroLIT weights](https://doi.org/10.5281/zenodo.14510136) |
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
 | HCP Pipelines | Hardware-specific gradient-distortion estimation and correction. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
@@ -35,12 +37,26 @@ the model format. FitLins is not a dependency.
 
 SynBOLD-DisCo runs from its separate image for synthetic-reference distortion
 correction. Its configured image and the wrapper policy are recorded in the
-functional manifest. Installation pins QuNex 1.5.1, SynthStrip 1.7,
-SynBOLD-DisCo 1.4, and Workbench 2.2.1 acquisition sources. Existing configured
+functional manifest. Installation pins QuNex 1.5.1, SynthStrip 1.7, the
+FastSurfer 2.5.4 image that supplies FreeSurfer 7.4.1, SynBOLD-DisCo 1.4, and
+Workbench 2.2.1 acquisition sources. Existing configured
 resources are reused, so those pins do not establish the versions of every
 executable already present at a site. Python versions are locked in `uv.lock`;
 TemplateFlow object versions/checksums are in the installed resource catalog.
 See [installation](../installation.md) for acquisition and verification.
+
+Lesion-aware anatomy uses the SynthStroke SynthPlus model at the revision
+recorded in the anatomical contract. nro implements the inference adapter and
+follows the architecture and preprocessing policy from its recorded upstream
+source revision. It checks the downloaded model files against pinned SHA-256
+digests. Inference uses the optional `lesion` Python extra and does not copy the
+upstream training implementation into nro.
+
+Lesion inpainting and reconstruction use FastSurfer 2.5.4 at source revision
+`cdfccea` with NeuroLIT 0.6.1. The container and the axial, coronal, and sagittal
+checkpoint files have pinned SHA-256 identities in the anatomical scientific
+policy. The three checkpoints come from the FastSurfer-LIT Zenodo record and
+are mounted read-only during execution.
 
 MARSS is an optional GPLv3 package invoked through a process boundary. nro does
 not copy or modify its implementation. The integration follows Tubiolo,

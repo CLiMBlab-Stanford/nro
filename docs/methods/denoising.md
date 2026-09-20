@@ -37,13 +37,18 @@ scan-nulling regressors.
 
 ## Confound regression
 
-Cleaning begins with the 36-parameter model described by Satterthwaite et al.
-([2013](https://doi.org/10.1016/j.neuroimage.2012.08.052)). Its nine base signals are the six rigid-body
-motion parameters, mean white-matter signal, mean cerebrospinal-fluid signal,
-and global signal. The model contains those nine signals, their first temporal
-derivatives, the squares of the nine signals, and the squares of their
-derivatives. Framewise displacement is used to identify extreme motion but is
-not an additional continuous nuisance regressor.
+The default connectivity nuisance model contains global signal, framewise
+displacement, the six rigid-body motion parameters, the first five aCompCor
+components, and DCT-II cosine drifts. aCompCor is estimated from combined
+white-matter and CSF voxels. The source confounds table also contains the
+36-parameter model described by Satterthwaite et al.
+([2013](https://doi.org/10.1016/j.neuroimage.2012.08.052)), so alternative clean
+configurations can select it without repeating functional preprocessing.
+
+The default selector also matches the numbered outlier columns. Those columns
+define the temporal mask, however, and are therefore zero in every retained
+fitting row. Cleaning discards them as unusable nuisance directions rather than
+fitting scan-nulling regressors alongside censoring.
 
 Cleaning constructs a real Fourier basis for frequencies inside the configured
 passband. Task regressors and nuisance regressors are projected into that same

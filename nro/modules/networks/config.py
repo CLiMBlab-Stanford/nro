@@ -16,11 +16,13 @@ networks_default = partial(main_configuration_factory, "networks")
 
 @dataclass(frozen=True)
 class InputsConfig:
-    """CIFTI microparcellation inputs and anatomy needed for reference-map projection."""
+    """Selected feature source and anatomy needed for reference-map projection."""
 
-    microparcellation_manifest: Path
-    microparcels: Path
-    connectivity: Path
+    source: str
+    source_manifest: Path
+    features: Path
+    spatial_reference: Path
+    source_representation: str
     domain: str = "surface"
     space: str = "fsnative"
     smoothing_mm: int = DEFAULT_SMOOTHING_MM
@@ -45,22 +47,34 @@ class ConnectivityConfig:
 
 @dataclass(frozen=True)
 class IcaConfig:
-    """ICA component count, randomized reduction, sign-tail normalization, and solver controls."""
+    """ICA component count, sign-tail normalization, and solver controls."""
 
     n_networks: int = field(default_factory=networks_default("ica", "n_networks"))
     random_seed: int | None = field(default_factory=networks_default("ica", "random_seed"))
     max_iterations: int = field(default_factory=networks_default("ica", "max_iterations"))
     tolerance: float = field(default_factory=networks_default("ica", "tolerance"))
     upper_quantile: float = field(default_factory=networks_default("ica", "upper_quantile"))
-    svd_oversamples: int = field(default_factory=networks_default("ica", "svd_oversamples"))
-    svd_power_iterations: int = field(
-        default_factory=networks_default("ica", "svd_power_iterations")
+
+
+@dataclass(frozen=True)
+class FeatureReductionConfig:
+    """Bound the common feature dimension before ICA or clustering."""
+
+    maximum_dimensions: int = field(
+        default_factory=networks_default("feature_reduction", "maximum_dimensions")
+    )
+    oversampling: int = field(default_factory=networks_default("feature_reduction", "oversampling"))
+    power_iterations: int = field(
+        default_factory=networks_default("feature_reduction", "power_iterations")
+    )
+    random_seed: int | None = field(
+        default_factory=networks_default("feature_reduction", "random_seed")
     )
 
 
 @dataclass(frozen=True)
 class ClusteringConfig:
-    """Repeated mini-batch k-means controls for binarized connectivity profiles."""
+    """Repeated mini-batch k-means controls for continuous feature profiles."""
 
     n_networks: int = field(default_factory=networks_default("clustering", "n_networks"))
     repetitions: int = field(default_factory=networks_default("clustering", "repetitions"))
@@ -145,7 +159,9 @@ class ModuleConfig:
 
     inputs: InputsConfig
     output: OutputConfig
+    connectivity_source: str = field(default_factory=networks_default("connectivity_source"))
     parcellation_strategy: str = field(default_factory=networks_default("parcellation_strategy"))
+    feature_reduction: FeatureReductionConfig = field(default_factory=FeatureReductionConfig)
     ica: IcaConfig = field(default_factory=IcaConfig)
     clustering: ClusteringConfig = field(default_factory=ClusteringConfig)
     oslom: OslomConfig = field(default_factory=OslomConfig)
@@ -157,9 +173,9 @@ class ModuleConfig:
 def validate_config(cfg: ModuleConfig) -> None:
     """Reject unsupported domains, missing input resources, and inconsistent algorithm settings."""
     required_inputs = [
-        cfg.inputs.microparcellation_manifest,
-        cfg.inputs.microparcels,
-        cfg.inputs.connectivity,
+        cfg.inputs.source_manifest,
+        cfg.inputs.features,
+        cfg.inputs.spatial_reference,
     ]
     required_inputs.extend(cfg.inputs.source_surfaces)
     missing_inputs = [str(path) for path in required_inputs if not path.is_file()]
@@ -176,13 +192,24 @@ def validate_config(cfg: ModuleConfig) -> None:
     validate_parameters(
         "networks",
         {
+            "connectivity_source": cfg.connectivity_source,
             "parcellation_strategy": cfg.parcellation_strategy,
             **{
                 name: asdict(getattr(cfg, name))
-                for name in ("connectivity", "ica", "clustering", "oslom", "consensus", "labeling")
+                for name in (
+                    "feature_reduction",
+                    "connectivity",
+                    "ica",
+                    "clustering",
+                    "oslom",
+                    "consensus",
+                    "labeling",
+                )
             },
         },
     )
+    if cfg.inputs.source != cfg.connectivity_source:
+        raise ValueError("Networks input source differs from connectivity_source")
     if cfg.labeling.enabled and cfg.inputs.space in {"ACPC", "fsnative"}:
         if (
             cfg.inputs.anatomical_manifest is None

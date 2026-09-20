@@ -14,9 +14,10 @@ The controller remains available for 12 hours after work and workers become
 idle, then exits. This avoids another Slurm wait when work is requested later
 the same day. Users do not manage it. `--no-submit` never starts the controller.
 
-Omitting `--module` requests every workflow endpoint, currently `dynconn`,
-`networks`, and `firstlevels`, with shared dependencies registered once. Firstlevels selects
-model set `main` unless a model or set is specified. Participants without a
+Omitting `--module` requests every endpoint derived from the selected workflow.
+For `main`, these are `dynconn`, `networks`, and `firstlevels`, with shared
+dependencies registered once. Firstlevels selects model set `main` unless a
+model or set is specified. Participants without a
 matching task model can still run the connectivity paths. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
 
@@ -70,7 +71,7 @@ option is unavailable before branch execution is activated.
 
 Use `--resume` when the original sequence of requests is inconvenient to
 reconstruct. A bare invocation selects registered work with status `Queued`,
-`Waiting`, `Stopped`, or `Error`. It also selects `Missing`, `Stale`, or
+`Waiting`, `Stopped`, `Timeout`, or `Error`. It also selects `Missing`, `Stale`, or
 `Blocked` work that still has demand. Those three states do not create demand
 on their own.
 The shared selectors narrow the selection; omitted selectors mean all existing
@@ -143,6 +144,8 @@ work whose dependencies are complete and which is waiting for worker capacity.
 `Waiting` indicates demanded work held behind unfinished dependencies.
 `Blocked` indicates demanded work held behind an upstream error.
 `Running` and `Error` describe current execution or an unresolved failed attempt.
+`Timeout` means Slurm ended the worker allocation at its wall-time limit. Resume
+that work with a larger `--time` value when the same limit would be insufficient.
 `Stopping` means cancellation is awaiting worker confirmation. `Stopped` means
 the latest attempt ended because a user cancelled its demand; it is not an
 execution failure. A new matching `nro run` request returns that work to the

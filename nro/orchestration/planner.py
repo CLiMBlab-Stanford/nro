@@ -152,12 +152,12 @@ class Planner:
 
     def __init__(self, registry: WorkflowRegistry, *, bids_root: str | Path) -> None:
         """Bind scientific workflow records and raw BIDS without opening a scheduler."""
-        from nro.configuration.site import definitions_root, settings
+        from nro.configuration.site import definitions_roots, settings
 
         self.registry = registry
         self.bids_root = Path(bids_root).expanduser().resolve()
         self._site_values = settings()[0]
-        self._definitions_root = definitions_root()
+        self._definitions_roots = definitions_roots()
         self._module_plan_cache: dict[tuple[object, ...], tuple[WorkItemSpec, ...]] = {}
 
     @staticmethod
@@ -520,7 +520,11 @@ class Planner:
         if selectors:
             runs = tuple(run for run in runs if matches_selectors(run.entities, selectors))
         if target in {"dynconn", "microparcellation", "networks"}:
-            filter_class = "dynconn" if target == "dynconn" else "microparcellation"
+            filter_class = (
+                workflow.configuration("networks").values["connectivity_source"]
+                if target == "networks"
+                else target
+            )
             aggregate_filter = workflow.configuration(filter_class).values.get("input_filter", {})
             runs = tuple(run for run in runs if matches_filter(run.entities, aggregate_filter))
         if target != "anat" and not runs:
@@ -572,12 +576,12 @@ class Planner:
             target_pairs=target_pairs,
             memory_gb=memory_gb,
             max_memory_gb=max_memory_gb,
-            definitions_root=self._definitions_root,
+            definitions_roots=self._definitions_roots,
             gradient_coefficients_root=Path(self._site_values["gradient_coefficients"]),
             task_models=task_models,
             source_markup=source_markup,
         )
-        descriptors = modules_through(target)
+        descriptors = modules_through(target, workflow)
         planned: dict[str, tuple[WorkItemSpec, ...]] = {}
         for descriptor in descriptors:
             upstream_keys = tuple(

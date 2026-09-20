@@ -23,7 +23,7 @@ from nro.modules.firstlevels.task_models import validate_task_model
 def store(tmp_path, monkeypatch):
     root = tmp_path / "store"
     shutil.copytree(ConfigStore().root, root)
-    monkeypatch.setattr(store_module, "definitions_root", lambda: root)
+    monkeypatch.setattr(store_module, "definitions_roots", lambda: (root,))
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     return ConfigStore()
@@ -32,6 +32,12 @@ def store(tmp_path, monkeypatch):
 def _write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+    from nro.configuration.definition_migrations import MANIFEST, refresh_manifest
+
+    for parent in path.parents:
+        if (parent / MANIFEST).is_file():
+            refresh_manifest(parent)
+            break
     return path
 
 
@@ -162,7 +168,7 @@ def test_create_model_draft_and_register_local_file(store, tmp_path):
     target = store.root / "models/newtask/main.yml"
     assert not target.exists()
     create(["model", "newtask", "--file", str(output), "--yes"])
-    assert target.read_text() == output.read_text()
+    assert target.read_text().endswith(output.read_text())
     with pytest.raises(SystemExit):
         create(["model", "newtask", "--file", str(output), "--yes"])
     edit(["model", "newtask", "--file", str(output), "--yes"])
@@ -194,7 +200,11 @@ def test_markup_initialization_and_publication(store, tmp_path):
         "demo:\n  sub-01:\n    T1w: anat/sub-01_T1w.nii.gz\n    exclude:\n      - ses-bad\n"
     )
     create(["markup", "alternative", "--file", str(draft), "--yes"])
-    assert definition_target(store, "markup", "alternative").path.read_text() == draft.read_text()
+    assert (
+        definition_target(store, "markup", "alternative")
+        .path.read_text()
+        .endswith(draft.read_text())
+    )
 
 
 def test_copy_model_removes_execution_membership(store, tmp_path):
@@ -223,7 +233,7 @@ def test_validation_rejects_invalid_staged_definitions(store, kind, identifier, 
 
 def test_create_existing_routes_to_edit_and_preserves_comments(store, monkeypatch, capsys):
     target = definition_target(store, "config", "clean/main").path
-    target.write_text("minimum_temporal_rank: 25\n")
+    _write(target, "minimum_temporal_rank: 25\n")
     original = target.read_bytes()
 
     def editor(command, **kwargs):
@@ -252,7 +262,7 @@ def test_invalid_edit_can_be_corrected_before_publication(store, monkeypatch):
     _interactive(monkeypatch, editor, ["y", "y"])
     create(["workflow", "new"])
     assert len(calls) == 2
-    assert target.read_text() == "clean: main\n"
+    assert target.read_text().endswith("clean: main\n")
 
 
 @pytest.mark.parametrize("outcome", ["cancel", "invalid", "editor_error", "interrupt", "conflict"])
@@ -366,13 +376,16 @@ def test_delete_model_then_recreate_from_event_defaults(store, tmp_path, capsys)
     target = store.root / "models/newtask/main.yml"
     _write(target, "model_set: main\nconditions: trial_type\ncontrasts:\n  AvB: {A: 1, B: -1}\n")
     original = target.read_bytes()
-    unrelated = _write(target.parent / "alternative.yml", "keep this")
+    unrelated = _write(
+        target.parent / "alternative.yml",
+        "model_set: []\nconditions: trial_type\ncontrasts:\n  A: {A: 1}\n",
+    )
     delete(["model", "newtask", "--yes"])
     report = capsys.readouterr().out
     backup = Path(report.split("Recovery copy: ", 1)[1].split(" (temporary", 1)[0])
     assert backup.read_bytes() == original
     assert not target.exists()
-    assert unrelated.read_text() == "keep this"
+    assert yaml.safe_load(unrelated.read_text())["contrasts"] == {"A": {"A": 1}}
     events = _events(tmp_path / "events.tsv", ["A", "B"])
     draft = tmp_path / "reset.yml"
     create(["model", "newtask", "--events", str(events), "--output", str(draft)])
@@ -420,8 +433,9 @@ def test_delete_main_config_restores_packaged_default_and_warns_about_references
     assert "packaged main configuration" in capsys.readouterr().out
     alternative = _write(store.configs / "clean/alternative_clean.yml", "{}\n")
     workflow = _write(store.root / "workflows/experiment_workflow.yml", "clean: alternative\n")
-    delete(["config", "clean/alternative", "--yes"])
-    assert not alternative.exists()
+    with pytest.raises(SystemExit):
+        delete(["config", "clean/alternative", "--yes"])
+    assert alternative.exists()
     assert workflow.read_text() == "clean: alternative\n"
     assert "experiment" in capsys.readouterr().out
 

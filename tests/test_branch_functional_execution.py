@@ -39,12 +39,42 @@ def functional_case(tmp_path, monkeypatch):
         json.dumps(
             {
                 "complete": True,
+                "subject": "sub-1",
                 "fs_subject": "sub-1",
+                "fsaverage_template": "fsaverage6",
+                "selection_strategy": "first",
+                "gradient_unwarping": {"enabled": False},
+                "bias_correction": {
+                    "method": "N4BiasFieldCorrection",
+                    "mask": "synthstrip_pre_n4",
+                    "bias_field_retained": True,
+                },
+                "surface_reconstruction": {
+                    "backend": "freesurfer",
+                    "version": "7.4.1",
+                    "skull_strip": "synthstrip",
+                },
+                "inputs": {"t1w": [str(image)], "t2w": []},
+                "copied_session_files": [],
                 "freesurfer_subjects_dir": str(subjects),
                 "mni_template": str(template),
+                "options": {
+                    "synthstrip_image": None,
+                    "configuration": {},
+                    "configuration_fingerprint": None,
+                },
+                "output_metadata_contract": {},
                 "outputs": {
                     "acpc_t1w": str(image),
+                    "acpc_t2w": None,
+                    "myelin_map": None,
+                    "brain_image": str(image),
                     "brain_mask": str(image),
+                    "gray_matter_mask": str(image),
+                    "cortical_ribbon_mask": str(image),
+                    "subcortical_masks": {},
+                    "mni_qc_images": {},
+                    "acpc_pose_qc": str(image),
                     "xfms": {"acpc_to_mni": str(image), "mni_to_acpc": str(image)},
                     "surfaces": {
                         f"{hemi}.{surface}": str(image)
@@ -180,6 +210,50 @@ def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
     assert "Run CICADA Component Classification" in names
     assert "Regress Shared CICADA Components in ACPC" in names
     assert "Run ICA-AROMA Classification and Denoising" not in names
+
+
+def test_lesion_anatomy_masks_template_surface_outputs(functional_case):
+    inputs, options, context, manifest, image = functional_case
+    document = json.loads(manifest.read_text())
+    inpainted = manifest.parent / "sub-1_desc-inpainted_T1w.nii.gz"
+    inpainted.write_bytes(image.read_bytes())
+    mappings = {}
+    validity = {}
+    for hemi in ("lh", "rh"):
+        mapping = manifest.parent / f"{hemi}_mapping.tsv"
+        summary = manifest.parent / f"{hemi}_validity.json"
+        mapping.write_text("scaffold_vertex\tpublic_vertex\n0\t0\n")
+        summary.write_text("{}")
+        mappings[hemi] = str(mapping)
+        validity[hemi] = str(summary)
+    document["lesion"] = {
+        "enabled": True,
+        "masker": {},
+        "reconstruction": {},
+        "boundary_margin_mm": 5.0,
+    }
+    document["outputs"].update(
+        {
+            "inpainted_acpc_t1w": str(inpainted),
+            "inpainted_acpc_t1w_metadata": str(image),
+            "lesion_mask": str(image),
+            "lesion_metadata": str(image),
+            "lesion_probability": str(image),
+            "lesion_qc": str(image),
+            "lesion_reconstruction_summary": str(image),
+            "surface_vertex_mappings": mappings,
+            "surface_validity": validity,
+        }
+    )
+    manifest.write_text(json.dumps(document))
+
+    graph = func.build_module(inputs, options, execution_context=context)._graph.freeze()
+    assert any(step.command and "-valid-roi-out" in step.command for step in graph.steps)
+    assert any(
+        step.name == "Mask Resampled Surface to Valid Anatomical Domain" for step in graph.steps
+    )
+    registration_steps = [step for step in graph.steps if inpainted in step.inputs]
+    assert registration_steps
 
 
 def test_cicada_configuration_snapshot_validates_after_writing(functional_case):

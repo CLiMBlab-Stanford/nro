@@ -2,7 +2,8 @@
 
 nro reads scientific definitions from a directory outside its installation.
 The site owns this directory and can track it in a separate Git repository.
-Code upgrades do not replace its contents.
+Installation migrations may rewrite definitions when their schema changes, but
+they preserve the repository and leave ordinary text changes for review.
 
 `nro paths show` displays the selected `definitions` path. Its default is
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible,
@@ -58,9 +59,11 @@ TOML snapshot, so later site edits cannot change running work.
 Development branches may select private definitions repositories for
 configurations, workflows, models, markup, events, hardware policy, conversion
 profiles, and scan-plan parser code. A private repository must omit
-`site/site.yml` and inherits the shared document. Branch selection rejects a
-private site document, and central admission rejects a request prepared against
-a different protected site.
+`site/site.yml`. Definitions resolve from the current branch, then each
+registered parent in order, and finally the shared repository. A file in a
+nearer store replaces the file with the same category and ID in every later
+store. Branch selection rejects a private site document, and central admission
+rejects a request prepared against a different protected site.
 
 The document has five top-level fields:
 
@@ -94,9 +97,12 @@ bidsify:
   event_rules: []
 ```
 
-`qunex`, `synthstrip`, `synbold`, `gradient_unwarp`, and `mni_template` are
+`qunex`, `synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`,
+`fastsurfer_data`, and `mni_template` are
 optional resource overrides. When omitted, nro derives them from `images` or
-`templates`. An empty account is valid for Slurm sites that do not use one.
+`templates`. The optional `lesion` Python extra supplies automatic
+stroke-lesion masking. An empty account is valid for Slurm sites that do not use
+one.
 
 ## Gradient-unwarping hardware
 
@@ -119,6 +125,8 @@ profiles:
         maximum: 7.5
     action: unwarp
     coefficients: coeff_IMPULSE.grad
+    acquisition_metadata:
+      gradient_coil_model: Impulse head gradient (Athena)
 ```
 
 String and list matches are exact. Numeric ranges may define inclusive
@@ -126,6 +134,24 @@ String and list matches are exact. Numeric ranges may define inclusive
 `action: unwarp` requires a coefficient filename relative to the site's
 `gradient_coefficients` directory. `action: already_corrected` declares that the
 matched hardware needs no nro correction and cannot name coefficients.
+
+The optional `acquisition_metadata` mapping records scanner facts that exported
+DICOMs may omit. nro accepts these assertions only from the shared site's
+hardware catalog; a development definitions override cannot change them:
+
+```yaml
+acquisition_metadata:
+  nonlinear_gradient_correction: true
+  gradient_correction_mode: 2D
+  gradient_coil_model: SIGNA UHP gradient
+```
+
+`gradient_correction_mode` accepts `2D`, `3D`, or `none`. A 2D or 3D mode
+requires `nonlinear_gradient_correction: true`; `none` requires `false`.
+During bidsification, series-level DICOM evidence takes precedence. A site
+assertion fills a missing value, while disagreement blocks publication for
+review. Profiles should identify one scanner installation closely enough that
+their assertions apply to every matching acquisition.
 
 An `unwarp` profile normally respects `NonlinearGradientCorrection: true` and
 does not repeat correction. Set `override_existing_correction: true` only when
@@ -150,6 +176,7 @@ nptl:
       - ses-anat/anat/sub-t20_ses-anat_run-2_T2w.nii.gz
     exclude:
       - ses-bad/func/sub-t20_ses-bad_task-rest_bold.nii.gz
+    lesion: true
 ```
 
 Paths are relative to the participant directory. `T1w` and `T2w` accept one
@@ -160,6 +187,9 @@ T2w candidate sets. Their selected sources may come from different sessions.
 `exclude` must be a list; each entry hides that path and everything below it
 from nro source discovery and metadata inheritance. A selected anatomical path
 cannot also be excluded.
+`lesion` is an optional boolean. `true` selects lesion-aware anatomical
+reconstruction for that participant; omission and `false` select ordinary
+reconstruction. This flag is a processing instruction, not a diagnosis.
 
 Every module configuration has a `markup` field. Its default is `main`, which
 selects `markup/main_markup.yml`; set it to `null` to ignore markup. The packaged
@@ -223,6 +253,12 @@ nro definitions validate
 nro definitions validate /data/lab/nro-definitions --json
 ```
 
+Each store has a `.nro-definitions.yml` manifest containing its schema version
+and the SHA-256 digest of every managed definition. YAML and Python definitions
+also begin with a notice that names the supported authoring commands. Readers
+reject direct additions, removals, and edits because those changes bypass
+validation and branch ownership checks.
+
 Omitting the path checks the selected store. Validation reads all definitions,
 including unused variants, and reports malformed filenames, missing packaged
 defaults, invalid configuration keys, broken workflow references, invalid task
@@ -241,12 +277,26 @@ for dependency checks. Both store commands support `--json` and exit nonzero on
 failure.
 
 Use [create, edit, and delete](commands/authoring.md) for configurations,
-workflows, task models, and source markup. These commands target the external
-store. Their
-existing staged validation, writer locks, and concurrent-edit checks still
-apply. Edit event catalogs and ingestion profiles directly, then validate the
-store. Use `nro paths set` for protected site values. Keep unrelated notes
-outside the structured definition directories.
+workflows, task models, and source markup. Use `nro paths set` for protected
+site values. For event catalogs, ingestion profiles, hardware policy, and
+scan-plan parsers, publish one or more local files as a validated transaction:
+
+```bash
+nro definitions apply \
+  --file events/mytask/index.yml=./index.yml \
+  --file events/mytask/main.tsv=./main.tsv
+nro definitions apply --file bidsify/main.yml=./main.yml
+```
+
+`nro definitions edit RELATIVE_PATH` is available for an existing definition
+that has no specialized editor. Transactions stage the complete store, update
+its manifest, validate every definition and reference, and then replace the
+affected files. A validation failure leaves the store unchanged. Keep drafts
+and unrelated notes outside the structured definition directories.
+
+If a direct edit has already occurred, `nro definitions apply` can adopt it
+only when the transaction names every drifted path. This recovery behavior does
+not make direct editing a supported workflow.
 
 Every configuration class inherits its packaged `main` definition. A store may
 omit `main_CLASS.yml`; if present, that file is a partial site override. Named
@@ -271,3 +321,18 @@ Resolved execution snapshots remain the authority for submitted attempts.
 Configuration edits affect subsequent resolution, not saved snapshots. Git
 history supplements these records but is not required to run nro, and Git
 revision identifiers do not participate in scientific fingerprints.
+
+## Schema migrations
+
+`./install --maintain` migrates the shared definitions store before activating
+a new shared release. It applies each required schema migration to a staged
+copy, validates the result, and then rewrites the affected files in place. A
+rollback journal lets a later invocation recover if publication is interrupted.
+The store remains human-readable and its Git history records the resulting
+changes.
+Commit those changes after review.
+
+A development installation never migrates the shared store or a parent's
+private store. It may migrate only the private store selected for its own
+branch. Inherited stores must already match the installed schema; otherwise the
+installation stops and asks the appropriate owner to run maintenance.

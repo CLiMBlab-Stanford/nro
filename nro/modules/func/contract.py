@@ -10,6 +10,22 @@ FINAL_RESAMPLING_TOOL = "AFNI 3dNwarpApply"
 FINAL_RESAMPLING_INTERPOLATION = "wsinc5"
 FINAL_WARP_INTERPOLATION = "linear"
 MARSS_DIAGNOSTIC_METHOD = "equal_target_slice_fisher_z_v1"
+CONFOUNDS_SCHEMA = {
+    "version": 2,
+    "continuous_families": [
+        "satterthwaite_36_parameter",
+        "framewise_displacement",
+        "acompcor",
+        "cosine_drift",
+    ],
+    "diagnostic_families": ["dvars"],
+    "outlier_families": [
+        "non_steady_state_outlier",
+        "extreme_fd_outlier",
+        "dvars_outlier",
+        "motion_outlier",
+    ],
+}
 
 FUNCTIONAL_MANIFEST_FIELDS = {
     "manifest_version": "integer",
@@ -97,6 +113,7 @@ def functional_output_contract() -> dict[str, object]:
         "marss": {
             "diagnostic_method": MARSS_DIAGNOSTIC_METHOD,
         },
+        "confounds": dict(CONFOUNDS_SCHEMA),
     }
 
 

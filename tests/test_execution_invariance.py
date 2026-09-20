@@ -32,6 +32,7 @@ def _execution_fields():
 def test_every_declared_execution_setting_is_excluded_from_scientific_identity(kind, keys):
     from copy import deepcopy
 
+    from nro.configuration.schema import SCHEMAS
     from nro.configuration.store import ConfigStore
 
     store = ConfigStore()
@@ -41,7 +42,17 @@ def test_every_declared_execution_setting_is_excluded_from_scientific_identity(k
     for key in keys[:-1]:
         parent = parent[key]
     old = parent[keys[-1]]
-    parent[keys[-1]] = not old if isinstance(old, bool) else (old or 0) + 1
+    if isinstance(old, bool):
+        parent[keys[-1]] = not old
+    elif isinstance(old, str):
+        parent[keys[-1]] = old + ".alternative"
+    elif old is None:
+        rule = SCHEMAS[kind]
+        for key in keys:
+            rule = rule[key]
+        parent[keys[-1]] = "/tmp/nro-alternative" if rule.kind == "str" else 1
+    else:
+        parent[keys[-1]] = (old or 0) + 1
     changed = store.load_configuration(kind, "main", document=values)
     assert changed.fingerprint != original.fingerprint
     assert changed.scientific_fingerprint == original.scientific_fingerprint

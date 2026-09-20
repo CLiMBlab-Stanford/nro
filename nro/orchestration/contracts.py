@@ -74,7 +74,10 @@ class WorkItemContract:
 
     def as_dict(self, identity: WorkItemIdentity) -> dict[str, Any]:
         """Serialize freshness-relevant configuration, topology, inputs, and outputs."""
+        from nro.orchestration.contract_migrations import current_contract_schema
+
         result: dict[str, Any] = {
+            "contract_schema": current_contract_schema(identity.module),
             "module": identity.module,
             "configuration": self.configuration_fingerprint,
             "entities": dict(sorted(identity.entities.items())),

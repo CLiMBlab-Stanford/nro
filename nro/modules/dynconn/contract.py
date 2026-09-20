@@ -1,6 +1,7 @@
 """Semantic output contract for dynamic-connectivity artifacts."""
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from nro.engine.artifact_metadata import validate_metadata_fields
 
@@ -47,6 +48,17 @@ DYNCONN_LOW_RANK_FIELDS = {
     "standardization": "string",
     "synthetic_basis": "string",
 }
+
+
+def dynconn_output_paths(directory: Path, prefix: str, domain: str) -> dict[str, Path]:
+    """Return the fixed public outputs for one dynamic-connectivity target."""
+
+    suffix = ".dtseries.nii" if domain == "surface" else ".nii"
+    return {
+        "timeseries": Path(directory) / f"{prefix}_desc-dynamicConnectivity_bold{suffix}",
+        "manifest": Path(directory) / f"{prefix}_desc-dynamicConnectivity_manifest.yaml",
+        "index": Path(directory) / f"{prefix}_desc-dynamicConnectivityIndex_manifest.json",
+    }
 
 
 def dynconn_output_contract() -> dict[str, object]:

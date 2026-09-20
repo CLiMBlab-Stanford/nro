@@ -1,4 +1,4 @@
-"""Repeated mini-batch k-means clustering of connectivity profiles."""
+"""Repeated mini-batch k-means clustering of continuous spatial features."""
 
 from __future__ import annotations
 
@@ -49,30 +49,28 @@ def _correlation_assignment(
 
 
 def clustering_membership(
-    lower_adjacency: sparse.spmatrix,
+    features: sparse.spmatrix | np.ndarray,
     config: ClusteringConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return aligned assignment frequencies and fit inertias.
 
     This adapts the procedure used by Shain and Fedorenko (2026): locations are
-    clustered repeatedly from binarized connectivity profiles, fit labels are
+    clustered repeatedly from continuous feature profiles, fit labels are
     aligned one-to-one by spatial correlation, and aligned assignments are
     averaged. The sparse representation avoids materializing the dense
     location-by-location connectivity matrix.
     """
     from sklearn.cluster import MiniBatchKMeans
 
-    profiles = sparse.csr_matrix(lower_adjacency, dtype=np.float32)
-    profiles = profiles + profiles.T
-    profiles.data.fill(1.0)
-    profiles.eliminate_zeros()
+    profiles = (
+        sparse.csr_matrix(features, dtype=np.float32)
+        if sparse.issparse(features)
+        else np.asarray(features, dtype=np.float32)
+    )
     n_nodes = int(profiles.shape[0])
-    if profiles.shape[1] != n_nodes:
-        raise ValueError("Clustering requires a square microparcel adjacency")
-    if config.n_networks >= n_nodes:
+    if config.n_networks >= min(n_nodes, int(profiles.shape[1])):
         raise ValueError(
-            "clustering.n_networks must be smaller than the number of microparcels: "
-            f"{config.n_networks} >= {n_nodes}"
+            "clustering.n_networks must be smaller than both spatial and feature dimensions"
         )
 
     fits: list[tuple[float, np.ndarray]] = []

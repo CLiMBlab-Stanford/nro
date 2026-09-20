@@ -658,7 +658,7 @@ def task_store(tmp_path, monkeypatch):
 
     source = load_task_model("langlocSN/main")
     root = tmp_path / "configuration"
-    monkeypatch.setattr(task_models, "definitions_root", lambda: root)
+    monkeypatch.setattr(task_models, "definitions_roots", lambda: (root,))
     for task, variant, membership in (
         ("langlocSN", "main", ["main"]),
         ("langlocSN", "dev", ["dev", "experiment"]),
@@ -681,6 +681,27 @@ def test_model_set_default_and_explicit_selection(task_store):
     assert set(select_models(tasks=("langlocSN",), model_sets=("experiment",))) == {"langlocSN/dev"}
     assert not select_models(models=("dev",), model_sets=("main",))
     assert len(select_models(model_sets=())) == 4
+
+
+def test_task_models_use_nearest_definition_in_inheritance_chain(task_store, tmp_path, monkeypatch):
+    import yaml
+
+    from nro.modules.firstlevels import task_models
+
+    child = tmp_path / "child"
+    (child / "models/langlocSN").mkdir(parents=True)
+    inherited = task_models.load_task_model("langlocSN/main", task_store / "models")
+    (child / "models/langlocSN/main.yml").write_text(
+        yaml.safe_dump({**inherited, "description": "child"})
+    )
+    monkeypatch.setattr(
+        task_models,
+        "definitions_roots",
+        lambda: (child, task_store),
+    )
+
+    assert task_models.load_task_model("langlocSN/main")["description"] == "child"
+    assert "other/main" in task_models.select_models(model_sets=())
 
 
 def test_shared_model_selectors_preserve_task_variant_pairs(task_store):

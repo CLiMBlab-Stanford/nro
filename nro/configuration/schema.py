@@ -155,6 +155,12 @@ SCHEMAS = {
         "selection_strategy": enum("first", "robust_average"),
         "mni_template": TEXT,
         "synthstrip_container": TEXT,
+        "freesurfer_container": Field("str", nonempty=True, execution=True),
+        "lesion": {
+            "masker_command": Field("str", nullable=True, nonempty=True, execution=True),
+            "fastsurfer_image": Field("str", nullable=True, nonempty=True, execution=True),
+            "use_gpu": Field("bool", execution=True),
+        },
         "freesurfer_subjects_dir": OPTIONAL_TEXT,
         "fs_subject": OPTIONAL_TEXT,
     },
@@ -202,6 +208,7 @@ SCHEMAS = {
             "brain_mask_in_epi": OPTIONAL_TEXT,
             "n_acompcor": NONNEGATIVE_INT,
             "acompcor_max_voxels": COUNT,
+            "cosine_high_pass_hz": POSITIVE,
             "fd_radius_mm": POSITIVE,
             "motion_outlier_fd_thresh": POSITIVE,
             "dvars_statistical_alpha": FRACTION,
@@ -304,7 +311,14 @@ SCHEMAS = {
     "networks": {
         "markup": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
+        "connectivity_source": enum("microparcellation", "dynconn"),
         "parcellation_strategy": enum("ica", "clustering", "oslom"),
+        "feature_reduction": {
+            "maximum_dimensions": COUNT,
+            "oversampling": NONNEGATIVE_INT,
+            "power_iterations": NONNEGATIVE_INT,
+            "random_seed": OPTIONAL_SEED,
+        },
         "connectivity": {
             "transform": enum("clip_positive", "absolute", "square"),
             "minimum_weight": NONNEGATIVE,
@@ -316,8 +330,6 @@ SCHEMAS = {
             "max_iterations": COUNT,
             "tolerance": POSITIVE,
             "upper_quantile": POSITIVE_FRACTION,
-            "svd_oversamples": COUNT,
-            "svd_power_iterations": NONNEGATIVE_INT,
         },
         "clustering": {
             "n_networks": Field("int", minimum=2),
@@ -368,7 +380,7 @@ RUNTIME_FIELDS = {
     },
     "microparcellation": {"anat_directory": TEXT, "clean_directory": TEXT},
     "dynconn": {"anat_directory": TEXT, "clean_directory": TEXT},
-    "networks": {"anat_directory": TEXT, "microparcellation_directory": TEXT},
+    "networks": {"anat_directory": TEXT, "source_directory": TEXT},
 }
 
 
@@ -408,6 +420,14 @@ def _relationships(kind: str, values: dict) -> None:
             raise DefinitionError("firstlevels.ar_grid must contain distinct coefficients")
     elif kind == "networks":
         oslom = values["oslom"]
+        if (
+            values["connectivity_source"] == "dynconn"
+            and values["parcellation_strategy"] == "oslom"
+        ):
+            raise DefinitionError(
+                "networks.parcellation_strategy=oslom requires "
+                "networks.connectivity_source=microparcellation"
+            )
         if (
             values["parcellation_strategy"] == "oslom"
             and oslom["initialization"] == "file"
@@ -456,10 +476,11 @@ def compile_configuration(kind: str, values: dict, *, runtime: bool = False) -> 
 
 
 def scientific_values(kind: str, values: dict) -> dict:
-    """Remove declared execution settings from an already resolved snapshot.
+    """Return settings that define the module-wide scientific lineage.
 
-    Preserve unknown fields and ordered lists. This also accepts module runtime
-    snapshots whose input/output structure differs from author-written configs.
+    Remove execution settings. Preserve unknown fields and ordered lists. This also
+    accepts module runtime snapshots whose input/output structure differs from
+    author-written configs.
     """
 
     def select(schema, mapping):
@@ -468,11 +489,12 @@ def scientific_values(kind: str, values: dict) -> dict:
             rule = schema.get(key)
             if isinstance(rule, Field) and rule.execution:
                 continue
-            result[key] = (
-                select(rule, value)
-                if isinstance(rule, dict) and isinstance(value, dict)
-                else deepcopy(value)
-            )
+            if isinstance(rule, dict) and isinstance(value, dict):
+                nested = select(rule, value)
+                if nested:
+                    result[key] = nested
+            else:
+                result[key] = deepcopy(value)
         return result
 
     schema = SCHEMAS[kind]
@@ -502,4 +524,17 @@ def scientific_values(kind: str, values: dict) -> dict:
             result.pop("marss_min_multiband_factor", None)
     if kind == "dynconn" and result.get("low_rank") is False:
         result.pop("low_rank_options", None)
+    if kind == "networks":
+        source = result.get("connectivity_source")
+        strategy = result.get("parcellation_strategy")
+        if source != "microparcellation":
+            result.pop("connectivity", None)
+        if strategy == "oslom":
+            result.pop("feature_reduction", None)
+            result.pop("ica", None)
+            result.pop("clustering", None)
+        else:
+            result.pop("oslom", None)
+            result.pop("consensus", None)
+            result.pop("ica" if strategy == "clustering" else "clustering", None)
     return result

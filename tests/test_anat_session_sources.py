@@ -169,3 +169,55 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
     assert step.prepare is not None
     step.prepare()
     assert destination.parent.is_dir()
+
+
+def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> None:
+    t1w = tmp_path / "input" / "sub-1_T1w.nii.gz"
+    t1w.parent.mkdir()
+    t1w.write_bytes(b"image")
+    image = tmp_path / "fastsurfer.sif"
+    image.write_bytes(b"container")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    subjects_dir = tmp_path / "subjects"
+    subject_dir = subjects_dir / "sub-1"
+    calls: list[list[str]] = []
+
+    def run_child(command, **_kwargs):
+        command = list(command)
+        calls.append(command)
+        if "mri_vol2vol" in command:
+            path = subject_dir / "mri" / "brainmask.auto.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "-autorecon3" in command:
+            (subject_dir / "scripts").mkdir(parents=True, exist_ok=True)
+            (subject_dir / "scripts" / "recon-all.done").write_text("done")
+            for path in anat_steps._recon_required_outputs(subject_dir):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"output")
+
+    step = anat_steps._create_recon_all_step(
+        run_child=run_child,
+        env={},
+        t1w=t1w,
+        t2w=None,
+        subjects_dir=subjects_dir,
+        fs_subject="sub-1",
+        runtime="singularity",
+        image=image,
+        license_file=license_file,
+        force=False,
+    )
+    assert step.action is not None
+    step.action()
+
+    assert len(calls) == 3
+    assert all(call[:3] == ["singularity", "exec", "--cleanenv"] for call in calls)
+    assert "-autorecon1" in calls[0]
+    assert "-noskullstrip" in calls[0]
+    assert "mri_vol2vol" in calls[1]
+    assert "-autorecon2" in calls[2]
+    assert "-autorecon3" in calls[2]
+    assert "-noskullstrip" in calls[2]
+    assert step.scientific_signature
