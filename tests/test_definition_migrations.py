@@ -69,6 +69,24 @@ def test_legacy_migration_rewrites_files_in_place_and_is_idempotent(tmp_path):
     assert _files(root) == before
 
 
+def test_legacy_migration_ignores_unmanaged_editor_directories(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    (root / MANIFEST).unlink()
+    checkpoint = root / "configs/clean/.ipynb_checkpoints"
+    checkpoint.mkdir()
+    scratch = checkpoint / "draft.yml"
+    scratch.write_text("not: a definition\n")
+    checkpoint.chmod(0)
+    try:
+        assert migrate_store(
+            root, validate=lambda candidate: validate_store(candidate, require_site=True)
+        )
+    finally:
+        checkpoint.chmod(0o755)
+    assert scratch.read_text() == "not: a definition\n"
+    validate_store_integrity(root)
+
+
 def test_failed_transaction_preserves_store_bytes(tmp_path):
     root = create_store(tmp_path / "definitions")
     before = _files(root)

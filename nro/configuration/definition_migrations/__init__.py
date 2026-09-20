@@ -226,6 +226,8 @@ def _copy_store(source: Path, destination: Path) -> None:
                 "*.swp",
                 "*.swo",
                 "*~",
+                ".DS_Store",
+                ".ipynb_checkpoints",
                 "__pycache__",
             ),
         )
