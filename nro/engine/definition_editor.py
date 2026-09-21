@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
+DRAFT_DIRECTORY = ".definition-drafts"
+
 
 def read_definition(path: Path) -> bytes | None:
     """Snapshot a regular definition file; reject symbolic links."""
@@ -123,6 +125,109 @@ def delete_definition(
         return backup
 
 
+def _private_directory(path: Path) -> None:
+    """Require a real directory owned by this user and inaccessible to others."""
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(f"Invalid private definition-draft directory: {path}")
+    status = path.stat()
+    if status.st_uid != os.geteuid() or stat.S_IMODE(status.st_mode) & 0o077:
+        raise ValueError(f"Definition-draft directory is not private to this user: {path}")
+
+
+def definition_draft_path(path: Path, store_root: Path) -> Path:
+    """Return the private, ignored draft path for one published definition."""
+    root = Path(store_root).expanduser().resolve()
+    target = Path(path).expanduser().absolute()
+    try:
+        relative = target.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"Definition is outside its store: {target}") from error
+    if len(relative.parts) < 2:
+        raise ValueError(f"Definition has no managed category: {target}")
+    category = root / relative.parts[0]
+    if category.is_symlink() or not category.is_dir():
+        raise ValueError(f"Invalid definition category: {category}")
+
+    shared = category / DRAFT_DIRECTORY
+    try:
+        shared.mkdir(mode=0o3770)
+        shared.chmod(0o3770)
+    except FileExistsError:
+        if shared.is_symlink() or not shared.is_dir():
+            raise ValueError(f"Invalid definition-draft directory: {shared}") from None
+
+    private = shared / f"user-{os.geteuid()}"
+    try:
+        private.mkdir(mode=0o700)
+        private.chmod(0o700)
+    except FileExistsError:
+        _private_directory(private)
+
+    parent = private
+    for component in relative.parts[1:-1]:
+        parent = parent / component
+        try:
+            parent.mkdir(mode=0o700)
+            parent.chmod(0o700)
+        except FileExistsError:
+            _private_directory(parent)
+    return parent / relative.name
+
+
+@contextmanager
+def _draft_lock(draft: Path):
+    """Prevent two commands from editing one user's saved draft concurrently."""
+    lock = draft.with_name(f".{draft.name}.lock")
+    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "a") as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError(f"This definition draft is already open: {draft}") from error
+        yield
+
+
+def _prepare_draft(
+    draft: Path,
+    initial: str,
+    *,
+    interactive: bool,
+    explicit_source: bool,
+) -> bool:
+    """Create a draft or let an interactive user recover an existing one."""
+    if draft.is_symlink():
+        raise ValueError(f"Refusing a symbolic-link definition draft: {draft}")
+    if draft.exists() and not draft.is_file():
+        raise ValueError(f"Invalid definition draft: {draft}")
+    if draft.is_file():
+        if not interactive:
+            raise ValueError(
+                "A saved draft is available for this definition. Rerun interactively to "
+                "recover it or start over."
+            )
+        source = "the supplied file" if explicit_source else "the published definition"
+        print("A saved draft is available for this definition.")
+        while True:
+            answer = (
+                input(f"Recover it [r], start over from {source} [s], or cancel [q]? [r] ")
+                .strip()
+                .lower()
+            )
+            if answer in {"", "r", "recover"}:
+                print("Recovered the saved draft.")
+                return True
+            if answer in {"s", "start", "start over"}:
+                break
+            if answer in {"q", "quit", "cancel"}:
+                print("Cancelled; the stored definition and saved draft are unchanged.")
+                return False
+            print("Choose r to recover, s to start over, or q to cancel.")
+    draft.write_text(initial, encoding="utf-8")
+    draft.chmod(0o600)
+    return True
+
+
 def review_definition(
     path: Path,
     initial: str,
@@ -137,8 +242,8 @@ def review_definition(
     """Edit a private draft, validate it, show a diff, and confirm publication.
 
     source supplies a local file instead of opening an editor. Noninteractive
-    publication requires source and yes. Unpublished drafts are retained and
-    their location is printed, including on cancellation or errors.
+    publication requires source and yes. Unpublished work remains in a private,
+    ignored store draft and is offered on the next edit of the same definition.
     """
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if not interactive and (source is None or not yes):
@@ -157,66 +262,74 @@ def review_definition(
             raise ValueError("Set VISUAL or EDITOR, or supply --file FILE")
         command = shlex.split(editor)
     initial_text = source.read_text(encoding="utf-8") if source else initial
-    directory = Path(tempfile.mkdtemp(prefix="nro-definition-"))
-    draft = directory / path.name
+    if store_root is None:
+        raise ValueError("Definition review requires its definitions-store root")
+    draft = definition_draft_path(path, store_root)
     saved = False
-    try:
-        draft.write_text(initial_text, encoding="utf-8")
-        while True:
-            if command:
-                subprocess.run([*command, str(draft)], check=True)
-            text = draft.read_text(encoding="utf-8")
-            if store_root is not None:
+    with _draft_lock(draft):
+        if not _prepare_draft(
+            draft,
+            initial_text,
+            interactive=interactive,
+            explicit_source=source is not None,
+        ):
+            return False
+        try:
+            while True:
+                if command:
+                    subprocess.run([*command, str(draft)], check=True)
+                text = draft.read_text(encoding="utf-8")
                 from nro.configuration.definition_migrations import normalize_managed_text
 
                 text = normalize_managed_text(path, text)
                 draft.write_text(text, encoding="utf-8")
-            try:
-                validate(text)
-            except ValueError as error:
-                print(f"Validation failed: {error}", file=sys.stderr)
-                if not command or input("Reopen the draft? [Y/n] ").strip().lower() not in {
-                    "",
+                draft.chmod(0o600)
+                try:
+                    validate(text)
+                except ValueError as error:
+                    print(f"Validation failed: {error}", file=sys.stderr)
+                    if not command or input("Reopen the draft? [Y/n] ").strip().lower() not in {
+                        "",
+                        "y",
+                        "yes",
+                    }:
+                        raise
+                    continue
+                if expected is not None and text.encode("utf-8") == expected:
+                    print("No changes.")
+                    saved = True
+                    return False
+                before = expected.decode("utf-8") if expected is not None else ""
+                print(
+                    "".join(
+                        difflib.unified_diff(
+                            before.splitlines(keepends=True),
+                            text.splitlines(keepends=True),
+                            fromfile=str(path),
+                            tofile="proposed definition",
+                        )
+                    ),
+                    end="",
+                )
+                print("Scientific changes may affect artifact freshness on the next assessment.")
+                if not yes and input(f"Save {path}? [y/N] ").strip().lower() not in {
                     "y",
                     "yes",
                 }:
-                    raise
-                continue
-            if expected is not None and text.encode("utf-8") == expected:
-                print("No changes.")
+                    print("Cancelled; the stored definition is unchanged.")
+                    return False
+                save_definition(
+                    path,
+                    text,
+                    expected=expected,
+                    store_root=store_root,
+                    validate_store=validate_store,
+                )
                 saved = True
-                return False
-            before = expected.decode("utf-8") if expected is not None else ""
-            print(
-                "".join(
-                    difflib.unified_diff(
-                        before.splitlines(keepends=True),
-                        text.splitlines(keepends=True),
-                        fromfile=str(path),
-                        tofile="proposed definition",
-                    )
-                ),
-                end="",
-            )
-            print("Scientific changes may affect artifact freshness on the next assessment.")
-            if not yes and input(f"Save {path}? [y/N] ").strip().lower() not in {"y", "yes"}:
-                print("Cancelled; the stored definition is unchanged.")
-                return False
-            save_definition(
-                path,
-                text,
-                expected=expected,
-                store_root=store_root,
-                validate_store=validate_store,
-            )
-            saved = True
-            print(f"Saved {path}")
-            return True
-    finally:
-        if saved:
-            draft.unlink()
-            directory.rmdir()
-        elif draft.exists():
-            print(f"Draft retained at {draft}", file=sys.stderr)
-        else:
-            directory.rmdir()
+                print(f"Saved {path}")
+                return True
+        finally:
+            if saved:
+                draft.unlink()
+            elif draft.exists():
+                print("Draft retained for the next edit of this definition.", file=sys.stderr)

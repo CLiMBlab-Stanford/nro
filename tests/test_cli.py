@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,61 @@ def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -
     cli.main(["run", "-p", "t12"])
 
     assert calls == [(["-p", "t12"], "nro run")]
+
+
+def test_version_reports_installed_distribution_without_site_loading(monkeypatch, capsys) -> None:
+    import nro.configuration.site as site
+
+    monkeypatch.setattr(
+        site,
+        "installation_record",
+        lambda: pytest.fail("--version must not load installation state"),
+    )
+    with pytest.raises(SystemExit) as error:
+        cli.main(["--version"])
+
+    assert error.value.code == 0
+    assert capsys.readouterr().out.strip() == f"nro {version('nro')}"
+
+
+def test_help_lists_task_guides_and_installed_commands(capsys) -> None:
+    from nro.bin import help as help_command
+
+    help_command.main([])
+
+    output = capsys.readouterr().out
+    assert "Task guides:" in output
+    assert "definitions" in output
+    assert "Installed commands:" in output
+    assert "run" in output
+
+
+def test_help_shows_task_guidance(capsys) -> None:
+    from nro.bin import help as help_command
+
+    help_command.main(["definitions"])
+
+    output = capsys.readouterr().out
+    assert "nro create config MODULE/ID" in output
+    assert "nro definitions create [PATH]" in output
+
+
+def test_help_delegates_command_reference(monkeypatch) -> None:
+    import nro.cli as cli_module
+    from nro.bin import help as help_command
+
+    calls = []
+
+    def command_main(argv, *, prog):
+        calls.append((argv, prog))
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_module, "available_commands", lambda: ("run",))
+    monkeypatch.setattr(cli_module, "_command_main", lambda command: command_main)
+
+    help_command.main(["--command", "run"])
+
+    assert calls == [(["--help"], "nro run")]
 
 
 def test_development_installation_restricts_only_central_maintenance(monkeypatch, capsys) -> None:
