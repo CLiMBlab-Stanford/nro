@@ -207,6 +207,22 @@ def test_markup_initialization_and_publication(store, tmp_path):
     )
 
 
+def test_markup_edit_does_not_revalidate_unrelated_event_catalog(store, tmp_path):
+    _write(
+        store.root / "events/orphan.tsv",
+        "onset\tduration\ttrial_type\n0\t1\tA\n",
+    )
+    draft = tmp_path / "markup.yml"
+    draft.write_text("demo:\n  sub-01:\n    lesion: true\n")
+    edit(["markup", "main", "--file", str(draft), "--yes"])
+    assert definition_target(store, "markup", "main").path.read_text().endswith(draft.read_text())
+
+    from nro.configuration.definitions import validate_store
+
+    with pytest.raises(ValueError, match="Unindexed event table"):
+        validate_store(store.root, require_site=True)
+
+
 def test_copy_model_removes_execution_membership(store, tmp_path):
     output = tmp_path / "draft.yml"
     create(["model", "langlocSN/dev", "--from", "langlocSN/main", "--output", str(output)])
