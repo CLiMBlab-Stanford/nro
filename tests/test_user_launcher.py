@@ -209,6 +209,7 @@ def test_launcher_uses_isolated_interpreter_and_selected_site(tmp_path, monkeypa
     assert argv[1:] == ["-I", "-B", "-m", "nro.cli", "run", "-p", "t20"]
     assert "PYTHONPATH" not in env and "PYTHONHOME" not in env
     assert env["NRO_SITE_CONFIG"] == main["site"]
+    assert env["NRO_CHECKOUT"] == main["checkout"]
 
 
 def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monkeypatch):

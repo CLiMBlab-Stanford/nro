@@ -642,9 +642,12 @@ def _main(argv=None) -> None:
             "UV_PYTHON_INSTALL_DIR": str(ROOT / ".nro-python"),
             "UV_CACHE_DIR": str(ROOT / ".nro-cache"),
             "NRO_SITE_CONFIG": str(site),
+            "NRO_CHECKOUT": str(ROOT),
             "NRO_SETUP_CHILD": "1",
         }
         subprocess.run(sync, cwd=ROOT, env=env, check=True)
+        environment.mkdir(parents=True, exist_ok=True)
+        (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
         if prepare_shared is not None:
             prepare_shared()
         command = [
