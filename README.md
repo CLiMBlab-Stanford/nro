@@ -135,6 +135,10 @@ The same commands support `config CLASS/ID` and `workflow ID`. See
 [definition authoring](docs/commands/authoring.md) for validation, local drafts,
 and shared-store safeguards.
 
+Run `nro help` for task-oriented guidance from the installed CLI, or
+`nro help --command COMMAND` for a command's current syntax. `nro --version`
+reports which package release the selected installation uses.
+
 Check progress and inspect a failed task:
 
 ```bash

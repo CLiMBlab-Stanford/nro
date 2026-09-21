@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.metadata
 import pkgutil
 import sys
 from collections.abc import Callable
@@ -22,6 +23,7 @@ COMMAND_HELP = {
     "setup": "Set up dependencies or connect to a shared installation.",
     "paths": "View and edit site paths.",
     "doctor": "Check dependencies and site access.",
+    "help": "Show task guides or the current reference for an installed command.",
     "dev": "Run validation selected from the current development sphere.",
     "log": "Browse work-item or worker logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
@@ -56,6 +58,11 @@ def build_parser(*, prog: str = "nro") -> argparse.ArgumentParser:
         prog=prog,
         description="Run and inspect nro derivative workflows.",
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {importlib.metadata.version('nro')}",
+    )
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
     for command in available_commands():
         commands.add_parser(
@@ -78,7 +85,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
     """Dispatch argv to a user command; unknown commands exit with a parser error."""
     values = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser(prog=prog)
-    if not values or values[0] in {"-h", "--help"}:
+    if not values or values[0] in {"-h", "--help", "--version"}:
         parser.parse_args(values)
         return
 

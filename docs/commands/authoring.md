@@ -97,14 +97,22 @@ not select it in any workflow.
 
 ## Editor and save behavior
 
-The commands open a private temporary copy with `$VISUAL`, then `$EDITOR` if
-VISUAL is unset. They fall back to `nano`, then `vi`, when available. Editor options
-are supported without shell evaluation; GUI editors must use an option that
-waits until editing is finished, such as `code --wait`.
+The commands open a private draft with `$VISUAL`, then `$EDITOR` if VISUAL is
+unset. They fall back to `nano`, then `vi`, when available. Editor options are
+supported without shell evaluation; GUI editors must use an option that waits
+until editing is finished, such as `code --wait`.
 
 On exit, nro validates the draft, prints a diff, and asks before saving.
-Invalid drafts can be reopened. Cancelled or failed edits retain the draft and
-print its path. An unchanged edit does not rewrite the stored file.
+Invalid drafts can be reopened. Cancelled, interrupted, conflicting, and failed
+edits retain a private draft inside the definitions store. The next edit of the
+same definition offers to recover the draft or start over. Users do not need to
+locate draft files themselves. Successful and unchanged edits clear the saved
+draft.
+
+Drafts are separated by operating-system user and inaccessible to other users.
+Their hidden directories match the store's `.gitignore` rules and are excluded
+from definition validation and version control. A second process cannot open the
+same user's draft while the first editor remains active.
 
 Validation checks model syntax, config keys and basic value types, and workflow
 references. Duplicate YAML keys are rejected. It does not establish numerical

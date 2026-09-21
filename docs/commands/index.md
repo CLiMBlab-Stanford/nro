@@ -1,9 +1,13 @@
 # Command-line reference
 
-Run `nro COMMAND --help` for the installed parser. Commands are discovered from
-public executable modules in `nro/bin`; `python -m nro.bin.COMMAND` is equivalent
-when using the correct interpreter. The engine's Python modules are not
-automatically exposed as commands.
+Run `nro help` for task guides and an inventory of installed commands. Use
+`nro help TOPIC` for common workflows, `nro help --command COMMAND` for the
+current command syntax, or `nro COMMAND --help` directly. `nro --version`
+reports the selected installation's package version.
+
+Commands are discovered from public executable modules in `nro/bin`;
+`python -m nro.bin.COMMAND` is equivalent when using the correct interpreter.
+The engine's Python modules are not automatically exposed as commands.
 
 ```{toctree}
 :maxdepth: 1

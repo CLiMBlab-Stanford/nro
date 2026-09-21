@@ -79,6 +79,7 @@ def _reject_symlinks(root: Path) -> None:
         if not directory.is_dir():
             continue
         for parent, directories, names in os.walk(directory, followlinks=False):
+            directories[:] = [name for name in directories if not name.startswith(".")]
             for name in (*directories, *names):
                 path = Path(parent) / name
                 if path.is_symlink():
@@ -220,6 +221,7 @@ def _copy_store(source: Path, destination: Path) -> None:
             symlinks=True,
             ignore=shutil.ignore_patterns(
                 ".git",
+                ".definition-drafts",
                 LOCK,
                 RECOVERY,
                 ".nro-incomplete",

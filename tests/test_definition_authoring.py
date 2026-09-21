@@ -307,7 +307,67 @@ def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, 
     expected = original + "# Another author's change.\n" if outcome == "conflict" else original
     assert target.read_text() == expected
     assert drafts[0].is_file()
+    assert drafts[0].is_relative_to(store.root)
+    assert ".definition-drafts" in drafts[0].parts
+    assert drafts[0].stat().st_mode & 0o077 == 0
     assert "Draft retained" in capsys.readouterr().err
+
+
+def test_later_edit_offers_and_recovers_saved_draft(store, monkeypatch, capsys):
+    target = store.workflow_path("main")[1]
+    saved_text = "clean: main\n# unfinished work\n"
+
+    def first_editor(command, **kwargs):
+        Path(command[-1]).write_text(saved_text)
+
+    _interactive(monkeypatch, first_editor, ["n"])
+    edit(["workflow", "main"])
+
+    def second_editor(command, **kwargs):
+        draft = Path(command[-1])
+        assert draft.read_text().endswith(saved_text)
+
+    _interactive(monkeypatch, second_editor, ["", "y"])
+    edit(["workflow", "main"])
+
+    report = capsys.readouterr()
+    assert "A saved draft is available" in report.out
+    assert "Recovered the saved draft" in report.out
+    assert target.read_text().endswith(saved_text)
+    assert not definition_editor.definition_draft_path(target, store.root).exists()
+
+
+def test_later_edit_can_discard_saved_draft_and_start_over(store, monkeypatch):
+    target = store.workflow_path("main")[1]
+    published = target.read_text()
+
+    def first_editor(command, **kwargs):
+        Path(command[-1]).write_text("clean: main\n# discard me\n")
+
+    _interactive(monkeypatch, first_editor, ["n"])
+    edit(["workflow", "main"])
+
+    def second_editor(command, **kwargs):
+        assert Path(command[-1]).read_text() == published
+
+    _interactive(monkeypatch, second_editor, ["s"])
+    edit(["workflow", "main"])
+
+    assert target.read_text() == published
+    assert not definition_editor.definition_draft_path(target, store.root).exists()
+
+
+def test_noninteractive_edit_does_not_overwrite_saved_draft(store, monkeypatch, tmp_path):
+    target = store.workflow_path("main")[1]
+    draft = definition_editor.definition_draft_path(target, store.root)
+    draft.write_text("clean: main\n# saved work\n")
+    source = _write(tmp_path / "replacement.yml", "clean: main\n# replacement\n")
+
+    with pytest.raises(SystemExit):
+        edit(["workflow", "main", "--file", str(source), "--yes"])
+
+    assert draft.read_text() == "clean: main\n# saved work\n"
+    assert not target.read_text().endswith("# replacement\n")
 
 
 def test_missing_edit_and_noninteractive_fallback_are_errors(store):

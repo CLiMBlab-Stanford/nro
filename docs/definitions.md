@@ -291,8 +291,10 @@ nro definitions apply --file bidsify/main.yml=./main.yml
 `nro definitions edit RELATIVE_PATH` is available for an existing definition
 that has no specialized editor. Transactions stage the complete store, update
 its manifest, validate every definition and reference, and then replace the
-affected files. A validation failure leaves the store unchanged. Keep drafts
-and unrelated notes outside the structured definition directories.
+affected files. A validation failure leaves the store unchanged. The editor
+retains unpublished work in private, ignored draft directories and offers it on
+the next edit of the same definition. Keep unrelated notes outside the
+structured definition directories.
 
 If a direct edit has already occurred, `nro definitions apply` can adopt it
 only when the transaction names every drifted path. This recovery behavior does
@@ -307,9 +309,9 @@ packaged values.
 ## Version control and reproducibility
 
 Track the store's definitions and README in its own repository. The generated
-`.gitignore` excludes editor files and nro's authoring locks. Review files for
-credentials and sensitive information before committing. nro never commits,
-pulls, pushes, or changes branches automatically.
+`.gitignore` excludes editor files, private definition drafts, and nro's
+authoring locks. Review files for credentials and sensitive information before
+committing. nro never commits, pulls, pushes, or changes branches automatically.
 
 Freshness compares compiled scientific content. Moving the store, editing
 comments, committing changes, or changing Git branches without changing that
