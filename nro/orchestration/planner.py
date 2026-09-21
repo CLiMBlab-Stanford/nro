@@ -187,9 +187,9 @@ class Planner:
     ) -> PlanningResult:
         """Construct requests from an explicit user selection."""
         from nro.configuration.site import definitions_root, settings
-        from nro.orchestration.source_snapshots import source_fingerprint
+        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
-        source_digest = source_fingerprint(Path(__file__).resolve().parents[2])
+        source_digest = source_fingerprint(execution_source_root())
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         request_plans: list[RequestPlan] = []
         present: set[str] = set()
@@ -292,9 +292,9 @@ class Planner:
     ) -> PlanningResult:
         """Recompile exact registered identities without broad selector expansion."""
         from nro.configuration.site import definitions_root, settings
-        from nro.orchestration.source_snapshots import source_fingerprint
+        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
-        source_digest = source_fingerprint(Path(__file__).resolve().parents[2])
+        source_digest = source_fingerprint(execution_source_root())
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         requests: list[RequestPlan] = []
         work_items: dict[str, WorkItemSpec] = {}

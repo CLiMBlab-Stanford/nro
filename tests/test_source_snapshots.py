@@ -180,3 +180,24 @@ def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
     assert "settings changed" in result.stderr
     with pytest.raises(ValueError, match="settings changed"):
         capture_site(tmp_path / "sites", values)
+
+
+def test_execution_source_root_uses_checkout_outside_snapshot(tmp_path, monkeypatch):
+    from nro.orchestration.source_snapshots import execution_source_root
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.delenv("NRO_EXECUTION_SOURCE_ROOT", raising=False)
+    monkeypatch.setenv("NRO_CHECKOUT", str(checkout))
+
+    assert execution_source_root() == checkout
+
+
+def test_execution_source_root_uses_verified_snapshot(tmp_path, monkeypatch):
+    from nro.orchestration.source_snapshots import execution_source_root
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(snapshot))
+
+    assert execution_source_root() == snapshot
