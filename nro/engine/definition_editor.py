@@ -209,9 +209,11 @@ def _prepare_draft(
         source = "the supplied file" if explicit_source else "the published definition"
         print("A saved draft is available for this definition.")
         while True:
-            answer = input(
-                f"Recover it [r], start over from {source} [s], or cancel [q]? [r] "
-            ).strip().lower()
+            answer = (
+                input(f"Recover it [r], start over from {source} [s], or cancel [q]? [r] ")
+                .strip()
+                .lower()
+            )
             if answer in {"", "r", "recover"}:
                 print("Recovered the saved draft.")
                 return True
