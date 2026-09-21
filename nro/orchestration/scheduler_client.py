@@ -559,7 +559,11 @@ def status(control: Path, bids_root: Path, *, checkout: Path, mode: str) -> dict
 def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, selection: dict) -> dict:
     """Cancel matching demand through the branch-scoped service operation."""
     return exchange(
-        _endpoint(control, bids_root),
+        # Cancellation must remain available while a shared checkout is ahead
+        # of its active release.  The endpoint still uses the pinned active
+        # implementation; only the otherwise-required checkout HEAD match is
+        # relaxed so users can quiesce work before installation maintenance.
+        _endpoint(control, bids_root, allow_changed_checkout=True),
         dict(operation="stop", checkout=str(checkout), project=project, selection=selection),
         timeout=CONTROL_RPC_TIMEOUT_SECONDS,
     )
@@ -633,7 +637,11 @@ def pool_operation(
 ) -> dict:
     """Apply a global pool control through the service."""
     return exchange(
-        _endpoint(control, bids_root),
+        _endpoint(
+            control,
+            bids_root,
+            allow_changed_checkout=operation == "stop_workers",
+        ),
         dict(operation=operation, checkout=str(checkout), concurrency=concurrency),
         timeout=CONTROL_RPC_TIMEOUT_SECONDS,
     )

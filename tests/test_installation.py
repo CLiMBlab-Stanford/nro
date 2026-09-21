@@ -343,6 +343,7 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     bootstrap.main(["--maintain", "--offline"])
 
     assert events == [("drain", root), ("publish", root)]
+    assert "--no-editable" in commands[0]
     assert "--prepared-maintenance" in commands[1]
     saved = json.loads((root / bootstrap.RECORD).read_text())
     assert saved["ready"] is True
@@ -397,6 +398,7 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
     candidate = Path(calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"])
     assert candidate != active
     assert candidate.parent == root / ".nro-environments"
+    assert "--no-editable" in calls[0][0]
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])

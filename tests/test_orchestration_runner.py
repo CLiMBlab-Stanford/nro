@@ -622,6 +622,43 @@ def test_structured_step_ledger_records_outputs(tmp_path: Path, monkeypatch) -> 
     assert generated_node["execution"] == "success"
 
 
+def test_missing_descendant_is_not_reported_as_a_rerun(tmp_path: Path, monkeypatch) -> None:
+    ledger = tmp_path / "current-steps.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    runner = Runner(
+        module_name="Fresh Module",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.fresh-descendant"),
+        next_step=count(1).__next__,
+    )
+    parent = runner.add_step(
+        Step.python(
+            name="First Output",
+            outputs=(first,),
+            action=lambda: first.write_text("first"),
+        )
+    )
+    runner.add_step(
+        Step.python(
+            name="Second Output",
+            inputs=(first,),
+            outputs=(second,),
+            action=lambda: second.write_text("second"),
+            after=(parent.id,),
+        )
+    )
+
+    with runner.run_context():
+        runner.execute()
+
+    current = json.loads(ledger.read_text())
+    descendant = next(value for value in current.values() if value["name"] == "Second Output")
+    assert descendant["reason"] == f"Missing or empty outputs: {second}"
+
+
 def test_python_artifact_validator_can_reopen_existing_output(tmp_path: Path) -> None:
     output = tmp_path / "output.txt"
     output.write_text("invalid")
