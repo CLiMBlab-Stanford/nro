@@ -346,12 +346,15 @@ def _commit_recovery(root: Path, recovery: Path) -> None:
     _clear_recovery(root, recovery)
 
 
-def _publish_staged(root: Path, staged: Path) -> None:
-    relative_paths = (
-        {path.relative_to(staged) for path in _managed_paths(staged)}
-        | {path.relative_to(root) for path in _managed_paths(root)}
-        | {Path(MANIFEST)}
-    )
+def _publish_staged(root: Path, staged: Path, *, relative_paths: set[Path] | None = None) -> None:
+    if relative_paths is None:
+        relative_paths = (
+            {path.relative_to(staged) for path in _managed_paths(staged)}
+            | {path.relative_to(root) for path in _managed_paths(root)}
+            | {Path(MANIFEST)}
+        )
+    else:
+        relative_paths = {Path(path) for path in relative_paths} | {Path(MANIFEST)}
     recovery = _begin_recovery(root, relative_paths)
     try:
         ordered = sorted(relative_paths - {Path(MANIFEST)}) + [Path(MANIFEST)]
@@ -468,5 +471,5 @@ def update_store(
             validate_store_integrity(staged)
             if validate is not None:
                 validate(staged)
-            _publish_staged(root, staged)
+            _publish_staged(root, staged, relative_paths=set(updates))
         validate_store_integrity(root)

@@ -6,6 +6,11 @@ in the selected [definitions store](../definitions.md). They validate and
 save drafts or remove definitions without opening the registry or requesting
 work. Deletion does not require a valid definition.
 
+Publication verifies the store manifest, then validates the changed definition
+and definitions that depend on it. For example, changing a config rechecks the
+workflows that select it. Unrelated models and event catalogs are not reparsed.
+Use `nro definitions validate` when a complete store audit is needed.
+
 ```bash
 nro create model newtask
 nro create config clean/alternative

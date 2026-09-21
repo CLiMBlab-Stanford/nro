@@ -175,18 +175,70 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
     return parser
 
 
-def _store_validator(store: ConfigStore) -> Callable[[Path], None]:
-    """Build full-store validation with the active inheritance chain."""
-    from nro.configuration.definitions import validate_store
+def _configuration_ids(store: ConfigStore, configuration_class: str) -> tuple[str, ...]:
+    """Return active configuration IDs for one class, including packaged main."""
+    suffix = f"_{configuration_class}.yml"
+    identifiers = {"main"}
+    for root in store.roots:
+        directory = root / "configs" / configuration_class
+        identifiers.update(
+            path.name.removesuffix(suffix)
+            for path in directory.glob(f"*{suffix}")
+            if path.is_file()
+        )
+    return tuple(sorted(identifiers))
 
+
+def _store_validator(
+    store: ConfigStore, target: DefinitionTarget, *, deleting: bool = False
+) -> Callable[[Path], None]:
+    """Validate the edited definition and definitions that depend on it."""
     inherited = store.roots[1:]
-    shared = inherited[-1] if inherited else None
-    return lambda candidate: validate_store(
-        candidate,
-        require_site=(candidate / "site/site.yml").is_file(),
-        inherited_site=shared,
-        inherited_roots=inherited,
-    )
+
+    def validate(candidate: Path) -> None:
+        active = ConfigStore(roots=(candidate, *inherited))
+        staged = definition_target(active, target.kind, target.identifier)
+        if target.kind == "model":
+            if not deleting or staged.path.is_file():
+                from nro.modules.firstlevels.task_models import load_task_model, scientific_model
+
+                scientific_model(load_task_model(target.identifier, candidate / "models"))
+            return
+        if target.kind == "workflow":
+            if not deleting or target.identifier in active.workflow_ids():
+                active.resolve(target.identifier)
+            if target.identifier == "main":
+                active.resolve("main")
+            return
+        if target.kind == "markup":
+            from nro.configuration.markup import MarkupStore
+
+            markup = MarkupStore(roots=active.roots)
+            if not deleting or any(
+                (root / "markup" / f"{target.identifier}_markup.yml").is_file()
+                for root in active.roots
+            ):
+                markup.load(target.identifier)
+            # Every configuration resolves its markup reference while loading.
+            for configuration_class in CONFIGURATION_CLASSES:
+                for config_id in _configuration_ids(active, configuration_class):
+                    active.load_configuration(configuration_class, config_id)
+            return
+        configuration_class = target.configuration_class
+        config_id = target.identifier.split("/", 1)[1]
+        active_ids = _configuration_ids(active, configuration_class)
+        if not deleting or config_id in active_ids:
+            active.load_configuration(configuration_class, config_id)
+        if config_id == "main":
+            for candidate_id in active_ids:
+                active.load_configuration(configuration_class, candidate_id)
+        # A configuration can affect workflow-wide constraints, including the
+        # requirement that all selected modules use the same markup.
+        active.resolve("main")
+        for workflow_id in active.workflow_ids():
+            active.resolve(workflow_id)
+
+    return validate
 
 
 def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, yes: bool) -> None:
@@ -227,7 +279,7 @@ def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, ye
         target.path,
         expected=expected,
         store_root=store.root,
-        validate_store=_store_validator(store),
+        validate_store=_store_validator(store, target, deleting=True),
     )
     print(
         f"Deleted {target.path}\nRecovery copy: {backup} (temporary; copy elsewhere to retain it)"
@@ -308,7 +360,7 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
             source=args.file,
             yes=args.yes,
             store_root=store.root,
-            validate_store=_store_validator(store),
+            validate_store=_store_validator(store, target),
         )
     except (KeyboardInterrupt, EOFError):
         print("Cancelled; no definition was changed.", file=sys.stderr)
