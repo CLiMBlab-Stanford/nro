@@ -24,6 +24,7 @@ from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
 from nro.modules.anat.lesion_policy import (
+    FASTSURFER_FREESURFER_BUILD,
     FASTSURFER_OCI_DIGEST,
     MASKER_MODEL,
     MASKER_RESOURCES,
@@ -257,7 +258,7 @@ def verify_fastsurfer_image(runtime: str, path: Path) -> None:
         timeout=60,
         check=True,
     ).stdout.strip()
-    if build != FREESURFER_BUILD:
+    if build != FASTSURFER_FREESURFER_BUILD:
         raise RuntimeError(f"FastSurfer image contains an unexpected FreeSurfer build: {build}")
 
 
