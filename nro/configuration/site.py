@@ -205,6 +205,12 @@ def site_file() -> Path:
     record = installation_record()
     _require_no_pending_conversion(record)
     selected = os.environ.get("NRO_SITE_CONFIG")
+    # A verified source launcher replaces the mutable site locator with the
+    # content-addressed execution snapshot whose digest it checked before
+    # importing nro. This is internal execution state, not a user override of
+    # the shared installation's protected site configuration.
+    if selected and "NRO_EXECUTION_SOURCE_ROOT" in os.environ:
+        return Path(selected).expanduser().resolve()
     if record.get("mode") in {"shared", "branch"}:
         required = Path(record["site"]).expanduser().resolve()
         if selected and Path(selected).expanduser().resolve() != required:

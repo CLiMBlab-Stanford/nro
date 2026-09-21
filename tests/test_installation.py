@@ -266,6 +266,22 @@ def test_shared_site_ignores_personal_environment(isolated_site, monkeypatch):
         site.site_file()
 
 
+def test_verified_execution_snapshot_uses_pinned_site(isolated_site, tmp_path, monkeypatch):
+    configured = tmp_path / "configured.toml"
+    configured.write_text("")
+    snapshot = tmp_path / "execution-site.toml"
+    snapshot.write_text("")
+    monkeypatch.setattr(
+        site,
+        "installation_record",
+        lambda: {"mode": "shared", "site": str(configured)},
+    )
+    monkeypatch.setenv("NRO_SITE_CONFIG", str(snapshot))
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(tmp_path / "source"))
+
+    assert site.site_file() == snapshot
+
+
 def test_shared_onboarding_never_syncs_or_mutates_checkout(tmp_path, monkeypatch):
     root = tmp_path / "shared"
     root.mkdir()
