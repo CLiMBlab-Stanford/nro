@@ -14,12 +14,11 @@ Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
 dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
-Ordinary setup acquires the pinned FastSurfer image because its FreeSurfer 7.4.1
-installation performs conventional anatomical reconstruction. This does not run
-the FastSurfer reconstruction pipeline.
+Ordinary setup acquires the pinned official FreeSurfer 7.4.1 image for conventional
+anatomical reconstruction.
 Pass `--with-lesion` to install PyTorch, MONAI, safetensors, and SOCKS proxy
 support used by lesion-aware anatomy. It also acquires the pinned SynthStroke
-model and three NeuroLIT 0.6.1 checkpoints for the installed FastSurfer image. The
+model, the FastSurfer 2.5.4 image, and three NeuroLIT 0.6.1 checkpoints. The
 SynthStroke model lives in `synthstroke_data`; the NeuroLIT checkpoints total
 about 711 MiB and live in `fastsurfer_data`. Both are site-managed paths rather
 than user caches. Setup verifies every model file against a pinned SHA-256, and

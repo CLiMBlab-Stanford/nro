@@ -16,7 +16,7 @@ container:
 selection_strategy: first
 mni_template: site:mni_template
 synthstrip_container: site:synthstrip
-freesurfer_container: site:fastsurfer
+freesurfer_container: site:freesurfer
 lesion:
   masker_command: null
   fastsurfer_image: site:fastsurfer

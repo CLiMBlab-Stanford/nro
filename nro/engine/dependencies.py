@@ -37,6 +37,7 @@ IMAGES = {
     "synthstrip": "docker://freesurfer/synthstrip@sha256:801924ea011be040346c0e68f9c25d175ab5b869afbd156560b01fb74059f1b1",
     "synbold": "docker://ytzero/synbold-disco@sha256:18814dd2f419dfe8375632cf9239a0fb31a1300a2bfe66d234e599450af66555",
     "gradient_unwarp": GRADIENT_UNWARP_IMAGE,
+    "freesurfer": "docker://freesurfer/freesurfer@sha256:10b6468cbd9fcd2db3708f4651d59ad75d4da849a2c5d8bb6dba217f08b8c46b",
 }
 FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
 NEUROLIT_URLS = {
@@ -52,7 +53,8 @@ SYNTHSTROKE_URLS = {
 def required_images(*, with_lesion: bool = False) -> dict[str, str]:
     """Return images needed by the site's configured scientific features."""
     images = dict(IMAGES)
-    images["fastsurfer"] = FASTSURFER_IMAGE
+    if with_lesion:
+        images["fastsurfer"] = FASTSURFER_IMAGE
     if not gradient_unwarping_configured():
         images.pop("gradient_unwarp")
     return images
@@ -259,6 +261,23 @@ def verify_fastsurfer_image(runtime: str, path: Path) -> None:
         raise RuntimeError(f"FastSurfer image contains an unexpected FreeSurfer build: {build}")
 
 
+def verify_freesurfer_image(runtime: str, path: Path) -> None:
+    """Require a complete conventional FreeSurfer installation at the pinned build."""
+    script = (
+        'test "$(cat /usr/local/freesurfer/build-stamp.txt)" = '
+        + shlex.quote(FREESURFER_BUILD)
+        + " && command -v recon-all >/dev/null"
+        + " && command -v mri_nu_correct.mni >/dev/null"
+    )
+    subprocess.run(
+        [runtime, "exec", "--cleanenv", str(path), "bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+
+
 def download(
     url: str, target: Path, *, checksum: str | None = None, md5: str | None = None
 ) -> None:
@@ -432,6 +451,13 @@ def check_installation(
     if deep:
         check(
             "FreeSurfer container identity",
+            lambda: verify_freesurfer_image(
+                executable(values["runtime"]), Path(values["freesurfer"])
+            ),
+        )
+    if deep and with_lesion:
+        check(
+            "FastSurfer container identity",
             lambda: verify_fastsurfer_image(
                 executable(values["runtime"]), Path(values["fastsurfer"])
             ),
@@ -533,7 +559,7 @@ def check_installation(
                 ],
             ),
         )
-        probe_images = ["synthstrip", "synbold"]
+        probe_images = ["synthstrip", "synbold", "freesurfer"]
         if with_lesion:
             probe_images.append("fastsurfer")
         if "gradient_unwarp" in images:
@@ -573,7 +599,20 @@ def _install_image(key: str, source: str, *, offline: bool) -> None:
         print(f"Downloading {key} from {source}", flush=True)
         with atomic_output_path(path) as staged:
             if source.startswith("docker://"):
-                subprocess.run([values["runtime"], "pull", str(staged), source], check=True)
+                # OCI extraction needs ordinary extended-attribute support. Some
+                # shared filesystems can store the completed SIF but cannot host
+                # Apptainer's temporary root filesystem.
+                with tempfile.TemporaryDirectory(
+                    prefix="nro-container-build-", dir="/tmp"
+                ) as build_tmp:
+                    environment = os.environ.copy()
+                    environment["APPTAINER_TMPDIR"] = build_tmp
+                    environment["SINGULARITY_TMPDIR"] = build_tmp
+                    subprocess.run(
+                        [values["runtime"], "pull", str(staged), source],
+                        check=True,
+                        env=environment,
+                    )
             else:
                 download(source, staged)
             run_probe([values["runtime"], "inspect", str(staged)])

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 FREESURFER_VERSION = "7.4.1"
-FREESURFER_BUILD = "freesurfer-linux-ubuntu22_x86_64-7.4.1-20230614-7eb8460"
+FREESURFER_BUILD = "freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460"
 
 
 def bias_correction_contract() -> dict[str, object]:
