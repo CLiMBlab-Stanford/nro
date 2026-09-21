@@ -37,9 +37,9 @@ the model format. FitLins is not a dependency.
 
 SynBOLD-DisCo runs from its separate image for synthetic-reference distortion
 correction. Its configured image and the wrapper policy are recorded in the
-functional manifest. Installation pins QuNex 1.5.1, SynthStrip 1.7, the
-FastSurfer 2.5.4 image that supplies FreeSurfer 7.4.1, SynBOLD-DisCo 1.4, and
-Workbench 2.2.1 acquisition sources. Existing configured
+functional manifest. Installation pins QuNex 1.5.1, SynthStrip 1.7, the official
+FreeSurfer 7.4.1 image, SynBOLD-DisCo 1.4, and Workbench 2.2.1 acquisition
+sources. Existing configured
 resources are reused, so those pins do not establish the versions of every
 executable already present at a site. Python versions are locked in `uv.lock`;
 TemplateFlow object versions/checksums are in the installed resource catalog.

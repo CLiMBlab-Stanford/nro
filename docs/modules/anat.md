@@ -47,7 +47,7 @@ selected sources before comparing subjects with different acquisition schemes.
 3. If both modalities exist, align the selected T2w reference directly to the
    ACPC T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
    inverse transforms and the optional T1w/T2w ratio.
-4. Run FreeSurfer 7.4.1 from the pinned FastSurfer image. `autorecon1` receives
+4. Run FreeSurfer 7.4.1 from its pinned official image. `autorecon1` receives
    the ACPC reference with `-noskullstrip`; nro installs the SynthStrip result
    as `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and
    `autorecon3`. The reconstruction has a validated directory completion boundary.
@@ -91,8 +91,8 @@ implementation support for closed-surface operations such as `bbregister`, but
 scenes and surface-based analyses use the cut public meshes.
 
 Most anatomical tools use the default QuNex container. SynthStrip and FreeSurfer
-use separate pinned images; the latter is the FreeSurfer 7.4.1 installation in
-the FastSurfer 2.5.4 image, not the FastSurfer reconstruction pipeline. Host and
+use separate pinned official images. Lesion-aware inpainting and reconstruction
+also use the separately pinned FastSurfer 2.5.4 image. Host and
 container paths are translated through `Runner`, and the configured FreeSurfer
 license is bound into processing. Linked scenes refer to these surfaces directly;
 published scenes copy them only when requested.

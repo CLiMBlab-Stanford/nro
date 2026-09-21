@@ -726,9 +726,9 @@ def _create_recon_all_step(
             translated(Path(item[4:])) if item.startswith("NRO:/") else item for item in command
         ]
         setup = (
-            "export FREESURFER_HOME=/opt/freesurfer; "
+            "export FREESURFER_HOME=/usr/local/freesurfer; "
             "export SUBJECTS_DIR=/subjects; export FS_LICENSE=/license.txt; "
-            "source /opt/freesurfer/SetUpFreeSurfer.sh >/dev/null; "
+            "source /usr/local/freesurfer/SetUpFreeSurfer.sh >/dev/null; "
             "export TMPDIR=/tmp; export TMP=/tmp; export TEMP=/tmp; "
             'exec "$@"'
         )

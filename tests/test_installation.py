@@ -570,8 +570,36 @@ def test_failed_download_never_replaces_target(tmp_path, monkeypatch, header, ch
     assert list(tmp_path.iterdir()) == [target]
 
 
+def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    build_directories: list[Path] = []
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
+
+    def run(command, **kwargs):
+        if command[1] == "pull":
+            environment = kwargs["env"]
+            assert environment["APPTAINER_TMPDIR"] == environment["SINGULARITY_TMPDIR"]
+            build_directory = Path(environment["APPTAINER_TMPDIR"])
+            assert build_directory.parent == Path("/tmp")
+            build_directories.append(build_directory)
+            Path(command[2]).write_bytes(b"container")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(dependencies.subprocess, "run", run)
+    dependencies._install_image("test_image", "docker://example/image@sha256:abc", offline=False)
+
+    assert target.read_bytes() == b"container"
+    assert build_directories and not build_directories[0].exists()
+
+
 def test_lesion_resources_are_explicit_and_checkpointed(tmp_path, monkeypatch) -> None:
-    assert dependencies.required_images()["fastsurfer"].endswith(dependencies.FASTSURFER_OCI_DIGEST)
+    assert "freesurfer/freesurfer@sha256:" in dependencies.required_images()["freesurfer"]
+    assert "fastsurfer" not in dependencies.required_images()
     assert dependencies.required_images(with_lesion=True)["fastsurfer"].endswith(
         dependencies.FASTSURFER_OCI_DIGEST
     )
