@@ -60,6 +60,17 @@ def source_fingerprint(checkout: Path) -> str:
     return _digest({str(path): _entry(checkout / path) for path in _files(checkout)})
 
 
+def execution_source_root() -> Path:
+    """Return the source tree represented by the current process."""
+    explicit = os.environ.get("NRO_EXECUTION_SOURCE_ROOT") or os.environ.get("NRO_CHECKOUT")
+    if explicit:
+        root = Path(explicit).expanduser()
+        if not root.is_absolute():
+            raise ValueError("The execution source root must be an absolute path")
+        return root.resolve()
+    return Path(__file__).resolve().parents[2]
+
+
 @dataclass(frozen=True)
 class SourceSnapshot:
     """A source tree addressed by content, independent of Git branch and version.

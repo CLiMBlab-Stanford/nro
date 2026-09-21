@@ -10,7 +10,7 @@ from nro.configuration.site import definitions_root, settings, validate_setting
 from nro.engine.io import atomic_write_text
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
-from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore
+from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore, execution_source_root
 
 
 def capture_site(root: Path, values: dict) -> Path:
@@ -45,7 +45,7 @@ def capture_execution(
     paths = ControlPaths(control)
     paths.require_current_layout()
     source = SourceStore(paths.implementations).capture(
-        Path(__file__).resolve().parents[2], expected_digest=expected_source
+        execution_source_root(), expected_digest=expected_source
     )
     if expected_source is not None and source.digest != expected_source:
         raise ValueError("Source changed during planning; retry the request after edits finish")
