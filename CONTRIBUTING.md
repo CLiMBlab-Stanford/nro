@@ -80,15 +80,21 @@ request that does not advance the version. Required quality checks must also pas
 complete test suite, formatting and lint checks, the documentation build, and an
 isolated upgrade rehearsal.
 
+Before pushing, run the focused tests and checks selected by the files and behavior
+you changed. The pull-request checks run the complete suite in a clean environment and
+are the authoritative release gate. A contributor does not need to duplicate that full
+run locally unless the change is broad or the focused checks expose a wider risk.
+
 Use patch releases for compatible fixes. During the 0.x series, use minor releases
 for new features and intentional interface changes. Compatibility support is welcome
 when it helps current users without materially increasing complexity, runtime,
 maintenance cost, or ambiguity. Document intentional incompatibilities and migration
 steps in the pull request.
 
-Before merging a release, run `./install --rehearse-upgrade`. This checks maintenance
-from the newest reachable release tag to the working tree using temporary installation
-and registry state. It does not alter the active shared installation.
+The required pull-request checks run `./install --rehearse-upgrade`. This checks
+maintenance from the target release to the candidate using temporary installation and
+registry state. Run it locally when installation, orchestration schemas, migrations, or
+release management changed. It does not alter the active shared installation.
 
 After merge, tag the release as `vMAJOR.MINOR.PATCH` and push the tag without moving
 or replacing an existing release. The tag workflow checks

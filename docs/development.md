@@ -167,7 +167,8 @@ Install with `--dev` to include the locked test dependencies:
 ```
 
 This default suite omits integration tests that exercise complete scheduler and
-private-state transactions. Run every test before a release or a major merge:
+private-state transactions. Run focused tests locally based on the files and behavior
+you changed. The pull-request checks run the complete suite before a release can merge:
 
 ```bash
 .nro-env/bin/python -m pytest -q -m "integration or not integration"
@@ -175,18 +176,19 @@ private-state transactions. Run every test before a release or a major merge:
 
 Run only the integration tier with `-m integration`.
 
-Before a release, rehearse maintenance from the current release to the candidate:
+Run the maintenance rehearsal locally when installation, orchestration schemas,
+migrations, or release management changed:
 
 ```bash
 ./install --rehearse-upgrade
 ```
 
-The main release check runs formatting, lint, the complete test suite, this isolated
+The main release check runs formatting, lint, the complete test suite, the isolated
 upgrade rehearsal, registry migration validation, and a warning-free documentation
-build. Configure `Version advances`
-as a required check in the repository settings so a version cannot merge after one of
-these steps fails. The rehearsal covers orchestration and source replacement; it does
-not probe site containers or Slurm.
+build. This clean-environment check is the authoritative release gate. Configure
+`Version advances` as a required check in the repository settings so a version cannot
+merge after one of these steps fails. The rehearsal covers orchestration and source
+replacement; it does not probe site containers or Slurm.
 
 Installation tests isolate site settings and mock scheduler mutations. Scientific
 unit tests use small synthetic inputs. The upgrade test crosses real process and source

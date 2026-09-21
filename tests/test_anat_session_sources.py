@@ -214,6 +214,7 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> No
 
     assert len(calls) == 3
     assert all(call[:3] == ["singularity", "exec", "--cleanenv"] for call in calls)
+    assert all(any("export TMPDIR=/tmp" in item for item in call) for call in calls)
     assert "-autorecon1" in calls[0]
     assert "-noskullstrip" in calls[0]
     assert "mri_vol2vol" in calls[1]

@@ -24,14 +24,19 @@ from nro.engine.io import atomic_write_text
 
 output = Path("result.txt")
 runner = Runner(
-    module_name="Example", container=None, binds=(),
-    logger=logging.getLogger("example"), next_step=count(1).__next__,
+    module_name="Example",
+    container=None,
+    binds=(),
+    logger=logging.getLogger("example"),
+    next_step=count(1).__next__,
 )
-runner.add_step(Step.python(
-    name="Write result",
-    outputs=(output,),
-    action=lambda: atomic_write_text(output, "complete\n"),
-))
+runner.add_step(
+    Step.python(
+        name="Write result",
+        outputs=(output,),
+        action=lambda: atomic_write_text(output, "complete\n"),
+    )
+)
 with runner.run_context():
     runner.execute()
 ```

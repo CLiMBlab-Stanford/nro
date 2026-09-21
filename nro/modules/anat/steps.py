@@ -728,7 +728,9 @@ def _create_recon_all_step(
         setup = (
             "export FREESURFER_HOME=/opt/freesurfer; "
             "export SUBJECTS_DIR=/subjects; export FS_LICENSE=/license.txt; "
-            'source /opt/freesurfer/SetUpFreeSurfer.sh >/dev/null; exec "$@"'
+            "source /opt/freesurfer/SetUpFreeSurfer.sh >/dev/null; "
+            "export TMPDIR=/tmp; export TMP=/tmp; export TEMP=/tmp; "
+            'exec "$@"'
         )
         return [
             runtime,
