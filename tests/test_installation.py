@@ -399,6 +399,8 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
     assert candidate != active
     assert candidate.parent == root / ".nro-environments"
     assert "--no-editable" in calls[0][0]
+    assert calls[0][1]["env"]["NRO_CHECKOUT"] == str(root)
+    assert (candidate / ".nro-checkout").read_text().strip() == str(root)
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])

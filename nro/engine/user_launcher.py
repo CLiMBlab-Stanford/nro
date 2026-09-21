@@ -108,7 +108,11 @@ def main(argv=None, *, index_path: Path | None = None) -> None:
             for key, value in os.environ.items()
             if key not in {"PYTHONPATH", "PYTHONHOME"}
         }
-        env.update(NRO_SITE_CONFIG=record["site"], PYTHONDONTWRITEBYTECODE="1")
+        env.update(
+            NRO_SITE_CONFIG=record["site"],
+            NRO_CHECKOUT=record["checkout"],
+            PYTHONDONTWRITEBYTECODE="1",
+        )
         os.execve(
             python,
             [python, "-I", "-B", "-m", "nro.cli", *(sys.argv[1:] if argv is None else argv)],

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tomllib
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -38,7 +39,25 @@ def with_site_read_cache(function: Callable) -> Callable:
     return wrapped
 
 
-CHECKOUT = Path(__file__).resolve().parents[2]
+def _checkout() -> Path:
+    """Resolve the checkout independently of editable package placement."""
+    explicit = os.environ.get("NRO_CHECKOUT")
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            raise ValueError("NRO_CHECKOUT must be an absolute path")
+        return path.resolve()
+    if "NRO_EXECUTION_SOURCE_ROOT" not in os.environ:
+        marker = Path(sys.prefix) / ".nro-checkout"
+        if marker.is_file():
+            path = Path(marker.read_text(encoding="utf-8").strip()).expanduser()
+            if not path.is_absolute():
+                raise ValueError(f"Invalid checkout marker: {marker}")
+            return path.resolve()
+    return Path(__file__).resolve().parents[2]
+
+
+CHECKOUT = _checkout()
 RECORD_NAME = ".nro-installation.json"
 SITE_DEFINITION_VERSION = 1
 SITE_DEFINITION = Path("site/site.yml")
