@@ -5,10 +5,13 @@ when invoked from another directory. First setup asks for `personal`, `shared`,
 or `branch` mode and saves that role in the untracked `.nro-installation.json`.
 
 The bootstrap requires Python 3.11 or newer with `venv` and pip support.
-It installs uv 0.8.22 in `.nro-bootstrap` and uses `uv.lock` to create an
-editable Python 3.12 environment in `.nro-env`. Python distributions downloaded
-by uv stay in `.nro-python`, so a shared environment does not depend on the
-maintainer's home directory. Existing Conda environments are not modified.
+It installs uv 0.8.22 in `.nro-bootstrap` and uses `uv.lock` to create a Python
+3.12 environment. Personal and branch environments are editable. A shared
+release uses a staged, non-editable environment so pulling a new checkout does
+not change the active command before maintenance completes. Python
+distributions downloaded by uv stay in `.nro-python`, so a shared environment
+does not depend on the maintainer's home directory. Existing Conda environments
+are not modified.
 Pass `--dev` to include test dependencies.
 Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
 dependencies. The

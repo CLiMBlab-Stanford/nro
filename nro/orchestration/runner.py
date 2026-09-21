@@ -212,12 +212,17 @@ class Runner:
                 states[parent] is NodeState.DIRTY for parent in graph.dependencies(step)
             )
             contract_change = contract_changes.get(step.id)
+            missing_outputs = [
+                str(path) for path in step.outputs if not path.exists() or path.stat().st_size == 0
+            ]
             should_run, reason = artifact_decision(
                 step.outputs,
                 step.force or upstream_dirty or contract_change is not None,
                 inputs=step.inputs,
             )
-            if upstream_dirty:
+            if missing_outputs:
+                reason = "Missing or empty outputs: " + ", ".join(missing_outputs)
+            elif upstream_dirty:
                 reason = "Re-running because an upstream step produced new artifacts."
             elif contract_change == "declaration_changed":
                 reason = "Re-running because this step's scientific declaration changed."

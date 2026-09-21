@@ -66,9 +66,12 @@ Choose the guide for your site:
 - [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md) for lab members connecting to
   the existing internal installation.
 
-From a Linux checkout, run `./install`. First setup creates an editable,
-locked Python environment and asks where data, work files, private state, and
-processing resources belong. It can use Slurm or run workers locally.
+From a Linux checkout, run `./install`. First setup creates a locked Python
+environment and asks where data, work files, private state, and processing
+resources belong. Personal and development installations are editable. Shared
+releases use staged, non-editable environments so a checkout update cannot
+alter the active command before maintenance succeeds. The system can use Slurm
+or run workers locally.
 
 The user launcher is installed in `~/.local/bin`; no environment activation is
 needed. The bootstrap requires Python 3.11 or newer with `venv` support and an

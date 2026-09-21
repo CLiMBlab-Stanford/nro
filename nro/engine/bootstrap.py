@@ -1,4 +1,4 @@
-"""Bootstrap an editable environment using only the Python standard library."""
+"""Bootstrap an isolated Python environment using only the standard library."""
 
 import argparse
 import fcntl
@@ -619,6 +619,11 @@ def _main(argv=None) -> None:
                 check=True,
             )
         sync = [str(uv), "sync", "--frozen", "--python", "3.12"]
+        if mode == "shared":
+            # A shared release must remain usable after the checkout advances
+            # and before the next maintenance cutover succeeds. Development
+            # branches remain editable so their commands follow branch code.
+            sync += ["--no-editable"]
         if record["with_oslom"]:
             sync += ["--extra", "oslom"]
         if record["with_bidsify"]:

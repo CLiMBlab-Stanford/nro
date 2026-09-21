@@ -21,6 +21,47 @@ from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.submission import _write_worker_script
 
 
+def test_cancellation_ignores_checkout_head_drift(monkeypatch, tmp_path):
+    from nro.orchestration import scheduler_client
+
+    calls = []
+    endpoint = object()
+
+    def capture_endpoint(*args, **kwargs):
+        calls.append(kwargs)
+        return endpoint
+
+    monkeypatch.setattr(scheduler_client, "_endpoint", capture_endpoint)
+    monkeypatch.setattr(scheduler_client, "exchange", lambda *args, **kwargs: {})
+
+    scheduler_client.stop(
+        tmp_path / "control",
+        tmp_path / "BIDS",
+        checkout=tmp_path / "main",
+        project="demo",
+        selection={},
+    )
+    scheduler_client.pool_operation(
+        tmp_path / "control",
+        tmp_path / "BIDS",
+        checkout=tmp_path / "main",
+        operation="stop_workers",
+    )
+    scheduler_client.pool_operation(
+        tmp_path / "control",
+        tmp_path / "BIDS",
+        checkout=tmp_path / "main",
+        operation="concurrency",
+        concurrency=2,
+    )
+
+    assert calls == [
+        {"allow_changed_checkout": True},
+        {"allow_changed_checkout": True},
+        {"allow_changed_checkout": False},
+    ]
+
+
 @pytest.fixture
 def central(tmp_path):
     root = tmp_path / "main"
