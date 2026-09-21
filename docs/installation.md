@@ -160,7 +160,9 @@ A durable phase record lets a repeated invocation resume the same maintenance
 transaction. Corrupt or obsolete derivatives are reported and are never silently
 assigned to a new lineage. See [registry migrations](registry-migrations.md).
 
-Before publishing an update, rehearse the transition from the newest release tag:
+The pull-request release gate rehearses the transition from the target release. Run the
+same check locally when installation, orchestration schemas, migrations, or release
+management changed:
 
 ```bash
 ./install --rehearse-upgrade

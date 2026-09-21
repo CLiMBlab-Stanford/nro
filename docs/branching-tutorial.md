@@ -176,7 +176,8 @@ the merge is confirmed.
 
 `main` contains releases only. Every pull request into `main` must advance the
 semantic version in `pyproject.toml` by at least one patch. Complete the release
-notes and version change on `dev`, run the release test suite, then push `dev`:
+notes and version change on `dev`, run focused checks for the change, then push `dev`.
+GitHub runs the complete release suite before the pull request can merge:
 
 ```bash
 cd /path/to/nro-dev
