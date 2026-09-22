@@ -509,25 +509,38 @@ class Worker:
             self.registry.request_capacity(
                 "expand",
                 resource_class=self.resource_class,
-                memory_gb=self.memory_gb,
+                # Pool expansion supplies the least expensive worker that can
+                # claim newly ready work. The completing worker may itself be
+                # an OOM retry and must not propagate its elevated tier.
+                memory_gb=1,
                 profile=self.profile,
             )
             return
         profile_suffix = f"-{self.profile}" if self.profile else ""
-        script = self.registry.paths.workers / (
-            f"worker-{self.resource_class}-{self.memory_gb}gb{profile_suffix}.sbatch"
-        )
-        if not script.is_file():
+        prefix = f"worker-{self.resource_class}-"
+        suffix = f"gb{profile_suffix}.sbatch"
+        tiers: list[tuple[int, Path]] = []
+        for candidate in self.registry.paths.workers.glob(f"{prefix}*{suffix}"):
+            value = candidate.name.removeprefix(prefix).removesuffix(suffix)
+            if value.isdigit():
+                tiers.append((int(value), candidate))
+        if not tiers:
             print(
-                f"WARNING: cannot expand worker pool; script is missing: {script}",
+                f"WARNING: cannot expand worker pool; no {self.resource_class} scripts exist",
                 file=sys.stderr,
             )
             return
-        reservations = self.registry.reserve_worker_submissions(
-            request_id=None,
-            resource_class=self.resource_class,
-            memory_gb=self.memory_gb,
-        )
+        reservations: list[tuple[int, str]] = []
+        script = tiers[0][1]
+        for memory_gb, candidate in sorted(tiers):
+            reservations = self.registry.reserve_worker_submissions(
+                request_id=None,
+                resource_class=self.resource_class,
+                memory_gb=memory_gb,
+            )
+            if reservations:
+                script = candidate
+                break
         for submission_id, _token in reservations:
             try:
                 validate_worker_script(self.registry.paths.control, script)

@@ -330,37 +330,25 @@ def _worker_script(registry, *, resource_class: str, memory_gb: int, profile: st
 
 
 def _worker_script_tiers(
-    registry, *, resource_class: str, memory_gb: int, profile: str | None
+    registry, *, resource_class: str, minimum_memory_gb: int, profile: str | None
 ) -> tuple[tuple[int, Path], ...]:
-    """Return one request profile's worker scripts in ascending memory order."""
-    if not profile:
-        return (
-            (
-                memory_gb,
-                _worker_script(
-                    registry,
-                    resource_class=resource_class,
-                    memory_gb=memory_gb,
-                    profile=None,
-                ),
-            ),
-        )
+    """Return one request profile's eligible scripts in ascending memory order."""
     prefix = f"worker-{resource_class}-"
-    suffix = f"gb-{profile}.sbatch"
+    suffix = f"gb-{profile}.sbatch" if profile else "gb.sbatch"
     scripts = []
     for candidate in registry.paths.workers.glob(f"{prefix}*{suffix}"):
         value = candidate.name.removeprefix(prefix).removesuffix(suffix)
-        if value.isdigit():
+        if value.isdigit() and int(value) >= minimum_memory_gb:
             scripts.append((int(value), candidate))
     if scripts:
         return tuple(sorted(scripts))
     return (
         (
-            memory_gb,
+            minimum_memory_gb,
             _worker_script(
                 registry,
                 resource_class=resource_class,
-                memory_gb=memory_gb,
+                memory_gb=minimum_memory_gb,
                 profile=profile,
             ),
         ),
@@ -562,7 +550,7 @@ def _apply_worker_operation(registry, message: dict) -> object:
                 for candidate_memory, script in _worker_script_tiers(
                     registry,
                     resource_class=candidate_class,
-                    memory_gb=memory,
+                    minimum_memory_gb=1,
                     profile=message.get("profile"),
                 ):
                     reservations = registry.reserve_worker_submissions(
