@@ -144,14 +144,29 @@ obsolete records together. Schema differences request migration or reconstructio
 SQLite or branch-identity failures stop maintenance before the active installation
 changes.
 
-Shared maintenance synchronizes the candidate Python environment in a new
-`.nro-environments/candidate-*` directory. It does not modify the environment named by
-the active installation record, and this package synchronization finishes before the
-worker pool is drained. After resource checks and registry maintenance pass,
-the installer publishes the scheduler binding and installation record while the
-installation barrier is held. A failed cutover restores both prior records. Only a
-successful cutover removes inactive candidate environments; the active environment is
-never deleted before its replacement is ready.
+Shared maintenance separates third-party dependencies from nro source. The dependency
+environment is addressed by the locked dependency set, selected extras, Python version,
+and platform under `.nro-environments/dependencies-*`. A later release reuses that
+environment when these inputs are unchanged. A changed lock, extra selection, Python
+version, or platform creates a new environment without modifying the active one.
+During the first maintenance run after this layout was introduced, the installer asks
+uv to verify the active environment against the selected locked dependencies and adopts
+it when they match. This avoids rebuilding an equivalent environment solely to change
+the installation layout.
+
+The candidate nro source is stored separately as a verified, content-addressed
+application snapshot. Setup and command launch combine that snapshot with the selected
+dependency interpreter. After resource checks and registry maintenance pass, the
+installer publishes the scheduler binding and installation record while the installation
+barrier is held. A failed cutover restores both prior records. A successful cutover may
+remove dependency environments that are no longer active.
+
+Large container checksums are associated with the file's device, inode, size, and
+timestamps after verification. Unchanged images therefore avoid repeated multi-gigabyte
+reads. A changed identity triggers a new checksum before the cached identity is updated.
+Container identity checks inspect pinned OCI metadata without starting scientific
+software on the installation host; explicit execution probes remain part of local deep
+validation.
 
 After the pool is quiet, schemas at or after the supported baseline are migrated on
 staged database copies. Each copy must match the generated target schema and pass

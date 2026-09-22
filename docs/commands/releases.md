@@ -30,8 +30,10 @@ release, run:
 
 If work is active, the installer offers to finish current attempts, stop them
 immediately while preserving demand, or cancel maintenance. Activation records
-the central checkout, interpreter, site settings path, source fingerprint, and
-installed release in `CONTROL/shared/scheduler/implementation.json`.
+the central checkout, dependency interpreter, site settings path, source fingerprint,
+and installed release in `CONTROL/shared/scheduler/implementation.json`. The checkout's
+installation record binds that interpreter to the verified application snapshot used
+by interactive commands.
 
 Once activated, Slurm submissions and `run --local` use this orchestration
 installation. Job subprocesses use their separately registered scientific code

@@ -56,6 +56,13 @@ def test_version_reports_installed_distribution_without_site_loading(monkeypatch
     assert capsys.readouterr().out.strip() == f"nro {version('nro')}"
 
 
+def test_version_reports_verified_application_source(tmp_path, monkeypatch) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "2.3.4"\n')
+    monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(tmp_path))
+
+    assert cli.package_version() == "2.3.4"
+
+
 def test_help_lists_task_guides_and_installed_commands(capsys) -> None:
     from nro.bin import help as help_command
 

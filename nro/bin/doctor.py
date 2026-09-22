@@ -18,6 +18,7 @@ def installation_details() -> list[dict]:
         "mode": mode,
         "branch": branch or "none",
         "environment": record.get("environment", str(sys.prefix)),
+        "application": record.get("application", "environment package"),
         "executable": sys.executable,
         "site settings": str(site.site_file()),
     }

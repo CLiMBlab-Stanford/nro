@@ -118,8 +118,19 @@ def convert_shared(root: Path, replacement: dict | None, *, site: Path | None = 
         key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}
     }
     env.update(NRO_SITE_CONFIG=str(target_site), PYTHONDONTWRITEBYTECODE="1")
+    command = [python, "-m", "nro.bin.branch", action, "--checkout", str(root)]
+    if original.get("application") is not None:
+        from nro.orchestration.source_snapshots import SourceSnapshot
+
+        application = SourceSnapshot(
+            Path(original["application"]), original.get("application_digest", "")
+        )
+        application.verify_manifest()
+        command = list(application.command(command, site=target_site, manifest_only=True))
+    else:
+        command[1:1] = ["-I", "-B"]
     subprocess.run(
-        [python, "-I", "-B", "-m", "nro.bin.branch", action, "--checkout", str(root)],
+        command,
         check=True,
         cwd=root,
         env=env,

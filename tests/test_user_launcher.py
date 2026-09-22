@@ -212,6 +212,30 @@ def test_launcher_uses_isolated_interpreter_and_selected_site(tmp_path, monkeypa
     assert env["NRO_CHECKOUT"] == main["checkout"]
 
 
+def test_launcher_combines_shared_dependencies_with_release_application(tmp_path, monkeypatch):
+    main = installation(tmp_path / "main")
+    application = tmp_path / "main/.nro-environments/applications" / ("a" * 64)
+    launcher = application / "nro/orchestration/source_launcher.py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("")
+    main.update(application=str(application), application_digest="a" * 64)
+    Path(main["checkout"], user_launcher.RECORD_NAME).write_text(json.dumps(main))
+    bootstrap.connect_user(main, bin_dir=tmp_path / "bin")
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(user_launcher.os, "execve", lambda *args: calls.append(args))
+
+    user_launcher.main(["status"], index_path=tmp_path / "bin" / user_launcher.INDEX_NAME)
+
+    python, argv, env = calls[0]
+    assert python == str(Path(main["environment"]) / "bin/python")
+    assert argv[:3] == [python, str(launcher), "--manifest-only"]
+    assert argv[3] == "a" * 64
+    assert argv[4] == main["site"]
+    assert argv[6:] == ["nro.cli", "status"]
+    assert env["NRO_CHECKOUT"] == main["checkout"]
+
+
 def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monkeypatch):
     from nro.orchestration import branches
     from nro.orchestration.branch_store import BranchStore
