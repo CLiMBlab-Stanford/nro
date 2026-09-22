@@ -175,6 +175,27 @@ def test_targeted_purge_removes_only_directly_selected_work_item(tmp_path: Path,
     assert _work_item_row(registry, "func", "1")["artifact_state"] == "missing"
 
 
+def test_purge_record_cleanup_preserves_only_required_ancestors(tmp_path: Path) -> None:
+    _bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
+    func10 = _work_item_row(registry, "func", "10")
+    clean1 = _work_item_row(registry, "clean", "1")
+    clean10 = _work_item_row(registry, "clean", "10")
+
+    cancelled = registry.cancel_purged_demand((clean1["id"],))
+    removed, retained = registry.forget_purged_work_items((clean1["id"],))
+
+    assert cancelled > 0
+    assert removed == 1
+    assert retained == ()
+    assert clean1["id"] not in {row["id"] for row in registry.work_item_rows()}
+    assert clean10["id"] in {row["id"] for row in registry.work_item_rows()}
+
+    removed, retained = registry.forget_purged_work_items((func10["id"],))
+
+    assert removed == 0
+    assert retained == (func10["id"],)
+
+
 def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, capsys) -> None:
     """A minimally named sub-01_bold run must not own every sub-01_* file."""
     bids = tmp_path / "bids"

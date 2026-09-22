@@ -1774,6 +1774,22 @@ class Registry(WorkflowRegistry):
                 )
             )
 
+    def cancel_purged_demand(self, work_item_ids: Iterable[int]) -> int:
+        """Withdraw requests that require artifacts selected for deletion."""
+        from nro.orchestration.registry_work_items import cancel_purged_demand
+
+        ids = tuple(sorted(set(work_item_ids)))
+        with self.connection(write=True) as db:
+            return cancel_purged_demand(db, ids, now=utcnow())
+
+    def forget_purged_work_items(self, work_item_ids: Iterable[int]) -> tuple[int, tuple[int, ...]]:
+        """Remove purged scheduler records that no surviving DAG still references."""
+        from nro.orchestration.registry_work_items import forget_purged_work_items
+
+        ids = tuple(sorted(set(work_item_ids)))
+        with self.connection(write=True) as db:
+            return forget_purged_work_items(db, ids)
+
     def reserve_artifact_assessment(
         self,
         *,

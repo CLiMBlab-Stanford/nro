@@ -209,6 +209,9 @@ def purge(
                         "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
                         [(utcnow(), work_item_id) for work_item_id in ids],
                     )
+                    from nro.orchestration.registry_work_items import cancel_purged_demand
+
+                    counts["demand_links"] = cancel_purged_demand(db, ids, now=utcnow())
     from nro.orchestration.control_paths import ControlPaths
 
     scoped = Registry(
@@ -221,4 +224,8 @@ def purge(
     counts["attempt_logs"] = _purge_attempt_logs(scoped, work_item_ids=ids, dry_run=dry_run)
     counts["worker_logs"] = _purge_inactive_worker_logs(registry, dry_run=dry_run)
     report("Removing logs", 1, 1)
+    if not logs_only and not dry_run:
+        removed, retained = registry.forget_purged_work_items(ids)
+        counts["scheduler_records"] = removed
+        counts["retained_dependency_records"] = len(retained)
     return counts
