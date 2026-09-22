@@ -547,6 +547,7 @@ def _apply_worker_operation(registry, message: dict) -> object:
         if kind == "expand":
             submitted = []
             for candidate_class in SCHEDULABLE_RESOURCE_CLASSES:
+                lower_memory = 0
                 for candidate_memory, script in _worker_script_tiers(
                     registry,
                     resource_class=candidate_class,
@@ -557,7 +558,9 @@ def _apply_worker_operation(registry, message: dict) -> object:
                         request_id=None,
                         resource_class=candidate_class,
                         memory_gb=candidate_memory,
+                        minimum_memory_gb=lower_memory,
                     )
+                    lower_memory = candidate_memory
                     if not reservations:
                         continue
                     submitted.extend(

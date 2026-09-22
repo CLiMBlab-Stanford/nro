@@ -31,13 +31,16 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
 
     submitted = []
     if options["local"]:
+        lower_memory = 0
         for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
             if registry.worker_capacity_needed(
                 request_id=request_ids[0] if request_ids else None,
                 resource_class=GPU_RESOURCE_CLASS,
                 memory_gb=tier,
+                minimum_memory_gb=lower_memory,
             ):
                 raise ValueError("Lesion-aware GPU anatomy requires a scheduled GPU worker")
+            lower_memory = tier
         process = run_local_worker(
             registry,
             memory_gb=options["memory"],
@@ -66,6 +69,7 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
                 )
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
             class_submitted: list[str] = []
+            lower_memory = 0
             for tier in memory_tiers(options["memory"], options["max_memory"]):
                 class_submitted = _submit_workers(
                     registry,
@@ -73,9 +77,11 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
                     scripts[(resource_class, tier)],
                     tier,
                     resource_class=resource_class,
+                    minimum_memory_gb=lower_memory,
                 )
                 if class_submitted:
                     break
+                lower_memory = tier
             submitted.extend(class_submitted)
     return {"submitted_workers": submitted}
 
@@ -96,14 +102,17 @@ def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: 
     registry.reconcile_requests()
     needed = False
     for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+        lower_memory = 0
         for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
             if registry.worker_capacity_needed(
                 request_id=request_ids[0] if request_ids else None,
                 resource_class=resource_class,
                 memory_gb=tier,
+                minimum_memory_gb=lower_memory,
             ):
                 needed = True
                 break
+            lower_memory = tier
         if needed:
             break
     return {"needed": needed}

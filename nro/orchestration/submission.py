@@ -108,6 +108,7 @@ def _submit_workers(
     memory_gb: int,
     *,
     resource_class: str = GENERAL_RESOURCE_CLASS,
+    minimum_memory_gb: int = 0,
 ) -> list[str]:
     from nro.orchestration.scheduler_implementation import validate_worker_script
 
@@ -115,7 +116,10 @@ def _submit_workers(
     submitted: list[str] = []
     registry.reconcile_scheduler_submissions()
     for submission_id, _token in registry.reserve_worker_submissions(
-        request_id=request_id, resource_class=resource_class, memory_gb=memory_gb
+        request_id=request_id,
+        resource_class=resource_class,
+        memory_gb=memory_gb,
+        minimum_memory_gb=minimum_memory_gb,
     ):
         try:
             result = subprocess.run(

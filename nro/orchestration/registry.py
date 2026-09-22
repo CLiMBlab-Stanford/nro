@@ -2271,12 +2271,14 @@ class Registry(WorkflowRegistry):
         request_id: str | None,
         resource_class: str,
         memory_gb: int = 32,
+        minimum_memory_gb: int = 0,
     ) -> list[tuple[int, str]]:
-        """Reserve workers for ready derivative and ingestion work under one limit."""
+        """Reserve workers for one memory tier of ready derivative work."""
         return self._worker_submission_plan(
             request_id=request_id,
             resource_class=resource_class,
             memory_gb=memory_gb,
+            minimum_memory_gb=minimum_memory_gb,
             reserve=True,
         )
 
@@ -2286,6 +2288,7 @@ class Registry(WorkflowRegistry):
         request_id: str | None,
         resource_class: str,
         memory_gb: int = 32,
+        minimum_memory_gb: int = 0,
     ) -> bool:
         """Return whether ready work needs another compatible worker."""
         return bool(
@@ -2293,6 +2296,7 @@ class Registry(WorkflowRegistry):
                 request_id=request_id,
                 resource_class=resource_class,
                 memory_gb=memory_gb,
+                minimum_memory_gb=minimum_memory_gb,
                 reserve=False,
             )
         )
@@ -2303,9 +2307,12 @@ class Registry(WorkflowRegistry):
         request_id: str | None,
         resource_class: str,
         memory_gb: int,
+        minimum_memory_gb: int,
         reserve: bool,
     ) -> list[tuple[int, str]]:
         """Compute needed capacity and optionally create its submission records."""
+        if minimum_memory_gb < 0 or minimum_memory_gb >= memory_gb:
+            raise ValueError("Worker memory tier bounds must satisfy 0 <= minimum < maximum")
         with self.connection(write=True) as db:
             if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
                 return []
@@ -2316,6 +2323,10 @@ class Registry(WorkflowRegistry):
             ingestion_active, ingestion_ready, ingestion_limit = (
                 IngestionIndex(self).summary(memory_gb) if supports_ingestion else (0, 0, 0)
             )
+            if supports_ingestion and minimum_memory_gb:
+                _, lower_ingestion_ready, _ = IngestionIndex(self).summary(minimum_memory_gb)
+                ingestion_active = 0
+                ingestion_ready = max(0, ingestion_ready - lower_ingestion_ready)
             if request_id is None:
                 request = db.execute(
                     "SELECT id FROM requests WHERE state='active' ORDER BY created_at LIMIT 1"
@@ -2335,8 +2346,9 @@ class Registry(WorkflowRegistry):
                     f"""SELECT COUNT(*) FROM attempts a
                         JOIN work_items t ON t.id=a.work_item_id
                         WHERE a.state IN ('queued', 'running', 'cancel_requested')
-                          AND t.resource_class IN ({placeholders})""",
-                    compatible,
+                          AND t.resource_class IN ({placeholders})
+                          AND t.memory_gb>? AND t.memory_gb<=?""",
+                    (*compatible, minimum_memory_gb, memory_gb),
                 ).fetchone()[0]
             )
             ready_work_items = int(
@@ -2344,7 +2356,7 @@ class Registry(WorkflowRegistry):
                     f"""
                     SELECT COUNT(*) FROM work_items t
                     WHERE t.resource_class IN ({placeholders})
-                      AND t.memory_gb<=?
+                      AND t.memory_gb>? AND t.memory_gb<=?
                       AND {dependency_state.WRITE_READY}
                       AND t.artifact_state!='fresh'
                       AND NOT (
@@ -2381,7 +2393,7 @@ class Registry(WorkflowRegistry):
                           )
                       )
                     """,
-                    (*compatible, memory_gb),
+                    (*compatible, minimum_memory_gb, memory_gb),
                 ).fetchone()[0]
             )
             global_limit = max(desired, ingestion_limit)
