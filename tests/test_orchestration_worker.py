@@ -49,6 +49,44 @@ def test_host_memory_failure_requests_more_host_memory(tmp_path: Path) -> None:
     assert _looks_like_oom(log, 1)
 
 
+def test_dag_construction_failure_does_not_request_more_memory(tmp_path: Path) -> None:
+    log = tmp_path / "attempt.log"
+    log.write_text(
+        "ValueError: Duplicate step id in module DAG: stage:abc123\n",
+        encoding="utf-8",
+    )
+
+    assert not _looks_like_oom(log, 1)
+
+
+def test_oversized_worker_expands_pool_from_lowest_memory_tier(tmp_path: Path, monkeypatch) -> None:
+    class CapacityClient:
+        def __init__(self) -> None:
+            self.paths = type("Paths", (), {"control": tmp_path})()
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def request_capacity(self, kind: str, **values: object) -> None:
+            self.calls.append((kind, values))
+
+    client = CapacityClient()
+    monkeypatch.setenv("SLURM_JOB_ID", "123")
+    worker = Worker(
+        client,  # type: ignore[arg-type]
+        resource_class="large",
+        memory_gb=256,
+        profile="profile",
+    )
+
+    worker._expand_ready_pool()
+
+    assert client.calls == [
+        (
+            "expand",
+            {"resource_class": "large", "memory_gb": 1, "profile": "profile"},
+        )
+    ]
+
+
 def _spec(
     *,
     key: str,

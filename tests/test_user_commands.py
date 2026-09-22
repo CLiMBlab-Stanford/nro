@@ -1626,6 +1626,12 @@ def test_gpu_worker_script_requests_one_gpu_and_never_lingers(tmp_path: Path) ->
     assert _worker_script_tiers(
         registry,
         resource_class="gpu",
-        memory_gb=64,
+        minimum_memory_gb=1,
         profile=script.stem.rsplit("-", 1)[-1],
     ) == ((32, smaller_gpu), (64, script))
+    assert _worker_script_tiers(
+        registry,
+        resource_class="gpu",
+        minimum_memory_gb=64,
+        profile=script.stem.rsplit("-", 1)[-1],
+    ) == ((64, script),)

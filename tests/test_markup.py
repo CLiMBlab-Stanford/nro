@@ -78,6 +78,18 @@ def test_missing_markup_fields_retain_automatic_discovery(tmp_path: Path) -> Non
     assert not markup.is_excluded(automatic_t1)
 
 
+def test_anatomical_discovery_deduplicates_session_aliases(tmp_path: Path) -> None:
+    subject = tmp_path / "BIDS/nptl/sub-t20"
+    t1w = _write(subject / "ses-ex123/anat/sub-t20_ses-ex123_T1w.nii.gz")
+    t2w = _write(subject / "ses-ex123/anat/sub-t20_ses-ex123_T2w.nii.gz")
+    alias_dir = subject / "ses-anat/anat"
+    alias_dir.mkdir(parents=True)
+    (alias_dir / "sub-t20_ses-anat_T1w.nii.gz").symlink_to(t1w)
+    (alias_dir / "sub-t20_ses-anat_T2w.nii.gz").symlink_to(t2w)
+
+    assert raw_anatomical_images(subject) == (t1w, t2w)
+
+
 def test_missing_project_or_subject_produces_empty_markup(tmp_path: Path) -> None:
     root = tmp_path / "definitions"
     _write(root / "markup/main_markup.yml", "other:\n  someone: {}\n")

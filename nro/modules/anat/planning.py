@@ -23,6 +23,14 @@ if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
 
 
+def _canonical_images(paths: list[Path] | tuple[Path, ...]) -> tuple[Path, ...]:
+    """Resolve BIDS aliases and retain each physical image exactly once."""
+    unique: dict[Path, None] = {}
+    for path in paths:
+        unique[path.resolve()] = None
+    return tuple(unique)
+
+
 def raw_anatomical_images(
     subject_dir: Path, markup: SubjectMarkup | None = None
 ) -> tuple[Path, ...]:
@@ -36,7 +44,7 @@ def raw_anatomical_images(
     ):
         automatic.extend(sorted(subject_dir.glob(pattern)))
     if markup is None:
-        return tuple(dict.fromkeys(automatic))
+        return _canonical_images(automatic)
     automatic = list(markup.filter(automatic))
     by_modality = {
         "T1w": [path for path in automatic if path.name.endswith(("_T1w.nii", "_T1w.nii.gz"))],
@@ -51,7 +59,7 @@ def raw_anatomical_images(
             if not path.name.endswith((f"_{modality}.nii", f"_{modality}.nii.gz")):
                 raise ValueError(f"Marked {modality} path has the wrong BIDS suffix: {path}")
         selected.extend(paths)
-    return tuple(dict.fromkeys(selected))
+    return _canonical_images(selected)
 
 
 def raw_anatomical_inputs(
