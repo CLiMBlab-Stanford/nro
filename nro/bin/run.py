@@ -692,13 +692,16 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if args.local:
         from nro.orchestration.scheduler_implementation import run_local_worker
 
+        lower_memory = 0
         for tier in memory_tiers(args.memory, args.max_memory):
             if registry.worker_capacity_needed(
                 request_id=request_ids[0] if request_ids else None,
                 resource_class=GPU_RESOURCE_CLASS,
                 memory_gb=tier,
+                minimum_memory_gb=lower_memory,
             ):
                 raise SystemExit("Lesion-aware GPU anatomy requires a scheduled GPU worker")
+            lower_memory = tier
         run_local_worker(
             registry,
             memory_gb=args.memory,
@@ -723,6 +726,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 )
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
             class_submitted: list[str] = []
+            lower_memory = 0
             for tier in memory_tiers(args.memory, args.max_memory):
                 class_submitted = _submit_workers(
                     registry,
@@ -730,9 +734,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                     scripts[(resource_class, tier)],
                     tier,
                     resource_class=resource_class,
+                    minimum_memory_gb=lower_memory,
                 )
                 if class_submitted:
                     break
+                lower_memory = tier
             submitted.extend(class_submitted)
     result = {
         "requests": request_ids,

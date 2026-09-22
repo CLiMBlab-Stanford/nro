@@ -532,12 +532,15 @@ class Worker:
             return
         reservations: list[tuple[int, str]] = []
         script = tiers[0][1]
+        lower_memory = 0
         for memory_gb, candidate in sorted(tiers):
             reservations = self.registry.reserve_worker_submissions(
                 request_id=None,
                 resource_class=self.resource_class,
                 memory_gb=memory_gb,
+                minimum_memory_gb=lower_memory,
             )
+            lower_memory = memory_gb
             if reservations:
                 script = candidate
                 break

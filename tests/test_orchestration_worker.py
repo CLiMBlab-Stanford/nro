@@ -297,6 +297,53 @@ def test_higher_memory_gpu_work_is_visible_to_initial_supply(tmp_path: Path) -> 
     assert registry.worker_capacity_needed(request_id=request, resource_class="gpu", memory_gb=64)
 
 
+def test_pending_lower_memory_gpu_does_not_create_higher_tier_demand(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    gpu = _spec(
+        key="anat:" + "9" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "gpu.txt",
+        resource_class="gpu",
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(gpu,),
+        terminal_work_item_keys=(gpu.key,),
+        concurrency=8,
+        partition=None,
+    )
+
+    assert (
+        len(
+            registry.reserve_worker_submissions(
+                request_id=request,
+                resource_class="gpu",
+                memory_gb=32,
+                minimum_memory_gb=0,
+            )
+        )
+        == 1
+    )
+    for lower, upper in ((32, 64), (64, 128), (128, 256)):
+        assert (
+            registry.reserve_worker_submissions(
+                request_id=request,
+                resource_class="gpu",
+                memory_gb=upper,
+                minimum_memory_gb=lower,
+            )
+            == []
+        )
+
+
 def test_work_item_private_paths_use_the_logical_digest() -> None:
     base = {
         "project": "demo",
