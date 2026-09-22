@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import yaml
 
 from nro.configuration import site
 from nro.configuration.store import ConfigStore
-from nro.engine import bootstrap, dependencies, shared_installation, site_setup
+from nro.engine import bootstrap, dependencies, installation_layers, shared_installation, site_setup
 from nro.engine.site_setup import edit_settings, save_settings
 
 
@@ -348,6 +349,30 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
         bootstrap.write_record(checkout / bootstrap.RECORD, installation)
 
     monkeypatch.setattr(shared_installation, "publish", publish)
+    dependencies = root / ".nro-environments" / ("dependencies-" + "d" * 64)
+    (dependencies / "bin").mkdir(parents=True)
+    (dependencies / "bin/python").write_text("python")
+    application_root = root / ".nro-environments/applications" / ("a" * 64)
+    (application_root / "nro/orchestration").mkdir(parents=True)
+    (application_root / "nro/orchestration/source_launcher.py").write_text("")
+    application = SimpleNamespace(
+        root=application_root,
+        digest="a" * 64,
+        command=lambda command, **options: (
+            command[0],
+            str(application_root / "nro/orchestration/source_launcher.py"),
+            "a" * 64,
+            str(site),
+            "site-digest",
+            *command[2:],
+        ),
+    )
+    monkeypatch.setattr(
+        installation_layers,
+        "prepare_shared_dependencies",
+        lambda *args, **kwargs: (dependencies, "d" * 64),
+    )
+    monkeypatch.setattr(installation_layers, "capture_shared_application", lambda root: application)
     commands = []
     monkeypatch.setattr(
         bootstrap.subprocess,
@@ -359,12 +384,14 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     bootstrap.main(["--maintain", "--offline"])
 
     assert events == [("drain", root), ("publish", root)]
-    assert "--no-editable" in commands[0]
-    assert "--prepared-maintenance" in commands[1]
+    assert "nro.bin.setup" in commands[0]
+    assert "--prepared-maintenance" in commands[0]
     saved = json.loads((root / bootstrap.RECORD).read_text())
     assert saved["ready"] is True
-    assert Path(saved["environment"]).parent == root / ".nro-environments"
-    assert Path(saved["environment"]).name.startswith("candidate-")
+    assert Path(saved["environment"]) == dependencies
+    assert saved["dependency_key"] == "d" * 64
+    assert Path(saved["application"]) == application_root
+    assert saved["application_digest"] == "a" * 64
 
 
 def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeypatch):
@@ -397,12 +424,35 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
         "publish",
         lambda *args, **options: pytest.fail("Invalid candidate was published"),
     )
+    dependencies = root / ".nro-environments" / ("dependencies-" + "d" * 64)
+    (dependencies / "bin").mkdir(parents=True)
+    (dependencies / "bin/python").write_text("python")
+    application_root = root / ".nro-environments/applications" / ("a" * 64)
+    (application_root / "nro/orchestration").mkdir(parents=True)
+    (application_root / "nro/orchestration/source_launcher.py").write_text("")
+    application = SimpleNamespace(
+        root=application_root,
+        digest="a" * 64,
+        command=lambda command, **options: (
+            command[0],
+            str(application_root / "nro/orchestration/source_launcher.py"),
+            "a" * 64,
+            str(site),
+            "site-digest",
+            *command[2:],
+        ),
+    )
+    monkeypatch.setattr(
+        installation_layers,
+        "prepare_shared_dependencies",
+        lambda *args, **kwargs: (dependencies, "d" * 64),
+    )
+    monkeypatch.setattr(installation_layers, "capture_shared_application", lambda root: application)
     calls = []
 
     def run(command, **options):
         calls.append((command, options))
-        if len(calls) == 2:
-            raise subprocess.CalledProcessError(1, command)
+        raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(bootstrap.subprocess, "run", run)
 
@@ -411,12 +461,136 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
 
     assert stopped.value.code == 1
     assert record_path.read_bytes() == original
-    candidate = Path(calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"])
-    assert candidate != active
-    assert candidate.parent == root / ".nro-environments"
-    assert "--no-editable" in calls[0][0]
+    assert dependencies != active
+    assert "nro.bin.setup" in calls[0][0]
     assert calls[0][1]["env"]["NRO_CHECKOUT"] == str(root)
-    assert (candidate / ".nro-checkout").read_text().strip() == str(root)
+
+
+def test_shared_dependencies_are_reused_until_their_inputs_change(tmp_path, monkeypatch):
+    root = tmp_path / "shared"
+    root.mkdir()
+    (root / "uv.lock").write_text(
+        'version = 1\nrevision = 3\nrequires-python = ">=3.12"\n\n'
+        '[[package]]\nname = "nro"\nversion = "1.0.0"\nsource = { editable = "." }\n'
+    )
+    uv = root / "uv"
+    uv.write_text("")
+    monkeypatch.setattr(bootstrap, "ROOT", root)
+    calls = []
+
+    def sync(command, **options):
+        calls.append(command)
+        if command[1:3] == ["lock", "--check"]:
+            return
+        environment = Path(options["env"]["UV_PROJECT_ENVIRONMENT"])
+        (environment / "bin").mkdir(parents=True)
+        (environment / "bin/python").write_text("python")
+
+    monkeypatch.setattr(installation_layers.subprocess, "run", sync)
+    monkeypatch.setattr(
+        installation_layers,
+        "_installed_packages",
+        lambda _environment: [["example", "1.0"]],
+    )
+    record = {
+        "with_oslom": True,
+        "with_bidsify": False,
+        "with_lesion": False,
+        "with_marss": True,
+        "dev": False,
+    }
+    env = {"UV_CACHE_DIR": str(root / "cache")}
+
+    first, first_key = installation_layers.prepare_shared_dependencies(
+        root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
+    )
+    second, second_key = installation_layers.prepare_shared_dependencies(
+        root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
+    )
+
+    assert first == second
+    assert first_key == second_key
+    sync_calls = [command for command in calls if "sync" in command]
+    assert len(sync_calls) == 1
+    assert "--no-install-project" in sync_calls[0]
+    assert "--offline" in sync_calls[0]
+
+    (root / "uv.lock").write_text(
+        (root / "uv.lock").read_text().replace('version = "1.0.0"', 'version = "1.0.1"')
+    )
+    version_only, version_only_key = installation_layers.prepare_shared_dependencies(
+        root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
+    )
+    assert version_only == first and version_only_key == first_key
+
+    changed, changed_key = installation_layers.prepare_shared_dependencies(
+        root,
+        uv,
+        {**record, "with_bidsify": True},
+        uv_version=bootstrap.UV_VERSION,
+        env=env,
+        offline=True,
+    )
+    assert changed != first and changed_key != first_key
+    assert len([command for command in calls if "sync" in command]) == 2
+
+
+def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, monkeypatch):
+    root = tmp_path / "shared"
+    root.mkdir()
+    (root / "uv.lock").write_text(
+        'version = 1\nrevision = 3\nrequires-python = ">=3.12"\n\n'
+        '[[package]]\nname = "nro"\nversion = "1.0.0"\nsource = { editable = "." }\n'
+    )
+    uv = root / "uv"
+    uv.write_text("")
+    active = root / ".nro-environments/candidate-existing"
+    (active / "bin").mkdir(parents=True)
+    (active / "bin/python").write_text("python")
+    (active / ".nro-checkout").write_text(f"{root}\n")
+    calls = []
+    monkeypatch.setattr(
+        installation_layers.subprocess,
+        "run",
+        lambda command, **_options: calls.append(command),
+    )
+    monkeypatch.setattr(
+        installation_layers,
+        "_installed_packages",
+        lambda _environment: [["example", "1.0"], ["nro", "0.9.0"]],
+    )
+    options = {
+        "with_oslom": True,
+        "with_bidsify": False,
+        "with_lesion": False,
+        "with_marss": True,
+        "dev": False,
+    }
+
+    first, key = installation_layers.prepare_shared_dependencies(
+        root,
+        uv,
+        options,
+        uv_version=bootstrap.UV_VERSION,
+        env={},
+        offline=False,
+        previous_environment=active,
+    )
+    second, second_key = installation_layers.prepare_shared_dependencies(
+        root,
+        uv,
+        options,
+        uv_version=bootstrap.UV_VERSION,
+        env={},
+        offline=False,
+        previous_environment=active,
+    )
+
+    assert first == second == active
+    assert key == second_key
+    assert calls[0][1:3] == ["sync", "--frozen"]
+    assert "--check" in calls[0] and "--inexact" in calls[0]
+    assert calls[1][1:3] == ["lock", "--check"]
 
 
 @pytest.mark.parametrize("without_oslom", [False, True])
@@ -652,6 +826,86 @@ def test_lesion_resources_are_explicit_and_checkpointed(tmp_path, monkeypatch) -
     target = data / "LIT" / "weights" / "model.pt"
     assert target.read_bytes() == payload
     assert calls == [("https://example.org/model.pt", target, digest, None)]
+
+
+def test_container_identity_checks_use_metadata_without_starting_images(
+    tmp_path, monkeypatch
+) -> None:
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    calls = []
+
+    def inspect(command, **_options):
+        calls.append(command)
+        digest = (
+            dependencies.FASTSURFER_OCI_DIGEST
+            if len(calls) == 1
+            else dependencies.IMAGES["freesurfer"].rsplit("@", 1)[1]
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "data": {
+                        "attributes": {
+                            "labels": {
+                                "org.opencontainers.image.base.digest": digest,
+                                "org.opencontainers.image.revision": "cdfccea",
+                            }
+                        }
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(dependencies.subprocess, "run", inspect)
+
+    dependencies.verify_fastsurfer_image("singularity", image)
+    dependencies.verify_freesurfer_image("singularity", image)
+
+    assert all(command[1:3] == ["inspect", "--json"] for command in calls)
+
+
+def test_image_receipt_caches_and_rechecks_filesystem_identity(tmp_path, monkeypatch) -> None:
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    receipt = tmp_path / "image.sif.receipt.json"
+    receipt.write_text(json.dumps({"sha256": dependencies.sha256(image)}))
+    os.utime(receipt, ns=(1, 1))
+    dependencies._SHA256_CACHE.clear()
+    calls = []
+    checksum = dependencies.sha256
+
+    def counted(path):
+        calls.append(path)
+        return checksum(path)
+
+    monkeypatch.setattr(dependencies, "sha256", counted)
+    dependencies.verify_image_receipt(image, receipt)
+    dependencies.verify_image_receipt(image, receipt)
+    assert calls == [image]
+
+    image.write_bytes(b"changed")
+    with pytest.raises(RuntimeError, match="differs from its acquisition receipt"):
+        dependencies.verify_image_receipt(image, receipt)
+
+
+def test_legacy_image_receipt_adopts_an_unchanged_acquisition(tmp_path, monkeypatch) -> None:
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    receipt = tmp_path / "image.sif.receipt.json"
+    receipt.write_text(json.dumps({"sha256": "already-verified-at-acquisition"}))
+    monkeypatch.setattr(
+        dependencies,
+        "sha256",
+        lambda _path: pytest.fail("unchanged legacy acquisition was rehashed"),
+    )
+
+    dependencies.verify_image_receipt(image, receipt)
+
+    assert json.loads(receipt.read_text())["file_identity"] == dependencies._file_identity(image)
 
 
 def test_synthstroke_model_is_installed_for_offline_workers(tmp_path, monkeypatch) -> None:

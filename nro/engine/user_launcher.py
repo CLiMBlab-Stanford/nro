@@ -4,6 +4,7 @@ Installation copies this script into the user's bin directory. It does not
 import nro before selecting the interpreter, site, and checkout.
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -74,6 +75,22 @@ def select_installation(index: dict, cwd: Path) -> dict:
     python = Path(record["environment"]) / "bin/python"
     if not python.is_file() or not Path(record["site"]).is_file():
         raise ValueError(f"Installation interpreter or site settings are missing: {root}")
+    application = record.get("application")
+    digest = record.get("application_digest")
+    if (application is None) != (digest is None):
+        raise ValueError("Installation has an incomplete application layer")
+    if application is not None:
+        application = Path(application)
+        launcher = application / "nro/orchestration/source_launcher.py"
+        if (
+            not application.is_absolute()
+            or application.resolve() != application
+            or not launcher.is_file()
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("Installation application layer is unavailable")
     return record
 
 
@@ -113,11 +130,25 @@ def main(argv=None, *, index_path: Path | None = None) -> None:
             NRO_CHECKOUT=record["checkout"],
             PYTHONDONTWRITEBYTECODE="1",
         )
-        os.execve(
-            python,
-            [python, "-I", "-B", "-m", "nro.cli", *(sys.argv[1:] if argv is None else argv)],
-            env,
-        )
+        arguments = sys.argv[1:] if argv is None else argv
+        if record.get("application") is None:
+            command = [python, "-I", "-B", "-m", "nro.cli", *arguments]
+        else:
+            application = Path(record["application"])
+            site = Path(record["site"])
+            with site.open("rb") as stream:
+                site_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            command = [
+                python,
+                str(application / "nro/orchestration/source_launcher.py"),
+                "--manifest-only",
+                record["application_digest"],
+                str(site),
+                site_digest,
+                "nro.cli",
+                *arguments,
+            ]
+        os.execve(python, command, env)
     except (OSError, ValueError, KeyError, TypeError) as error:
         sys.exit(f"nro: {error}")
 

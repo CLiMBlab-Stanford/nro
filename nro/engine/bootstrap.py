@@ -5,7 +5,6 @@ import fcntl
 import json
 import os
 import shlex
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -41,16 +40,6 @@ def write_record(path: Path, record: dict) -> None:
             os.close(descriptor)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _prune_shared_environments(root: Path, active: Path) -> None:
-    """Remove inactive candidate environments after a successful shared cutover."""
-    parent = root / ".nro-environments"
-    if not parent.is_dir() or active.parent != parent:
-        return
-    for path in parent.glob("candidate-*"):
-        if path != active and path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path, ignore_errors=True)
 
 
 @contextmanager
@@ -267,7 +256,15 @@ def connect_user(
             "The installation is incomplete. Ask its maintainer to run ./install --maintain."
         )
     python = Path(record["environment"]) / "bin/python"
-    if not python.is_file() or not Path(record["site"]).is_file():
+    application = Path(record["application"]) if record.get("application") else None
+    if (
+        not python.is_file()
+        or not Path(record["site"]).is_file()
+        or (
+            application is not None
+            and not (application / "nro/orchestration/source_launcher.py").is_file()
+        )
+    ):
         raise RuntimeError("The shared interpreter or site configuration is missing.")
     destination = (bin_dir or Path.home() / ".local/bin") / "nro"
     marker = "# nro directory-aware launcher\n"
@@ -586,15 +583,19 @@ def _main(argv=None) -> None:
         if mode != "shared" and mode != "branch":
             check_workers(site)
         if mode == "shared":
-            environment = ROOT / ".nro-environments" / f"candidate-{uuid.uuid4().hex}"
+            environment = None
+        elif mode == "branch" and existing and existing.get("dependency_key"):
+            # A converted shared checkout initially retains its immutable release
+            # layers. Its first branch setup must not mutate the shared dependency
+            # environment.
+            environment = ROOT / ".nro-env"
         else:
             environment = Path(existing["environment"]) if existing else ROOT / ".nro-env"
-        if mode == "branch" and existing:
+        if mode == "branch" and existing and environment.exists():
             check_branch_environment(site, environment)
         record = {
             "mode": mode,
             "checkout": str(ROOT),
-            "environment": str(environment),
             "site": str(site),
             "ready": False,
             "with_oslom": not args.without_oslom,
@@ -618,46 +619,71 @@ def _main(argv=None) -> None:
                 [str(uv_env / "bin/python"), "-m", "pip", "install", f"uv=={UV_VERSION}"],
                 check=True,
             )
-        sync = [str(uv), "sync", "--frozen", "--python", "3.12"]
-        if mode == "shared":
-            # A shared release must remain usable after the checkout advances
-            # and before the next maintenance cutover succeeds. Development
-            # branches remain editable so their commands follow branch code.
-            sync += ["--no-editable"]
-        if record["with_oslom"]:
-            sync += ["--extra", "oslom"]
-        if record["with_bidsify"]:
-            sync += ["--extra", "bidsify"]
-        if record["with_lesion"]:
-            sync += ["--extra", "lesion"]
-        if record["with_marss"]:
-            sync += ["--extra", "marss"]
-        if not record["dev"]:
-            sync += ["--no-dev"]
-        if args.offline:
-            sync += ["--offline"]
         env = {
-            **os.environ,
-            "UV_PROJECT_ENVIRONMENT": str(environment),
+            **{
+                key: value
+                for key, value in os.environ.items()
+                if key not in {"PYTHONPATH", "PYTHONHOME"}
+            },
             "UV_PYTHON_INSTALL_DIR": str(ROOT / ".nro-python"),
             "UV_CACHE_DIR": str(ROOT / ".nro-cache"),
             "NRO_SITE_CONFIG": str(site),
             "NRO_CHECKOUT": str(ROOT),
             "NRO_SETUP_CHILD": "1",
         }
-        subprocess.run(sync, cwd=ROOT, env=env, check=True)
+        application = None
+        if mode == "shared":
+            from nro.engine import installation_layers
+
+            environment, dependency_key = installation_layers.prepare_shared_dependencies(
+                ROOT,
+                uv,
+                record,
+                uv_version=UV_VERSION,
+                env=env,
+                offline=args.offline,
+                previous_environment=(
+                    Path(existing["environment"])
+                    if existing is not None and existing.get("environment")
+                    else None
+                ),
+            )
+            application = installation_layers.capture_shared_application(ROOT)
+            record.update(
+                environment=str(environment),
+                dependency_key=dependency_key,
+                application=str(application.root),
+                application_digest=application.digest,
+            )
+        else:
+            sync = [str(uv), "sync", "--frozen", "--python", "3.12"]
+            if record["with_oslom"]:
+                sync += ["--extra", "oslom"]
+            if record["with_bidsify"]:
+                sync += ["--extra", "bidsify"]
+            if record["with_lesion"]:
+                sync += ["--extra", "lesion"]
+            if record["with_marss"]:
+                sync += ["--extra", "marss"]
+            if not record["dev"]:
+                sync += ["--no-dev"]
+            if args.offline:
+                sync += ["--offline"]
+            sync_env = {**env, "UV_PROJECT_ENVIRONMENT": str(environment)}
+            subprocess.run(sync, cwd=ROOT, env=sync_env, check=True)
+            record["environment"] = str(environment)
         environment.mkdir(parents=True, exist_ok=True)
-        (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
+        if mode != "shared":
+            (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
         if prepare_shared is not None:
             prepare_shared()
-        command = [
-            str(environment / "bin/python"),
-            "-I",
-            "-B",
-            "-m",
-            "nro.bin.setup",
-            "--resources-only",
-        ]
+        python = str(environment / "bin/python")
+        module_command = [python, "-m", "nro.bin.setup", "--resources-only"]
+        command = (
+            list(application.command(module_command, site=site))
+            if application is not None
+            else [python, "-I", "-B", *module_command[1:]]
+        )
         if mode != "branch":
             command += ["--maintain"]
         if mode == "shared":
@@ -698,7 +724,11 @@ def _main(argv=None) -> None:
 
             publish(ROOT, shared_registry, installation=record)
             record = json.loads(record_path.read_text())
-            _prune_shared_environments(ROOT, Path(record["environment"]))
+            installation_layers.prune_shared_environments(
+                ROOT,
+                Path(record["environment"]),
+                active_application=Path(record["application"]),
+            )
         else:
             write_record(record_path, record)
         connect_user(

@@ -116,6 +116,16 @@ def activate(
                 source = SourceStore(ControlPaths(registry.paths.control).implementations).capture(
                     checkout
                 )
+                if installation.get("application") is not None:
+                    application = SourceSnapshot(
+                        Path(installation["application"]),
+                        installation.get("application_digest", ""),
+                    )
+                    application.verify_manifest()
+                    if application.digest != source.digest:
+                        raise ValueError(
+                            "Shared application layer does not match the approved release source"
+                        )
                 record = dict(
                     protocol=1,
                     checkout=str(checkout),

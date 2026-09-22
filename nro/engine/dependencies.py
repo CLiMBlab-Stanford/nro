@@ -24,14 +24,12 @@ from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
 from nro.modules.anat.lesion_policy import (
-    FASTSURFER_FREESURFER_BUILD,
     FASTSURFER_OCI_DIGEST,
     MASKER_MODEL,
     MASKER_RESOURCES,
     MASKER_REVISION,
     NEUROLIT_CHECKPOINTS,
 )
-from nro.modules.anat.policy import FREESURFER_BUILD
 
 IMAGES = {
     "qunex": "docker://qunex/qunex_suite@sha256:a06befbb64f93ab289bbef94d1d00bf957c7cdff920f35e107f90b186ff9f09d",
@@ -49,6 +47,7 @@ SYNTHSTROKE_URLS = {
     name: f"https://huggingface.co/{MASKER_MODEL}/resolve/{MASKER_REVISION}/{name}?download=true"
     for name in MASKER_RESOURCES
 }
+_SHA256_CACHE: dict[Path, tuple[tuple[int, int, int, int, int], str]] = {}
 
 
 def required_images(*, with_lesion: bool = False) -> dict[str, str]:
@@ -223,11 +222,66 @@ def resource_lock(path: Path):
 
 def sha256(path: Path) -> str:
     """Compute a file checksum in bounded chunks."""
+    path = path.resolve()
+    before = path.stat()
+    identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    cached = _SHA256_CACHE.get(path)
+    if cached is not None and cached[0] == identity:
+        return cached[1]
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    after = path.stat()
+    if identity != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise RuntimeError(f"File changed during checksum verification: {path}")
+    value = digest.hexdigest()
+    _SHA256_CACHE[path] = (identity, value)
+    return value
+
+
+def _file_identity(path: Path) -> dict[str, int]:
+    """Return the filesystem identity used to reuse a prior checksum."""
+    stat = path.stat()
+    return {
+        "device": stat.st_dev,
+        "inode": stat.st_ino,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "ctime_ns": stat.st_ctime_ns,
+    }
+
+
+def verify_image_receipt(path: Path, receipt: Path) -> None:
+    """Validate an acquired image, caching its verified filesystem identity."""
+    document = json.loads(receipt.read_text(encoding="utf-8"))
+    identity = _file_identity(path)
+    if document.get("file_identity") == identity:
+        return
+    if "file_identity" not in document and receipt.stat().st_mtime_ns >= path.stat().st_ctime_ns:
+        # Legacy receipts were written only after the acquired image's checksum
+        # passed. An older file ctime therefore proves that the recorded bytes
+        # have not been modified since that verification.
+        document["file_identity"] = identity
+        atomic_write_json(receipt, document)
+        return
+    print(f"Verify container checksum: {path}", flush=True)
+    if sha256(path) != document["sha256"]:
+        raise RuntimeError(f"Installed image differs from its acquisition receipt: {path}")
+    document["file_identity"] = identity
+    atomic_write_json(receipt, document)
 
 
 def verify_sha256(path: Path, expected: str, label: str) -> None:
@@ -236,8 +290,8 @@ def verify_sha256(path: Path, expected: str, label: str) -> None:
         raise RuntimeError(f"Missing or invalid {label}: {path}")
 
 
-def verify_fastsurfer_image(runtime: str, path: Path) -> None:
-    """Require the pinned FastSurfer image and embedded FreeSurfer build."""
+def _image_labels(runtime: str, path: Path) -> dict[str, str]:
+    """Read container identity without starting the image on the login host."""
     result = subprocess.run(
         [runtime, "inspect", "--json", str(path)],
         capture_output=True,
@@ -247,36 +301,26 @@ def verify_fastsurfer_image(runtime: str, path: Path) -> None:
     )
     document = json.loads(result.stdout)
     labels = document["data"]["attributes"]["labels"]
+    if not isinstance(labels, dict):
+        raise RuntimeError(f"Container has invalid identity labels: {path}")
+    return labels
+
+
+def verify_fastsurfer_image(runtime: str, path: Path) -> None:
+    """Require the exact pinned FastSurfer image metadata."""
+    labels = _image_labels(runtime, path)
     if labels.get("org.opencontainers.image.base.digest") != FASTSURFER_OCI_DIGEST:
         raise RuntimeError("FastSurfer image has an unexpected OCI base digest")
     if labels.get("org.opencontainers.image.revision") != "cdfccea":
         raise RuntimeError("FastSurfer image has an unexpected source revision")
-    build = subprocess.run(
-        [runtime, "exec", "--cleanenv", str(path), "cat", "/opt/freesurfer/build-stamp.txt"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=True,
-    ).stdout.strip()
-    if build != FASTSURFER_FREESURFER_BUILD:
-        raise RuntimeError(f"FastSurfer image contains an unexpected FreeSurfer build: {build}")
 
 
 def verify_freesurfer_image(runtime: str, path: Path) -> None:
-    """Require a complete conventional FreeSurfer installation at the pinned build."""
-    script = (
-        'test "$(cat /usr/local/freesurfer/build-stamp.txt)" = '
-        + shlex.quote(FREESURFER_BUILD)
-        + " && command -v recon-all >/dev/null"
-        + " && command -v mri_nu_correct.mni >/dev/null"
-    )
-    subprocess.run(
-        [runtime, "exec", "--cleanenv", str(path), "bash", "-lc", script],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=True,
-    )
+    """Require the exact digest-pinned conventional FreeSurfer image metadata."""
+    labels = _image_labels(runtime, path)
+    expected = IMAGES["freesurfer"].rsplit("@", 1)[1]
+    if labels.get("org.opencontainers.image.base.digest") != expected:
+        raise RuntimeError("FreeSurfer image has an unexpected OCI base digest")
 
 
 def download(
@@ -517,14 +561,10 @@ def check_installation(
             path = Path(values[key])
             receipt = path.with_name(path.name + ".receipt.json")
             if receipt.is_file():
-
-                def receipt_check(path=path, receipt=receipt):
-                    if sha256(path) != json.loads(receipt.read_text())["sha256"]:
-                        raise RuntimeError(
-                            f"Installed image differs from its acquisition receipt: {path}"
-                        )
-
-                check(f"{key} checksum", receipt_check)
+                check(
+                    f"{key} checksum",
+                    lambda path=path, receipt=receipt: verify_image_receipt(path, receipt),
+                )
     if deep and container_execution:
         tools = " ".join(
             shlex.quote(x)
@@ -623,6 +663,7 @@ def _install_image(key: str, source: str, *, offline: bool) -> None:
             {
                 "source": source,
                 "sha256": digest,
+                "file_identity": _file_identity(path),
                 "verification": "HTTPS or container transport, runtime inspect; SHA-256 recorded after acquisition",
             },
         )
