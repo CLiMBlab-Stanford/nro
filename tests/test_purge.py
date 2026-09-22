@@ -231,6 +231,49 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, ca
     assert freesurfer_file.exists()
 
 
+def test_anat_purge_removes_partial_subject_outputs(tmp_path: Path, capsys) -> None:
+    """Anat owns session outputs and WORK created before final publication."""
+    bids, registry, _work_items, _request = _registry_with_two_runs(tmp_path)
+    work = tmp_path / "work"
+    anat = _work_item_row(registry, "anat")
+    subject_root = Path(anat["output_root"]).parent
+    partial_public = _write(
+        subject_root / "ses-01" / "anat" / "sub-01_ses-01_desc-reference_T1w.nii.gz"
+    )
+    partial_work = _write(
+        work
+        / "demo"
+        / "derivatives"
+        / "nro"
+        / "anat"
+        / anat["directory_label"]
+        / "sub-01"
+        / "subject_reference"
+        / "sub-01_desc-selected_T1w.nii.gz"
+    )
+
+    purge_main(
+        [
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "anat",
+            "--work-root",
+            str(work),
+            "-f",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["work_items"] == 1
+    assert not partial_public.exists()
+    assert not partial_work.exists()
+    assert not subject_root.exists()
+
+
 def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Path, capsys) -> None:
     bids, registry, _work_items, request = _registry_with_two_runs(tmp_path)
     terminal_work_item = _work_item_row(registry, "func", "1")

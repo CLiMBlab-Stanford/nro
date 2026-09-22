@@ -150,6 +150,7 @@ def _work_item_paths(
     participant = str(work_item["participant"]).removeprefix("sub-")
     sub_id = f"sub-{participant}"
     output_root = Path(work_item["output_root"])
+    owned_output_root = output_root.parent if module == "anat" else output_root
     output_prefix = str(work_item.get("output_prefix") or "")
     derivatives_root = registry.paths.project_root / "derivatives" / "nro"
     project_work_derivatives = work_root / registry.paths.project / "derivatives" / "nro"
@@ -158,7 +159,10 @@ def _work_item_paths(
     work_paths: list[Path] = []
     entities = json.loads(work_item["entities_json"])
     if module == "anat":
-        derivative_paths.append(output_root)
+        # Anatomical work can publish session references before it creates the
+        # final subject-level anat directory. The subject directory is the
+        # common ownership boundary for both partial and complete artifacts.
+        derivative_paths.append(owned_output_root)
     elif module in {"dynconn", "microparcellation", "networks"}:
         # Space and smoothing targets share the subject directory. The full
         # output prefix identifies the files owned by this work item.
@@ -189,11 +193,11 @@ def _work_item_paths(
         )
 
     if module == "anat":
-        anat_root = output_root.parent.parent
+        anat_root = owned_output_root.parent
         derivative_paths.append(anat_root / "code" / "freesurfer" / sub_id)
 
     try:
-        relative_output = output_root.relative_to(derivatives_root)
+        relative_output = owned_output_root.relative_to(derivatives_root)
     except ValueError:
         relative_output = None
     if relative_output is not None:
