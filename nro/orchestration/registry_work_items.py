@@ -279,3 +279,157 @@ def normalize_active_request_graph(database: sqlite3.Connection) -> None:
                       AND demand_state='active'""",
                 (request_id, *tuple(orphaned)),
             )
+
+
+def cancel_purged_demand(
+    database: sqlite3.Connection,
+    work_item_ids: Sequence[int],
+    *,
+    now: str,
+) -> int:
+    """Withdraw demand that requires explicitly purged work items.
+
+    Purging an upstream item also makes every dependent target ineligible to
+    continue under its existing request. Unrelated targets in the same request
+    remain active, together with their dependency closures.
+    """
+    selected = {int(value) for value in work_item_ids}
+    if not selected:
+        return 0
+    dependents: dict[int, set[int]] = {}
+    for row in database.execute(
+        "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
+    ):
+        dependents.setdefault(int(row["upstream_work_item_id"]), set()).add(
+            int(row["work_item_id"])
+        )
+    affected = set(selected)
+    pending = list(selected)
+    while pending:
+        for dependent in dependents.get(pending.pop(), ()):
+            if dependent not in affected:
+                affected.add(dependent)
+                pending.append(dependent)
+
+    placeholders = ",".join("?" for _ in affected)
+    cursor = database.execute(
+        f"""UPDATE request_work_items SET demand_state='cancelled'
+            WHERE work_item_id IN ({placeholders}) AND demand_state='active'""",
+        tuple(sorted(affected)),
+    )
+    cancelled = int(cursor.rowcount)
+    normalize_active_request_graph(database)
+    database.execute(
+        """UPDATE requests SET state='cancelled',updated_at=?
+           WHERE state='active' AND NOT EXISTS (
+               SELECT 1 FROM request_work_items
+               WHERE request_id=requests.id AND role='target' AND demand_state='active'
+           )""",
+        (now,),
+    )
+    database.execute(
+        """UPDATE attempts SET state='cancel_requested',
+                  error_type='UserCancelled',
+                  error_message='Demand withdrawn because a required artifact was purged'
+           WHERE state IN ('queued','running') AND NOT EXISTS (
+               SELECT 1 FROM request_work_items links JOIN requests requests
+                 ON requests.id=links.request_id
+               WHERE links.work_item_id=attempts.work_item_id
+                 AND links.demand_state='active' AND requests.state='active'
+           )"""
+    )
+    return cancelled
+
+
+def forget_purged_work_items(
+    database: sqlite3.Connection,
+    work_item_ids: Sequence[int],
+) -> tuple[int, tuple[int, ...]]:
+    """Delete unreferenced scheduler records for purged work items.
+
+    A selected item remains when a registered item outside the purge still
+    depends on it. Such a row is part of the surviving artifact's saved DAG,
+    even though its own artifact is missing and has no demand.
+    """
+    selected = {int(value) for value in work_item_ids}
+    if not selected:
+        return 0, ()
+    existing = {
+        int(row["id"])
+        for row in database.execute(
+            f"SELECT id FROM work_items WHERE id IN ({','.join('?' for _ in selected)})",
+            tuple(sorted(selected)),
+        )
+    }
+    deletable = set(existing)
+    while deletable:
+        placeholders = ",".join("?" for _ in deletable)
+        protected = {
+            int(row["upstream_work_item_id"])
+            for row in database.execute(
+                f"""SELECT upstream_work_item_id FROM work_item_dependencies
+                    WHERE upstream_work_item_id IN ({placeholders})
+                      AND work_item_id NOT IN ({placeholders})""",
+                (*tuple(sorted(deletable)), *tuple(sorted(deletable))),
+            )
+        }
+        if not protected:
+            break
+        deletable.difference_update(protected)
+    if not deletable:
+        return 0, tuple(sorted(existing))
+
+    placeholders = ",".join("?" for _ in deletable)
+    values = tuple(sorted(deletable))
+    attempt_ids = tuple(
+        int(row["id"])
+        for row in database.execute(
+            f"SELECT id FROM attempts WHERE work_item_id IN ({placeholders})", values
+        )
+    )
+    if attempt_ids:
+        attempt_placeholders = ",".join("?" for _ in attempt_ids)
+        database.execute(
+            f"DELETE FROM attempt_dependencies WHERE attempt_id IN ({attempt_placeholders})",
+            attempt_ids,
+        )
+        database.execute(
+            f"DELETE FROM attempt_execution WHERE attempt_id IN ({attempt_placeholders})",
+            attempt_ids,
+        )
+    database.execute(
+        f"DELETE FROM attempt_dependencies WHERE upstream_work_item_id IN ({placeholders})",
+        values,
+    )
+    database.execute(f"DELETE FROM artifacts WHERE work_item_id IN ({placeholders})", values)
+    database.execute(f"DELETE FROM completions WHERE work_item_id IN ({placeholders})", values)
+    database.execute(f"DELETE FROM attempts WHERE work_item_id IN ({placeholders})", values)
+    database.execute(
+        f"DELETE FROM request_work_items WHERE work_item_id IN ({placeholders})", values
+    )
+    database.execute(
+        f"DELETE FROM request_artifacts WHERE work_item_id IN ({placeholders})", values
+    )
+    database.execute(
+        f"DELETE FROM work_item_dependencies WHERE work_item_id IN ({placeholders})", values
+    )
+    database.execute(
+        f"DELETE FROM artifact_mutations WHERE work_item_id IN ({placeholders})", values
+    )
+    mappings = database.execute(
+        f"""SELECT registry_id,logical_key FROM branch_work_items
+            WHERE work_item_id IN ({placeholders})""",
+        values,
+    ).fetchall()
+    database.executemany(
+        "DELETE FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+        [(row["registry_id"], row["logical_key"]) for row in mappings],
+    )
+    database.execute(
+        f"DELETE FROM branch_work_items WHERE work_item_id IN ({placeholders})", values
+    )
+    database.execute(
+        f"DELETE FROM work_item_execution WHERE work_item_id IN ({placeholders})", values
+    )
+    database.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", values)
+    return len(deletable), tuple(sorted(existing - deletable))

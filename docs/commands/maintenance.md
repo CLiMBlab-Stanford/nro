@@ -71,11 +71,18 @@ private-file root. Selected work items must have no active attempts.
 
 Deleting an upstream artifact also invalidates its consumers and requests
 cancellation of their active attempts, even when those consumers were not selected
-for deletion. Their files are not purged. The command reserves the selected
+for deletion. Their files are not purged. Purge withdraws existing demand for
+the selected work and for targets that depend on it; unrelated targets from the
+same request remain active. The command reserves the selected
 outputs and waits up to 30 seconds for confirmed consumer shutdown without holding
 the registry lock while waiting. If shutdown is not confirmed, it deletes no
 outputs; retry after the attempts stop. Invalidation and cancellation remain in
-effect, and demand is preserved. `--dry-run` does not invalidate or cancel work.
+effect. `--dry-run` does not invalidate or cancel work.
+
+After successful deletion, the scheduler removes purged work-item records that
+no surviving registered artifact references. A missing upstream record remains
+when it is needed to describe a surviving downstream artifact's DAG. Purging that
+downstream artifact later makes the retained ancestor eligible for removal.
 
 After an interrupted purge, repeat the operation to recover its mutation lock and
 reservation. The scheduler retains an approved purge and finishes it before later
