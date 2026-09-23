@@ -67,24 +67,20 @@ from .lesion_policy import (
 )
 from .lesions import (
     create_cut_surfaces_step,
-    create_fastsurfer_lit_step,
+    create_fastsurfer_lit_steps,
     create_inpainted_metadata_step,
     create_lesion_excluded_mask_step,
     create_lesion_mask_step,
     create_lesion_qc_step,
+    create_lesion_reconstruction_summary_step,
 )
 from .policy import bias_correction_contract, surface_reconstruction_contract
 from .steps import (
     _aseg_label_ids,
     _brain_extract_anat_copy,
-    _create_acpc_grid_step,
-    _create_acpc_inverse_step,
-    _create_acpc_qc_step,
-    _create_acpc_registration_step,
-    _create_acpc_resampling_step,
     _create_apply_brain_mask_step,
     _create_copy_or_average_step,
-    _create_finalize_acpc_anatomy_step,
+    _create_finalize_anatomy_step,
     _create_inverse_affine_step,
     _create_label_mask_step,
     _create_metric_conversion_step,
@@ -92,6 +88,11 @@ from .steps import (
     _create_mni_qc_image_step,
     _create_mni_registration_step,
     _create_mri_conversion_step,
+    _create_pose_grid_step,
+    _create_pose_inverse_step,
+    _create_pose_qc_step,
+    _create_pose_registration_step,
+    _create_pose_resampling_step,
     _create_recon_all_step,
     _create_ribbon_mask_step,
     _create_surface_affine_step,
@@ -610,92 +611,100 @@ def build_module(
                 env=env,
             )
         )
-    acpc_work = opts.work_dir / "acpc_alignment"
-    acpc_prefix = acpc_work / f"{inputs.sub_id}_"
-    source_to_acpc = acpc_work / f"{inputs.sub_id}_0GenericAffine.mat"
-    acpc_to_source = (
-        opts.out_dir / f"{inputs.sub_id}_from-ACPC_to-{pose_modality}_mode-image_xfm.mat"
+    reference_space = pose_modality
+    pose_work = opts.work_dir / "pose_normalization"
+    pose_prefix = pose_work / f"{inputs.sub_id}_"
+    source_to_reference = pose_work / f"{inputs.sub_id}_0GenericAffine.mat"
+    reference_to_source = (
+        opts.out_dir / f"{inputs.sub_id}_from-{reference_space}_to-orig_mode-image_xfm.mat"
     )
-    published_source_to_acpc = (
-        opts.out_dir / f"{inputs.sub_id}_from-{pose_modality}_to-ACPC_mode-image_xfm.mat"
+    published_source_to_reference = (
+        opts.out_dir / f"{inputs.sub_id}_from-orig_to-{reference_space}_mode-image_xfm.mat"
     )
-    acpc_grid = acpc_work / f"{inputs.sub_id}_space-ACPC_reference.nii.gz"
+    reference_grid = pose_work / f"{inputs.sub_id}_space-{reference_space}_reference.nii.gz"
     runner.add_step(
-        _create_acpc_registration_step(
+        _create_pose_registration_step(
             source=pose_source,
             source_mask=pose_mask,
             template=mni_brain_template,
             template_mask=mni_brain_mask,
-            prefix=acpc_prefix,
-            transform=source_to_acpc,
+            prefix=pose_prefix,
+            transform=source_to_reference,
             env=env,
             force=opts.overwrite,
         )
     )
     runner.add_step(
-        _create_acpc_grid_step(
+        _create_pose_grid_step(
             source=pose_source,
             source_mask=pose_mask,
             template=opts.mni_template,
-            transform=source_to_acpc,
-            output=acpc_grid,
+            transform=source_to_reference,
+            output=reference_grid,
             force=opts.overwrite,
         )
     )
     runner.add_step(
         create_copy_file_step(
-            src=source_to_acpc,
-            dst=published_source_to_acpc,
+            src=source_to_reference,
+            dst=published_source_to_reference,
             force=opts.overwrite,
-            step_name="Publish ACPC Pose Transform",
+            step_name="Publish Anatomical Pose Transform",
         )
     )
     runner.add_step(
-        _create_acpc_inverse_step(
-            source=source_to_acpc,
-            output=acpc_to_source,
+        _create_pose_inverse_step(
+            source=source_to_reference,
+            output=reference_to_source,
             force=opts.overwrite,
         )
     )
     subj_t1 = (
-        opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-preproc_T1w.nii.gz"
+        opts.out_dir / f"{inputs.sub_id}_desc-preproc_T1w.nii.gz"
         if subj_t1_selected is not None
         else None
     )
     subj_t2 = (
-        opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-preproc_T2w.nii.gz"
+        opts.out_dir
+        / (
+            f"{inputs.sub_id}_space-T1w_desc-preproc_T2w.nii.gz"
+            if subj_t1_selected is not None
+            else f"{inputs.sub_id}_desc-preproc_T2w.nii.gz"
+        )
         if subj_t2_selected is not None
         else None
     )
     pose_output = subj_t1 or subj_t2
     assert pose_output is not None
-    acpc_resampled = acpc_work / f"{inputs.sub_id}_space-ACPC_desc-resampled_{pose_modality}.nii.gz"
-    acpc_mask = acpc_work / f"{inputs.sub_id}_space-ACPC_desc-brain_mask.nii.gz"
+    pose_resampled = (
+        pose_work / f"{inputs.sub_id}_space-{reference_space}_desc-resampled_{pose_modality}.nii.gz"
+    )
+    reference_mask = pose_work / f"{inputs.sub_id}_space-{reference_space}_desc-brain_mask.nii.gz"
     runner.add_step(
-        _create_acpc_resampling_step(
+        _create_pose_resampling_step(
             source=pose_source,
-            reference=acpc_grid,
-            transform=source_to_acpc,
-            output=acpc_resampled,
+            reference=reference_grid,
+            transform=source_to_reference,
+            output=pose_resampled,
             env=env,
             force=opts.overwrite,
         )
     )
     runner.add_step(
-        _create_acpc_resampling_step(
+        _create_pose_resampling_step(
             source=pose_mask,
-            reference=acpc_grid,
-            transform=source_to_acpc,
-            output=acpc_mask,
+            reference=reference_grid,
+            transform=source_to_reference,
+            output=reference_mask,
             env=env,
             force=opts.overwrite,
             label=True,
         )
     )
     runner.add_step(
-        _create_finalize_acpc_anatomy_step(
-            source=acpc_resampled,
-            mask=acpc_mask,
+        _create_finalize_anatomy_step(
+            source=pose_resampled,
+            mask=reference_mask,
             output=pose_output,
             env=env,
             force=opts.overwrite,
@@ -704,64 +713,62 @@ def build_module(
     lesion_fastsurfer_t1: Optional[Path] = None
     if opts.lesion:
         assert lesion_raw_t1_selected is not None
-        lesion_fastsurfer_t1 = (
-            reference_work / f"{inputs.sub_id}_space-ACPC_desc-fastSurferInput_T1w.nii.gz"
-        )
+        lesion_fastsurfer_t1 = reference_work / f"{inputs.sub_id}_desc-fastSurferInput_T1w.nii.gz"
         runner.add_step(
-            _create_acpc_resampling_step(
+            _create_pose_resampling_step(
                 source=lesion_raw_t1_selected,
-                reference=acpc_grid,
-                transform=source_to_acpc,
+                reference=reference_grid,
+                transform=source_to_reference,
                 output=lesion_fastsurfer_t1,
                 env=env,
                 force=opts.overwrite,
             )
         )
-    acpc_qc = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-poseQC_metrics.json"
+    pose_qc = opts.out_dir / f"{inputs.sub_id}_space-{reference_space}_desc-poseQC_metrics.json"
     runner.add_step(
-        _create_acpc_qc_step(
+        _create_pose_qc_step(
             source=pose_source,
             source_mask=pose_mask,
             aligned=pose_output,
             template=opts.mni_template,
-            transform=source_to_acpc,
-            grid=acpc_grid,
-            output=acpc_qc,
+            transform=source_to_reference,
+            grid=reference_grid,
+            output=pose_qc,
             force=opts.overwrite,
         )
     )
     pose_xfms = {
-        f"{pose_modality.lower()}_to_acpc": str(published_source_to_acpc),
-        f"acpc_to_{pose_modality.lower()}": str(acpc_to_source),
+        f"orig_to_{reference_space.lower()}": str(published_source_to_reference),
+        f"{reference_space.lower()}_to_orig": str(reference_to_source),
     }
-    t2w_to_acpc_xfms: dict[str, str] = {}
-    t2w_to_acpc: Optional[Path] = None
+    t2w_to_t1w_xfms: dict[str, str] = {}
+    t2w_to_t1w: Optional[Path] = None
     if subj_t1 is not None and subj_t2 is not None:
         assert subj_t2_selected is not None
-        t2w_to_acpc = opts.out_dir / f"{inputs.sub_id}_from-T2w_to-ACPC_mode-image_xfm.mat"
-        acpc_to_t2w = opts.out_dir / f"{inputs.sub_id}_from-ACPC_to-T2w_mode-image_xfm.mat"
+        t2w_to_t1w = opts.out_dir / f"{inputs.sub_id}_from-T2w_to-T1w_mode-image_xfm.mat"
+        t1w_to_t2w = opts.out_dir / f"{inputs.sub_id}_from-T1w_to-T2w_mode-image_xfm.mat"
         runner.add_step(
             _register_t2_to_t1(
                 env=env,
                 t2_src=subj_t2_selected,
                 t1_ref=subj_t1,
                 out_t2=subj_t2,
-                out_mat=t2w_to_acpc,
+                out_mat=t2w_to_t1w,
                 force=opts.overwrite,
             )
         )
         runner.add_step(
             _create_inverse_affine_step(
-                source=t2w_to_acpc,
-                output=acpc_to_t2w,
+                source=t2w_to_t1w,
+                output=t1w_to_t2w,
                 env=env,
                 force=opts.overwrite,
-                name="Invert T2w-to-ACPC Affine",
+                name="Invert T2w-to-T1w Affine",
             )
         )
-        t2w_to_acpc_xfms.update(
-            t2w_to_acpc=str(t2w_to_acpc),
-            acpc_to_t2w=str(acpc_to_t2w),
+        t2w_to_t1w_xfms.update(
+            t2w_to_t1w=str(t2w_to_t1w),
+            t1w_to_t2w=str(t1w_to_t2w),
         )
     if subj_t1 is not None:
         runner.add_step(
@@ -772,11 +779,11 @@ def build_module(
                     "Sources": t1_meta["sources"],
                     "SelectionStrategy": opts.selection_strategy,
                     "BiasCorrection": "N4BiasFieldCorrection",
-                    "Space": "ACPC",
-                    "PoseTransform": str(published_source_to_acpc),
-                    "PoseQuality": str(acpc_qc),
+                    "SpatialReference": "T1w",
+                    "PoseTransform": str(published_source_to_reference),
+                    "PoseQuality": str(pose_qc),
                 },
-                inputs=(subj_t1, published_source_to_acpc, acpc_qc),
+                inputs=(subj_t1, published_source_to_reference, pose_qc),
                 force=opts.overwrite,
             )
         )
@@ -789,20 +796,19 @@ def build_module(
                     "Sources": t2_meta["sources"],
                     "SelectionStrategy": opts.selection_strategy,
                     "BiasCorrection": "N4BiasFieldCorrection",
-                    "Space": "ACPC",
-                    "SpatialReference": "ACPC",
-                    "TransformToACPC": str(t2w_to_acpc)
-                    if t2w_to_acpc is not None
-                    else str(published_source_to_acpc),
-                    "PoseQuality": str(acpc_qc),
+                    "SpatialReference": "T1w",
+                    "TransformToT1w": str(t2w_to_t1w)
+                    if t2w_to_t1w is not None
+                    else str(published_source_to_reference),
+                    "PoseQuality": str(pose_qc),
                 },
-                inputs=tuple(path for path in (subj_t2, t2w_to_acpc, acpc_qc) if path is not None),
+                inputs=tuple(path for path in (subj_t2, t2w_to_t1w, pose_qc) if path is not None),
                 force=opts.overwrite,
             )
         )
     myelin_map: Optional[Path] = None
     if subj_t1 is not None and subj_t2 is not None:
-        myelin_map = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-myelinMap_T1w.nii.gz"
+        myelin_map = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-myelinMap_T1w.nii.gz"
         t2_nonzero = opts.work_dir / "myelin_map" / f"{inputs.sub_id}_desc-T2wNonzero_T2w.nii.gz"
         runner.add_step(
             Step.command_step(
@@ -830,9 +836,9 @@ def build_module(
                 myelin_map.with_suffix("").with_suffix(".json"),
                 {
                     "Type": "myelin map",
-                    "Space": "ACPC",
+                    "Space": "T1w",
                     "Sources": [str(subj_t1), str(subj_t2)],
-                    "Description": "T1w/T2w ratio using preprocessed images aligned on the participant ACPC grid.",
+                    "Description": "T1w/T2w ratio using preprocessed images aligned on the participant T1w grid.",
                 },
             )
         )
@@ -851,9 +857,9 @@ def build_module(
         assert lesion_fastsurfer_t1 is not None
         assert lesion_masker_command is not None
         assert opts.fastsurfer_image is not None
-        lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesion_mask.nii.gz"
+        lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_mask.nii.gz"
         lesion_probability = (
-            opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesion_probability.nii.gz"
+            opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_probability.nii.gz"
         )
         lesion_metadata = lesion_mask.with_suffix("").with_suffix(".json")
         runner.add_step(
@@ -870,11 +876,11 @@ def build_module(
                 revision=MASKER_REVISION,
                 threshold=PROBABILITY_THRESHOLD,
                 test_time_augmentation=TEST_TIME_AUGMENTATION,
-                use_gpu=opts.lesion_use_gpu,
+                use_gpu=False,
                 force=opts.overwrite,
             )
         )
-        lesion_qc = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-lesionQC.png"
+        lesion_qc = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesionQC.png"
         runner.add_step(
             create_lesion_qc_step(
                 source=subj_t1,
@@ -883,8 +889,8 @@ def build_module(
                 force=opts.overwrite,
             )
         )
-        runner.add_step(
-            create_fastsurfer_lit_step(
+        runner.add_steps(
+            create_fastsurfer_lit_steps(
                 run_child=runner.run_child,
                 runtime=opts.gradient_unwarp_runtime,
                 image=opts.fastsurfer_image,
@@ -900,7 +906,18 @@ def build_module(
                 force=opts.overwrite,
             )
         )
-        inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-ACPC_desc-inpainted_T1w.nii.gz"
+        lesion_reconstruction_summary = (
+            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
+        )
+        runner.add_step(
+            create_lesion_reconstruction_summary_step(
+                subject_dir=subject_dir,
+                lesion_mask=lesion_mask,
+                output=lesion_reconstruction_summary,
+                force=opts.overwrite,
+            )
+        )
+        inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-inpainted_T1w.nii.gz"
         runner.add_step(
             Step.command_step(
                 [
@@ -928,20 +945,9 @@ def build_module(
                 observed_t1w=subj_t1,
                 lesion_mask=lesion_mask,
                 lesion_metadata=lesion_metadata,
-                reconstruction_summary=subject_dir / "stats" / "lesion_impact_summary.yaml",
+                reconstruction_summary=lesion_reconstruction_summary,
                 output=inpainted_t1.with_suffix("").with_suffix(".json"),
                 force=opts.overwrite,
-            )
-        )
-        lesion_reconstruction_summary = (
-            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
-        )
-        runner.add_step(
-            create_copy_file_step(
-                src=subject_dir / "stats" / "lesion_impact_summary.yaml",
-                dst=lesion_reconstruction_summary,
-                force=opts.overwrite,
-                step_name="Publish Lesion Reconstruction Summary",
             )
         )
     else:
@@ -951,7 +957,7 @@ def build_module(
                 env=env,
                 t1w=subj_t1,
                 t2w=subj_t2,
-                brain_mask=acpc_mask,
+                brain_mask=reference_mask,
                 subjects_dir=opts.freesurfer_subjects_dir,
                 fs_subject=opts.fs_subject,
                 runtime=opts.gradient_unwarp_runtime,
@@ -1184,11 +1190,9 @@ def build_module(
     }
     subject_t1 = subj_t1 or subject_anat
     fsnative_ref = opts.freesurfer_subjects_dir / opts.fs_subject / "mri" / "T1.mgz"
-    t1_to_fsnative = opts.out_dir / f"{opts.fs_subject}_from-ACPC_to-fsnative_mode-image_xfm.txt"
-    fsnative_to_t1 = opts.out_dir / f"{opts.fs_subject}_from-fsnative_to-ACPC_mode-image_xfm.txt"
-    t1_to_fsnative_reg = (
-        opts.out_dir / f"{opts.fs_subject}_from-ACPC_to-fsnative_mode-image_xfm.dat"
-    )
+    t1_to_fsnative = opts.out_dir / f"{opts.fs_subject}_from-T1w_to-fsnative_mode-image_xfm.txt"
+    fsnative_to_t1 = opts.out_dir / f"{opts.fs_subject}_from-fsnative_to-T1w_mode-image_xfm.txt"
+    t1_to_fsnative_reg = opts.out_dir / f"{opts.fs_subject}_from-T1w_to-fsnative_mode-image_xfm.dat"
     runner.add_step(
         _create_t1_to_fsnative_affine_step(
             subject_t1=subject_t1,
@@ -1208,12 +1212,12 @@ def build_module(
         )
     )
     fsnative_xfms = {
-        "acpc_to_fsnative": str(t1_to_fsnative),
-        "fsnative_to_acpc": str(fsnative_to_t1),
+        "t1w_to_fsnative": str(t1_to_fsnative),
+        "fsnative_to_t1w": str(fsnative_to_t1),
     }
     for path, from_space, to_space in (
-        (t1_to_fsnative, "ACPC", "fsnative"),
-        (fsnative_to_t1, "fsnative", "ACPC"),
+        (t1_to_fsnative, "T1w", "fsnative"),
+        (fsnative_to_t1, "fsnative", "T1w"),
     ):
         runner.add_step(
             _write_json_step(
@@ -1311,7 +1315,7 @@ def build_module(
                         "AnatomicalStructurePrimary": "Cortex",
                         "SurfaceType": bids_suffix,
                         "Sources": [str(source)],
-                        "SpatialReference": "fsnative" if is_sphere else "ACPC",
+                        "SpatialReference": "fsnative" if is_sphere else "T1w",
                     },
                 )
             )
@@ -1556,23 +1560,23 @@ def build_module(
         )
         forward = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-ACPC_to-{fsaverage_space}_hemi-{hemi_label}_mode-image+surface_xfm.json"
+            / f"{opts.fs_subject}_from-T1w_to-{fsaverage_space}_hemi-{hemi_label}_mode-image+surface_xfm.json"
         )
         inverse = (
             opts.out_dir
-            / f"{opts.fs_subject}_from-{fsaverage_space}_to-ACPC_hemi-{hemi_label}_mode-surface+image_xfm.json"
+            / f"{opts.fs_subject}_from-{fsaverage_space}_to-T1w_hemi-{hemi_label}_mode-surface+image_xfm.json"
         )
         runner.add_step(
             create_json_step(
                 step_name=(
-                    f"Write Hemisphere {hemi_label} ACPC-to-{fsaverage_space} Transform Metadata"
+                    f"Write Hemisphere {hemi_label} T1w-to-{fsaverage_space} Transform Metadata"
                 ),
                 path=forward,
                 payload={
                     "Type": "chain",
                     "Format": "surface",
                     "Hemisphere": hemi_label,
-                    "From": "ACPC",
+                    "From": "T1w",
                     "To": fsaverage_space,
                     "Steps": [str(fsnative_to_fsaverage)],
                 },
@@ -1583,7 +1587,7 @@ def build_module(
         runner.add_step(
             create_json_step(
                 step_name=(
-                    f"Write Hemisphere {hemi_label} {fsaverage_space}-to-ACPC Transform Metadata"
+                    f"Write Hemisphere {hemi_label} {fsaverage_space}-to-T1w Transform Metadata"
                 ),
                 path=inverse,
                 payload={
@@ -1591,22 +1595,22 @@ def build_module(
                     "Format": "surface",
                     "Hemisphere": hemi_label,
                     "From": fsaverage_space,
-                    "To": "ACPC",
+                    "To": "T1w",
                     "Steps": [str(fsaverage_to_fsnative)],
                 },
                 inputs=(fsaverage_to_fsnative,),
                 force=opts.overwrite,
             )
         )
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_acpc_to_{fsaverage_space}"] = str(forward)
-        t1_fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_acpc"] = str(inverse)
+        t1_fsaverage_xfms[f"hemi-{hemi_label}_t1w_to_{fsaverage_space}"] = str(forward)
+        t1_fsaverage_xfms[f"hemi-{hemi_label}_{fsaverage_space}_to_t1w"] = str(inverse)
 
     mni_prefix = opts.work_dir / "ants_mni_" / f"{opts.fs_subject}_"
     t1_to_mni = (
-        opts.out_dir / f"{opts.fs_subject}_from-ACPC_to-MNI152NLin2009cAsym_mode-image_xfm.h5"
+        opts.out_dir / f"{opts.fs_subject}_from-T1w_to-MNI152NLin2009cAsym_mode-image_xfm.h5"
     )
     mni_to_t1 = (
-        opts.out_dir / f"{opts.fs_subject}_from-MNI152NLin2009cAsym_to-ACPC_mode-image_xfm.h5"
+        opts.out_dir / f"{opts.fs_subject}_from-MNI152NLin2009cAsym_to-T1w_mode-image_xfm.h5"
     )
     produced_t1_to_mni = mni_prefix.parent / f"{mni_prefix.name}Composite.h5"
     produced_mni_to_t1 = mni_prefix.parent / f"{mni_prefix.name}InverseComposite.h5"
@@ -1640,10 +1644,10 @@ def build_module(
             force=opts.overwrite,
         )
     )
-    mni_xfms = {"acpc_to_mni": str(t1_to_mni), "mni_to_acpc": str(mni_to_t1)}
+    mni_xfms = {"t1w_to_mni": str(t1_to_mni), "mni_to_t1w": str(mni_to_t1)}
     for path, from_space, to_space in (
-        (t1_to_mni, "ACPC", "MNI152NLin2009cAsym"),
-        (mni_to_t1, "MNI152NLin2009cAsym", "ACPC"),
+        (t1_to_mni, "T1w", "MNI152NLin2009cAsym"),
+        (mni_to_t1, "MNI152NLin2009cAsym", "T1w"),
     ):
         runner.add_step(
             _write_json_step(
@@ -1658,7 +1662,7 @@ def build_module(
             )
         )
 
-    mni_in_t1 = opts.out_dir / f"{opts.fs_subject}_space-ACPC_desc-mniToACPCQC.nii.gz"
+    mni_in_t1 = opts.out_dir / f"{opts.fs_subject}_space-T1w_desc-mniToT1wQC.nii.gz"
     t1_in_mni = opts.out_dir / f"{opts.fs_subject}_space-MNI152NLin2009cAsym_desc-t1ToMNIQC.nii.gz"
     mni_qc_images: dict[str, str] = {}
     for (
@@ -1672,24 +1676,24 @@ def build_module(
         description,
     ) in (
         (
-            "mni_to_acpc",
+            "mni_to_t1w",
             mni_in_t1,
             opts.mni_template,
             subject_t1,
             mni_to_t1,
             "MNI152NLin2009cAsym",
-            "ACPC",
-            "Saved inverse composite transform applied once to project the MNI template into participant ACPC space for QC.",
+            "T1w",
+            "Saved inverse composite transform applied once to project the MNI template into participant T1w space for QC.",
         ),
         (
-            "acpc_to_mni",
+            "t1w_to_mni",
             t1_in_mni,
             subject_t1,
             opts.mni_template,
             t1_to_mni,
-            "ACPC",
+            "T1w",
             "MNI152NLin2009cAsym",
-            "Saved forward composite transform applied once to project the participant ACPC T1w image into MNI space for QC.",
+            "Saved forward composite transform applied once to project the participant T1w reference into MNI space for QC.",
         ),
     ):
         runner.add_step(
@@ -1743,8 +1747,8 @@ def build_module(
         },
         "copied_session_files": copied_session_files,
         "outputs": {
-            "acpc_t1w": (str(subj_t1) if subj_t1 is not None else None),
-            "acpc_t2w": (str(subj_t2) if subj_t2 is not None else None),
+            "t1w": (str(subj_t1) if subj_t1 is not None else None),
+            "t2w": (str(subj_t2) if subj_t2 is not None else None),
             "myelin_map": (str(myelin_map) if myelin_map is not None else None),
             "brain_image": str(subject_anat),
             "brain_mask": core_masks["brain"],
@@ -1753,10 +1757,10 @@ def build_module(
             "subcortical_masks": subcortical_masks,
             "surfaces": exported_surfaces,
             "mni_qc_images": mni_qc_images,
-            "acpc_pose_qc": str(acpc_qc),
+            "pose_qc": str(pose_qc),
             "xfms": {
                 **pose_xfms,
-                **t2w_to_acpc_xfms,
+                **t2w_to_t1w_xfms,
                 **fsnative_xfms,
                 **fsaverage_xfms,
                 **t1_fsaverage_xfms,
@@ -1813,8 +1817,8 @@ def build_module(
         manifest_outputs = manifest["outputs"]
         assert isinstance(manifest_outputs, dict)
         manifest_outputs.update(
-            inpainted_acpc_t1w=str(inpainted_t1),
-            inpainted_acpc_t1w_metadata=str(inpainted_t1.with_suffix("").with_suffix(".json")),
+            inpainted_t1w=str(inpainted_t1),
+            inpainted_t1w_metadata=str(inpainted_t1.with_suffix("").with_suffix(".json")),
             lesion_mask=str(lesion_mask),
             lesion_metadata=str(lesion_metadata),
             lesion_probability=str(lesion_probability),

@@ -1280,6 +1280,18 @@ class Registry(WorkflowRegistry):
 
             return int(cursor.rowcount) + IngestionIndex(self).set_concurrency_locked(concurrency)
 
+    def set_gpu_concurrency(self, concurrency: int) -> int:
+        """Set the independent limit for resource-specific GPU runner steps."""
+        if concurrency < 1:
+            raise ValueError("GPU concurrency must be at least one")
+        with self.connection(write=True) as db:
+            db.execute(
+                """INSERT INTO metadata(key,value) VALUES ('gpu_concurrency',?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (str(concurrency),),
+            )
+        return 1
+
     def work_item_rows(self, *, read_only: bool = False) -> list[dict]:
         """Read work-item records with their current orchestration and artifact state."""
         from nro.orchestration.registry_status import work_item_rows
@@ -1557,6 +1569,13 @@ class Registry(WorkflowRegistry):
                       AND state IN ('queued','running','cancel_requested')""",
                 (now, *selected),
             ).rowcount
+            db.execute(
+                f"""UPDATE resource_step_tasks SET state='cancelled',completed_at=?,updated_at=?,
+                           error_type='WorkerTerminated',
+                           error_message='Worker terminated during resource-specific runner step'
+                    WHERE worker_id IN ({placeholders}) AND state='running'""",
+                (now, now, *selected),
+            )
             workers = db.execute(
                 f"""UPDATE workers SET state='terminated', lease_expires_at=NULL, updated_at=?
                     WHERE id IN ({placeholders}) AND state='shutdown_requested'""",
@@ -1602,7 +1621,11 @@ class Registry(WorkflowRegistry):
             )
             active = int(
                 db.execute(
-                    "SELECT COUNT(*) FROM attempts WHERE state IN ('queued', 'running', 'cancel_requested')"
+                    """SELECT COUNT(*) FROM attempts a
+                       WHERE a.state IN ('queued','running','cancel_requested')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM resource_step_tasks task WHERE task.attempt_id=a.id
+                         )"""
                 ).fetchone()[0]
             )
             from nro.bidsify.index import IngestionIndex
@@ -1641,6 +1664,12 @@ class Registry(WorkflowRegistry):
                       SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
                       AND active.state IN ('queued', 'running', 'cancel_requested')
                   )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
+                      AND task.generation=t.current_generation
+                      AND task.revision_fingerprint=t.revision_fingerprint
+                      AND task.state IN ('pending','running','error')
+                  )
                   AND (
                       NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
                       OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
@@ -1648,6 +1677,9 @@ class Registry(WorkflowRegistry):
                                    WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
                          IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
                              'WorkItemGraphChanged', 'RegistryUnavailable')
+                             OR COALESCE((SELECT error_type FROM attempts old
+                                  WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
+                                = 'ResourcePreconditionChanged'
                       OR EXISTS (
                           SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
                           WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
@@ -1658,7 +1690,14 @@ class Registry(WorkflowRegistry):
                               '')
                       )
                   )
-                ORDER BY CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
+                ORDER BY CASE WHEN EXISTS (
+                             SELECT 1 FROM resource_step_tasks resumed
+                             WHERE resumed.work_item_id=t.id
+                               AND resumed.generation=t.current_generation
+                               AND resumed.revision_fingerprint=t.revision_fingerprint
+                               AND resumed.state='success'
+                         ) THEN 0 ELSE 1 END,
+                         CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
                                       WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
                          t.participant, t.work_item_key
                 LIMIT 1
@@ -1668,6 +1707,9 @@ class Registry(WorkflowRegistry):
             if row is None:
                 return None
             work_item = dict(row)
+            work_item["completed_resource_steps_json"] = self._completed_resource_steps_json(
+                db, work_item
+            )
             log_dir = self.paths.events / work_item_relative_directory(work_item)
             execution = db.execute(
                 "SELECT * FROM work_item_execution WHERE work_item_id=?", (work_item["id"],)
@@ -1733,18 +1775,280 @@ class Registry(WorkflowRegistry):
         with self.connection() as db:
             row = db.execute(
                 """SELECT i.*,a.id AS attempt_id,a.log_path,
+                          task.id AS resource_task_id,task.step_id AS target_step_id,
                           COALESCE(e.command_json,i.command_json) AS command_json
                    FROM attempts a JOIN work_items i ON i.id=a.work_item_id
                    LEFT JOIN attempt_execution e ON e.attempt_id=a.id
+                   LEFT JOIN resource_step_tasks task ON task.attempt_id=a.id
                    WHERE a.worker_id=? AND a.state IN ('queued','running','cancel_requested')
                    ORDER BY a.id DESC LIMIT 1""",
                 (worker_id,),
             ).fetchone()
+            work_item = None if row is None else dict(row)
+            if work_item is not None:
+                work_item["completed_resource_steps_json"] = self._completed_resource_steps_json(
+                    db, work_item
+                )
         if row is None:
             return None
         from nro.orchestration.contracts import ExecutionEnvelope
 
-        return ExecutionEnvelope.from_registry_row(dict(row))
+        return ExecutionEnvelope.from_registry_row(work_item)
+
+    @staticmethod
+    def _completed_resource_steps_json(db: sqlite3.Connection, work_item: dict) -> str:
+        """Encode resource steps completed in the work item's current generation."""
+        return json.dumps(
+            [
+                str(row[0])
+                for row in db.execute(
+                    """SELECT step_id FROM resource_step_tasks
+                       WHERE work_item_id=? AND generation=? AND revision_fingerprint=?
+                         AND state='success'
+                       ORDER BY id""",
+                    (
+                        int(work_item["id"]),
+                        int(work_item["current_generation"]),
+                        str(work_item["revision_fingerprint"]),
+                    ),
+                )
+            ]
+        )
+
+    def defer_resource_step(
+        self,
+        attempt_id: int,
+        *,
+        step_id: str,
+        resource_class: str,
+        memory_gb: int = 32,
+    ) -> int:
+        """Yield a valid work-item attempt and queue one runner step for another worker."""
+        if not step_id or resource_class != "gpu":
+            raise ValueError("Resource handoffs require a step ID and the GPU resource class")
+        if memory_gb < 1:
+            raise ValueError("Resource handoff memory must be positive")
+        now = utcnow()
+        with self.connection(write=True) as db:
+            work_item = db.execute(
+                """SELECT i.* FROM attempts a JOIN work_items i ON i.id=a.work_item_id
+                   WHERE a.id=?""",
+                (attempt_id,),
+            ).fetchone()
+            if work_item is None:
+                raise KeyError(f"Unknown attempt: {attempt_id}")
+            dependency_state.check_completion(db, dict(work_item), attempt_id)
+            cursor = db.execute(
+                """INSERT INTO resource_step_tasks(
+                       work_item_id,step_id,resource_class,memory_gb,generation,
+                       revision_fingerprint,state,created_at,updated_at
+                   ) VALUES (?,?,?,?,?,?,'pending',?,?)
+                   ON CONFLICT(work_item_id,step_id,generation,revision_fingerprint)
+                   DO UPDATE SET resource_class=excluded.resource_class,
+                       memory_gb=excluded.memory_gb,state='pending',worker_id=NULL,
+                       attempt_id=NULL,error_type=NULL,error_message=NULL,
+                       completed_at=NULL,updated_at=excluded.updated_at
+                   RETURNING id""",
+                (
+                    int(work_item["id"]),
+                    step_id,
+                    resource_class,
+                    memory_gb,
+                    int(work_item["current_generation"]),
+                    str(work_item["revision_fingerprint"]),
+                    now,
+                    now,
+                ),
+            )
+            task_id = int(cursor.fetchone()[0])
+            db.execute(
+                """UPDATE attempts SET state='success',completed_at=?,error_type='ResourceHandoff',
+                       error_message=? WHERE id=?""",
+                (now, f"Waiting for {resource_class} runner step {step_id}", attempt_id),
+            )
+            worker_id = db.execute(
+                "SELECT worker_id FROM attempts WHERE id=?", (attempt_id,)
+            ).fetchone()[0]
+            if worker_id:
+                db.execute(
+                    "UPDATE workers SET state='idle',updated_at=? WHERE id=?", (now, worker_id)
+                )
+            return task_id
+
+    def claim_resource_step(
+        self,
+        worker_id: str,
+        *,
+        resource_class: str,
+        memory_gb: int,
+    ) -> "ExecutionEnvelope | None":
+        """Claim one ready runner step for the worker's exact resource class."""
+        now = utcnow()
+        with self.connection(write=True) as db:
+            worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if worker is None or worker["state"] == "shutdown_requested":
+                return None
+            if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
+                return None
+            dependency_state.synchronize(db, now=now)
+            concurrency_row = db.execute(
+                "SELECT value FROM metadata WHERE key='gpu_concurrency'"
+            ).fetchone()
+            concurrency = int(concurrency_row[0]) if concurrency_row is not None else 1
+            active = int(
+                db.execute(
+                    """SELECT COUNT(*) FROM resource_step_tasks
+                       WHERE state='running' AND resource_class=?""",
+                    (resource_class,),
+                ).fetchone()[0]
+            )
+            if concurrency < 1 or active >= concurrency:
+                return None
+            row = db.execute(
+                """SELECT i.*,ci.config_fingerprint,
+                          task.id AS resource_task_id,task.step_id AS target_step_id
+                   FROM resource_step_tasks task
+                   JOIN work_items i ON i.id=task.work_item_id
+                   JOIN module_lineages ci ON ci.id=i.module_lineage_id
+                   WHERE task.resource_class=? AND task.memory_gb<=?
+                     AND task.state IN ('pending','error')
+                     AND task.generation=i.current_generation
+                     AND task.revision_fingerprint=i.revision_fingerprint
+                     AND i.artifact_state!='fresh'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM attempts active WHERE active.work_item_id=i.id
+                         AND active.state IN ('queued','running','cancel_requested')
+                     )
+                     AND EXISTS (
+                         SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                         WHERE rt.work_item_id=i.id AND rt.demand_state='active' AND r.state='active'
+                           AND (task.state='pending' OR r.updated_at>task.updated_at)
+                     )
+                   ORDER BY task.id LIMIT 1""",
+                (resource_class, memory_gb),
+            ).fetchone()
+            if row is None:
+                return None
+            work_item = dict(row)
+            work_item["completed_resource_steps_json"] = self._completed_resource_steps_json(
+                db, work_item
+            )
+            execution = db.execute(
+                "SELECT * FROM work_item_execution WHERE work_item_id=?", (work_item["id"],)
+            ).fetchone()
+            log_dir = self.paths.events / work_item_relative_directory(work_item)
+            if execution is not None:
+                from nro.orchestration.branch_admission import prepare_attempt
+
+                log_dir = (
+                    ControlPaths(self.paths.control).branch(execution["branch"])
+                    / "events"
+                    / work_item_relative_directory(work_item)
+                )
+                ensure_shared_directory(log_dir)
+                command = prepare_attempt(self, db, work_item, dict(execution), log_dir)
+                if command is None:
+                    db.execute(
+                        """UPDATE resource_step_tasks SET state='cancelled',completed_at=?,
+                                  updated_at=?,error_type='ResourcePreconditionChanged',
+                                  error_message='Branch inputs require local replanning'
+                           WHERE id=?""",
+                        (now, now, int(work_item["resource_task_id"])),
+                    )
+                    return None
+                work_item["command_json"] = json.dumps(command)
+            ensure_shared_directory(log_dir)
+            cursor = db.execute(
+                """INSERT INTO attempts(work_item_id,worker_id,state,revision_fingerprint,
+                                         memory_gb,started_at,log_path,created_at)
+                   VALUES (?,?,'running',?,?,?,?,?)""",
+                (
+                    int(work_item["id"]),
+                    worker_id,
+                    str(work_item["revision_fingerprint"]),
+                    memory_gb,
+                    now,
+                    str(log_dir / f"resource-step-{int(work_item['resource_task_id'])}.log"),
+                    now,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            if execution is not None:
+                payload = json.loads(Path(command[-3]).read_text())
+                db.execute(
+                    "INSERT INTO attempt_execution VALUES (?,?,?,?)",
+                    (
+                        attempt_id,
+                        json.dumps(payload["context"]),
+                        execution["provenance_json"],
+                        work_item["command_json"],
+                    ),
+                )
+            dependency_state.capture_inputs(db, attempt_id, int(work_item["id"]))
+            db.execute(
+                """UPDATE resource_step_tasks SET state='running',worker_id=?,attempt_id=?,
+                       updated_at=? WHERE id=?""",
+                (worker_id, attempt_id, now, int(work_item["resource_task_id"])),
+            )
+            db.execute(
+                "UPDATE workers SET state='running',lease_expires_at=?,updated_at=? WHERE id=?",
+                (time.time() + 120.0, now, worker_id),
+            )
+            work_item["attempt_id"] = attempt_id
+            work_item["log_path"] = str(
+                log_dir / f"resource-step-{int(work_item['resource_task_id'])}.log"
+            )
+            from nro.orchestration.contracts import ExecutionEnvelope
+
+            return ExecutionEnvelope.from_registry_row(work_item)
+
+    def finish_resource_step(
+        self,
+        task_id: int,
+        attempt_id: int,
+        *,
+        state: str,
+        error_type: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Publish a resource-step result under the ordinary attempt validation rules."""
+        if state not in {"success", "error", "cancelled"}:
+            raise ValueError(f"Invalid resource-step state: {state}")
+        now = utcnow()
+        with self.connection(write=True) as db:
+            row = db.execute(
+                """SELECT i.*,task.id AS resource_task_id,task.state AS resource_task_state
+                   FROM resource_step_tasks task
+                   JOIN work_items i ON i.id=task.work_item_id
+                   WHERE task.id=? AND task.attempt_id=?""",
+                (task_id, attempt_id),
+            ).fetchone()
+            if row is None:
+                raise dependency_state.AttemptInvalidated(
+                    "Resource-step assignment changed before publication"
+                )
+            if state == "success":
+                dependency_state.check_completion(db, dict(row), attempt_id)
+            attempt = db.execute(
+                "SELECT worker_id,state FROM attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            if state == "success" and attempt and attempt["state"] == "cancel_requested":
+                state = "cancelled"
+            db.execute(
+                """UPDATE attempts SET state=?,completed_at=?,error_type=COALESCE(?,error_type),
+                       error_message=COALESCE(?,error_message) WHERE id=?""",
+                (state, now, error_type, error_message, attempt_id),
+            )
+            db.execute(
+                """UPDATE resource_step_tasks SET state=?,completed_at=?,updated_at=?,
+                       error_type=?,error_message=? WHERE id=?""",
+                (state, now, now, error_type, error_message, task_id),
+            )
+            if attempt and attempt["worker_id"]:
+                db.execute(
+                    "UPDATE workers SET state='idle',updated_at=? WHERE id=?",
+                    (now, attempt["worker_id"]),
+                )
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
         """Return whether the current attempt has been marked for cancellation."""
@@ -2238,6 +2542,17 @@ class Registry(WorkflowRegistry):
                   )
                 """
             )
+            db.execute(
+                """UPDATE resource_step_tasks SET state='cancelled',completed_at=?,updated_at=?,
+                           error_type='UserCancelled',
+                           error_message='Demand was cancelled before the resource step ran'
+                    WHERE state='pending' AND NOT EXISTS (
+                        SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                        WHERE rt.work_item_id=resource_step_tasks.work_item_id
+                          AND rt.demand_state='active' AND r.state='active'
+                    )""",
+                (utcnow(), utcnow()),
+            )
             return {
                 "work_items": demand_count,
                 "requests": len(cancelled_requests),
@@ -2339,6 +2654,11 @@ class Registry(WorkflowRegistry):
                     "SELECT COALESCE(MAX(concurrency), 0) FROM requests WHERE state='active'"
                 ).fetchone()[0]
             )
+            if resource_class == "gpu":
+                gpu_limit = db.execute(
+                    "SELECT value FROM metadata WHERE key='gpu_concurrency'"
+                ).fetchone()
+                desired = int(gpu_limit[0]) if gpu_limit is not None else 1
             compatible = compatible_work_item_classes(resource_class)
             placeholders = ",".join("?" for _ in compatible)
             active_work_items = int(
@@ -2347,7 +2667,10 @@ class Registry(WorkflowRegistry):
                         JOIN work_items t ON t.id=a.work_item_id
                         WHERE a.state IN ('queued', 'running', 'cancel_requested')
                           AND t.resource_class IN ({placeholders})
-                          AND t.memory_gb>? AND t.memory_gb<=?""",
+                          AND t.memory_gb>? AND t.memory_gb<=?
+                          AND NOT EXISTS (
+                              SELECT 1 FROM resource_step_tasks task WHERE task.attempt_id=a.id
+                          )""",
                     (*compatible, minimum_memory_gb, memory_gb),
                 ).fetchone()[0]
             )
@@ -2375,6 +2698,12 @@ class Registry(WorkflowRegistry):
                           SELECT 1 FROM attempts a WHERE a.work_item_id=t.id
                           AND a.state IN ('queued', 'running', 'cancel_requested')
                       )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
+                          AND task.generation=t.current_generation
+                          AND task.revision_fingerprint=t.revision_fingerprint
+                          AND task.state IN ('pending','running','error')
+                      )
                       AND (
                           NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
                           OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
@@ -2396,6 +2725,32 @@ class Registry(WorkflowRegistry):
                     (*compatible, minimum_memory_gb, memory_gb),
                 ).fetchone()[0]
             )
+            if resource_class == "gpu":
+                active_work_items = int(
+                    db.execute(
+                        """SELECT COUNT(*) FROM resource_step_tasks
+                           WHERE state='running' AND resource_class=? AND memory_gb>? AND memory_gb<=?""",
+                        (resource_class, minimum_memory_gb, memory_gb),
+                    ).fetchone()[0]
+                )
+                ready_work_items = int(
+                    db.execute(
+                        """SELECT COUNT(*) FROM resource_step_tasks task
+                           JOIN work_items i ON i.id=task.work_item_id
+                           WHERE task.resource_class=? AND task.memory_gb>? AND task.memory_gb<=?
+                             AND task.state IN ('pending','error')
+                             AND task.generation=i.current_generation
+                             AND task.revision_fingerprint=i.revision_fingerprint
+                             AND i.artifact_state!='fresh'
+                             AND EXISTS (
+                                 SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+                                 WHERE rt.work_item_id=i.id AND rt.demand_state='active'
+                                   AND r.state='active'
+                                   AND (task.state='pending' OR r.updated_at>task.updated_at)
+                             )""",
+                        (resource_class, minimum_memory_gb, memory_gb),
+                    ).fetchone()[0]
+                )
             global_limit = max(desired, ingestion_limit)
             desired = min(
                 global_limit,
@@ -2418,21 +2773,23 @@ class Registry(WorkflowRegistry):
                     (resource_class, memory_gb),
                 ).fetchone()[0]
             )
-            global_workers = int(
+            pool_workers = int(
                 db.execute(
                     """SELECT COUNT(*) FROM workers
-                       WHERE state IN ('idle', 'running') AND lease_expires_at>?""",
-                    (time.time(),),
+                       WHERE state IN ('idle', 'running') AND lease_expires_at>?
+                         AND resource_class=?""",
+                    (time.time(), resource_class),
                 ).fetchone()[0]
             )
-            global_pending = int(
+            pool_pending = int(
                 db.execute(
                     """SELECT COUNT(*) FROM scheduler_submissions
                        WHERE state IN ('prepared', 'submitted')
-                         AND predecessor_worker_id IS NULL"""
+                         AND predecessor_worker_id IS NULL AND resource_class=?""",
+                    (resource_class,),
                 ).fetchone()[0]
             )
-            available = max(0, global_limit - global_workers - global_pending)
+            available = max(0, global_limit - pool_workers - pool_pending)
             count = min(max(0, desired - live_workers - pending), available)
             if ingestion_ready:
                 # Cloud credentials belong to the submitting user. Idle
@@ -2754,14 +3111,32 @@ class Registry(WorkflowRegistry):
                     (worker_id,),
                 ).fetchall()
                 for attempt in attempts:
+                    resource_task = db.execute(
+                        "SELECT id FROM resource_step_tasks WHERE attempt_id=? AND state='running'",
+                        (attempt["id"],),
+                    ).fetchone()
                     if worker_id in oom_workers:
-                        self._record_oom_locked(
-                            db,
-                            int(attempt["id"]),
-                            message=(
-                                f"Slurm reported OUT_OF_MEMORY for worker job "
-                                f"{next(item['slurm_job_id'] for item in expired if item['id'] == worker_id)}"
-                            ),
+                        message = (
+                            f"Slurm reported OUT_OF_MEMORY for worker job "
+                            f"{next(item['slurm_job_id'] for item in expired if item['id'] == worker_id)}"
+                        )
+                        if resource_task is None:
+                            self._record_oom_locked(
+                                db,
+                                int(attempt["id"]),
+                                message=message,
+                            )
+                        else:
+                            db.execute(
+                                """UPDATE attempts SET state='error',completed_at=?,
+                                          error_type='OutOfMemory',error_message=? WHERE id=?""",
+                                (utcnow(), message, attempt["id"]),
+                            )
+                        db.execute(
+                            """UPDATE resource_step_tasks SET state='error',completed_at=?,updated_at=?,
+                                      error_type='OutOfMemory',error_message=?
+                               WHERE attempt_id=? AND state='running'""",
+                            (utcnow(), utcnow(), message, attempt["id"]),
                         )
                         recovered += 1
                         continue
@@ -2781,6 +3156,17 @@ class Registry(WorkflowRegistry):
                                 attempt["id"],
                             ),
                         )
+                        db.execute(
+                            """UPDATE resource_step_tasks SET state='error',completed_at=?,updated_at=?,
+                                      error_type='Timeout',error_message=?
+                               WHERE attempt_id=? AND state='running'""",
+                            (
+                                utcnow(),
+                                utcnow(),
+                                f"Worker allocation {job_id} reached its Slurm wall-time limit",
+                                attempt["id"],
+                            ),
+                        )
                         recovered += 1
                         continue
                     completed = utcnow()
@@ -2791,6 +3177,17 @@ class Registry(WorkflowRegistry):
                         WHERE id=?
                         """,
                         (completed, attempt["id"]),
+                    )
+                    db.execute(
+                        """UPDATE resource_step_tasks SET state='error',completed_at=?,updated_at=?,
+                                  error_type='WorkerLost',error_message=?
+                           WHERE attempt_id=? AND state='running'""",
+                        (
+                            completed,
+                            completed,
+                            "Worker lease expired during resource-specific runner step",
+                            attempt["id"],
+                        ),
                     )
                     # This is an interrupted attempt, not a scientific failure.
                     # Renew existing demand so a successor may resume it.

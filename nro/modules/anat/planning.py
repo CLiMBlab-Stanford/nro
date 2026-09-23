@@ -86,12 +86,9 @@ def plan_work_items(
         raise ParticipantUnavailableError(f"No T1w or T2w images found under {context.subject_dir}")
     entities: dict[str, str] = {}
     config = context.workflow.configuration(descriptor.configuration_class).values
-    lesion_config = config.get("lesion") or {}
-    resource_class = (
-        "gpu"
-        if context.source_markup.lesion and bool(lesion_config.get("use_gpu", True))
-        else descriptor.resource_class
-    )
+    # Resource-specific runner steps are dispatched independently. The parent
+    # anatomical work item always returns to the ordinary CPU pool.
+    resource_class = descriptor.resource_class
     gradient_records, _ = gradient_unwarping_records(
         list(raw_anatomical_images(context.subject_dir, context.source_markup)),
         mode=str(config["gradient_unwarping"]),

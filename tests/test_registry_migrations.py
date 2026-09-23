@@ -12,6 +12,8 @@ import pytest
 from nro.orchestration.migrations import (
     AddColumn,
     Column,
+    CreateTable,
+    ForeignKey,
     MapValues,
     Migration,
     RegistrySchema,
@@ -121,6 +123,26 @@ def test_migration_chain_must_be_contiguous() -> None:
 def test_required_added_column_needs_a_default() -> None:
     with pytest.raises(ValueError, match="needs a default"):
         Column("required", "TEXT", nullable=False).sql()
+
+
+def test_created_table_may_have_required_columns_without_defaults() -> None:
+    database = sqlite3.connect(":memory:")
+    try:
+        database.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        CreateTable(
+            "child",
+            columns=(
+                Column("id", "INTEGER", nullable=False),
+                Column("parent_id", "INTEGER", nullable=False),
+            ),
+            primary_key=("id",),
+            foreign_keys=(ForeignKey("parent_id", "parent", on_delete="CASCADE"),),
+        ).apply(database)
+        database.execute("INSERT INTO parent VALUES (1)")
+        database.execute("INSERT INTO child VALUES (1, 1)")
+        assert database.execute("SELECT parent_id FROM child").fetchone() == (1,)
+    finally:
+        database.close()
 
 
 def test_schema_literals_reject_nonfinite_numbers() -> None:

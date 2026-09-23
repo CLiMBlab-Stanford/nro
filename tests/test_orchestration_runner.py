@@ -8,8 +8,9 @@ import pytest
 
 from nro.engine.execution import allocated_cpus, collect_bind_directories, thread_environment
 from nro.orchestration.artifact_records import file_record
+from nro.orchestration.resource_handoff import RESOURCE_HANDOFF_EXIT
 from nro.orchestration.runner import ContainerSpec, Runner
-from nro.orchestration.runner_graph import RunnerGraph, Step, artifact_decision
+from nro.orchestration.runner_graph import NodeState, RunnerGraph, Step, artifact_decision
 
 
 def test_each_runner_owns_an_independent_step_counter() -> None:
@@ -53,6 +54,186 @@ def test_runner_adds_stage_declarations_in_order(tmp_path: Path) -> None:
     added = runner.add_steps((first, second))
 
     assert added == runner._graph.steps
+
+
+def test_runner_yields_dirty_step_to_required_worker_resource(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "gpu.txt"
+    request = tmp_path / "handoff.json"
+    runner = Runner(
+        module_name="Resource Test",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.resource-handoff"),
+    )
+    runner.add_step(
+        Step.python(
+            id="gpu-step",
+            name="GPU Step",
+            outputs=(output,),
+            action=lambda: output.write_text("done"),
+            resource_class="gpu",
+        )
+    )
+    monkeypatch.setenv("NRO_WORKER_RESOURCE_CLASS", "large")
+    monkeypatch.setenv("NRO_RESOURCE_HANDOFF", str(request))
+
+    with pytest.raises(SystemExit) as error, runner.run_context():
+        runner.execute()
+
+    assert error.value.code == RESOURCE_HANDOFF_EXIT
+    assert json.loads(request.read_text()) == {
+        "kind": "execute_step",
+        "reason": "Step GPU Step requires a gpu worker.",
+        "resource_class": "gpu",
+        "step_id": "gpu-step",
+    }
+    assert not output.exists()
+
+
+def test_runner_rejects_unknown_step_resource_class(tmp_path: Path) -> None:
+    runner = Runner(
+        module_name="Resource Test",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.resource-class"),
+    )
+
+    with pytest.raises(ValueError, match="unsupported resource class"):
+        runner.add_step(
+            Step.python(
+                name="Unknown Resource",
+                outputs=(tmp_path / "output.txt",),
+                action=lambda: None,
+                resource_class="accelerator",
+            )
+        )
+
+
+def test_step_resource_class_is_not_part_of_the_scientific_contract(tmp_path: Path) -> None:
+    output = tmp_path / "output.txt"
+    cpu = RunnerGraph("Resource Test")
+    gpu = RunnerGraph("Resource Test")
+    cpu.add(Step.python(id="stage", name="Stage", outputs=(output,), action=lambda: None))
+    gpu.add(
+        Step.python(
+            id="stage",
+            name="Stage",
+            outputs=(output,),
+            action=lambda: None,
+            resource_class="gpu",
+        )
+    )
+
+    assert cpu.freeze().contract_payload(signature="same") == gpu.freeze().contract_payload(
+        signature="same"
+    )
+
+
+def test_targeted_resource_worker_runs_only_the_requested_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream = tmp_path / "upstream.txt"
+    target = tmp_path / "target.txt"
+    downstream = tmp_path / "downstream.txt"
+    upstream.write_text("ready")
+    runner = Runner(
+        module_name="Target Test",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.target-step"),
+    )
+    runner.add_step(
+        Step.python(
+            id="upstream",
+            name="Upstream",
+            outputs=(upstream,),
+            action=lambda: upstream.write_text("rebuilt"),
+        )
+    )
+    runner.add_step(
+        Step.python(
+            id="gpu-step",
+            name="GPU Step",
+            inputs=(upstream,),
+            outputs=(target,),
+            action=lambda: target.write_text("gpu"),
+            force=True,
+            resource_class="gpu",
+        )
+    )
+    runner.add_step(
+        Step.python(
+            id="downstream",
+            name="Downstream",
+            inputs=(target,),
+            outputs=(downstream,),
+            action=lambda: downstream.write_text("cpu"),
+        )
+    )
+    monkeypatch.setenv("NRO_WORKER_RESOURCE_CLASS", "gpu")
+    monkeypatch.setenv("NRO_TARGET_STEP_ID", "gpu-step")
+    monkeypatch.setenv("NRO_RESOURCE_HANDOFF", str(tmp_path / "handoff.json"))
+    ledger = tmp_path / "current-steps.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "test-signature")
+    contract = runner._graph.freeze().contract_payload(signature="test-signature")
+    contract["nodes"] = [node for node in contract["nodes"] if node["id"] == "upstream"]
+    (tmp_path / "runner-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+
+    with runner.run_context():
+        states = runner.execute()
+
+    assert states == {"upstream": NodeState.FRESH, "gpu-step": NodeState.DIRTY}
+    assert target.read_text() == "gpu"
+    assert not downstream.exists()
+    contract = json.loads((tmp_path / "runner-contract.json").read_text())
+    assert [node["id"] for node in contract["nodes"]] == ["upstream", "gpu-step"]
+
+    resumed = Runner(
+        module_name="Target Test",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.target-resume"),
+    )
+    resumed.add_step(
+        Step.python(
+            id="upstream",
+            name="Upstream",
+            outputs=(upstream,),
+            action=lambda: upstream.write_text("rebuilt"),
+        )
+    )
+    resumed.add_step(
+        Step.python(
+            id="gpu-step",
+            name="GPU Step",
+            inputs=(upstream,),
+            outputs=(target,),
+            action=lambda: target.write_text("unexpected rerun"),
+            force=True,
+            resource_class="gpu",
+        )
+    )
+    resumed.add_step(
+        Step.python(
+            id="downstream",
+            name="Downstream",
+            inputs=(target,),
+            outputs=(downstream,),
+            action=lambda: downstream.write_text("cpu"),
+        )
+    )
+    monkeypatch.delenv("NRO_TARGET_STEP_ID")
+    monkeypatch.setenv("NRO_WORKER_RESOURCE_CLASS", "large")
+    monkeypatch.setenv("NRO_COMPLETED_RESOURCE_STEPS", '["gpu-step"]')
+
+    with resumed.run_context():
+        resumed.execute()
+
+    assert target.read_text() == "gpu"
+    assert downstream.read_text() == "cpu"
 
 
 def test_allocated_cpus_prefers_explicit_worker_allocation(monkeypatch) -> None:

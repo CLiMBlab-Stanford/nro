@@ -108,7 +108,7 @@ produce their cross-product:
 
 ```bash
 nro run -p 01 -P example -m networks \
-  --space fsnative ACPC --smoothing 0 2
+  --space fsnative T1w --smoothing 0 2
 ```
 
 The `main` workflow estimates networks from microparcellation with ICA. Select
@@ -167,7 +167,7 @@ nro render -p 01 -P example -m networks firstlevels
 ```
 
 Seed-driven connectivity is skipped unless `--seeds` supplies subject-specific
-ACPC coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
+T1w coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
 file format and rendering controls.
 
 Common controls are:

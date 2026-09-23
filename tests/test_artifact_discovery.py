@@ -75,7 +75,7 @@ def test_clean_recovery_selects_only_existing_run_and_exact_target_pairs(tmp_pat
     (bids / "demo/sub-01/func/sub-01_task-rest_run-2_bold.json").unlink()
     registry = Registry.for_project("demo", bids_root=bids)
     registered = registry.register_workflow(ConfigStore().resolve("main"))
-    for space, smoothing in [("fsnative", 2), ("ACPC", 0)]:
+    for space, smoothing in [("fsnative", 2), ("T1w", 0)]:
         write(
             bids
             / "demo/derivatives/nro/clean"
@@ -90,7 +90,7 @@ def test_clean_recovery_selects_only_existing_run_and_exact_target_pairs(tmp_pat
     assert len(calls) == 2
     assert {(call["spaces"], call["smoothing_levels"]) for call in calls} == {
         (("fsnative",), (2,)),
-        (("ACPC",), (0,)),
+        (("T1w",), (0,)),
     }
     assert all(call["module"] == "clean" and call["selectors"]["run"] == ("1",) for call in calls)
     assert registry.request_rows() == []

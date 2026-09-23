@@ -525,7 +525,7 @@ def test_shared_selection_options_accept_multiple_values() -> None:
             "dir=LR",
             "-s",
             "fsnative",
-            "ACPC",
+            "T1w",
             "-S",
             "0",
             "2",
@@ -539,19 +539,19 @@ def test_shared_selection_options_accept_multiple_values() -> None:
     assert selection.workflows == ("main", "experiment")
     assert selection.lineages == ("networks/main-2",)
     assert selection.runs == {"task": ("language", "spatial"), "dir": ("LR",)}
-    assert selection.spaces == ("fsnative", "ACPC")
+    assert selection.spaces == ("fsnative", "T1w")
     assert selection.smoothing == (0, 2)
 
 
 def test_module_specific_selectors_can_accompany_mixed_module_requests() -> None:
     args = build_parser().parse_args(
-        ["-m", "anat", "networks", "-r", "task=rest", "-s", "ACPC", "-S", "0"]
+        ["-m", "anat", "networks", "-r", "task=rest", "-s", "T1w", "-S", "0"]
     )
     selection = core_selection(args)
 
     assert selection.modules == ("anat", "networks")
     assert selection.runs == {"task": ("rest",)}
-    assert selection.spaces == ("ACPC",)
+    assert selection.spaces == ("T1w",)
     assert selection.smoothing == (0,)
 
 
@@ -1423,6 +1423,26 @@ def test_set_ignores_invocation_with_only_unsupported_settings(capsys) -> None:
 
     assert json.loads(captured.out) == {"settings": {}, "updated_requests": 0}
     assert "unsupported registry setting: future-setting" in captured.err
+
+
+def test_set_records_independent_gpu_concurrency_without_active_demand(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    registry = Registry.for_project("", bids_root=tmp_path / "bids")
+    registry.initialize()
+
+    set_main(["gpu_concurrency=3", "--json"])
+
+    assert json.loads(capsys.readouterr().out) == {
+        "settings": {"gpu_concurrency": 3},
+        "updated_requests": 1,
+    }
+    with registry.connection() as database:
+        assert (
+            database.execute("SELECT value FROM metadata WHERE key='gpu_concurrency'").fetchone()[0]
+            == "3"
+        )
 
 
 def test_status_reports_blocked_work_items_and_their_root_errors(

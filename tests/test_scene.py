@@ -219,7 +219,7 @@ def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> No
 def test_published_scene_copies_inputs_and_records_checksums(tmp_path: Path, monkeypatch) -> None:
     source_root = tmp_path / "derivative"
     source_root.mkdir()
-    data = source_root / "sub-01_space-ACPC_desc-map_stat.nii.gz"
+    data = source_root / "sub-01_space-T1w_desc-map_stat.nii.gz"
     data.write_bytes(b"map")
 
     def run(command, **_kwargs):

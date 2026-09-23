@@ -189,7 +189,7 @@ def _ica_aroma_policy_payload(
 ) -> dict[str, object]:
     return {
         "version": _ICA_AROMA_ESTIMATION_POLICY_VERSION,
-        "input_space": "MNI152NLin2009cAsym" if input_is_mni else "ACPC",
+        "input_space": "MNI152NLin2009cAsym" if input_is_mni else "T1w",
         "workflow": "external" if external_aroma else "internal",
         "denoise_type": str(denoise_type).strip().lower(),
         "repetition_time": (float(repetition_time) if repetition_time is not None else None),
@@ -214,7 +214,7 @@ def _ica_aroma_shared_regression_policy_payload(
         "workflow": "shared-t1w-component-regression",
         "denoise_type": str(denoise_type).strip().lower(),
         "repetition_time": (float(repetition_time) if repetition_time is not None else None),
-        "estimation_space": "ACPC",
+        "estimation_space": "T1w",
         "shared_estimation_work_dir": str(shared_work_dir),
         "regression_mask_dilation_mm": _ICA_AROMA_REGRESSION_MASK_DILATION_MM,
         "epi_support_bet_fractional_intensity_threshold": _ICA_AROMA_BET_FRACTIONAL_INTENSITY_THRESHOLD,
@@ -648,7 +648,7 @@ def _create_shared_aroma_regression_step(
         mixing = np.loadtxt(mixing_matrix, ndmin=2)
         if int(mixing.shape[0]) != n_timepoints:
             raise SystemExit(
-                f"Shared ACPC {classifier_name} mixing matrix does not match registered "
+                f"Shared T1w {classifier_name} mixing matrix does not match registered "
                 f"BOLD length: {mixing.shape[0]} != {n_timepoints}"
             )
         indices = [
@@ -665,7 +665,7 @@ def _create_shared_aroma_regression_step(
                 f"Missing required FSL command for shared {classifier_name} regression: fsl_regfilt"
             )
         LOG.info(
-            "Applying %d ACPC-classified %s noise components to %s registered BOLD",
+            "Applying %d T1w-classified %s noise components to %s registered BOLD",
             len(indices),
             classifier_name,
             input_space,

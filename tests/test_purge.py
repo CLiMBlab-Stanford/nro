@@ -109,17 +109,17 @@ def test_targeted_purge_removes_only_directly_selected_work_item(tmp_path: Path,
     func1_file = _write(
         Path(func1["output_root"])
         / "func"
-        / f"{func1['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func1['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     func10_file = _write(
         Path(func10["output_root"])
         / "func"
-        / f"{func10['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func10['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     clean1_file = _write(
         Path(clean1["output_root"])
         / "func"
-        / f"{clean1['output_prefix']}_space-ACPC_desc-clean_bold.nii.gz"
+        / f"{clean1['output_prefix']}_space-T1w_desc-clean_bold.nii.gz"
     )
     func1_work = _write(
         work
@@ -228,7 +228,7 @@ def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, ca
         / "recon-all.done"
     )
     func_file = _write(
-        Path(func.output_root) / "func" / "sub-01_space-ACPC_desc-preproc_bold.nii.gz"
+        Path(func.output_root) / "func" / "sub-01_space-T1w_desc-preproc_bold.nii.gz"
     )
 
     purge_main(
@@ -302,7 +302,7 @@ def test_logs_only_purge_removes_matching_and_inactive_worker_logs(tmp_path: Pat
     derivative = _write(
         Path(terminal_work_item["output_root"])
         / "func"
-        / f"{terminal_work_item['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{terminal_work_item['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     terminal_log = _write(registry.paths.events / "terminal" / "attempt-1.log")
     active_log = _write(registry.paths.events / "active" / "attempt-2.log")
@@ -375,7 +375,7 @@ def test_targeted_purge_refuses_active_attempt(tmp_path: Path) -> None:
     derivative = _write(
         Path(work_item["output_root"])
         / "func"
-        / f"{work_item['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{work_item['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     now = utcnow()
     with registry.connection(write=True) as db:
@@ -420,12 +420,12 @@ def test_purge_accepts_multiple_direct_job_types(tmp_path: Path, capsys) -> None
     func_file = _write(
         Path(func["output_root"])
         / "func"
-        / f"{func['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     clean_file = _write(
         Path(clean["output_root"])
         / "func"
-        / f"{clean['output_prefix']}_space-ACPC_desc-clean_bold.nii.gz"
+        / f"{clean['output_prefix']}_space-T1w_desc-clean_bold.nii.gz"
     )
 
     purge_main(
@@ -470,7 +470,7 @@ def test_purge_removes_one_space_smoothing_subject_artifact(tmp_path: Path, caps
         registered=registered,
         registry=registry,
         bids_root=bids,
-        spaces=("fsnative", "ACPC"),
+        spaces=("fsnative", "T1w"),
         smoothing_levels=(0, 2),
     )
     registry.register_work_items(work_items)
@@ -544,7 +544,7 @@ def test_bare_purge_removes_all_registered_derivatives_but_not_foreign_ones(
     func_file = _write(
         Path(func["output_root"])
         / "func"
-        / f"{func['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     func_work = _write(
         work
@@ -597,7 +597,7 @@ def test_purge_reports_plan_and_requires_confirmation(tmp_path: Path, capsys, mo
     derivative = _write(
         Path(func["output_root"])
         / "func"
-        / f"{func['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     monkeypatch.setattr("builtins.input", lambda _prompt: "no")
 

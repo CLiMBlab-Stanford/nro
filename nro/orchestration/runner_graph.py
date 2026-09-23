@@ -177,6 +177,7 @@ class Step:
     reset_directory: bool = True
     completion_boundary: bool = False
     scientific_signature: str = ""
+    resource_class: str | None = field(default=None, compare=False)
 
     @staticmethod
     def _scientific_signature(parameters: object | None) -> str:
@@ -205,6 +206,7 @@ class Step:
         after: Sequence[str] = (),
         completion_boundary: bool = False,
         parameters: object | None = None,
+        resource_class: str | None = None,
     ) -> "Step":
         """Declare a Python action without executing it.
 
@@ -224,6 +226,7 @@ class Step:
             after=tuple(after),
             completion_boundary=bool(completion_boundary),
             scientific_signature=cls._scientific_signature(parameters),
+            resource_class=resource_class,
         )
 
     @classmethod
@@ -244,6 +247,7 @@ class Step:
         prepare: Optional[Action] = None,
         finalize: Optional[Action] = None,
         parameters: object | None = None,
+        resource_class: str | None = None,
     ) -> "Step":
         """Declare an external command and its file boundary.
 
@@ -266,6 +270,7 @@ class Step:
             prepare=prepare,
             finalize=finalize,
             scientific_signature=cls._scientific_signature(parameters),
+            resource_class=resource_class,
         )
 
     @classmethod
@@ -286,6 +291,7 @@ class Step:
         reset_directory: bool = True,
         completion_boundary: bool = False,
         parameters: object | None = None,
+        resource_class: str | None = None,
     ) -> "Step":
         """Declare a tool-owned directory with validated completion.
 
@@ -311,6 +317,7 @@ class Step:
             reset_directory=bool(reset_directory),
             completion_boundary=bool(completion_boundary),
             scientific_signature=cls._scientific_signature(parameters),
+            resource_class=resource_class,
         )
 
 
@@ -399,6 +406,10 @@ class RunnerGraph:
             raise TypeError(f"RunnerGraph.add() requires a Step, got {type(step).__name__}")
         if not step.outputs:
             raise ValueError(f"Step {step.name!r} must declare at least one output file.")
+        if step.resource_class not in {None, "gpu"}:
+            raise ValueError(
+                f"Step {step.name!r} uses unsupported resource class {step.resource_class!r}"
+            )
         normalized = replace(
             step,
             id=step.id or self._node_id(step.outputs),
@@ -836,8 +847,8 @@ class RunnerGraph:
         atomic_write_json(path, contract, sort_keys=True)
         return contract
 
-    def validate_execution_contract(self) -> None:
-        """Require one complete execution decision for every declared step.
+    def validate_execution_contract(self, *, through_step: str | None = None) -> None:
+        """Require complete execution decisions through the requested step.
 
         Raise RuntimeError when execution records violate the frozen graph.
         """
@@ -860,6 +871,10 @@ class RunnerGraph:
                     f"step {result.number:03d} ({step.name}) was planned fresh but ended "
                     f"with execution state {result.execution!r}"
                 )
+            if step.id == through_step:
+                break
+        if through_step is not None and not any(step.id == through_step for step in self._steps):
+            failures.append(f"unknown execution boundary {through_step!r}")
         if failures:
             raise RuntimeError(
                 "Runner graph execution contract was violated:\n- " + "\n- ".join(failures)

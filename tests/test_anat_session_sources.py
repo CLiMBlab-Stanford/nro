@@ -171,7 +171,7 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
     assert destination.parent.is_dir()
 
 
-def test_acpc_resampling_separates_intensity_and_mask_interpolation(tmp_path: Path) -> None:
+def test_t1w_resampling_separates_intensity_and_mask_interpolation(tmp_path: Path) -> None:
     common = {
         "source": tmp_path / "source.nii.gz",
         "reference": tmp_path / "reference.nii.gz",
@@ -179,11 +179,11 @@ def test_acpc_resampling_separates_intensity_and_mask_interpolation(tmp_path: Pa
         "env": {},
         "force": False,
     }
-    intensity = anat_steps._create_acpc_resampling_step(
+    intensity = anat_steps._create_pose_resampling_step(
         **common,
         output=tmp_path / "intensity.nii.gz",
     )
-    mask = anat_steps._create_acpc_resampling_step(
+    mask = anat_steps._create_pose_resampling_step(
         **common,
         output=tmp_path / "mask.nii.gz",
         label=True,
@@ -200,7 +200,7 @@ def test_anatomical_registration_qc_uses_bspline_interpolation(tmp_path: Path) -
         reference=tmp_path / "fixed.nii.gz",
         transform=tmp_path / "transform.h5",
         output=tmp_path / "qc.nii.gz",
-        from_space="ACPC",
+        from_space="T1w",
         to_space="MNI152NLin2009cAsym",
         env={},
         force=False,
@@ -210,8 +210,8 @@ def test_anatomical_registration_qc_uses_bspline_interpolation(tmp_path: Path) -
     assert "LanczosWindowedSinc" not in step.command
 
 
-def test_acpc_finalization_remasks_without_reflecting_negative_values(tmp_path: Path) -> None:
-    step = anat_steps._create_finalize_acpc_anatomy_step(
+def test_pose_finalization_remasks_without_reflecting_negative_values(tmp_path: Path) -> None:
+    step = anat_steps._create_finalize_anatomy_step(
         source=tmp_path / "resampled.nii.gz",
         mask=tmp_path / "mask.nii.gz",
         output=tmp_path / "anatomy.nii.gz",

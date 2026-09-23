@@ -229,9 +229,9 @@ def test_shared_regression_outputs_do_not_require_second_melodic(tmp_path: Path)
         epi=tmp_path / "mni_bold.nii.gz",
         input_space="MNI152NLin2009cAsym",
         regression_mask=tmp_path / "mni_mask.nii.gz",
-        mixing_matrix=tmp_path / "space-ACPC/aroma/melodic.ica/melodic_mix",
-        classified_components=tmp_path / "space-ACPC/aroma/classified_motion_ICs.txt",
-        shared_policy=tmp_path / "space-ACPC/ica_aroma_policy.json",
+        mixing_matrix=tmp_path / "space-T1w/aroma/melodic.ica/melodic_mix",
+        classified_components=tmp_path / "space-T1w/aroma/classified_motion_ICs.txt",
+        shared_policy=tmp_path / "space-T1w/ica_aroma_policy.json",
         aroma_dir=aroma_dir,
         outputs=outputs,
         env={},
@@ -246,7 +246,7 @@ def test_shared_regression_outputs_do_not_require_second_melodic(tmp_path: Path)
 
 def test_shared_regression_becomes_stale_when_t1w_classification_changes(tmp_path: Path) -> None:
     work_dir = tmp_path / "space-MNI"
-    shared_work = tmp_path / "space-ACPC"
+    shared_work = tmp_path / "space-T1w"
     shared_mix = shared_work / "aroma/melodic.ica/melodic_mix"
     shared_classified = shared_work / "aroma/classified_motion_ICs.txt"
     shared_policy = shared_work / "ica_aroma_policy.json"
@@ -309,7 +309,7 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
     nib.save(nib.Nifti1Image(data.mean(axis=3), np.eye(4)), mean)
     nib.save(nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.uint8), np.eye(4)), brain_mask)
 
-    shared_work = tmp_path / "space-ACPC"
+    shared_work = tmp_path / "space-T1w"
     shared_aroma = shared_work / "aroma"
     shared_melodic = shared_aroma / "melodic.ica"
     shared_melodic.mkdir(parents=True)
@@ -430,7 +430,7 @@ def test_shared_regression_uses_t1w_mixing_matrix_without_melodic(
             repetition_time=1.0,
             shared_work_dir=shared_work,
         )["estimation_space"]
-        == "ACPC"
+        == "T1w"
     )
     assert out_4d.exists()
     assert out_mean.exists()

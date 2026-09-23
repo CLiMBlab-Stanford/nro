@@ -60,7 +60,7 @@ def test_gc_preserves_registered_files_and_collects_unclaimed_siblings(tmp_path:
     owned = _write(
         Path(func["output_root"])
         / "func"
-        / f"{func['output_prefix']}_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{func['output_prefix']}_space-T1w_desc-preproc_bold.nii.gz"
     )
     garbage = _write(Path(func["output_root"]) / "func" / "sub-01_desc-pollutant.txt")
 

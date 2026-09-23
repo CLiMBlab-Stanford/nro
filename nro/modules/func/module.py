@@ -293,14 +293,14 @@ def build_module(
     t1_to_mni_xfm = require_nested_manifest_output(
         anat_info,
         "xfms",
-        "acpc_to_mni",
+        "t1w_to_mni",
         manifest_path=anat_manifest,
         manifest_name="Anatomical",
     )
     require_nested_manifest_output(
         anat_info,
         "xfms",
-        "mni_to_acpc",
+        "mni_to_t1w",
         manifest_path=anat_manifest,
         manifest_name="Anatomical",
     )
@@ -435,7 +435,7 @@ def build_module(
     )
     run_stem = nifti_stem(inputs.epi)
     run_base = run_stem[: -len("_bold")] if run_stem.endswith("_bold") else run_stem
-    run_prefix = f"{run_base}_space-ACPC"
+    run_prefix = f"{run_base}_space-T1w"
     source_volume_count = nifti_volume_count(inputs.epi)
     source_spatial_shape = nifti_spatial_shape(inputs.epi)
     func_dir = opts.out_dir
@@ -491,7 +491,7 @@ def build_module(
     reg_ref_tag = "regRef"
     reg_ref_space = "FunctionalReference"
     requested_spaces = set(opts.output_spaces)
-    want_t1 = "ACPC" in requested_spaces
+    want_t1 = "T1w" in requested_spaces
     want_mni = "MNI152NLin2009cAsym" in requested_spaces
     if classifier == "cicada" and not want_mni:
         raise SystemExit(
@@ -606,7 +606,7 @@ def build_module(
         f"{run_base}_space-{reg_ref_space}", "_desc-synbold_boldref.nii.gz"
     )
     fmap_synbold_rigid_out = fmap_dir / _with_suffix(
-        f"{run_base}_space-ACPC", "_desc-synboldRigid_boldref.nii.gz"
+        f"{run_base}_space-T1w", "_desc-synboldRigid_boldref.nii.gz"
     )
     anat_brain_mask_in_t1 = func_dir / _with_suffix(run_prefix, "_desc-brain_mask.nii.gz")
     anat_brain_mask_in_mni = qc_dir / _with_suffix(
@@ -618,7 +618,7 @@ def build_module(
         if classifier == "cicada"
         else _ica_aroma_output_label(denoise_type)
     )
-    aroma_t1_dir = aroma_dir / "space-ACPC"
+    aroma_t1_dir = aroma_dir / "space-T1w"
     aroma_mni_dir = aroma_dir / "space-MNI152NLin2009cAsym"
     aroma_clean = uncompressed_nifti_path(
         aroma_t1_dir / _with_suffix(run_prefix, f"_desc-{aroma_label}_bold.nii.gz")
@@ -1892,8 +1892,8 @@ def build_module(
         and warp_regref2t1_refined is not None
     )
     if (not use_syn_fallback) and topup_native is not None:
-        # The Hz field lives in registration-reference space, so its ACPC
-        # derivative must follow the final registration-reference-to-ACPC warp.
+        # The Hz field lives in registration-reference space, so its T1w
+        # derivative must follow the final registration-reference-to-T1w warp.
         # In particular, defer this until after anatomical SyN refinement; the
         # base warp above is not the final spatial mapping in that pathway.
         fieldmap_hz_in_t1 = fieldmap_hz_in_t1_out
@@ -1980,14 +1980,14 @@ def build_module(
 
     space_sequence: list[str] = []
     if compute_t1:
-        space_sequence.append("ACPC")
+        space_sequence.append("T1w")
     if want_mni:
         space_sequence.append("MNI152NLin2009cAsym")
     log_space_sequence = []
     if want_t1:
-        log_space_sequence.append("ACPC")
+        log_space_sequence.append("T1w")
     elif compute_t1:
-        log_space_sequence.append("ACPC(required)")
+        log_space_sequence.append("T1w(required)")
     if want_fsnative:
         log_space_sequence.append("fsnative")
     if want_fsaverage:
@@ -2029,7 +2029,7 @@ def build_module(
     )
 
     for space in space_sequence:
-        if space == "ACPC":
+        if space == "T1w":
             raw_4d, mean_3d, mask_3d = epi_t1, epi_mean_t1, anat_brain_mask_in_t1
             ref_img, warp_img = t1_ref, warp_sbref2t1_refined
             aroma_out_4d, aroma_out_mean, aroma_work = aroma_clean, aroma_clean_mean, aroma_t1_dir
@@ -2048,8 +2048,8 @@ def build_module(
 
         space_name = (
             f"Output Space: {space}"
-            if (space != "ACPC" or want_t1)
-            else "Preparing Required ACPC Source"
+            if (space != "T1w" or want_t1)
+            else "Preparing Required T1w Source"
         )
         LOG.info("Constructing %s", space_name)
         world_warp = resampling_work / "warp_world.nii.gz"
@@ -2123,7 +2123,7 @@ def build_module(
                     force=opts.overwrite,
                 )
             )
-            if space == "ACPC":
+            if space == "T1w":
                 melodic_mask = aroma_work / "melodic_mask.nii.gz"
                 melodic_input = aroma_work / "melodic_input_smooth6mm.nii.gz"
                 runner.add_step(
@@ -2306,7 +2306,7 @@ def build_module(
                         _create_shared_aroma_regression_step(
                             runner=runner,
                             epi=raw_4d,
-                            input_space="ACPC",
+                            input_space="T1w",
                             regression_mask=regression_mask,
                             mixing_matrix=melodic_dir / "melodic_mix",
                             classified_components=classified_components,
@@ -2462,7 +2462,7 @@ def build_module(
         final_sources_mean[space] = final_mean
         final_masks[space] = mask_3d
 
-    confounds_space = "ACPC" if "ACPC" in final_sources_4d else "MNI152NLin2009cAsym"
+    confounds_space = "T1w" if "T1w" in final_sources_4d else "MNI152NLin2009cAsym"
     confounds_source_4d = final_sources_4d[confounds_space]
     confounds_source_mean = final_sources_mean[confounds_space]
     confounds_mask = final_masks[confounds_space]
@@ -2554,8 +2554,8 @@ def build_module(
             )
         )
 
-    final_preproc_source = final_sources_4d.get("ACPC", confounds_source_4d)
-    final_t1_surface_source_4d = final_sources_4d.get("ACPC", final_preproc_source)
+    final_preproc_source = final_sources_4d.get("T1w", confounds_source_4d)
+    final_t1_surface_source_4d = final_sources_4d.get("T1w", final_preproc_source)
     fsnative_metric_outputs = (
         preproc_fsnative
         if want_fsnative

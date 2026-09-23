@@ -6,7 +6,7 @@ import nibabel as nib
 import numpy as np
 from scipy.io import loadmat, savemat
 
-from nro.engine.pose import create_acpc_grid, invert_itk_affine, read_itk_affine
+from nro.engine.pose import create_pose_normalized_grid, invert_itk_affine, read_itk_affine
 
 
 def _write_itk(path: Path, matrix: np.ndarray, translation: np.ndarray) -> None:
@@ -42,7 +42,7 @@ def test_itk_rigid_inverse_composes_to_identity(tmp_path: Path) -> None:
     assert loadmat(inverse)["AffineTransform_double_3_3"].size == 12
 
 
-def test_acpc_grid_keeps_source_resolution_and_covers_rotated_field(tmp_path: Path) -> None:
+def test_t1w_grid_keeps_source_resolution_and_covers_rotated_field(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     source_mask = tmp_path / "source_mask.nii.gz"
     template = tmp_path / "template.nii.gz"
@@ -59,7 +59,9 @@ def test_acpc_grid_keeps_source_resolution_and_covers_rotated_field(tmp_path: Pa
     nib.save(nib.Nifti1Image(np.zeros((30, 30, 30), dtype=np.uint8), template_affine), template)
     _write_itk(transform, np.eye(3), np.array([3.0, 4.0, -2.0]))
 
-    create_acpc_grid(source, source_mask, template, transform, destination, margin_mm=5.0)
+    create_pose_normalized_grid(
+        source, source_mask, template, transform, destination, margin_mm=5.0
+    )
 
     grid = nib.load(destination)
     np.testing.assert_allclose(grid.header.get_zooms()[:3], (0.8, 1.2, 1.5), atol=1e-6)
@@ -68,7 +70,7 @@ def test_acpc_grid_keeps_source_resolution_and_covers_rotated_field(tmp_path: Pa
     np.testing.assert_allclose(directions, template_directions, atol=1e-6)
 
 
-def test_acpc_grid_excludes_empty_rotated_field_of_view(tmp_path: Path) -> None:
+def test_t1w_grid_excludes_empty_rotated_field_of_view(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     source_mask = tmp_path / "source_mask.nii.gz"
     template = tmp_path / "template.nii.gz"
@@ -90,14 +92,16 @@ def test_acpc_grid_excludes_empty_rotated_field_of_view(tmp_path: Path) -> None:
     )
     _write_itk(transform, rotation, np.zeros(3))
 
-    create_acpc_grid(source, source_mask, template, transform, destination, margin_mm=5.0)
+    create_pose_normalized_grid(
+        source, source_mask, template, transform, destination, margin_mm=5.0
+    )
 
     grid = nib.load(destination)
     physical_extent = np.asarray(grid.shape) * np.asarray(grid.header.get_zooms()[:3])
     assert np.all(physical_extent < 256.0)
 
 
-def test_acpc_grid_inverts_ants_fixed_to_moving_point_map(tmp_path: Path) -> None:
+def test_t1w_grid_inverts_ants_fixed_to_moving_point_map(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     source_mask = tmp_path / "source_mask.nii.gz"
     template = tmp_path / "template.nii.gz"
@@ -113,7 +117,9 @@ def test_acpc_grid_inverts_ants_fixed_to_moving_point_map(tmp_path: Path) -> Non
     # The moving anatomy consequently lies 10 mm right in fixed RAS space.
     _write_itk(transform, np.eye(3), np.array([-10.0, 0.0, 0.0]))
 
-    create_acpc_grid(source, source_mask, template, transform, destination, margin_mm=0.0)
+    create_pose_normalized_grid(
+        source, source_mask, template, transform, destination, margin_mm=0.0
+    )
 
     grid = nib.load(destination)
     np.testing.assert_allclose(grid.affine[:3, 3], (-8.5, 1.5, 1.5), atol=1e-6)

@@ -35,12 +35,12 @@ def test_registration_audit_stacks_first_volumes_and_writes_scene(tmp_path: Path
     subject_dir = tmp_path / subject
     affine = np.diag([2.0, 2.0, 2.0, 1.0])
     affine[:3, 3] = (-8.0, -9.0, -10.0)
-    first = subject_dir / "func" / f"{subject}_task-a_run-10_space-ACPC_desc-preproc_bold.nii.gz"
+    first = subject_dir / "func" / f"{subject}_task-a_run-10_space-T1w_desc-preproc_bold.nii.gz"
     second = (
         subject_dir
         / "ses-one"
         / "func"
-        / f"{subject}_ses-one_task-a_run-2_space-ACPC_desc-preproc_bold.nii.gz"
+        / f"{subject}_ses-one_task-a_run-2_space-T1w_desc-preproc_bold.nii.gz"
     )
     _write_nifti(first, 10.0, affine)
     _write_nifti(second, 2.0, affine)
@@ -77,7 +77,7 @@ def test_registration_audit_resamples_a_different_grid(tmp_path: Path) -> None:
     shifted[0, 3] = 0.25
     for run, run_affine in ((1, affine), (2, affine), (3, shifted)):
         path = (
-            subject_dir / "func" / f"{subject}_task-a_run-{run}_space-ACPC_desc-preproc_bold.nii.gz"
+            subject_dir / "func" / f"{subject}_task-a_run-{run}_space-T1w_desc-preproc_bold.nii.gz"
         )
         _write_nifti(path, float(run), run_affine)
     _write_anatomy(subject_dir, subject, affine)

@@ -20,8 +20,8 @@ def _manifest(tmp_path, *, lesion: bool):
     subjects_dir = tmp_path / "subjects"
     subjects_dir.mkdir()
     outputs = {
-        "acpc_t1w": str(observed),
-        "acpc_t2w": None,
+        "t1w": str(observed),
+        "t2w": None,
         "myelin_map": None,
         "brain_image": str(observed),
         "brain_mask": str(brain_mask),
@@ -30,7 +30,7 @@ def _manifest(tmp_path, *, lesion: bool):
         "subcortical_masks": {},
         "surfaces": {"lh.white": str(surface)},
         "mni_qc_images": {},
-        "acpc_pose_qc": str(_file(tmp_path, "pose.json")),
+        "pose_qc": str(_file(tmp_path, "pose.json")),
         "xfms": {},
     }
     document = {
@@ -60,8 +60,8 @@ def _manifest(tmp_path, *, lesion: bool):
         left_mapping = _file(tmp_path, "left.tsv")
         right_mapping = _file(tmp_path, "right.tsv")
         outputs.update(
-            inpainted_acpc_t1w=str(inpainted),
-            inpainted_acpc_t1w_metadata=str(_file(tmp_path, "inpainted.json")),
+            inpainted_t1w=str(inpainted),
+            inpainted_t1w_metadata=str(_file(tmp_path, "inpainted.json")),
             lesion_mask=str(lesion_mask),
             lesion_metadata=str(_file(tmp_path, "lesion.json")),
             lesion_probability=str(_file(tmp_path, "probability.nii.gz")),

@@ -62,7 +62,7 @@ Current defaults are workflow `main`, space `fsnative`, and 2 mm FWHM
 smoothing. Multiple spaces and smoothing values request their cross-product:
 
 ```bash
-nro run -P nptl -p t20 -m networks -s fsnative ACPC -S 0 2
+nro run -P nptl -p t20 -m networks -s fsnative T1w -S 0 2
 ```
 
 ## Follow or stop a request

@@ -15,7 +15,7 @@ import pytest
 
 from nro.bin.status import main as status_main
 from nro.configuration.store import ConfigStore
-from nro.orchestration import completion
+from nro.orchestration import completion, dependency_state
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
@@ -147,20 +147,121 @@ def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Pa
     assert gpu.work_item_contract == general.work_item_contract
 
 
-def test_gpu_worker_claims_only_gpu_work(tmp_path: Path) -> None:
+def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
+    tmp_path: Path,
+) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    spec = _spec(
+        key="anat:" + "a" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "anat.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(spec,),
+        terminal_work_item_keys=(spec.key,),
+        concurrency=2,
+        partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    registry.register_worker("gpu", resource_class="gpu")
+
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    task_id = registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=32,
+    )
+    assert registry.claim_ready_work_item("cpu", ("large",)) is None
+    assert registry.work_item_status_snapshot()[0]["status"] == "Waiting"
+
+    task = registry.claim_resource_step("gpu", resource_class="gpu", memory_gb=32)
+    assert task is not None
+    assert task.resource_task_id == task_id
+    assert task.target_step_id == "neurolit-inpainting"
+    assert registry.work_item_status_snapshot()[0]["status"] == "Running"
+    registry.finish_resource_step(task_id, task.attempt_id, state="success")
+    assert registry.work_item_status_snapshot()[0]["status"] == "Queued"
+
+    resumed = registry.claim_ready_work_item("cpu", ("large",))
+    assert resumed is not None
+    assert resumed.work_item_id == parent.work_item_id
+    assert resumed.completed_resource_steps == ("neurolit-inpainting",)
+
+
+def test_resource_step_completion_rejects_changed_upstream_generation(tmp_path: Path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    upstream = _spec(
+        key="anat:" + "b" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "upstream.txt",
+    )
+    child = _spec(
+        key="anat:" + "c" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=runtime,
+        output=tmp_path / "child.txt",
+        dependencies=(upstream.key,),
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(upstream, child),
+        terminal_work_item_keys=(child.key,),
+        concurrency=2,
+        partition=None,
+    )
+    with registry.connection(write=True) as database:
+        database.execute(
+            """UPDATE work_items SET artifact_state='fresh',artifact_reason='test',
+                      current_generation=1 WHERE work_item_key=?""",
+            (upstream.key,),
+        )
+    registry.register_worker("cpu", resource_class="large")
+    registry.register_worker("gpu", resource_class="gpu")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None and parent.work_item_key == child.key
+    task_id = registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="gpu-step",
+        resource_class="gpu",
+    )
+    task = registry.claim_resource_step("gpu", resource_class="gpu", memory_gb=32)
+    assert task is not None
+    with registry.connection(write=True) as database:
+        database.execute(
+            "UPDATE work_items SET current_generation=2 WHERE work_item_key=?",
+            (upstream.key,),
+        )
+
+    with pytest.raises(dependency_state.AttemptInvalidated, match="upstream artifact changed"):
+        registry.finish_resource_step(task_id, task.attempt_id, state="success")
+
+
+def test_gpu_worker_does_not_claim_whole_work_items(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
     runtime = registry.runtime_config_path(registered, "anat")
-    general = _spec(
-        key="anat:" + "1" * 64,
-        module="anat",
-        lineage=registered.lineages["anat"],
-        config_fingerprint=workflow.configuration("anat").fingerprint,
-        runtime_config=runtime,
-        output=tmp_path / "general.txt",
-    )
     gpu = _spec(
         key="anat:" + "2" * 64,
         module="anat",
@@ -174,17 +275,23 @@ def test_gpu_worker_claims_only_gpu_work(tmp_path: Path) -> None:
         registered=registered,
         target_module="anat",
         selectors={},
-        work_items=(general, gpu),
-        terminal_work_item_keys=(general.key, gpu.key),
-        concurrency=2,
+        work_items=(gpu,),
+        terminal_work_item_keys=(gpu.key,),
+        concurrency=1,
         partition=None,
     )
-    registry.register_worker("gpu-worker", resource_class="gpu")
 
-    claimed = registry.claim_ready_work_item("gpu-worker", ("gpu",))
-
-    assert claimed is not None
-    assert claimed.work_item_key == gpu.key
+    assert (
+        Worker(
+            registry,
+            resource_class="gpu",
+            idle_timeout=0,
+            poll_interval=0.01,
+        ).run()
+        == 0
+    )
+    with registry.connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 0
 
 
 def test_gpu_worker_exits_without_claiming_general_work(tmp_path: Path) -> None:
@@ -237,24 +344,33 @@ def test_general_and_gpu_capacity_are_reserved_independently(tmp_path: Path) -> 
         runtime_config=runtime,
         output=tmp_path / "general.txt",
     )
-    gpu = _spec(
+    resource_parent = _spec(
         key="anat:" + "5" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=runtime,
         output=tmp_path / "gpu.txt",
-        resource_class="gpu",
     )
     request = registry.create_request(
         registered=registered,
         target_module="anat",
         selectors={},
-        work_items=(general, gpu),
-        terminal_work_item_keys=(general.key, gpu.key),
+        work_items=(general, resource_parent),
+        terminal_work_item_keys=(general.key, resource_parent.key),
         concurrency=2,
         partition=None,
     )
+    registry.register_worker("cpu", resource_class="large")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=32,
+    )
+    registry.close_worker("cpu")
 
     gpu_reservations = registry.reserve_worker_submissions(
         request_id=request, resource_class="gpu", memory_gb=32
@@ -267,28 +383,86 @@ def test_general_and_gpu_capacity_are_reserved_independently(tmp_path: Path) -> 
     assert len(general_reservations) == 1
 
 
+def test_gpu_concurrency_is_independent_of_request_concurrency(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    specs = tuple(
+        _spec(
+            key="anat:" + digit * 64,
+            module="anat",
+            lineage=registered.lineages["anat"],
+            config_fingerprint=workflow.configuration("anat").fingerprint,
+            runtime_config=runtime,
+            output=tmp_path / f"parent-{digit}.txt",
+        )
+        for digit in ("6", "7")
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=specs,
+        terminal_work_item_keys=tuple(spec.key for spec in specs),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    for index in range(2):
+        parent = registry.claim_ready_work_item("cpu", ("large",))
+        assert parent is not None
+        registry.defer_resource_step(
+            parent.attempt_id,
+            step_id=f"gpu-step-{index}",
+            resource_class="gpu",
+            memory_gb=32,
+        )
+    registry.close_worker("cpu")
+    registry.set_gpu_concurrency(2)
+
+    assert (
+        len(
+            registry.reserve_worker_submissions(
+                request_id=request,
+                resource_class="gpu",
+                memory_gb=32,
+            )
+        )
+        == 2
+    )
+
+
 def test_higher_memory_gpu_work_is_visible_to_initial_supply(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    gpu = _spec(
+    parent_spec = _spec(
         key="anat:" + "6" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "gpu.txt",
-        resource_class="gpu",
-    ).evolve(memory_gb=64, max_memory_gb=256)
+    )
     request = registry.create_request(
         registered=registered,
         target_module="anat",
         selectors={},
-        work_items=(gpu,),
-        terminal_work_item_keys=(gpu.key,),
+        work_items=(parent_spec,),
+        terminal_work_item_keys=(parent_spec.key,),
         concurrency=1,
         partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=64,
     )
 
     assert not registry.worker_capacity_needed(
@@ -302,23 +476,31 @@ def test_pending_lower_memory_gpu_does_not_create_higher_tier_demand(tmp_path: P
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    gpu = _spec(
+    parent_spec = _spec(
         key="anat:" + "9" * 64,
         module="anat",
         lineage=registered.lineages["anat"],
         config_fingerprint=workflow.configuration("anat").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "anat"),
         output=tmp_path / "gpu.txt",
-        resource_class="gpu",
     )
     request = registry.create_request(
         registered=registered,
         target_module="anat",
         selectors={},
-        work_items=(gpu,),
-        terminal_work_item_keys=(gpu.key,),
+        work_items=(parent_spec,),
+        terminal_work_item_keys=(parent_spec.key,),
         concurrency=8,
         partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=32,
     )
 
     assert (
@@ -2275,6 +2457,74 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, mo
     row = registry.work_item_rows()[0]
     assert row["oom_count"] == 1
     assert "OUT_OF_MEMORY" in row["error_message"]
+
+
+def test_recovered_gpu_step_oom_does_not_inflate_parent_memory(tmp_path: Path, monkeypatch) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="anat:" + "g" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "output" / "result.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large", memory_gb=32)
+    parent = registry.claim_ready_work_item("cpu", ("large",), memory_gb=32)
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=32,
+    )
+    registry.close_worker("cpu")
+    registry.register_worker("gpu-oom", resource_class="gpu", memory_gb=32, slurm_job_id="456")
+    task = registry.claim_resource_step("gpu-oom", resource_class="gpu", memory_gb=32)
+    assert task is not None
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE workers SET pid=999999999, lease_expires_at=0 WHERE id='gpu-oom'")
+    monkeypatch.setattr(
+        "nro.orchestration.registry.RegistryLock._slurm_out_of_memory",
+        staticmethod(lambda _job: True),
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.registry.RegistryLock._slurm_terminal",
+        staticmethod(lambda _job: True),
+    )
+
+    assert registry.recover_orphaned_attempts() == 1
+
+    row = registry.work_item_rows()[0]
+    assert row["memory_gb"] == 32
+    assert row["oom_count"] == 0
+    with registry.connection() as db:
+        attempt = db.execute(
+            "SELECT state,error_type,error_message FROM attempts WHERE id=?",
+            (task.attempt_id,),
+        ).fetchone()
+        resource_task = db.execute(
+            "SELECT state,error_type,error_message FROM resource_step_tasks WHERE id=?",
+            (task.resource_task_id,),
+        ).fetchone()
+    assert dict(attempt) == {
+        "state": "error",
+        "error_type": "OutOfMemory",
+        "error_message": "Slurm reported OUT_OF_MEMORY for worker job 456",
+    }
+    assert dict(resource_task) == dict(attempt)
 
 
 def test_new_demand_survives_an_inflight_cancellation(tmp_path: Path) -> None:

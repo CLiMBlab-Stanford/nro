@@ -189,15 +189,19 @@ operations. Coordinate with other users before installation maintenance.
 ## `nro set`
 
 ```bash
-nro set concurrency=100
+nro set concurrency=60
+nro set gpu_concurrency=2
 ```
 
-Accept one or more `NAME=VALUE` pairs. Currently only positive integer
-`concurrency` is recognized; unsupported keys warn and are skipped. Malformed
-pairs or invalid recognized values fail. `--json` returns the update result.
-The global site configuration selects the registry and BIDS context.
+Accept one or more `NAME=VALUE` pairs. `concurrency` updates active requests and
+limits the general worker pool. `gpu_concurrency` is a persistent scheduler
+setting, defaults to one, and limits resource-specific GPU steps independently.
+Unsupported keys warn and are skipped. Malformed pairs or invalid recognized
+values fail. `--json` returns the update result. The global site configuration
+selects the registry and BIDS context.
 
-The update applies to active requests, not a permanent installation default.
-It fails when no active requests can be updated. Workers observe the new limit
-during normal check-in and claiming; changing the setting is not an immediate
-kill/relaunch reconciliation operation.
+Changing a limit does not create demand or immediately kill or launch workers.
+Workers observe it during normal check-in; a later `nro run --resume` or worker
+completion supplies newly useful capacity. Updating `concurrency` fails when no
+active request can be changed. `gpu_concurrency` may be set before a GPU step is
+ready.

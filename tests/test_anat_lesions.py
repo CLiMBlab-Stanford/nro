@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import nibabel as nib
 import numpy as np
 import pytest
@@ -12,12 +14,14 @@ from nro.modules.anat.lesion_policy import (
     lesion_reconstruction_contract,
 )
 from nro.modules.anat.lesions import (
+    _reconcile_fastsurfer_mask,
     create_cut_surfaces_step,
-    create_fastsurfer_lit_step,
+    create_fastsurfer_lit_steps,
     create_inpainted_metadata_step,
     create_lesion_excluded_mask_step,
     create_lesion_mask_step,
     create_lesion_qc_step,
+    create_lesion_reconstruction_summary_step,
     retained_surface_vertices,
     validate_lesion_mask,
     validate_lesion_probability,
@@ -189,11 +193,31 @@ def test_fastsurfer_lit_uses_pinned_read_only_model_data(tmp_path, monkeypatch) 
 
     def run_child(command, **options):
         calls.append((command, options))
-        for output in step.outputs[:-1]:
+        if len(calls) == 1:
+            outputs = inpaint_step.outputs
+        elif len(calls) == 2:
+            mri = tmp_path / "subjects" / "sub-test" / "mri"
+            mri.mkdir(parents=True, exist_ok=True)
+            mask = np.zeros((3, 3, 3), dtype=np.uint8)
+            segmentation = np.zeros_like(mask)
+            segmentation[1, 1, 1] = 2
+            nib.save(nib.MGHImage(mask, np.eye(4)), str(mri / "mask.mgz"))
+            nib.save(
+                nib.MGHImage(segmentation, np.eye(4)),
+                str(mri / "aparc.DKTatlas+aseg.orig.mgz"),
+            )
+            return
+        else:
+            outputs = tuple(
+                output
+                for output in reconstruction_step.outputs[:-1]
+                if output.name != "nro-mask-reconciliation.json"
+            )
+        for output in outputs:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text("result")
 
-    step = create_fastsurfer_lit_step(
+    inpaint_step, reconstruction_step = create_fastsurfer_lit_steps(
         run_child=run_child,
         runtime="singularity",
         image=image,
@@ -208,10 +232,12 @@ def test_fastsurfer_lit_uses_pinned_read_only_model_data(tmp_path, monkeypatch) 
         threads=2,
         force=False,
     )
-    step.action()
+    inpaint_step.action()
+    reconstruction_step.action()
 
     inpaint, inpaint_options = calls[0]
-    reconstruct, reconstruct_options = calls[1]
+    segment, segment_options = calls[1]
+    reconstruct, reconstruct_options = calls[2]
     assert inpaint[:3] == ["singularity", "exec", "--nv"]
     assert f"{data}:/nro-lit-data:ro" in inpaint
     assert "XDG_DATA_HOME=/nro-lit-data" in inpaint
@@ -219,21 +245,90 @@ def test_fastsurfer_lit_uses_pinned_read_only_model_data(tmp_path, monkeypatch) 
     assert inpaint[inpaint.index("--batch_size") + 1] == "8"
     assert "CUDA_VISIBLE_DEVICES=3" in inpaint
     assert "--lesion_mask" in inpaint
-    assert "/fastsurfer/run_fastsurfer.sh" in reconstruct
-    assert "--lesion_mask" not in reconstruct
-    assert reconstruct[reconstruct.index("--t1") + 1] == (
-        "/output/sub-test/mri/inpainted.lit.nii.gz"
+    assert "/fastsurfer/run_fastsurfer.sh" in segment
+    assert "--lesion_mask" not in segment
+    assert segment[segment.index("--t1") + 1] == (
+        "/output/.nro-inpainting/sub-test/mri/inpainted.lit.nii.gz"
     )
-    assert reconstruct[reconstruct.index("--vox_size") + 1] == "1.0"
+    assert segment[segment.index("--vox_size") + 1] == "1.0"
+    assert "--seg_only" in segment
+    assert "--surf_only" in reconstruct
+    assert "--fsaparc" in reconstruct
     assert lesion_reconstruction_contract()["fastsurfer_voxel_size_mm"] == 1.0
-    assert "--no_cereb" in reconstruct
-    assert "--no_hypothal" in reconstruct
-    assert "--no_cc" not in reconstruct
+    assert lesion_reconstruction_contract()["fastsurfer_mask_reconciliation"] == (
+        "segmentation_union"
+    )
+    assert "--no_cereb" in segment
+    assert "--no_hypothal" in segment
+    assert "--no_cc" not in segment
     assert inpaint_options == {"direct": True, "stream_output": True}
+    assert segment_options == {"direct": True, "stream_output": True}
     assert reconstruct_options == {"direct": True, "stream_output": True}
     assert set(data / "LIT" / "weights" / name for name in NEUROLIT_CHECKPOINTS).issubset(
-        step.inputs
+        inpaint_step.inputs
     )
+    assert inpaint_step.resource_class == "gpu"
+    assert reconstruction_step.resource_class is None
+    assert inpaint_step.validate is not None and inpaint_step.validate()[0]
+    assert reconstruction_step.validate is not None and reconstruction_step.validate()[0]
+
+
+def test_fastsurfer_mask_includes_disconnected_segmented_tissue(tmp_path) -> None:
+    subject_dir = tmp_path / "subjects" / "sub-test"
+    mri = subject_dir / "mri"
+    mri.mkdir(parents=True)
+    mask = np.zeros((3, 3, 3), dtype=np.uint8)
+    mask[1, 1, 1] = 1
+    segmentation = np.zeros_like(mask)
+    segmentation[1, 1, 1] = 2
+    segmentation[2, 2, 2] = 41
+    nib.save(nib.MGHImage(mask, np.eye(4)), str(mri / "mask.mgz"))
+    nib.save(
+        nib.MGHImage(segmentation, np.eye(4)),
+        str(mri / "aparc.DKTatlas+aseg.orig.mgz"),
+    )
+    record = subject_dir / "stats" / "nro-mask-reconciliation.json"
+
+    _reconcile_fastsurfer_mask(subject_dir, record)
+
+    reconciled = np.asarray(nib.load(str(mri / "mask.mgz")).dataobj)
+    metadata = json.loads(record.read_text(encoding="utf-8"))
+    assert reconciled[2, 2, 2] == 1
+    assert metadata["AddedVoxelCount"] == 1
+    assert metadata["FinalMaskVoxelCount"] == 2
+
+
+def test_lesion_reconstruction_summary_is_separate_from_fastsurfer_outputs(tmp_path) -> None:
+    subject_dir = tmp_path / "subjects" / "sub-test"
+    outputs = (
+        subject_dir / "mri" / "aseg.mgz",
+        subject_dir / "mri" / "ribbon.mgz",
+        subject_dir / "surf" / "lh.white",
+        subject_dir / "surf" / "rh.white",
+    )
+    for output in outputs:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("result", encoding="utf-8")
+    reconciliation = subject_dir / "stats" / "nro-mask-reconciliation.json"
+    reconciliation.parent.mkdir(parents=True)
+    reconciliation.write_text(
+        '{"Method": "segmentation_union", "AddedVoxelCount": 12}\n', encoding="utf-8"
+    )
+    lesion_mask = tmp_path / "lesion.nii.gz"
+    lesion_mask.write_text("mask", encoding="utf-8")
+    summary = tmp_path / "lesion-reconstruction.yaml"
+    step = create_lesion_reconstruction_summary_step(
+        subject_dir=subject_dir,
+        lesion_mask=lesion_mask,
+        output=summary,
+        force=False,
+    )
+
+    step.action()
+
+    assert summary in step.outputs
+    assert summary not in outputs
+    assert "AddedVoxelCount: 12" in summary.read_text(encoding="utf-8")
     assert step.validate is not None and step.validate()[0]
 
 

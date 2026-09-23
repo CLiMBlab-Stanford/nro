@@ -36,7 +36,7 @@ def case(tmp_path, monkeypatch):
         raw = paths.source_project("demo") / "sub-1/func" / f"{stem}_bold.nii.gz"
         raw.parent.mkdir(parents=True, exist_ok=True)
         nib.save(nib.Nifti1Image(np.ones((3, 3, 3, 4), dtype=np.float32), np.eye(4)), raw)
-        for space in ("ACPC", "fsnative"):
+        for space in ("T1w", "fsnative"):
             prefix = f"{stem}_space-{space}_smoothing-2mm"
             bindings.append(
                 InputBinding(
@@ -48,7 +48,7 @@ def case(tmp_path, monkeypatch):
                     prefix,
                 )
             )
-            if space == "ACPC":
+            if space == "T1w":
                 (root / f"{prefix}_desc-clean_bold.nii.gz").write_bytes(raw.read_bytes())
             else:
                 for hemi in ("L", "R"):
@@ -115,7 +115,7 @@ def case(tmp_path, monkeypatch):
     return context, roots, cfg
 
 
-@pytest.mark.parametrize("space", ["ACPC", "fsnative"])
+@pytest.mark.parametrize("space", ["T1w", "fsnative"])
 def test_entry_routes_mixed_run_owners_and_outputs(case, monkeypatch, space):
     context, roots, _ = case
     before = {p: p.read_bytes() for root in roots for p in root.rglob("*") if p.is_file()}

@@ -55,8 +55,13 @@ class Column:
     nullable: bool = True
     default: object = _MISSING
 
-    def sql(self) -> str:
-        """Render a checked SQLite column declaration."""
+    def sql(self, *, for_create: bool = False) -> str:
+        """Render a checked SQLite column declaration.
+
+        Required columns need defaults when they are added to an existing
+        table. A newly created table has no existing rows to populate, so its
+        required columns may omit defaults.
+        """
         name = _identifier(self.name)
         kind = self.kind.upper()
         if kind not in _KINDS:
@@ -66,7 +71,7 @@ class Column:
             pieces.append("NOT NULL")
         if self.default is not _MISSING:
             pieces.extend(("DEFAULT", _literal(self.default)))
-        elif not self.nullable:
+        elif not self.nullable and not for_create:
             raise ValueError("A required added column needs a default for existing rows")
         return " ".join(pieces)
 
@@ -88,6 +93,69 @@ class AddColumn:
     def apply(self, database: sqlite3.Connection) -> None:
         """Add the column to its declared table."""
         database.execute(f"ALTER TABLE {_identifier(self.table)} ADD COLUMN {self.column.sql()}")
+
+
+@dataclass(frozen=True)
+class ForeignKey:
+    """Reference one column in another table from a generated table."""
+
+    column: str
+    table: str
+    target: str = "id"
+    on_delete: str | None = None
+
+    def sql(self) -> str:
+        """Render a checked foreign-key clause."""
+        clause = (
+            f"FOREIGN KEY({_identifier(self.column)}) REFERENCES "
+            f"{_identifier(self.table)}({_identifier(self.target)})"
+        )
+        if self.on_delete is not None:
+            action = self.on_delete.upper()
+            if action not in {"CASCADE", "RESTRICT", "SET NULL", "NO ACTION"}:
+                raise ValueError(f"Unsupported foreign-key delete action: {self.on_delete!r}")
+            clause += f" ON DELETE {action}"
+        return clause
+
+
+@dataclass(frozen=True)
+class CreateTable:
+    """Create a table from checked columns, keys, and uniqueness constraints."""
+
+    name: str
+    columns: tuple[Column, ...]
+    primary_key: tuple[str, ...] = ()
+    foreign_keys: tuple[ForeignKey, ...] = ()
+    unique: tuple[tuple[str, ...], ...] = ()
+
+    def apply(self, database: sqlite3.Connection) -> None:
+        """Create the declared table after validating every referenced column."""
+        if not self.columns:
+            raise ValueError("A created table needs at least one column")
+        names = [column.name for column in self.columns]
+        if len(names) != len(set(names)):
+            raise ValueError(f"Duplicate column in created table {self.name!r}")
+        known = set(names)
+        referenced = set(self.primary_key)
+        referenced.update(key.column for key in self.foreign_keys)
+        referenced.update(column for group in self.unique for column in group)
+        unknown = referenced - known
+        if unknown:
+            raise ValueError(
+                f"Created table {self.name!r} references unknown columns: "
+                + ", ".join(sorted(unknown))
+            )
+        clauses = [column.sql(for_create=True) for column in self.columns]
+        if self.primary_key:
+            clauses.append(
+                "PRIMARY KEY(" + ",".join(_identifier(value) for value in self.primary_key) + ")"
+            )
+        clauses.extend(key.sql() for key in self.foreign_keys)
+        clauses.extend(
+            "UNIQUE(" + ",".join(_identifier(value) for value in group) + ")"
+            for group in self.unique
+        )
+        database.execute(f"CREATE TABLE {_identifier(self.name)} (" + ",".join(clauses) + ")")
 
 
 @dataclass(frozen=True)

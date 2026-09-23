@@ -75,7 +75,7 @@ def project_references_to_cifti(
     space: str,
     source_surfaces: tuple[Path, ...],
     anatomical_reference: Path | None,
-    mni_to_acpc_transform: Path | None,
+    mni_to_t1w_transform: Path | None,
 ) -> dict[str, np.ndarray]:
     """Project MNI reference volumes onto a CIFTI brain-model axis."""
     import nibabel as nib
@@ -88,9 +88,9 @@ def project_references_to_cifti(
 
     target_image = None
     transform = None
-    if space in {"ACPC", "fsnative"}:
-        if anatomical_reference is None or mni_to_acpc_transform is None:
-            raise ValueError(f"space-{space} reference projection requires MNI-to-ACPC provenance")
+    if space in {"T1w", "fsnative"}:
+        if anatomical_reference is None or mni_to_t1w_transform is None:
+            raise ValueError(f"space-{space} reference projection requires MNI-to-T1w provenance")
         target_image = nib.load(str(anatomical_reference))
         try:
             from nitransforms import manip, resampling
@@ -100,7 +100,7 @@ def project_references_to_cifti(
             ) from error
         # ANTs composite HDF5 and X5 are different formats despite sharing the
         # same container type. Let nitransforms dispatch from the filename.
-        transform = manip.load(str(mni_to_acpc_transform), fmt=None)
+        transform = manip.load(str(mni_to_t1w_transform), fmt=None)
 
     projected: dict[str, np.ndarray] = {}
     for atlas in references.REFERENCE_ATLASES:

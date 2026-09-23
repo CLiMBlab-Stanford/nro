@@ -149,7 +149,7 @@ def functional_config_payload(
 def normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
     """Normalize supported functional output-space aliases."""
     aliases = {
-        "acpc": "ACPC",
+        "t1w": "T1w",
         "fsnative": "fsnative",
         "mni": "MNI152NLin2009cAsym",
         "mni152nlin2009casym": "MNI152NLin2009cAsym",
@@ -165,7 +165,7 @@ def normalize_output_spaces(values: Sequence[str]) -> tuple[str, ...]:
         if space is None:
             raise SystemExit(
                 "Unknown output space "
-                f"{raw!r}. Expected ACPC, fsnative, MNI152NLin2009cAsym, or an fsaverage template"
+                f"{raw!r}. Expected T1w, fsnative, MNI152NLin2009cAsym, or an fsaverage template"
             )
         if space not in normalized:
             normalized.append(space)

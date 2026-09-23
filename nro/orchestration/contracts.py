@@ -448,6 +448,9 @@ class ExecutionEnvelope:
     output_prefix: str | None
     expected_outputs: tuple[Path, ...]
     log_path: Path
+    resource_task_id: int | None = None
+    target_step_id: str | None = None
+    completed_resource_steps: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Encode an assignment for the durable worker transport."""
@@ -470,6 +473,9 @@ class ExecutionEnvelope:
             "output_prefix": self.output_prefix,
             "expected_outputs": [str(path) for path in self.expected_outputs],
             "log_path": str(self.log_path),
+            "resource_task_id": self.resource_task_id,
+            "target_step_id": self.target_step_id,
+            "completed_resource_steps": list(self.completed_resource_steps),
         }
 
     @classmethod
@@ -494,11 +500,21 @@ class ExecutionEnvelope:
             output_prefix=value.get("output_prefix"),
             expected_outputs=tuple(Path(path) for path in value["expected_outputs"]),
             log_path=Path(value["log_path"]),
+            resource_task_id=(
+                None if value.get("resource_task_id") is None else int(value["resource_task_id"])
+            ),
+            target_step_id=(
+                None if value.get("target_step_id") is None else str(value["target_step_id"])
+            ),
+            completed_resource_steps=tuple(
+                str(step_id) for step_id in value.get("completed_resource_steps", ())
+            ),
         )
 
     @classmethod
     def from_registry_row(cls, row: Mapping[str, Any]) -> "ExecutionEnvelope":
         """Decode the registry's storage representation at its boundary."""
+        keys = set(row.keys())
         return cls(
             work_item_id=int(row["id"]),
             attempt_id=int(row["attempt_id"]),
@@ -523,4 +539,22 @@ class ExecutionEnvelope:
                 Path(value) for value in json.loads(row["expected_outputs_json"])
             ),
             log_path=Path(row["log_path"]),
+            resource_task_id=(
+                None
+                if "resource_task_id" not in keys or row["resource_task_id"] is None
+                else int(row["resource_task_id"])
+            ),
+            target_step_id=(
+                None
+                if "target_step_id" not in keys or row["target_step_id"] is None
+                else str(row["target_step_id"])
+            ),
+            completed_resource_steps=tuple(
+                str(step_id)
+                for step_id in json.loads(
+                    row["completed_resource_steps_json"]
+                    if "completed_resource_steps_json" in keys
+                    else "[]"
+                )
+            ),
         )

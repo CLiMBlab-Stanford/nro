@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 import nibabel as nib
 import numpy as np
+import yaml
 
 from nro.engine.io import atomic_write_text
 from nro.modules.anat.lesion_policy import (
@@ -328,7 +330,7 @@ def create_lesion_excluded_mask_step(
     )
 
 
-def create_fastsurfer_lit_step(
+def create_fastsurfer_lit_steps(
     *,
     run_child: Callable[..., Any],
     runtime: str,
@@ -343,9 +345,14 @@ def create_fastsurfer_lit_step(
     use_gpu: bool,
     threads: int,
     force: bool,
-) -> Step:
-    """Run one pinned FastSurfer-LIT reconstruction as a resumable directory step."""
+) -> tuple[Step, Step]:
+    """Split NeuroLIT inference from CPU FastSurfer reconstruction."""
     subject_dir = subjects_dir / subject
+    inpaint_dir = subjects_dir / ".nro-inpainting" / subject
+    inpainted = inpaint_dir / "mri" / "inpainted.lit.nii.gz"
+    inpaint_mask = inpaint_dir / "mri" / "mask.lit.nii.gz"
+    original_mask = inpaint_dir / "mri" / "orig" / "mask.lit.nii.gz"
+    mask_reconciliation = subject_dir / "stats" / "nro-mask-reconciliation.json"
     required = (
         subject_dir / "mri" / "T1.mgz",
         subject_dir / "mri" / "aseg.mgz",
@@ -356,7 +363,7 @@ def create_fastsurfer_lit_step(
         subject_dir / "mri" / "orig" / "mask.lit.nii.gz",
         subject_dir / "surf" / "lh.white",
         subject_dir / "surf" / "rh.white",
-        subject_dir / "stats" / "lesion_impact_summary.yaml",
+        mask_reconciliation,
         *(
             subject_dir / "surf" / f"{hemi}.{surface}"
             for hemi in ("lh", "rh")
@@ -380,10 +387,10 @@ def create_fastsurfer_lit_step(
             return False, "FastSurfer-LIT outputs are incomplete: " + ", ".join(missing)
         return True, "FastSurfer-LIT reconstruction is complete."
 
-    def action() -> None:
+    def container_prefix(*, gpu: bool) -> list[str]:
         subjects_dir.mkdir(parents=True, exist_ok=True)
         container = [runtime, "exec"]
-        if use_gpu:
+        if gpu:
             container.append("--nv")
             visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
             if not visible_devices:
@@ -412,10 +419,15 @@ def create_fastsurfer_lit_step(
         if visible_devices is not None:
             container.extend(["--env", f"CUDA_VISIBLE_DEVICES={visible_devices}"])
         container.append(str(image))
+        return container
+
+    def inpaint_action() -> None:
+        if inpaint_dir.exists():
+            shutil.rmtree(inpaint_dir)
         device = "cuda" if use_gpu else "cpu"
         run_child(
             [
-                *container,
+                *container_prefix(gpu=use_gpu),
                 "python3",
                 "-s",
                 "-m",
@@ -425,7 +437,7 @@ def create_fastsurfer_lit_step(
                 "--lesion_mask",
                 f"/lesion/{lesion_mask.name}",
                 "--sd",
-                f"/output/{subject}",
+                f"/output/.nro-inpainting/{subject}",
                 "--fastsurfer_dir",
                 "--device",
                 device,
@@ -435,56 +447,199 @@ def create_fastsurfer_lit_step(
             direct=True,
             stream_output=True,
         )
+
+    def inpaint_valid() -> tuple[bool, str]:
+        missing = [
+            str(path)
+            for path in (inpainted, inpaint_mask, original_mask)
+            if not path.is_file() or path.stat().st_size == 0
+        ]
+        if missing:
+            return False, "NeuroLIT outputs are incomplete: " + ", ".join(missing)
+        return True, "NeuroLIT inpainting outputs are complete."
+
+    def reconstruct_action() -> None:
+        common = [
+            *container_prefix(gpu=False),
+            "/fastsurfer/run_fastsurfer.sh",
+            "--sid",
+            subject,
+            "--sd",
+            "/output",
+            "--fs_license",
+            "/license.txt",
+            "--threads",
+            str(threads),
+        ]
         run_child(
             [
-                *container,
-                "/fastsurfer/run_fastsurfer.sh",
+                *common,
                 "--t1",
-                f"/output/{subject}/mri/inpainted.lit.nii.gz",
-                "--sid",
-                subject,
-                "--sd",
-                "/output",
-                "--fs_license",
-                "/license.txt",
-                "--threads",
-                str(threads),
+                f"/output/.nro-inpainting/{subject}/mri/inpainted.lit.nii.gz",
                 "--device",
-                device,
+                "cpu",
                 "--vox_size",
                 str(FASTSURFER_VOXEL_SIZE_MM),
-                "--fsaparc",
+                "--seg_only",
                 "--no_cereb",
                 "--no_hypothal",
             ],
             direct=True,
             stream_output=True,
         )
+        _reconcile_fastsurfer_mask(subject_dir, mask_reconciliation)
+        run_child(
+            [*common, "--surf_only", "--fsaparc"],
+            direct=True,
+            stream_output=True,
+        )
+        destination_mri = subject_dir / "mri"
+        (destination_mri / "orig").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(inpainted, destination_mri / inpainted.name)
+        shutil.copy2(inpaint_mask, destination_mri / inpaint_mask.name)
+        shutil.copy2(original_mask, destination_mri / "orig" / original_mask.name)
         ok, reason = valid()
         if not ok:
             raise RuntimeError(reason)
 
-    return Step.directory_step(
-        name="FastSurfer-LIT Reconstruction",
-        directory=subject_dir,
-        breadcrumb=breadcrumb,
-        inputs=(t1w, lesion_mask, image, *checkpoints),
-        outputs=required,
+    inpainting_scientific = {
+        "backend": "FastSurfer-LIT",
+        "neurolit_version": NEUROLIT_VERSION,
+        "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
+        "neurolit_batch_size": 8,
+        "stage": "inpainting",
+    }
+    reconstruction_scientific = {
+        "backend": "FastSurfer-LIT",
+        "version": version,
+        "source_revision": FASTSURFER_SOURCE_REVISION,
+        "oci_digest": FASTSURFER_OCI_DIGEST,
+        "fastsurfer_voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
+        "fastsurfer_mask_reconciliation": "segmentation_union",
+        "freesurfer_parcellation": True,
+        "fastsurfer_options": ["fsaparc", "no_cereb", "no_hypothal"],
+        "stage": "segmentation-and-surfaces",
+        "device": "cpu",
+    }
+    return (
+        Step.python(
+            id="neurolit-inpainting",
+            name="NeuroLIT Lesion Inpainting",
+            inputs=(t1w, lesion_mask, image, *checkpoints),
+            outputs=(inpainted, inpaint_mask, original_mask),
+            action=inpaint_action,
+            validate=inpaint_valid,
+            force=force,
+            resource_class="gpu" if use_gpu else None,
+            parameters=inpainting_scientific,
+        ),
+        Step.directory_step(
+            id="fastsurfer-lesion-reconstruction",
+            name="FastSurfer Lesion Reconstruction",
+            directory=subject_dir,
+            breadcrumb=breadcrumb,
+            inputs=(inpainted, inpaint_mask, original_mask, image),
+            outputs=required,
+            action=reconstruct_action,
+            validate=valid,
+            force=force,
+            breadcrumb_text="FastSurfer-LIT reconstruction complete\n",
+            parameters=reconstruction_scientific,
+        ),
+    )
+
+
+def _reconcile_fastsurfer_mask(subject_dir: Path, record: Path) -> None:
+    """Include every segmented voxel in FastSurfer's surface-processing mask."""
+    mri_dir = subject_dir / "mri"
+    mask_path = mri_dir / "mask.mgz"
+    segmentation_path = mri_dir / "aparc.DKTatlas+aseg.orig.mgz"
+    mask_image = nib.load(str(mask_path))
+    segmentation_image = nib.load(str(segmentation_path))
+    if mask_image.shape != segmentation_image.shape or not np.allclose(
+        mask_image.affine, segmentation_image.affine, atol=1e-4
+    ):
+        raise ValueError("FastSurfer mask and segmentation grids differ")
+    mask = np.asarray(mask_image.dataobj)
+    segmentation = np.asarray(segmentation_image.dataobj)
+    added = (segmentation != 0) & (mask == 0)
+    reconciled = np.asarray(mask).copy()
+    reconciled[segmentation != 0] = 1
+    temporary = mask_path.with_name(f".partial-{mask_path.name}")
+    temporary.unlink(missing_ok=True)
+    nib.save(
+        nib.MGHImage(reconciled.astype(mask.dtype), mask_image.affine, header=mask_image.header),
+        str(temporary),
+    )
+    os.replace(temporary, mask_path)
+    atomic_write_text(
+        record,
+        json.dumps(
+            {
+                "Method": "segmentation_union",
+                "Mask": str(mask_path),
+                "Segmentation": str(segmentation_path),
+                "AddedVoxelCount": int(added.sum()),
+                "FinalMaskVoxelCount": int(np.count_nonzero(reconciled)),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+    )
+
+
+def create_lesion_reconstruction_summary_step(
+    *,
+    subject_dir: Path,
+    lesion_mask: Path,
+    output: Path,
+    force: bool,
+) -> Step:
+    """Record the completed lesion-aware reconstruction and mask reconciliation."""
+    reconciliation = subject_dir / "stats" / "nro-mask-reconciliation.json"
+    required = (
+        subject_dir / "mri" / "aseg.mgz",
+        subject_dir / "mri" / "ribbon.mgz",
+        subject_dir / "surf" / "lh.white",
+        subject_dir / "surf" / "rh.white",
+    )
+
+    def payload() -> dict[str, object]:
+        return {
+            "Type": "lesion-aware surface reconstruction",
+            "SurfaceBackend": "FastSurfer-LIT",
+            "SoftwareVersion": FASTSURFER_VERSION,
+            "SourceRevision": FASTSURFER_SOURCE_REVISION,
+            "VoxelSizeMillimeters": FASTSURFER_VOXEL_SIZE_MM,
+            "LesionMask": str(lesion_mask),
+            "MaskReconciliation": json.loads(reconciliation.read_text(encoding="utf-8")),
+            "CompleteScaffold": True,
+        }
+
+    def action() -> None:
+        atomic_write_text(output, yaml.safe_dump(payload(), sort_keys=False))
+
+    def validate() -> tuple[bool, str]:
+        try:
+            current = yaml.safe_load(output.read_text(encoding="utf-8"))
+            expected = payload()
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, yaml.YAMLError) as error:
+            return False, f"Lesion reconstruction summary is absent or invalid: {error}"
+        if current != expected:
+            return False, "Lesion reconstruction summary differs from its source evidence."
+        return True, "Lesion reconstruction summary matches its source evidence."
+
+    return Step.python(
+        name="Write Lesion Reconstruction Summary",
+        inputs=(*required, lesion_mask, reconciliation),
+        outputs=(output,),
         action=action,
-        validate=valid,
+        validate=validate,
         force=force,
-        breadcrumb_text="FastSurfer-LIT reconstruction complete\n",
         parameters={
             "backend": "FastSurfer-LIT",
-            "version": version,
-            "source_revision": FASTSURFER_SOURCE_REVISION,
-            "oci_digest": FASTSURFER_OCI_DIGEST,
-            "neurolit_version": NEUROLIT_VERSION,
-            "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
-            "neurolit_batch_size": 8,
-            "fastsurfer_voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
-            "freesurfer_parcellation": True,
-            "fastsurfer_options": ["fsaparc", "no_cereb", "no_hypothal"],
+            "mask_reconciliation": "segmentation_union",
         },
     )
 

@@ -26,12 +26,18 @@ lineages, and artifact observations. All projects and branches therefore share
 worker capacity without requiring the scheduler to import development code.
 
 The worker pool has separate general and GPU resource classes. General workers
-claim ordinary work. GPU workers claim only work that explicitly requires a
-GPU, currently lesion-aware anatomy with `lesion.use_gpu: true`. A GPU worker
-runs consecutive ready GPU work items, but exits as soon as none is ready. A
-general worker that completes an upstream dependency asks the scheduler to
-submit a new GPU worker when that completion makes GPU work ready. Both classes
-count against the same site-wide concurrency limit.
+claim complete work items. A runner may yield at a step marked for GPU
+execution; the scheduler then records a durable step task, releases the general
+worker, and starts a GPU worker only when that task is ready. The GPU worker
+reconstructs the same fixed module graph, verifies the same inputs and contract,
+and executes only the named step. The parent work item then returns to the front
+of the general queue and resumes from its fresh step outputs.
+
+GPU workers never claim complete work items and exit as soon as no GPU step is
+ready. General and GPU pools have independent concurrency limits. `concurrency`
+limits general derivative and ingestion work; `gpu_concurrency` defaults to one
+and limits GPU step tasks. Resource classes, device identifiers, and handoffs
+are execution policy. They do not change scientific contracts or freshness.
 
 ## Requests
 
@@ -72,6 +78,12 @@ Workers request ready work items from the controller and run each one in a
 separate subprocess. A module constructs its complete runner graph before
 freshness is checked. The shared runner then executes or skips each declared
 step and writes the completion record.
+
+Every step uses the same freshness and publication rules. A GPU handoff does
+not strengthen or weaken upstream validation: claims capture the current
+upstream generations, and completion is rejected if the work-item contract,
+generation, or captured dependencies changed during either CPU or GPU
+execution.
 
 Development requests send their compiled graph and execution recipe to the
 installed central scheduler. The scheduler resolves compatible ancestor
