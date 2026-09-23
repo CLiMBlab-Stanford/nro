@@ -67,7 +67,7 @@ def test_cli_can_register_without_participant_and_infer_session(
     monkeypatch.setattr(cli.Registry, "for_project", lambda *a, **k: registry)
     monkeypatch.setattr(cli, "load_config", lambda _: profile)
     monkeypatch.setattr(
-        cli, "FlywheelSource", lambda _: SimpleNamespace(sessions=lambda: [remote()])
+        cli, "FlywheelSource", lambda *a, **k: SimpleNamespace(sessions=lambda: [remote()])
     )
     prompts = []
     answers = iter(["all", "", "y"] if configured else ["all", "", "", "y"])
@@ -325,7 +325,7 @@ def test_rebidsify_cannot_redirect_external_session(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.Registry, "for_project", lambda *a, **k: registry)
     monkeypatch.setattr(cli, "load_config", lambda _: config)
     monkeypatch.setattr(
-        cli, "FlywheelSource", lambda _: SimpleNamespace(sessions=lambda: [remote()])
+        cli, "FlywheelSource", lambda *a, **k: SimpleNamespace(sessions=lambda: [remote()])
     )
     monkeypatch.setattr(cli, "ask", lambda *_: "all")
     with pytest.raises(SystemExit) as error:
@@ -360,7 +360,7 @@ def test_external_rebidsify_retains_subject_and_session(tmp_path, monkeypatch, p
     monkeypatch.setattr(cli.Registry, "for_project", lambda *a, **k: registry)
     monkeypatch.setattr(cli, "load_config", lambda _: config)
     monkeypatch.setattr(
-        cli, "FlywheelSource", lambda _: SimpleNamespace(sessions=lambda: [remote()])
+        cli, "FlywheelSource", lambda *a, **k: SimpleNamespace(sessions=lambda: [remote()])
     )
     answers = iter(["all", participant, "y"])
     monkeypatch.setattr(cli, "ask", lambda *_: next(answers))
@@ -440,7 +440,9 @@ def test_cli_only_contacts_selected_flywheel_project(tmp_path, monkeypatch, caps
     monkeypatch.setattr(
         cli,
         "FlywheelSource",
-        lambda profile: FlywheelSource(profile, client=SimpleNamespace(lookup=lookup)),
+        lambda profile, **kwargs: FlywheelSource(
+            profile, client=SimpleNamespace(lookup=lookup), **kwargs
+        ),
     )
 
     def answer(prompt, *args):
@@ -478,7 +480,7 @@ def test_cli_omits_existing_before_prompting_and_writes_no_records(tmp_path, mon
     profile["session_rules"] = rules()
     monkeypatch.setattr(cli, "load_config", lambda _: profile)
     monkeypatch.setattr(
-        cli, "FlywheelSource", lambda _: SimpleNamespace(sessions=lambda: [remote()])
+        cli, "FlywheelSource", lambda *a, **k: SimpleNamespace(sessions=lambda: [remote()])
     )
     monkeypatch.setattr(
         cli, "ask", lambda *a: pytest.fail("An existing external session was offered")
@@ -501,7 +503,7 @@ def test_cli_rebidsify_lists_existing_before_mapping(tmp_path, monkeypatch, caps
     profile["session_rules"] = rules()
     monkeypatch.setattr(cli, "load_config", lambda _: profile)
     monkeypatch.setattr(
-        cli, "FlywheelSource", lambda _: SimpleNamespace(sessions=lambda: [remote()])
+        cli, "FlywheelSource", lambda *a, **k: SimpleNamespace(sessions=lambda: [remote()])
     )
 
     def cancel(prompt, *args):

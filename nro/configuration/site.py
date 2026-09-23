@@ -59,7 +59,7 @@ def _checkout() -> Path:
 
 CHECKOUT = _checkout()
 RECORD_NAME = ".nro-installation.json"
-SITE_DEFINITION_VERSION = 1
+SITE_DEFINITION_VERSION = 2
 SITE_DEFINITION = Path("site/site.yml")
 LAB = Path("/juice6/u/nlp/climblab")
 DEFAULTS = {
@@ -281,6 +281,13 @@ def _validate_bidsify_site(value: object) -> dict:
             raise ValueError(f"site.bidsify.{key} must be a string or null")
     if not isinstance(result["servers"], dict):
         raise ValueError("site.bidsify.servers must be a mapping")
+    for server_id, server in result["servers"].items():
+        if (
+            not isinstance(server_id, str)
+            or not isinstance(server, dict)
+            or set(server) != {"host", "projects"}
+        ):
+            raise ValueError("Each site.bidsify server requires host and projects")
     if not isinstance(result["project_sources"], dict):
         raise ValueError("site.bidsify.project_sources must be a mapping")
     scanplans = result["scanplans"]
@@ -377,7 +384,7 @@ def write_site_definition(
     atomic_write_text(
         path,
         text,
-        mode=0o644,
+        mode=0o664,
         durable=True,
     )
     return path

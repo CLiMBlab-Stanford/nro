@@ -315,6 +315,9 @@ def create_store(
                 inherited_roots=inherited,
             ),
         )
+        from nro.configuration.definition_migrations import ensure_group_maintainable
+
+        ensure_group_maintainable(staged)
         _publish(staged, destination)
     return destination
 

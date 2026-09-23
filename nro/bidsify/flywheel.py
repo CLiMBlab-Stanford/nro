@@ -2,8 +2,10 @@
 
 import hashlib
 import logging
-import os
 from pathlib import Path
+
+from nro.bidsify.credentials import read_key
+from nro.configuration.site import settings
 
 from .errors import BidsificationError
 
@@ -24,21 +26,30 @@ class FlywheelSource:
     because they may include source labels or authenticated URLs.
     """
 
-    def __init__(self, profile: dict, *, client=None):
+    def __init__(
+        self,
+        profile: dict,
+        *,
+        server_id: str | None = None,
+        definitions: Path | None = None,
+        client=None,
+    ):
         """Create an isolated client; client injection supports offline tests."""
         self.profile = profile
         if client is not None:
             self.client = client
             return
-        key = os.environ.get(profile["credential_env"])
-        if not key:
-            raise BidsificationError(
-                f"Set {profile['credential_env']} in your environment before submission"
-            )
-        if ":" in key:
-            host, key = key.split(":", 1)
-            if host != profile["host"]:
-                raise BidsificationError("Credential host does not match selected server")
+        if server_id is None:
+            raise BidsificationError("Flywheel source requires a configured server ID")
+        root = (
+            Path(settings()[0]["definitions"]).expanduser().resolve()
+            if definitions is None
+            else Path(definitions).expanduser().resolve()
+        )
+        try:
+            key = read_key(root, server_id, host=profile["host"])
+        except ValueError as error:
+            raise BidsificationError(str(error)) from None
         try:
             import flywheel
         except ImportError:
@@ -57,7 +68,8 @@ class FlywheelSource:
             self.client = flywheel.Client(f"{profile['host']}:{key}")
         except Exception:
             raise BidsificationError(
-                "Could not initialize Flywheel client; check server credentials"
+                f"Could not authenticate to Flywheel server {server_id!r}; refresh its key "
+                f"with `nro fw addkey {server_id}` or check server availability"
             ) from None
 
     def sessions(self) -> list[dict]:

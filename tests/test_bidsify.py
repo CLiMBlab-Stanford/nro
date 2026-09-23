@@ -93,11 +93,11 @@ def prepared_session(registry, store, row, *, replace=False):
     return store.claim("worker", 32)
 
 
-def test_config_servers_come_from_store_and_credentials_are_references():
+def test_config_servers_come_from_store_without_credentials():
     config = load_config()
     assert config["servers"]["cni"]["host"] == "cni.example.org"
     assert config["servers"]["lucas"]["host"] == "lucas.example.org"
-    assert config["servers"]["cni"]["credential_env"] == "TEST_CNI_KEY"
+    assert set(config["servers"]["cni"]) == {"host", "projects"}
     assert config["cpus"] == 2
 
 
@@ -107,10 +107,14 @@ def test_missing_flywheel_points_to_managed_installer(monkeypatch):
     from nro.bidsify.errors import BidsificationError
     from nro.bidsify.flywheel import FlywheelSource
 
-    monkeypatch.setenv("TEST_FLYWHEEL_KEY", "test-placeholder")
+    monkeypatch.setattr("nro.bidsify.flywheel.read_key", lambda *args, **kwargs: "test-placeholder")
     monkeypatch.setitem(sys.modules, "flywheel", None)
     with pytest.raises(BidsificationError) as error:
-        FlywheelSource({"host": "example.org", "credential_env": "TEST_FLYWHEEL_KEY"})
+        FlywheelSource(
+            {"host": "example.org", "projects": []},
+            server_id="example",
+            definitions=Path("/unused"),
+        )
     message = str(error.value)
     assert "./install --with-bidsify" in message
     assert "./install --maintain --with-bidsify" in message

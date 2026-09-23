@@ -1,13 +1,16 @@
 """Definitions-store migration, integrity, and ownership tests."""
 
+import stat
 from pathlib import Path
 
 import pytest
+import yaml
 
 from nro.configuration.definition_migrations import (
     MANAGED_NOTICE,
     MANIFEST,
     _begin_recovery,
+    _manifest_text,
     migrate_store,
     store_lock,
     update_store,
@@ -34,6 +37,49 @@ def test_new_store_is_versioned_and_warns_against_direct_edits(tmp_path):
                 text = text.splitlines(keepends=True)[0] + text.splitlines(keepends=True)[1]
             assert MANAGED_NOTICE in text[: len(MANAGED_NOTICE) + 128]
     validate_store_integrity(root)
+
+
+def test_new_store_is_group_maintainable_without_adding_read_access(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            continue
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode & 0o020
+        if path.is_dir():
+            assert mode & 0o010
+
+
+def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path):
+    from nro.bidsify.credentials import read_key, store_key
+
+    root = create_store(tmp_path / "definitions")
+    store_key(root, "cni", "private-key", host="cni.example.org")
+    site = root / "site/site.yml"
+    value = yaml.safe_load(site.read_text())
+    value["version"] = 1
+    value["bidsify"]["servers"] = {
+        "cni": {
+            "host": "cni.example.org",
+            "credential_env": "CNI_API_KEY",
+            "projects": ["lab/study"],
+        }
+    }
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 1))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    migrated = yaml.safe_load(site.read_text())
+    assert migrated["version"] == 2
+    assert migrated["bidsify"]["servers"]["cni"] == {
+        "host": "cni.example.org",
+        "projects": ["lab/study"],
+    }
+    assert read_key(root, "cni", host="cni.example.org") == "private-key"
+    assert ".definition-secrets" not in (root / MANIFEST).read_text()
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

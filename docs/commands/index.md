@@ -31,6 +31,10 @@ full-store transaction, and `nro definitions migrate` applies the current store
 schema in place. See [definitions stores](../definitions.md) for their layout,
 validation scope, and version-control policy.
 
+`nro fw addkey SERVER` stores the current user's private Flywheel key for a
+configured site server. `nro fw list` reports which servers have usable keys,
+and `nro fw removekey SERVER` removes one. See [bidsification](bidsify.md).
+
 ## Shared selectors
 
 `run`, `status`, `stop`, `log`, `purge`, `gc`, `promote`, `scene`, and `render` use the

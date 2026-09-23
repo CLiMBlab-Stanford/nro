@@ -71,6 +71,21 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def ensure_group_maintainable(root: Path) -> None:
+    """Keep store content writable without granting additional read access."""
+    root = Path(root)
+    paths = [root]
+    for parent, directories, names in os.walk(root, followlinks=False):
+        directories[:] = [name for name in directories if name != ".git"]
+        paths.extend(Path(parent) / name for name in directories)
+        paths.extend(Path(parent) / name for name in names)
+    for path in paths:
+        if path.is_symlink():
+            continue
+        mode = stat.S_IMODE(path.stat().st_mode)
+        path.chmod(mode | (0o2030 if path.is_dir() else 0o020))
+
+
 def _reject_symlinks(root: Path) -> None:
     for category in MANAGED_CATEGORIES:
         directory = root / category
@@ -186,7 +201,32 @@ def _adopt_unversioned(root: Path) -> None:
                 path.write_text(normalized, encoding="utf-8")
 
 
-MIGRATIONS = (Migration(0, 1, "0.13.0", _adopt_unversioned),)
+def _private_flywheel_credentials(root: Path) -> None:
+    """Remove environment-variable credential routing from tracked site metadata."""
+    path = root / "site/site.yml"
+    if not path.is_file():
+        return
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") not in {1, 2}:
+        raise ValueError(f"Definitions schema 1 requires site definition version 1 or 2: {path}")
+    bidsify = value.get("bidsify")
+    if not isinstance(bidsify, dict) or not isinstance(bidsify.get("servers", {}), dict):
+        raise ValueError(f"Invalid Flywheel server definitions: {path}")
+    for profile in bidsify.get("servers", {}).values():
+        if not isinstance(profile, dict):
+            raise ValueError(f"Invalid Flywheel server definition: {path}")
+        profile.pop("credential_env", None)
+    value["version"] = 2
+    path.write_text(
+        normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
+        encoding="utf-8",
+    )
+
+
+MIGRATIONS = (
+    Migration(0, 1, "0.13.0", _adopt_unversioned),
+    Migration(1, 2, "0.14.4", _private_flywheel_credentials),
+)
 SCHEMA_VERSION = MIGRATIONS[-1].destination
 
 
@@ -222,6 +262,7 @@ def _copy_store(source: Path, destination: Path) -> None:
             ignore=shutil.ignore_patterns(
                 ".git",
                 ".definition-drafts",
+                ".definition-secrets",
                 LOCK,
                 RECOVERY,
                 ".nro-incomplete",
@@ -366,7 +407,9 @@ def _publish_staged(root: Path, staged: Path, *, relative_paths: set[Path] | Non
             if not source.is_file():
                 destination.unlink(missing_ok=True)
                 continue
-            mode = stat.S_IMODE(destination.stat().st_mode) if destination.is_file() else 0o664
+            mode = (
+                stat.S_IMODE(destination.stat().st_mode) | 0o020 if destination.is_file() else 0o664
+            )
             _atomic_bytes(destination, source.read_bytes(), mode)
         _commit_recovery(root, recovery)
     except Exception:
@@ -389,6 +432,7 @@ def migrate_store(
                 f"Definitions schema {current} is newer than supported schema {SCHEMA_VERSION}"
             )
         if current == SCHEMA_VERSION:
+            ensure_group_maintainable(root)
             validate_store_integrity(root)
             if validate is not None:
                 validate(root)
@@ -415,6 +459,7 @@ def migrate_store(
             if validate is not None:
                 validate(staged)
             _publish_staged(root, staged)
+        ensure_group_maintainable(root)
         validate_store_integrity(root)
         return True
 
@@ -474,4 +519,5 @@ def update_store(
             if validate is not None:
                 validate(staged)
             _publish_staged(root, staged, relative_paths=set(updates))
+        ensure_group_maintainable(root)
         validate_store_integrity(root)

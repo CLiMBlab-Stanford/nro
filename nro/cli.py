@@ -21,6 +21,7 @@ COMMAND_HELP = {
     "create": "Create a model, config, workflow, or source-markup definition.",
     "edit": "Edit an existing model, config, workflow, or source-markup definition.",
     "find": "List source BIDS images that match entity selectors.",
+    "fw": "Manage private Flywheel credentials for configured servers.",
     "gc": "Remove unclaimed files from nro derivative namespaces.",
     "delete": "Delete a definition without removing derivatives.",
     "definitions": "Create or validate an external definitions store.",
