@@ -20,6 +20,7 @@ FASTSURFER_VERSION = "2.5.4"
 FASTSURFER_SOURCE_REVISION = "cdfccea"
 FASTSURFER_OCI_DIGEST = "sha256:8db4881c12961a7d6e2c8ed879f6207fbba82d1668c1d64bef281512cebbe1e5"
 FASTSURFER_FREESURFER_BUILD = "freesurfer-linux-ubuntu22_x86_64-7.4.1-20230614-7eb8460"
+FASTSURFER_VOXEL_SIZE_MM = 1.0
 NEUROLIT_VERSION = "0.6.1"
 NEUROLIT_RECORD = "https://doi.org/10.5281/zenodo.14510136"
 NEUROLIT_CHECKPOINTS = {
@@ -49,6 +50,7 @@ def lesion_reconstruction_contract() -> dict[str, object]:
         "fastsurfer_source_revision": FASTSURFER_SOURCE_REVISION,
         "fastsurfer_oci_digest": FASTSURFER_OCI_DIGEST,
         "fastsurfer_freesurfer_build": FASTSURFER_FREESURFER_BUILD,
+        "fastsurfer_voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
         "neurolit_version": NEUROLIT_VERSION,
         "neurolit_record": NEUROLIT_RECORD,
         "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,

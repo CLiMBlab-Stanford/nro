@@ -157,8 +157,11 @@ part of the scientific artifact contract.
 `freesurfer_subjects_dir` and `fs_subject` override FreeSurfer storage and identity.
 The initial lesion method pins the SynthStroke model, source and model revisions,
 model hashes, 1 mm inference grid, sliding-window settings, probability
-threshold, test-time augmentation, FastSurfer version, and surface-boundary
-policy in code. Install the optional Python stack with `./install --with-lesion`.
+threshold, test-time augmentation, FastSurfer version, 1 mm FastSurfer
+reconstruction grid, and surface-boundary policy in code. The surface grid
+matches conventional FreeSurfer conformation; lesion detection and the public
+lesion mask retain the source anatomical grid. Install the optional Python stack
+with `./install --with-lesion`.
 When `masker_command` is `null`, anatomy runs its built-in adapter with the
 installed Python environment and the checksum-verified model in
 `synthstroke_data`. The worker never contacts Hugging Face. An override must

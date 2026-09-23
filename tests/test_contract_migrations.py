@@ -38,12 +38,12 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration is not None
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 3
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 4
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, _ = migrate_contract(_anat_contract(version=3))
+    migrated, _ = migrate_contract(_anat_contract(version=4))
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
@@ -118,10 +118,40 @@ def test_canonical_contract_distinguishes_revised_anatomical_methods() -> None:
 
 def test_lesion_true_remains_scientifically_distinct() -> None:
     ordinary, _ = migrate_contract(_anat_contract())
-    lesioned, _ = migrate_contract(_anat_contract(version=3, lesion=True))
+    lesioned, _ = migrate_contract(_anat_contract(version=4, lesion=True))
 
     assert ordinary != lesioned
     assert lesioned["processing"]["source_markup"]["lesion"] is True
+
+
+def test_historical_lesion_resolution_is_not_imputed_as_current_policy() -> None:
+    historical = _anat_contract(version=3, lesion=True)
+    historical["processing"]["lesion_reconstruction"] = {"surface_backend": "FastSurfer-LIT"}
+    current = _anat_contract(version=4, lesion=True)
+    current["processing"]["lesion_reconstruction"] = {"surface_backend": "FastSurfer-LIT"}
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+
+    assert (
+        migrated_historical["processing"]["lesion_reconstruction"]["fastsurfer_voxel_size_mm"]
+        == INDETERMINATE
+    )
+    assert (
+        migrated_current["processing"]["lesion_reconstruction"]["fastsurfer_voxel_size_mm"] == 1.0
+    )
+
+
+def test_lesion_resolution_migration_leaves_ordinary_anatomy_unchanged() -> None:
+    historical = _anat_contract(version=3, lesion=False)
+    historical["processing"]["surface_reconstruction"] = {"backend": "FreeSurfer"}
+    current = _anat_contract(version=4, lesion=False)
+    current["processing"]["surface_reconstruction"] = {"backend": "FreeSurfer"}
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+
+    assert migrated_historical == migrated_current
 
 
 def test_add_field_distinguishes_current_default_from_historical_value() -> None:
