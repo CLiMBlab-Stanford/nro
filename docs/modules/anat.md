@@ -31,15 +31,19 @@ selected sources before comparing subjects with different acquisition schemes.
 1. Resolve the site's gradient-unwarping policy from inherited BIDS metadata.
    A matching `unwarp` profile runs HCP gradient correction unless the metadata
    already reports `NonlinearGradientCorrection: true`. Unmatched acquisitions
-   pass through unchanged. SynthStrip estimates a brain mask on each full-head
-   image. ANTs N4 uses that mask to fit the bias field, retains the field as a
-   private intermediate, and corrects the full image. Applying the same mask
-   then creates the brain-extracted session copy without changing its grid.
+   pass through unchanged. Source BIDS anatomicals are already skull-stripped
+   to prevent identifiable facial anatomy from entering the dataset. SynthStrip
+   estimates a brain mask on each source image. ANTs N4 uses that mask to fit
+   the bias field, retains the field as a private intermediate, and corrects the
+   source image. Applying the same mask then standardizes the brain boundary
+   without changing its grid.
 2. Select or combine T1w and T2w acquisitions independently. Estimate a rigid
    T1w-to-ACPC transform with ANTs mutual-information registration. Construct a
    deterministic template-oriented grid around the transformed anatomical mask
    at the selected source resolution. Include a 5 mm margin, verify mask
-   coverage, and resample the T1w once. ANTs affine files encode the
+   coverage, and resample the T1w once with cubic B-spline interpolation.
+   Resample the mask separately with nearest-neighbor interpolation and reapply
+   it before publication. ANTs affine files encode the
    fixed-to-moving map used for resampling, so grid construction inverts that
    map when projecting source-mask points into ACPC space.
    Publish both transform directions and numerical pose checks. If no T1w exists,
@@ -48,9 +52,11 @@ selected sources before comparing subjects with different acquisition schemes.
    ACPC T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
    inverse transforms and the optional T1w/T2w ratio.
 4. Run FreeSurfer 7.4.1 from its pinned official image. `autorecon1` receives
-   the ACPC reference with `-noskullstrip`; nro installs the SynthStrip result
-   as `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and
-   `autorecon3`. The reconstruction has a validated directory completion boundary.
+   the ACPC reference with `-noskullstrip`; nro resamples the binary SynthStrip
+   mask to FreeSurfer's conformed grid with nearest-neighbor interpolation and
+   applies it to FreeSurfer's normalized `T1.mgz`. The result becomes
+   `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and `autorecon3`.
+   The reconstruction has a validated directory completion boundary.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric
    values are in `nro.modules.anat.constants`; they are not learned tissue probabilities.
@@ -66,17 +72,18 @@ selected sources before comparing subjects with different acquisition schemes.
    then SyN with radius-4 cross-correlation. Linear stages use
    `1000x500x250x0` iterations; SyN uses `100x70x50x20`. Both use shrink factors
    `8x4x2x1` and smoothing `3x2x1x0vox`. Registration uses brain masks,
-   histogram matching, 0.5–99.5% winsorization, and Lanczos-windowed sinc
-   interpolation. These schedules are implementation constants, not YAML keys.
+   histogram matching, and 0.5–99.5% winsorization. Registration-check images use
+   cubic B-spline interpolation. These schedules are implementation constants,
+   not YAML keys.
 7. Validate and publish the anatomical manifest. Session copies and subject-level
    results have separate paths; the subject manifest identifies the complete
    public result set, including the FreeSurfer directory.
 
 For a participant marked `lesion: true`, steps 4 and 5 use a separate fixed
 graph. nro's SynthStroke adapter estimates a stroke-lesion mask on the
-selected, bias-corrected full-head ACPC T1w image. A separately extracted brain
-mask supports pose registration. FastSurfer receives an otherwise matched
-full-head image before N4 bias correction, as required by its input contract.
+selected, bias-corrected ACPC T1w image. A separately extracted brain mask
+supports pose registration. FastSurfer receives an otherwise matched source
+image before N4 bias correction, as required by its input contract.
 Mechanical checks reject an empty, nonfinite,
 misregistered, or implausibly large mask and report overlap with the nonzero
 anatomical support for review. FastSurfer-LIT inpaints the mask, runs

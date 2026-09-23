@@ -171,10 +171,64 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
     assert destination.parent.is_dir()
 
 
+def test_acpc_resampling_separates_intensity_and_mask_interpolation(tmp_path: Path) -> None:
+    common = {
+        "source": tmp_path / "source.nii.gz",
+        "reference": tmp_path / "reference.nii.gz",
+        "transform": tmp_path / "transform.mat",
+        "env": {},
+        "force": False,
+    }
+    intensity = anat_steps._create_acpc_resampling_step(
+        **common,
+        output=tmp_path / "intensity.nii.gz",
+    )
+    mask = anat_steps._create_acpc_resampling_step(
+        **common,
+        output=tmp_path / "mask.nii.gz",
+        label=True,
+    )
+
+    assert "BSpline[3]" in intensity.command
+    assert "NearestNeighbor" in mask.command
+    assert intensity.scientific_signature != mask.scientific_signature
+
+
+def test_anatomical_registration_qc_uses_bspline_interpolation(tmp_path: Path) -> None:
+    step = anat_steps._create_mni_qc_image_step(
+        input_image=tmp_path / "moving.nii.gz",
+        reference=tmp_path / "fixed.nii.gz",
+        transform=tmp_path / "transform.h5",
+        output=tmp_path / "qc.nii.gz",
+        from_space="ACPC",
+        to_space="MNI152NLin2009cAsym",
+        env={},
+        force=False,
+    )
+
+    assert "BSpline[3]" in step.command
+    assert "LanczosWindowedSinc" not in step.command
+
+
+def test_acpc_finalization_remasks_without_reflecting_negative_values(tmp_path: Path) -> None:
+    step = anat_steps._create_finalize_acpc_anatomy_step(
+        source=tmp_path / "resampled.nii.gz",
+        mask=tmp_path / "mask.nii.gz",
+        output=tmp_path / "anatomy.nii.gz",
+        env={},
+        force=False,
+    )
+
+    assert "-mas" in step.command
+    assert "-abs" not in step.command
+
+
 def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> None:
     t1w = tmp_path / "input" / "sub-1_T1w.nii.gz"
     t1w.parent.mkdir()
     t1w.write_bytes(b"image")
+    brain_mask = tmp_path / "input" / "sub-1_mask.nii.gz"
+    brain_mask.write_bytes(b"mask")
     image = tmp_path / "fastsurfer.sif"
     image.write_bytes(b"container")
     license_file = tmp_path / "license.txt"
@@ -187,6 +241,10 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> No
         command = list(command)
         calls.append(command)
         if "mri_vol2vol" in command:
+            path = subject_dir / "mri" / "brainmask.external.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "mri_mask" in command:
             path = subject_dir / "mri" / "brainmask.auto.mgz"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"mask")
@@ -202,6 +260,7 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> No
         env={},
         t1w=t1w,
         t2w=None,
+        brain_mask=brain_mask,
         subjects_dir=subjects_dir,
         fs_subject="sub-1",
         runtime="singularity",
@@ -212,13 +271,15 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> No
     assert step.action is not None
     step.action()
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert all(call[:3] == ["singularity", "exec", "--cleanenv"] for call in calls)
     assert all(any("export TMPDIR=/tmp" in item for item in call) for call in calls)
     assert "-autorecon1" in calls[0]
     assert "-noskullstrip" in calls[0]
     assert "mri_vol2vol" in calls[1]
-    assert "-autorecon2" in calls[2]
-    assert "-autorecon3" in calls[2]
-    assert "-noskullstrip" in calls[2]
+    assert "nearest" in calls[1]
+    assert "mri_mask" in calls[2]
+    assert "-autorecon2" in calls[3]
+    assert "-autorecon3" in calls[3]
+    assert "-noskullstrip" in calls[3]
     assert step.scientific_signature

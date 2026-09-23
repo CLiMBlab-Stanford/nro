@@ -372,7 +372,7 @@ def main(
 
     rows = registered_rows(Path(BIDS_PATH))
     if rows is not None:
-        from nro.configuration.site import CHECKOUT, settings
+        from nro.configuration.site import CHECKOUT, installation_record, settings
         from nro.orchestration.branch_store import BranchStore
         from nro.orchestration.branches import BranchPaths
 
@@ -382,7 +382,7 @@ def main(
         if name == "main":
             from nro.orchestration.releases import ReleaseStore
 
-            ReleaseStore(branches).require_approved(CHECKOUT)
+            ReleaseStore(branches).require_installed(CHECKOUT, installation_record())
         selected = [
             row
             for row in rows

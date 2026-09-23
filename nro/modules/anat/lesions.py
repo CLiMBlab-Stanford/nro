@@ -453,7 +453,6 @@ def create_fastsurfer_lit_step(
                 "--fsaparc",
                 "--no_cereb",
                 "--no_hypothal",
-                "--no_cc",
             ],
             direct=True,
             stream_output=True,
@@ -481,6 +480,7 @@ def create_fastsurfer_lit_step(
             "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
             "neurolit_batch_size": 8,
             "freesurfer_parcellation": True,
+            "fastsurfer_options": ["fsaparc", "no_cereb", "no_hypothal"],
         },
     )
 

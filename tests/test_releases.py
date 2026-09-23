@@ -111,6 +111,44 @@ def test_recorded_release_check_rejects_a_changed_head(release):
         store.require_recorded(root, row, check_head=True)
 
 
+def test_static_installation_uses_its_recorded_release_without_reading_git(release):
+    root, store = release
+    row = store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
+    installation = {
+        "mode": "shared",
+        "ready": True,
+        "checkout": str(root),
+        "release": row,
+    }
+    commit_version(root, "0.0.2")
+
+    assert store.require_installed(root, installation) == row
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        {"ready": False},
+        {"mode": "personal"},
+        {"checkout": "/another/checkout"},
+        {"release": None},
+    ),
+)
+def test_installed_release_requires_a_ready_matching_shared_record(release, change):
+    root, store = release
+    row = store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
+    installation = {
+        "mode": "shared",
+        "ready": True,
+        "checkout": str(root),
+        "release": row,
+        **change,
+    }
+
+    with pytest.raises(ValueError, match="ready shared installation"):
+        store.require_installed(root, installation)
+
+
 def test_initial_release_can_use_explicit_bootstrap_attestation(release):
     root, store = release
     git(root, "tag", "-a", "v0.0.1", "-m", "Synthetic initial release")
