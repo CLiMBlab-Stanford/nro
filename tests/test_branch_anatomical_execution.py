@@ -303,7 +303,9 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     assert "desc-preproc_T1w" in mask_step.inputs[0].name
     assert "desc-fastSurferInput_T1w" in fastsurfer_step.inputs[0].name
     assert fastsurfer_step.scientific_signature
-    assert any("selectedFullHead" in path.name for step in graph.steps for path in step.outputs)
+    assert any(
+        "selectedBiasCorrected" in path.name for step in graph.steps for path in step.outputs
+    )
     manifest = next(step for step in graph.steps if step.completion_boundary)
     assert any("desc-inpainted_T1w" in str(path) for path in manifest.inputs)
     assert any("desc-lesionQC.png" in str(path) for path in manifest.inputs)
