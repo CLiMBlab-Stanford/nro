@@ -340,6 +340,10 @@ def build_module(
             current = read_json(configuration_snapshot)
         except (OSError, ValueError, TypeError):
             return False, "Anatomical configuration snapshot is missing or unreadable."
+        # Snapshots created before surface backends were configurable used
+        # FreeSurfer implicitly. Preserve that meaning without rewriting the
+        # private record.
+        current.setdefault("surface_reconstruction_engine", "freesurfer")
         # Only settings that govern the core anatomical steps belong to this
         # comparison. Other preprocessing settings must not invalidate them.
         effective = {key: current.get(key) for key in configuration}
