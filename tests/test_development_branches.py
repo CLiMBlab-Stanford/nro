@@ -134,6 +134,19 @@ def test_main_paths_and_symlink_escape(tmp_path):
         paths.output_project("../other")
 
 
+def test_main_paths_authorize_unlinking_an_external_symlink_target(tmp_path):
+    paths = BranchPaths("main", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV")
+    target = tmp_path / "outside" / "template"
+    target.mkdir(parents=True)
+    link = paths.output_project("demo") / "derivatives" / "nro" / "template"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target, target_is_directory=True)
+
+    assert paths.require_removal(link, "demo") == link
+    with pytest.raises(ValueError, match="outside"):
+        paths.require_removal(target, "demo")
+
+
 def test_overlapping_roots_rejected(tmp_path):
     with pytest.raises(ValueError, match="must not overlap"):
         BranchPaths("dev", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "BIDS/development")

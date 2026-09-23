@@ -20,6 +20,22 @@ from nro.engine import bootstrap, dependencies, installation_layers, shared_inst
 from nro.engine.site_setup import edit_settings, save_settings
 
 
+@pytest.mark.parametrize("response", ["", "y", "Y", "yes", "YES"])
+def test_setup_resource_terms_default_to_accept(monkeypatch, response):
+    from nro.bin import setup
+
+    monkeypatch.setattr("builtins.input", lambda prompt: response)
+    assert setup._accept_resource_terms()
+
+
+@pytest.mark.parametrize("response", ["n", "no", "anything else"])
+def test_setup_resource_terms_can_be_declined(monkeypatch, response):
+    from nro.bin import setup
+
+    monkeypatch.setattr("builtins.input", lambda prompt: response)
+    assert not setup._accept_resource_terms()
+
+
 @pytest.fixture
 def isolated_site(tmp_path, monkeypatch):
     path = tmp_path / "site.toml"

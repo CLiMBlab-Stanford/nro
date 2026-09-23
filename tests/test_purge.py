@@ -86,6 +86,20 @@ def test_remove_path_stops_pruning_at_nonempty_directory(tmp_path: Path) -> None
     assert retained.is_file()
 
 
+def test_remove_path_unlinks_symlink_without_removing_external_target(tmp_path: Path) -> None:
+    derivatives = tmp_path / "derivatives"
+    target = _write(tmp_path / "external" / "target.txt")
+    link = derivatives / "module" / "main" / "target-link"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    assert _remove_path(link, dry_run=False, prune_root=derivatives)
+
+    assert not link.is_symlink()
+    assert target.read_text() == "x"
+    assert derivatives.is_dir()
+
+
 def test_protected_output_index_detects_only_equal_or_descendant_paths(tmp_path: Path) -> None:
     protected = tmp_path / "derivatives" / "module" / "sub-01" / "result.nii.gz"
     sibling = tmp_path / "derivatives" / "module-other"

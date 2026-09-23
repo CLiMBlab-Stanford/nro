@@ -57,6 +57,15 @@ class ExecutionContext:
                 pass
         raise ValueError(f"Output is outside the branch-owned derivative roots: {path}")
 
+    def require_removal(self, path: Path) -> Path:
+        """Authorize deleting an output entry without following its final symlink."""
+        for private in (False, True):
+            try:
+                return self.paths.require_removal(path, self.project, private=private)
+            except ValueError:
+                pass
+        raise ValueError(f"Removal is outside the branch-owned derivative roots: {path}")
+
     def input_path(self, logical_path: Path) -> Path:
         """Resolve a selected derivative member or retain an exact raw source path."""
         logical_path = Path(logical_path).expanduser().absolute()

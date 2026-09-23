@@ -25,6 +25,11 @@ from nro.engine.dependencies import (
 from nro.engine.site_setup import edit_settings, migrate_site_configuration, save_settings
 
 
+def _accept_resource_terms() -> bool:
+    response = input("Proceed under the linked software terms? [Y/n]: ").strip().lower()
+    return response in {"", "y", "yes"}
+
+
 def _main(argv=None, *, prog="nro setup"):
     values = list(sys.argv[1:] if argv is None else argv)
     if "--resources-only" not in values:
@@ -116,10 +121,7 @@ def _main(argv=None, *, prog="nro setup"):
                 while not parent.exists():
                     parent = parent.parent
                 print(f"{key}: {shutil.disk_usage(parent).free / 2**30:.1f} GiB free")
-            if input("Proceed under the linked software terms? [y/N]: ").strip().lower() not in {
-                "y",
-                "yes",
-            }:
+            if not _accept_resource_terms():
                 raise RuntimeError("Resource setup cancelled")
         install_runtime(offline=args.offline)
         install_images(offline=args.offline, with_lesion=args.with_lesion)

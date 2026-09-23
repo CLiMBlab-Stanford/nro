@@ -12,6 +12,8 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.purge_paths import (
+    _entry_location,
+    _is_removal_within,
     _purge_attempt_logs,
     _purge_inactive_worker_logs,
     _remove_path,
@@ -21,7 +23,7 @@ from nro.orchestration.registry import Registry, utcnow
 
 def _protected_output_index(paths) -> tuple[frozenset[str], tuple[str, ...]]:
     """Resolve protected outputs once and index them for ancestor queries."""
-    exact = frozenset(str(Path(path).resolve()) for path in paths)
+    exact = frozenset(str(_entry_location(Path(path))) for path in paths)
     return exact, tuple(sorted(exact))
 
 
@@ -31,7 +33,7 @@ def _contains_protected_output(
 ) -> bool:
     """Return whether deleting path would remove an indexed protected output."""
     exact, ordered = index
-    resolved = str(path.resolve())
+    resolved = str(_entry_location(path))
     if resolved in exact:
         return True
     prefix = resolved if resolved == os.sep else resolved + os.sep
@@ -150,7 +152,7 @@ def purge(
                 path = Path(raw)
                 if not path.is_absolute() or ".." in path.parts:
                     raise ValueError("Purge paths must be normalized and absolute")
-                context.require_output(path)
+                context.require_removal(path)
                 if _contains_protected_output(path, protected):
                     raise ValueError(
                         "Purge would remove another registered work item; narrow the paths or expand the selection"
@@ -184,9 +186,7 @@ def purge(
                         for raw in item[kind]:
                             path = Path(raw)
                             targets[path] = next(
-                                root
-                                for root in roots
-                                if path.resolve().is_relative_to(root.resolve())
+                                root for root in roots if _is_removal_within(path, root)
                             )
                     groups.append((counter, targets))
                 total_paths = sum(len(targets) for _counter, targets in groups)

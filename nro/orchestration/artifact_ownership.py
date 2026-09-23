@@ -9,7 +9,7 @@ from typing import Iterable
 
 from nro.engine.bids import parse_bids_entities
 from nro.orchestration.ownership import work_item_record_path
-from nro.orchestration.purge_paths import _is_within
+from nro.orchestration.purge_paths import _entry_location, _is_entry_within
 
 RUN_IDENTITY_ENTITIES = {
     "ses",
@@ -169,13 +169,13 @@ def work_item_paths(
     derivative_paths = [
         path
         for path in dict.fromkeys(derivative_paths)
-        if any(_is_within(path, root) for root in allowed_derivative_roots)
+        if any(_is_entry_within(path, root) for root in allowed_derivative_roots)
         and path.resolve(strict=False) not in derivative_root_resolved
     ]
     work_paths = [
         path
         for path in dict.fromkeys(work_paths)
-        if _is_within(path, project_work_derivatives)
+        if _is_entry_within(path, project_work_derivatives)
         and path.resolve(strict=False) != project_work_derivatives.resolve(strict=False)
     ]
     return derivative_paths, work_paths
@@ -190,12 +190,12 @@ class OwnershipIndex:
 
     def owns(self, path: Path) -> bool:
         """Return whether a registered claim or public receipt protects a path."""
-        resolved = path.resolve(strict=False)
+        location = _entry_location(path)
         if ".nro" in path.parts:
             return True
-        if resolved in self.files:
+        if location in self.files:
             return True
-        return any(_is_within(resolved, tree) for tree in self.trees)
+        return any(_is_entry_within(path, tree) for tree in self.trees)
 
 
 def public_ownership_index(rows: Iterable[dict], *, registry, work_root: Path) -> OwnershipIndex:
@@ -211,7 +211,7 @@ def public_ownership_index(rows: Iterable[dict], *, registry, work_root: Path) -
             inventories=inventories,
         )
         for path in public:
-            if _is_within(path, registry.paths.control):
+            if _is_entry_within(path, registry.paths.control):
                 continue
             resolved = path.resolve(strict=False)
             if str(row["module"]) == "anat" and path.suffix != ".json":
@@ -219,7 +219,7 @@ def public_ownership_index(rows: Iterable[dict], *, registry, work_root: Path) -
             elif path.is_dir() and not path.is_symlink():
                 trees.add(resolved)
             else:
-                files.add(resolved)
+                files.add(_entry_location(path))
     return OwnershipIndex(frozenset(files), tuple(sorted(trees)))
 
 
