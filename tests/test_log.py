@@ -139,6 +139,32 @@ def test_default_level_collects_attempt_logs_for_matching_work_items(tmp_path: P
     assert set(unfiltered) == {anat_work_item.resolve(), func_work_item.resolve()}
 
 
+def test_running_filter_keeps_only_work_items_with_active_attempts(tmp_path: Path) -> None:
+    _bids, registry, _anat_work_item, _func_work_item, *_ = _registry_with_logs(tmp_path)
+    func = next(row for row in registry.work_item_rows() if row["module"] == "func")
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE attempts SET state='running', completed_at=NULL WHERE work_item_id=?",
+            (func["id"],),
+        )
+
+    assert log_cli._matching_work_item_ids(
+        registry,
+        projects={"demo"},
+        participants=[],
+        modules=set(),
+        workflows=set(),
+        selectors={},
+        running_only=True,
+    ) == {func["id"]}
+
+
+def test_running_option_is_available() -> None:
+    args = log_cli.build_parser(prog="nro log").parse_args(["--running"])
+
+    assert args.running is True
+
+
 def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkeypatch) -> None:
     bids, _registry, _anat_work_item, func_work_item, _anat_worker, _func_worker = (
         _registry_with_logs(tmp_path)
@@ -218,6 +244,7 @@ def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, m
     assert commands == [["/usr/bin/less", "-R", "--", str(request_log.resolve())]]
     selection = core_selection(log_cli.build_parser().parse_args(["-m", "bidsify"]))
     assert log_cli.collect_bidsify_log_paths(registry, selection) == [request_log.resolve()]
+    assert log_cli.collect_bidsify_log_paths(registry, selection, running_only=True) == []
 
 
 def test_scheduler_resolves_branch_bidsification_logs(tmp_path: Path, monkeypatch) -> None:
@@ -264,3 +291,17 @@ def test_scheduler_resolves_branch_bidsification_logs(tmp_path: Path, monkeypatc
     )
 
     assert result == {"paths": [str(request_log)]}
+    assert scheduler_logs(
+        registry,
+        checkout=checkout,
+        selection={
+            "projects": [],
+            "ingestion_projects": [],
+            "participants": ["01"],
+            "modules": ["bidsify"],
+            "workflows": [],
+            "selectors": {"ses": ("visit1",)},
+        },
+        worker_level=False,
+        running_only=True,
+    ) == {"paths": []}

@@ -369,6 +369,70 @@ class BidsRun:
     selectors: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class BidsImage:
+    """One source BIDS image with entities used by discovery commands."""
+
+    participant: str
+    session: str | None
+    datatype: str
+    suffix: str
+    entities: Mapping[str, str]
+    path: Path
+
+
+_BIDS_IMAGE_EXTENSIONS = (
+    ".nii.gz",
+    ".func.gii",
+    ".shape.gii",
+    ".label.gii",
+    ".surf.gii",
+    ".nii",
+)
+
+
+def _is_bids_image(path: Path) -> bool:
+    return any(path.name.endswith(extension) for extension in _BIDS_IMAGE_EXTENSIONS)
+
+
+def discover_bids_images(subject_dir: Path) -> tuple[BidsImage, ...]:
+    """Discover images directly within a source BIDS participant hierarchy.
+
+    Discovery accepts files in ``sub-*/DATATYPE`` and
+    ``sub-*/ses-*/DATATYPE``. It does not descend into nested copies or
+    derivative trees.
+    """
+    subject_dir = Path(subject_dir)
+    participant = subject_dir.name.removeprefix("sub-")
+    candidates = (*subject_dir.glob("*/*"), *subject_dir.glob("ses-*/*/*"))
+    images: list[BidsImage] = []
+    for path in sorted(set(candidates)):
+        if not path.is_file() or not _is_bids_image(path):
+            continue
+        relative = path.relative_to(subject_dir)
+        session = (
+            relative.parts[0].removeprefix("ses-") if relative.parts[0].startswith("ses-") else None
+        )
+        datatype = relative.parts[-2]
+        entities = parse_bids_entities(path.name)
+        entities.setdefault("sub", participant)
+        if session is not None:
+            entities.setdefault("ses", session)
+        suffix = bids_suffix(path)
+        entities.update(datatype=datatype, suffix=suffix)
+        images.append(
+            BidsImage(
+                participant=participant,
+                session=session,
+                datatype=datatype,
+                suffix=suffix,
+                entities=entities,
+                path=path,
+            )
+        )
+    return tuple(images)
+
+
 def run_arguments(run: BidsRun) -> tuple[str, ...]:
     """Build deterministic command-line selectors for one BIDS run."""
     return ("--run", *(f"{key}={value}" for key, value in sorted(run.entities.items())))

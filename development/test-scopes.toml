@@ -19,8 +19,8 @@ boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invarianc
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 
 [scope.commands]
-paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_log.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
-tests = ["tests/test_cli.py", "tests/test_user_commands.py"]
+paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_log.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
+tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py", "tests/test_gc.py"]
 boundaries = ["tests/test_orchestration_planner.py"]
 
 [scope.installation]
@@ -36,7 +36,7 @@ boundaries = ["tests/test_scheduler_service.py"]
 
 [scope.anat]
 paths = ["nro/modules/anat/**", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_synthstroke_adapter.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
-tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
+tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_anat_fastsurfer.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
 boundaries = ["tests/test_branch_functional_execution.py", "tests/test_scene.py"]
 downstream = ["func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 

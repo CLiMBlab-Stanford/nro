@@ -166,11 +166,14 @@ Browse the current attempt logs for matching work items in `less`. Pass
 `--worker` to browse the Slurm worker logs instead. Logs separate command stdout
 and stderr; a message on stderr is not by itself a failed command. Worker logs
 are not one-to-one with derivatives because workers execute multiple work items.
+Pass `--running` to keep only matching work that currently has a running attempt.
+The option composes with the standard selectors.
 
 Use `nro log -m bidsify` to browse the dedicated logs for matching bidsification
 requests. In this command, `bidsify` is a logging selector, not a scientific
 module. Project and participant selectors apply, and `-r ses=LABEL` selects a
 BIDS session. `--worker` does not change bidsification log selection.
+For bidsification, `--running` keeps only sessions with an active ingestion stage.
 
 ## `nro stop`
 

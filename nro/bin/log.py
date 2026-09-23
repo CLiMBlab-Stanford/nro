@@ -27,11 +27,17 @@ def _matching_work_item_ids(
     workflows: set[str],
     selectors: dict[str, tuple[str, ...] | None],
     lineages: set[str] | None = None,
+    running_only: bool = False,
 ) -> set[int]:
     participant_set = {value.removeprefix("sub-") for value in participants}
     project_set = projects or {registry.paths.project}
     result: set[int] = set()
-    for row in registry.work_item_rows(read_only=True):
+    rows = (
+        registry.work_item_status_snapshot(read_only=True)
+        if running_only
+        else registry.work_item_rows(read_only=True)
+    )
+    for row in rows:
         if str(row["project"]) not in project_set:
             continue
         if participant_set and str(row["participant"]) not in participant_set:
@@ -46,6 +52,8 @@ def _matching_work_item_ids(
             continue
         entities = json.loads(row["entities_json"])
         if selectors and not matches_selectors(entities, selectors):
+            continue
+        if running_only and row.get("status") != "Running":
             continue
         result.add(int(row["id"]))
     return result
@@ -98,7 +106,13 @@ def collect_log_paths(
     return _existing(registry.paths.workers / f"slurm-{job_id}.log" for job_id in job_ids)
 
 
-def collect_bidsify_log_paths(registry: Registry, selection, *, branch: str = "main") -> list[Path]:
+def collect_bidsify_log_paths(
+    registry: Registry,
+    selection,
+    *,
+    branch: str = "main",
+    running_only: bool = False,
+) -> list[Path]:
     """Resolve dedicated ingestion logs using the selectors that apply to BIDS sessions."""
     if (
         selection.workflows
@@ -120,6 +134,7 @@ def collect_bidsify_log_paths(registry: Registry, selection, *, branch: str = "m
         if (not selection.projects or row["project"] in selection.projects)
         and (not selection.participants or row["participant"] in selection.participants)
         and (not sessions or row["session"] in sessions)
+        and (not running_only or row.get("state") == "running")
     )
 
 
@@ -135,6 +150,11 @@ def build_parser(*, prog: str = "nro.bin.log") -> argparse.ArgumentParser:
         "--worker",
         action="store_true",
         help="Browse Slurm worker logs instead of current work-item logs",
+    )
+    parser.add_argument(
+        "--running",
+        action="store_true",
+        help="Browse logs only for matching work that is currently running",
     )
     return parser
 
@@ -189,6 +209,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
                 selectors=selectors,
             ),
             worker_level=args.worker,
+            running_only=args.running,
         )
         _page_logs([Path(path) for path in result["paths"]], worker_level=args.worker)
         return
@@ -202,6 +223,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         or selection.workflows
         or selection.lineages
         or selectors
+        or args.running
     )
     paths = (
         collect_log_paths(
@@ -214,6 +236,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
                 workflows=set(selection.workflows),
                 lineages=set(selection.lineages),
                 selectors=selectors,
+                running_only=args.running,
             ),
             worker_level=args.worker,
             work_item_filtered=work_item_filtered,
@@ -222,7 +245,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         else []
     )
     if bidsify_selected:
-        paths.extend(collect_bidsify_log_paths(registry, selection))
+        paths.extend(collect_bidsify_log_paths(registry, selection, running_only=args.running))
     _page_logs(
         paths,
         worker_level=args.worker,

@@ -123,6 +123,36 @@ process running from a snapshot retains its own source and site file; a later
 command can reclaim those after it exits. Unknown entries and partial capture
 directories are not automatically removed.
 
+## `nro gc`
+
+Remove unclaimed files from nro's public derivative and private WORK namespaces
+while preserving registered artifacts and work directories:
+
+```bash
+nro gc -P nptl -p t20 -m clean --dry-run
+nro gc -P nptl -p t20 -m clean
+```
+
+`gc` accepts the same artifact selectors as `purge`. Selectors limit the
+directories inspected; they do not make other registered artifacts eligible for
+deletion. A bare invocation checks every project and module owned by the current
+branch. Inherited branch data lies outside the branch's writable roots and is not
+collected.
+
+The command reports public and WORK files separately and asks for confirmation.
+Use `-f`/`--force` to skip the prompt, `--dry-run` to report without deleting, or
+`--json` for structured output. Collection refuses a scope with queued, running,
+or cancel-requested attempts. It verifies the candidate set again after
+confirmation and removes directories made empty by the selected files.
+
+Ownership is conservative. Fixed artifacts are protected by exact paths or
+filename prefixes. Directory-producing artifacts and registered work-item
+directories protect their complete directory trees because third-party tools can
+create files that are not known in advance. As a result, `gc` removes orphaned
+lineages and unmatched files in shared directories but does not remove an
+unrecognized file placed inside an owned directory tree. Control records, logs,
+and executable caches are outside this command's scope.
+
 ## `nro publish`
 
 ```bash

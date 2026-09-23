@@ -20,6 +20,8 @@ COMMAND_HELP = {
     "bidsify": "Download, review, convert, and approve BIDS sessions.",
     "create": "Create a model, config, workflow, or source-markup definition.",
     "edit": "Edit an existing model, config, workflow, or source-markup definition.",
+    "find": "List source BIDS images that match entity selectors.",
+    "gc": "Remove unclaimed files from nro derivative namespaces.",
     "delete": "Delete a definition without removing derivatives.",
     "definitions": "Create or validate an external definitions store.",
     "models": "Inspect, validate, register, and compile task models.",

@@ -74,6 +74,10 @@ TASK_GUIDES = {
 
           nro status --update -P PROJECT -p PARTICIPANT
 
+        Find source BIDS images without consulting the registry:
+
+          nro find -P PROJECT -p PARTICIPANT -r task='Rest.*'
+
         Open matching instance logs or worker logs:
 
           nro log -P PROJECT -p PARTICIPANT -m MODULE
@@ -134,6 +138,11 @@ TASK_GUIDES = {
         Preview deletion interactively:
 
           nro purge -P PROJECT -p PARTICIPANT -m MODULE
+
+        Remove unclaimed public and WORK derivative files while preserving
+        registered work:
+
+          nro gc -P PROJECT -p PARTICIPANT -m MODULE
 
         Rebuild registry knowledge from existing controlled artifacts:
 
