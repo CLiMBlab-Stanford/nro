@@ -44,9 +44,10 @@ def _authority(registry, checkout, source, pr, attest):
         raise ValueError("Only an ancestor checkout can accept development artifacts")
     release = None
     if target == "main":
+        from nro.configuration.site import installation_record
         from nro.orchestration.releases import ReleaseStore
 
-        release = ReleaseStore(branches).require_approved(checkout)
+        release = ReleaseStore(branches).require_installed(checkout, installation_record(checkout))
     return topology, target, release
 
 

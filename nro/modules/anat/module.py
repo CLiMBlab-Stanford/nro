@@ -84,6 +84,7 @@ from .steps import (
     _create_acpc_resampling_step,
     _create_apply_brain_mask_step,
     _create_copy_or_average_step,
+    _create_finalize_acpc_anatomy_step,
     _create_inverse_affine_step,
     _create_label_mask_step,
     _create_metric_conversion_step,
@@ -377,7 +378,7 @@ def build_module(
         sub_id=inputs.sub_id,
         execution_context=execution_context,
     )
-    full_head_sources: dict[Path, Path] = {}
+    gradient_corrected_sources: dict[Path, Path] = {}
     for plan in session_plans:
         runner.add_step(
             create_copy_file_step(
@@ -411,7 +412,7 @@ def build_module(
                     force=opts.overwrite,
                 )
             )
-        full_head_sources[plan.source.image] = n4_input
+        gradient_corrected_sources[plan.source.image] = n4_input
         plan.metadata["GradientDistortionCorrection"] = gradient_resolution.scientific_record()
         preliminary_brain = plan.staged_preprocessed.with_name(
             plan.staged_preprocessed.name.replace("_desc-preproc_", "_desc-preN4Brain_")
@@ -476,9 +477,9 @@ def build_module(
     copied_session_files = [str(plan.output) for plan in session_plans]
     copied_t1 = [item for item in copied_images if item.modality == "T1w"]
     copied_t2 = [item for item in copied_images if item.modality == "T2w"]
-    full_head_t1 = [
+    gradient_corrected_t1 = [
         AnatImage(
-            image=full_head_sources[plan.source.image],
+            image=gradient_corrected_sources[plan.source.image],
             json=plan.source.json,
             modality="T1w",
             entities=dict(plan.source.entities),
@@ -501,18 +502,18 @@ def build_module(
         "sources": [],
         "strategy": opts.selection_strategy,
     }
-    lesion_full_t1_selected: Optional[Path] = None
+    lesion_bias_corrected_t1_selected: Optional[Path] = None
     lesion_raw_t1_selected: Optional[Path] = None
     lesion_selected_t1_mask: Optional[Path] = None
     if subj_t1_selected is not None:
         if opts.lesion:
             lesion_raw_t1_selected = reference_work / f"{inputs.sub_id}_desc-selectedRaw_T1w.nii.gz"
-            lesion_full_t1_selected = (
-                reference_work / f"{inputs.sub_id}_desc-selectedFullHead_T1w.nii.gz"
+            lesion_bias_corrected_t1_selected = (
+                reference_work / f"{inputs.sub_id}_desc-selectedBiasCorrected_T1w.nii.gz"
             )
-            full_t1_step, t1_meta = _create_copy_or_average_step(
+            source_t1_step, t1_meta = _create_copy_or_average_step(
                 env=env,
-                images=full_head_t1,
+                images=gradient_corrected_t1,
                 modality="T1w",
                 strategy=opts.selection_strategy,
                 out_img=lesion_raw_t1_selected,
@@ -522,7 +523,7 @@ def build_module(
             t1_meta["sources"] = [
                 str(plan.source.image) for plan in session_plans if plan.source.modality == "T1w"
             ]
-            runner.add_step(full_t1_step)
+            runner.add_step(source_t1_step)
             lesion_selected_t1_mask = (
                 reference_work / f"{inputs.sub_id}_desc-selectedT1w_mask.nii.gz"
             )
@@ -546,17 +547,17 @@ def build_module(
                 create_n4_bias_correction_step(
                     env=env,
                     in_img=lesion_raw_t1_selected,
-                    out_img=lesion_full_t1_selected,
+                    out_img=lesion_bias_corrected_t1_selected,
                     mask=lesion_selected_t1_mask,
                     bias_field=lesion_bias_field,
                     force=opts.overwrite,
                     validate_gzip=True,
-                    step_name="Bias Correct Selected Full-Head T1w",
+                    step_name="Bias Correct Selected Source T1w",
                 )
             )
             runner.add_step(
                 _create_apply_brain_mask_step(
-                    source=lesion_full_t1_selected,
+                    source=lesion_bias_corrected_t1_selected,
                     mask=lesion_selected_t1_mask,
                     output=subj_t1_selected,
                     env=env,
@@ -591,7 +592,7 @@ def build_module(
         )
         runner.add_step(t2_step)
 
-    pose_source = lesion_full_t1_selected or subj_t1_selected or subj_t2_selected
+    pose_source = lesion_bias_corrected_t1_selected or subj_t1_selected or subj_t2_selected
     if pose_source is None:
         raise SystemExit("No subject-level anatomical image available after selection.")
     pose_modality = "T1w" if subj_t1_selected is not None else "T2w"
@@ -668,11 +669,33 @@ def build_module(
     )
     pose_output = subj_t1 or subj_t2
     assert pose_output is not None
+    acpc_resampled = acpc_work / f"{inputs.sub_id}_space-ACPC_desc-resampled_{pose_modality}.nii.gz"
+    acpc_mask = acpc_work / f"{inputs.sub_id}_space-ACPC_desc-brain_mask.nii.gz"
     runner.add_step(
         _create_acpc_resampling_step(
             source=pose_source,
             reference=acpc_grid,
             transform=source_to_acpc,
+            output=acpc_resampled,
+            env=env,
+            force=opts.overwrite,
+        )
+    )
+    runner.add_step(
+        _create_acpc_resampling_step(
+            source=pose_mask,
+            reference=acpc_grid,
+            transform=source_to_acpc,
+            output=acpc_mask,
+            env=env,
+            force=opts.overwrite,
+            label=True,
+        )
+    )
+    runner.add_step(
+        _create_finalize_acpc_anatomy_step(
+            source=acpc_resampled,
+            mask=acpc_mask,
             output=pose_output,
             env=env,
             force=opts.overwrite,
@@ -928,6 +951,7 @@ def build_module(
                 env=env,
                 t1w=subj_t1,
                 t2w=subj_t2,
+                brain_mask=acpc_mask,
                 subjects_dir=opts.freesurfer_subjects_dir,
                 fs_subject=opts.fs_subject,
                 runtime=opts.gradient_unwarp_runtime,

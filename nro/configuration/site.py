@@ -561,7 +561,7 @@ def require_execution_support(
 
         control = Path(settings()[0]["registry"])
         if implementation_path(control).exists():
-            ReleaseStore(BranchStore(control)).require_approved(CHECKOUT)
+            ReleaseStore(BranchStore(control)).require_installed(CHECKOUT, installation_record())
 
 
 def require_definition_write(path: Path | None = None, *, creating_store: bool = False) -> None:

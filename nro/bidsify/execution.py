@@ -33,7 +33,7 @@ def launch_review(argv: list[str]) -> None:
     if name == "main":
         from nro.orchestration.releases import ReleaseStore
 
-        release = ReleaseStore(BranchStore(control)).require_approved(CHECKOUT)
+        release = ReleaseStore(BranchStore(control)).require_installed(CHECKOUT, record)
     with ExitStack() as stack:
         descriptors = []
         if record:
@@ -101,7 +101,10 @@ def validate_execution(pin: dict, *, current_source: bool = True) -> BranchPaths
     if name == "main":
         from nro.orchestration.releases import ReleaseStore
 
-        if ReleaseStore(branches).require_approved(Path(pin["checkout"])) != pin["release"]:
+        if (
+            ReleaseStore(branches).require_recorded(Path(pin["checkout"]), pin["release"])
+            != pin["release"]
+        ):
             raise ValueError("Production ingestion lacks its approved main release")
     return BranchPaths(name, *(Path(values[key]) for key in ("bids", "work", "development")))
 

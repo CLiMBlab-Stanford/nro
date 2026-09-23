@@ -72,6 +72,9 @@ def pose_normalization_contract() -> dict[str, object]:
         "margin_mm": 5.0,
         "resolution": "selected_anatomical",
         "transform_direction": "moving_to_fixed",
+        "intensity_interpolation": "cubic_bspline",
+        "mask_interpolation": "nearest_neighbor",
+        "post_resampling_mask": True,
     }
 
 

@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
-from nro.configuration.site import CHECKOUT, protected_site_fingerprint, settings
+from nro.configuration.site import (
+    CHECKOUT,
+    installation_record,
+    protected_site_fingerprint,
+    settings,
+)
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.compiled_request import encode_spec, export_workflow
@@ -90,7 +95,7 @@ def register_requests(
     if name == "main":
         from nro.orchestration.releases import ReleaseStore
 
-        release = ReleaseStore(branches).require_approved(CHECKOUT)
+        release = ReleaseStore(branches).require_installed(CHECKOUT, installation_record())
     with cache_lock(control):
         source, site = capture_execution(
             control,

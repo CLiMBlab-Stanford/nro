@@ -18,7 +18,9 @@ from nro.versioning import parse_release_version, require_release_advance
 def _git(checkout: Path, *args: str) -> str:
     result = subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True)
     if result.returncode:
-        raise ValueError("Cannot verify release Git state: " + " ".join(args[:2]))
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[-1]}" if detail else ""
+        raise ValueError("Cannot verify release Git state: " + " ".join(args[:2]) + suffix)
     return result.stdout.strip()
 
 
@@ -297,3 +299,15 @@ class ReleaseStore:
         if check_head and _git(checkout, "rev-parse", "HEAD") != expected["commit"]:
             raise ValueError("Main checkout changed; rerun shared installation maintenance")
         return matches[0]
+
+    def require_installed(self, checkout: Path, installation: dict) -> dict:
+        """Validate the release pinned by a ready static shared installation."""
+        checkout = Path(checkout).expanduser().resolve()
+        if (
+            installation.get("mode") != "shared"
+            or not installation.get("ready")
+            or installation.get("checkout") != str(checkout)
+            or not isinstance(installation.get("release"), dict)
+        ):
+            raise ValueError("A ready shared installation with a recorded release is required")
+        return self.require_recorded(checkout, installation["release"])

@@ -220,6 +220,8 @@ def test_fastsurfer_lit_uses_pinned_read_only_model_data(tmp_path, monkeypatch) 
         "/output/sub-test/mri/inpainted.lit.nii.gz"
     )
     assert "--no_cereb" in reconstruct
+    assert "--no_hypothal" in reconstruct
+    assert "--no_cc" not in reconstruct
     assert inpaint_options == {"direct": True, "stream_output": True}
     assert reconstruct_options == {"direct": True, "stream_output": True}
     assert set(data / "LIT" / "weights" / name for name in NEUROLIT_CHECKPOINTS).issubset(

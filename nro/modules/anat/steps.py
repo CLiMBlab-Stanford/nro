@@ -202,6 +202,27 @@ def _create_apply_brain_mask_step(
     )
 
 
+def _create_finalize_acpc_anatomy_step(
+    *,
+    source: Path,
+    mask: Path,
+    output: Path,
+    env: dict[str, str],
+    force: bool,
+) -> Step:
+    """Restore a crisp ACPC brain boundary after continuous resampling."""
+    return Step.command_step(
+        ["fslmaths", str(source), "-mas", str(mask), str(output)],
+        name="Finalize ACPC Anatomical Image",
+        outputs=(output,),
+        inputs=(source, mask),
+        force=force,
+        env=env,
+        prepare=lambda: output.parent.mkdir(parents=True, exist_ok=True),
+        parameters={"mask_application": "nearest_neighbor_binary_mask"},
+    )
+
+
 def _strip_freesurfer_volgeom_metadata(
     *,
     surf_in: Path,
@@ -397,7 +418,7 @@ def _create_acpc_registration_step(
             "--output",
             f"[{prefix}]",
             "--interpolation",
-            "LanczosWindowedSinc",
+            "BSpline[3]",
             "--use-histogram-matching",
             "1",
             "--winsorize-image-intensities",
@@ -482,7 +503,7 @@ def _create_acpc_resampling_step(
             "-o",
             str(output),
             "-n",
-            "NearestNeighbor" if label else "LanczosWindowedSinc",
+            "NearestNeighbor" if label else "BSpline[3]",
             "-t",
             str(transform),
         ],
@@ -492,7 +513,7 @@ def _create_acpc_resampling_step(
         inputs=(source, reference, transform),
         force=force,
         prepare=lambda: output.parent.mkdir(parents=True, exist_ok=True),
-        parameters={"interpolation": "nearest" if label else "LanczosWindowedSinc"},
+        parameters={"interpolation": "nearest" if label else "cubic_bspline"},
     )
 
 
@@ -691,6 +712,7 @@ def _create_recon_all_step(
     env: dict[str, str],
     t1w: Optional[Path],
     t2w: Optional[Path],
+    brain_mask: Path,
     subjects_dir: Path,
     fs_subject: str,
     runtime: str,
@@ -711,7 +733,7 @@ def _create_recon_all_step(
             f"{subjects_dir}:/subjects",
             f"{license_file}:/license.txt:ro",
         ]
-        inputs = [path for path in (t1w, t2w) if path is not None]
+        inputs = [path for path in (t1w, t2w, brain_mask) if path is not None]
         mounted: dict[Path, str] = {}
         for index, path in enumerate(inputs, start=1):
             parent = path.parent.resolve()
@@ -767,6 +789,8 @@ def _create_recon_all_step(
             "-noskullstrip",
         ]
         run_child(container_command(first), direct=True, env=env, stream_output=True)
+        mask_arg = f"NRO:{brain_mask}"
+        conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
         brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
         conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
         run_child(
@@ -774,15 +798,23 @@ def _create_recon_all_step(
                 [
                     "mri_vol2vol",
                     "--mov",
-                    primary_arg,
+                    mask_arg,
                     "--targ",
                     conformed_t1,
                     "--regheader",
+                    "--interp",
+                    "nearest",
                     "--o",
-                    brainmask_auto,
+                    conformed_mask,
                     "--no-save-reg",
                 ]
             ),
+            direct=True,
+            env=env,
+            stream_output=True,
+        )
+        run_child(
+            container_command(["mri_mask", conformed_t1, conformed_mask, brainmask_auto]),
             direct=True,
             env=env,
             stream_output=True,
@@ -809,7 +841,12 @@ def _create_recon_all_step(
         name="FreeSurfer Recon-All",
         directory=subject_dir,
         breadcrumb=breadcrumb,
-        inputs=(*tuple(path for path in (t1w, t2w) if path is not None), image, license_file),
+        inputs=(
+            *tuple(path for path in (t1w, t2w) if path is not None),
+            brain_mask,
+            image,
+            license_file,
+        ),
         outputs=(*_recon_required_outputs(subject_dir), recon_done),
         action=action,
         validate=validate,
@@ -820,6 +857,8 @@ def _create_recon_all_step(
             "version": FREESURFER_VERSION,
             "build": FREESURFER_BUILD,
             "skull_stripping": "SynthStrip_external_mask",
+            "external_mask_resampling": "nearest_neighbor",
+            "brainmask_intensity_source": "FreeSurfer_normalized_T1",
         },
     )
 
@@ -1122,7 +1161,7 @@ def _create_mni_qc_image_step(
             "-o",
             str(output),
             "-n",
-            "LanczosWindowedSinc",
+            "BSpline[3]",
             "-t",
             str(transform),
         ],
@@ -1132,6 +1171,7 @@ def _create_mni_qc_image_step(
         inputs=(input_image, reference, transform),
         force=force,
         prepare=lambda: output.parent.mkdir(parents=True, exist_ok=True),
+        parameters={"interpolation": "cubic_bspline", "role": "registration_qc"},
     )
 
 
