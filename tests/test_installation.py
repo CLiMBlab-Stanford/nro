@@ -813,12 +813,11 @@ def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -
     assert build_directories and not build_directories[0].exists()
 
 
-def test_lesion_resources_are_explicit_and_checkpointed(tmp_path, monkeypatch) -> None:
+def test_fastsurfer_image_is_standard_and_lesion_checkpoints_are_explicit(
+    tmp_path, monkeypatch
+) -> None:
     assert "freesurfer/freesurfer@sha256:" in dependencies.required_images()["freesurfer"]
-    assert "fastsurfer" not in dependencies.required_images()
-    assert dependencies.required_images(with_lesion=True)["fastsurfer"].endswith(
-        dependencies.FASTSURFER_OCI_DIGEST
-    )
+    assert dependencies.required_images()["fastsurfer"].endswith(dependencies.FASTSURFER_OCI_DIGEST)
 
     payload = b"pinned checkpoint"
     digest = dependencies.hashlib.sha256(payload).hexdigest()

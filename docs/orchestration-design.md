@@ -123,7 +123,8 @@ one-shot coordinator. Only work supply and workers may submit a controller to
 Slurm. Commands display a lightweight progress indicator while awaiting a
 response. Controller queueing has no timeout; communication with a live
 controller does. The controller exits after attempts, workers, submissions, and
-pending requests remain idle for a short grace period. Installation and repair
+pending requests remain idle for the configured grace period, which defaults to
+12 hours. Installation and repair
 use a deliberate shutdown barrier before entering their exceptional offline
 maintenance phase.
 

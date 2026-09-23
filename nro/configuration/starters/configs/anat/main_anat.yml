@@ -14,9 +14,11 @@ container:
     exit "$qx_setup_rc"; fi
   no_container: false
 selection_strategy: first
+surface_reconstruction_engine: freesurfer
 mni_template: site:mni_template
 synthstrip_container: site:synthstrip
 freesurfer_container: site:freesurfer
+fastsurfer_container: site:fastsurfer
 lesion:
   masker_command: null
   fastsurfer_image: site:fastsurfer

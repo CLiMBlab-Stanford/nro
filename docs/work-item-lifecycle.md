@@ -157,6 +157,9 @@ ExecutionLauncher supervises the module subprocess
         ▼
 Runner freezes its graph, executes or skips every step, and records the result
         │
+        ├── A resource-specific step may yield to its matching worker pool
+        │   and return the parent work item to the general queue
+        │
         ▼
 Worker validates public outputs and commits the completion record
 ```

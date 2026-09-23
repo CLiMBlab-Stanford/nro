@@ -89,8 +89,10 @@ BIDS entities. For example:
 > `clean` for participant `t20`, one BOLD run, `fsnative` space, and 2 mm
 > smoothing under a particular `clean` module lineage.
 
-Work items can run concurrently when their dependencies permit it. Steps within
-one work item are not independently scheduled to cluster workers.
+Work items can run concurrently when their dependencies permit it. A general
+worker normally runs all of a work item's steps. A step with a distinct resource
+class may be handed to that resource pool while the parent work item waits; it
+remains part of the same fixed runner graph and artifact contract.
 
 ### Step
 
@@ -120,8 +122,9 @@ graph before checking freshness, then traverses it in dependency order and
 records every execute-or-skip decision.
 
 The module defines the scientific DAG. The runner implements its common
-execution semantics. The planner schedules complete work items, not runner
-steps.
+execution semantics. The planner schedules complete work items. The scheduler
+may route a declared resource-specific step to a matching worker without making
+that step a separate work item.
 
 ### Artifact and product
 

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nro.configuration.schema import scientific_values
-from nro.configuration.store import ConfigStore, configuration_fingerprint, fingerprint
+from nro.configuration.store import ConfigStore, configuration_fingerprint
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.contract_migrations import (
     INDETERMINATE,
@@ -38,38 +37,89 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration is not None
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 4
+    assert configuration["surface_reconstruction_engine"] == "freesurfer"
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 6
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, _ = migrate_contract(_anat_contract(version=4))
+    migrated, configuration = migrate_contract(_anat_contract(version=6), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
+    assert configuration is not None
+    assert configuration["surface_reconstruction_engine"] == "freesurfer"
 
 
 def test_anatomy_configuration_migration_preserves_ordinary_scientific_identity() -> None:
     current = ConfigStore().load_configuration("anat", "main").values
-    historical = {key: value for key, value in current.items() if key != "lesion"}
+    historical = {
+        key: value
+        for key, value in current.items()
+        if key not in {"lesion", "surface_reconstruction_engine"}
+    }
     _, migrated = migrate_contract(_anat_contract(), historical)
 
     assert migrated is not None
     assert configuration_fingerprint(
         "anat", "main", migrated, scientific=True, complete_snapshot=True
     ) == configuration_fingerprint("anat", "main", current, scientific=True)
-    historical_lineage = fingerprint(
-        {
-            "module": "anat",
-            "config_id": "main",
-            "values": scientific_values("anat", historical),
-        }
+    assert migrated["surface_reconstruction_engine"] == "freesurfer"
+
+
+def test_freesurfer_contract_survives_introduction_of_engine_selector() -> None:
+    current = ConfigStore().load_configuration("anat", "main").values
+    historical = {
+        key: value for key, value in current.items() if key != "surface_reconstruction_engine"
+    }
+    old_fingerprint = configuration_fingerprint("anat", "main", historical)
+    new_fingerprint = configuration_fingerprint("anat", "main", current)
+    processing = {
+        "source_markup": {"id": "main", "lesion": False},
+        "bias_correction": {
+            "method": "N4BiasFieldCorrection",
+            "mask_source": "SynthStrip",
+            "mask_application": "hard_mask",
+            "bias_field_retained": True,
+        },
+        "surface_reconstruction": {
+            "backend": "FreeSurfer",
+            "version": "7.4.1",
+            "build": "freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460",
+            "skull_stripping": "SynthStrip_external_mask",
+            "recon_all_stages": ["autorecon1", "autorecon2", "autorecon3"],
+            "external_mask_resampling": "nearest_neighbor",
+            "brainmask_intensity_source": "FreeSurfer_normalized_T1",
+        },
+    }
+    old_contract = {
+        "contract_schema": 4,
+        "module": "anat",
+        "configuration": old_fingerprint,
+        "processing": processing,
+    }
+    new_contract = {
+        "contract_schema": 6,
+        "module": "anat",
+        "configuration": new_fingerprint,
+        "processing": processing,
+    }
+
+    assert canonical_contract(
+        old_contract,
+        {"id": "main", "fingerprint": old_fingerprint, "resolved": historical},
+    ) == canonical_contract(
+        new_contract,
+        {"id": "main", "fingerprint": new_fingerprint, "resolved": current},
     )
-    assert historical_lineage == configuration_fingerprint("anat", "main", current, scientific=True)
 
 
 def test_canonical_contract_distinguishes_revised_anatomical_methods() -> None:
     current = ConfigStore().load_configuration("anat", "main").values
-    historical = {key: value for key, value in current.items() if key != "lesion"}
+    historical = {
+        key: value
+        for key, value in current.items()
+        if key not in {"lesion", "surface_reconstruction_engine"}
+    }
     source_markup = {
         "id": "main",
         "project": "demo",
@@ -124,7 +174,7 @@ def test_lesion_true_remains_scientifically_distinct() -> None:
     assert lesioned["processing"]["source_markup"]["lesion"] is True
 
 
-def test_historical_lesion_resolution_is_not_imputed_as_current_policy() -> None:
+def test_legacy_lesion_backend_fields_retire_after_pipeline_refactor() -> None:
     historical = _anat_contract(version=3, lesion=True)
     historical["processing"]["lesion_reconstruction"] = {"surface_backend": "FastSurfer-LIT"}
     current = _anat_contract(version=4, lesion=True)
@@ -133,13 +183,11 @@ def test_historical_lesion_resolution_is_not_imputed_as_current_policy() -> None
     migrated_historical, _ = migrate_contract(historical)
     migrated_current, _ = migrate_contract(current)
 
-    assert (
-        migrated_historical["processing"]["lesion_reconstruction"]["fastsurfer_voxel_size_mm"]
-        == INDETERMINATE
-    )
-    assert (
-        migrated_current["processing"]["lesion_reconstruction"]["fastsurfer_voxel_size_mm"] == 1.0
-    )
+    for migrated in (migrated_historical, migrated_current):
+        lesion = migrated["processing"]["lesion_reconstruction"]
+        assert lesion["pipeline"] == INDETERMINATE
+        assert "surface_backend" not in lesion
+        assert "fastsurfer_voxel_size_mm" not in lesion
 
 
 def test_lesion_resolution_migration_leaves_ordinary_anatomy_unchanged() -> None:
@@ -152,6 +200,28 @@ def test_lesion_resolution_migration_leaves_ordinary_anatomy_unchanged() -> None
     migrated_current, _ = migrate_contract(current)
 
     assert migrated_historical == migrated_current
+
+
+def test_decoupled_lesion_reconstruction_invalidates_only_lesion_anatomy() -> None:
+    ordinary_v5 = _anat_contract(version=5, lesion=False)
+    ordinary_v5["processing"]["surface_reconstruction"] = {"backend": "FreeSurfer"}
+    ordinary_v6 = _anat_contract(version=6, lesion=False)
+    ordinary_v6["processing"]["surface_reconstruction"] = {"backend": "FreeSurfer"}
+    lesion_v5 = _anat_contract(version=5, lesion=True)
+    lesion_v5["processing"]["lesion_reconstruction"] = {"surface_backend": "FastSurfer-LIT"}
+    lesion_v6 = _anat_contract(version=6, lesion=True)
+    lesion_v6["processing"]["lesion_reconstruction"] = {
+        "pipeline": "inpainting_surface_reconstruction_excision"
+    }
+
+    migrated_ordinary_v5, _ = migrate_contract(ordinary_v5)
+    migrated_ordinary_v6, _ = migrate_contract(ordinary_v6)
+    migrated_lesion_v5, _ = migrate_contract(lesion_v5)
+    migrated_lesion_v6, _ = migrate_contract(lesion_v6)
+
+    assert migrated_ordinary_v5 == migrated_ordinary_v6
+    assert migrated_lesion_v5 != migrated_lesion_v6
+    assert migrated_lesion_v5["processing"]["lesion_reconstruction"]["pipeline"] == (INDETERMINATE)
 
 
 def test_add_field_distinguishes_current_default_from_historical_value() -> None:

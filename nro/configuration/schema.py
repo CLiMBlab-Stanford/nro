@@ -153,9 +153,11 @@ SCHEMAS = {
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
         "selection_strategy": enum("first", "robust_average"),
+        "surface_reconstruction_engine": enum("freesurfer", "fastsurfer"),
         "mni_template": TEXT,
         "synthstrip_container": TEXT,
         "freesurfer_container": Field("str", nonempty=True, execution=True),
+        "fastsurfer_container": Field("str", nonempty=True, execution=True),
         "lesion": {
             "masker_command": Field("str", nullable=True, nonempty=True, execution=True),
             "fastsurfer_image": Field("str", nullable=True, nonempty=True, execution=True),

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from nro.engine.artifact_metadata import validate_metadata_fields
-from nro.modules.anat.lesion_policy import FASTSURFER_VOXEL_SIZE_MM
+from nro.modules.anat.policy import FASTSURFER_VOXEL_SIZE_MM
 from nro.modules.anat.policy import (
     bias_correction_contract as bias_correction_contract,
 )

@@ -124,7 +124,7 @@ def _main(argv=None, *, prog="nro setup"):
             if not _accept_resource_terms():
                 raise RuntimeError("Resource setup cancelled")
         install_runtime(offline=args.offline)
-        install_images(offline=args.offline, with_lesion=args.with_lesion)
+        install_images(offline=args.offline)
         if args.with_lesion:
             install_synthstroke_model(offline=args.offline)
             install_neurolit_checkpoints(offline=args.offline)

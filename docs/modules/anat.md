@@ -52,12 +52,17 @@ selected sources before comparing subjects with different acquisition schemes.
 3. If both modalities exist, align the selected T2w reference directly to the
    T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
    inverse transforms and the optional T1w/T2w ratio.
-4. Run FreeSurfer 7.4.1 from its pinned official image. `autorecon1` receives
-   the T1w reference with `-noskullstrip`; nro resamples the binary SynthStrip
-   mask to FreeSurfer's conformed grid with nearest-neighbor interpolation and
-   applies it to FreeSurfer's normalized `T1.mgz`. The result becomes
-   `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and `autorecon3`.
-   The reconstruction has a validated directory completion boundary.
+4. Reconstruct cortical surfaces with the selected engine. The default
+   FreeSurfer 7.4.1 path runs from its pinned official image. `autorecon1`
+   receives the T1w reference with `-noskullstrip`; nro resamples the binary
+   SynthStrip mask to FreeSurfer's conformed grid with nearest-neighbor
+   interpolation and applies it to FreeSurfer's normalized `T1.mgz`. The result
+   becomes `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and
+   `autorecon3`. The alternative FastSurfer 2.5.4 path runs FastSurferVINN at
+   1 mm on a GPU, stores that stage in private work, and returns the work item
+   to a CPU worker for surface reconstruction. The GPU stage publishes a
+   complete private archive, and the CPU stage publishes a validated directory.
+   FastSurfer requires a T1w input.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric
    values are in `nro.modules.anat.constants`; they are not learned tissue probabilities.
@@ -80,27 +85,30 @@ selected sources before comparing subjects with different acquisition schemes.
    results have separate paths; the subject manifest identifies the complete
    public result set, including the FreeSurfer directory.
 
-For a participant marked `lesion: true`, steps 4 and 5 use a separate fixed
-graph. nro's SynthStroke adapter estimates a stroke-lesion mask on the
+For a participant marked `lesion: true`, nro adds inpainting before the same
+surface-reconstruction backend used by ordinary anatomy. nro's SynthStroke
+adapter estimates a stroke-lesion mask on the
 selected, bias-corrected T1w image. A separately extracted brain mask
-supports pose registration. FastSurfer receives an otherwise matched source
+supports pose registration. NeuroLIT receives an otherwise matched source
 image before N4 bias correction, as required by its input contract.
 Mechanical checks reject an empty, nonfinite,
 misregistered, or implausibly large mask and report overlap with the nonzero
-anatomical support for review. FastSurfer-LIT inpaints the mask, runs
-FastSurferVINN and cortical reconstruction, and records its lesion-impact
-summary. Cerebellar, hypothalamic, and corpus-callosum submodules are skipped
-because they do not contribute to nro's cortical scaffold. nro then
+anatomical support for review. NeuroLIT inpaints the mask. The configured
+`surface_reconstruction_engine` then reconstructs an intact scaffold from that
+image using the ordinary FreeSurfer or FastSurfer runner. nro records the
+selected backend in the lesion-impact summary and then
 projects the mask through the white-to-pial ribbon, removes every triangle that
 touches the lesion, removes unused vertices, and applies the same compact
 vertex mapping to every published surface, sphere, and metric. The complete
-scaffold is not an anatomical observation. Its FreeSurfer directory remains
-implementation support for closed-surface operations such as `bbregister`, but
+scaffold is not an anatomical observation. Its public FreeSurfer-compatible
+directory is labeled as implementation support for closed-surface operations
+such as `bbregister`, while
 scenes and surface-based analyses use the cut public meshes.
 
-Most anatomical tools use the default QuNex container. SynthStrip and FreeSurfer
-use separate pinned official images. Lesion-aware inpainting and reconstruction
-also use the separately pinned FastSurfer 2.5.4 image. Host and
+Most anatomical tools use the default QuNex container. SynthStrip, FreeSurfer,
+and FastSurfer use separate pinned official images. NeuroLIT runs from the
+pinned FastSurfer 2.5.4 image independently of the selected reconstruction
+backend. Host and
 container paths are translated through `Runner`, and the configured FreeSurfer
 license is bound into processing. Linked scenes refer to these surfaces directly;
 published scenes copy them only when requested.
@@ -123,8 +131,9 @@ hemisphere. Each hemisphere also has a validity summary with its scaffold and
 public vertex and face counts. The mask metadata records connected-component
 sizes, lesion volume, laterality, model hashes, and overlap with nonzero
 anatomical support. An nro-generated reconstruction summary records the
-FastSurfer-LIT version, reconstruction resolution, and any voxels restored to
-the FastSurfer mask from its segmentation. The ordinary T1w reference remains
+inpainting method and selected reconstruction backend. When FastSurfer is
+selected, it also records any voxels restored to the FastSurfer mask from its
+segmentation. The ordinary T1w reference remains
 the primary anatomy. Published surfaces contain surviving cortex only.
 Automatic masks and reconstructed boundaries require visual review.
 
@@ -151,26 +160,33 @@ matched by the site's hardware catalog are eligible for correction. The catalog
 and coefficient file are site resources, not module settings.
 `fsaverage_template` selects either `fsaverage6`, the packaged default, or the
 full-resolution `fsaverage` surface target. `selection_strategy` controls
-acquisition combination. `mni_template`
+acquisition combination. `surface_reconstruction_engine` selects `freesurfer`,
+the default, or `fastsurfer`. FastSurfer performs only its neural-network
+segmentation stage on a GPU; its surface stage resumes on a general CPU worker.
+The selector, backend version, fixed 1 mm reconstruction grid, and scientific
+options enter the artifact contract. Thread counts and resource routing do not.
+`mni_template`
 selects the registration target; `synthstrip_container` selects brain extraction.
-`freesurfer_container` selects the image that supplies conventional FreeSurfer
-7.4.1. It is an execution path; the pinned version and reconstruction policy are
-part of the scientific artifact contract.
-`freesurfer_subjects_dir` and `fs_subject` override FreeSurfer storage and identity.
+`freesurfer_container` and `fastsurfer_container` select the execution images
+for their respective engines. The paths are execution settings; pinned versions
+and reconstruction policies are part of the scientific artifact contract.
+`freesurfer_subjects_dir` and `fs_subject` override the shared
+FreeSurfer-compatible storage and identity.
 The initial lesion method pins the SynthStroke model, source and model revisions,
 model hashes, 1 mm inference grid, sliding-window settings, probability
-threshold, test-time augmentation, FastSurfer version, 1 mm FastSurfer
-reconstruction grid, and surface-boundary policy in code. The surface grid
-matches conventional FreeSurfer conformation; lesion detection and the public
-lesion mask retain the source anatomical grid. Install the optional Python stack
+threshold, test-time augmentation, NeuroLIT version, and surface-boundary policy
+in code. Reconstruction parameters come from the selected surface backend;
+lesion detection and the public lesion mask retain the source anatomical grid.
+Install the optional Python stack
 with `./install --with-lesion`.
 When `masker_command` is `null`, anatomy runs its built-in adapter with the
 installed Python environment and the checksum-verified model in
 `synthstroke_data`. The worker never contacts Hugging Face. An override must
 implement the same adapter interface:
 `--input`, `--probability`, `--mask`, `--model`, `--revision`, `--threshold`,
-`--device`, and optional `--tta`. `fastsurfer_image` points to a FastSurfer 2.5.4 image with
-NeuroLIT 0.6.1 support. The image, its source revision, and all three inpainting
+`--device`, and optional `--tta`. The lesion block's `fastsurfer_image` may
+override the ordinary FastSurfer container with an image that includes NeuroLIT
+0.6.1 support. The image, its source revision, and all three inpainting
 checkpoint hashes are pinned. Site setup stores the checkpoints under
 `fastsurfer_data` and workers mount them read-only. The SynthStroke model is
 stored separately under `synthstroke_data`. The override, image path,
