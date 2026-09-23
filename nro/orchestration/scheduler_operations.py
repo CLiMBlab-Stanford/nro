@@ -274,7 +274,14 @@ def stop(registry, *, checkout: Path, selection: dict) -> dict:
     )
 
 
-def logs(registry, *, checkout: Path, selection: dict, worker_level: bool) -> dict:
+def logs(
+    registry,
+    *,
+    checkout: Path,
+    selection: dict,
+    worker_level: bool,
+    running_only: bool = False,
+) -> dict:
     """Resolve logs of selected branch artifacts or the workers that executed them."""
     from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
 
@@ -308,6 +315,7 @@ def logs(registry, *, checkout: Path, selection: dict, worker_level: bool) -> di
             )
         )
         and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
+        and (not running_only or row.get("status") == "Running")
     ]
     if worker_level:
         ids = {row["id"] for row in selected}
@@ -339,6 +347,7 @@ def logs(registry, *, checkout: Path, selection: dict, worker_level: bool) -> di
             )
             and (not selection["participants"] or row["participant"] in selection["participants"])
             and (not sessions or row["session"] in sessions)
+            and (not running_only or row.get("state") == "running")
         )
     return {"paths": sorted(set(paths))}
 

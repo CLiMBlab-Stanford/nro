@@ -235,10 +235,11 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
                 payload = consume_message(path)["payload"]
             except (OSError, ValueError):
                 continue
-            if payload.get("operation") == "purge":
-                count = len(payload.get("plan", ()))
+            if payload.get("operation") in {"purge", "gc"}:
+                operation = str(payload["operation"])
+                count = len(payload.get("plan", ())) if operation == "purge" else 0
                 suffix = f" for {count:,} work items" if count else ""
-                notice_text = f"Applying a pending purge{suffix}..."
+                notice_text = f"Applying pending {operation}{suffix}..."
                 break
         started = time.monotonic()
         frame = 0
@@ -378,7 +379,7 @@ def exchange(
 
                 attempted_endpoint = endpoint_identity
                 response = None
-                if not (durable and message.get("operation") == "purge"):
+                if not (durable and message.get("operation") in {"purge", "gc"}):
                     try:
                         direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
                         response = request(
@@ -570,7 +571,13 @@ def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, select
 
 
 def logs(
-    control: Path, bids_root: Path, *, checkout: Path, selection: dict, worker_level: bool
+    control: Path,
+    bids_root: Path,
+    *,
+    checkout: Path,
+    selection: dict,
+    worker_level: bool,
+    running_only: bool = False,
 ) -> dict:
     """Resolve logs from the cached read model without starting a service."""
     from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
@@ -599,6 +606,7 @@ def logs(
             )
         )
         and matches_work_item_selectors(json.loads(row["entities_json"]), selection["selectors"])
+        and (not running_only or row.get("status") == "Running")
     ]
     if worker_level:
         paths = [row["worker_log_path"] for row in selected if row.get("worker_log_path")]
@@ -628,6 +636,7 @@ def logs(
             and (not selection["participants"] or row["participant"] in selection["participants"])
             and (not sessions or row["session"] in sessions)
             and row.get("branch")
+            and (not running_only or row.get("state") == "running")
         )
     return {"paths": sorted(set(paths))}
 
@@ -678,6 +687,7 @@ def maintenance(
     if operation not in {
         "purge_snapshot",
         "purge",
+        "gc",
         "cache",
         "repair_prepare",
         "repair_finish",
@@ -693,7 +703,7 @@ def maintenance(
         raise ValueError("Unsupported maintenance operation")
     timeout = (
         None
-        if operation in {"purge", "promotion_publish", "publish"}
+        if operation in {"purge", "gc", "promotion_publish", "publish"}
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )
     return exchange(

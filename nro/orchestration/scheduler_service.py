@@ -646,6 +646,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             checkout=Path(message["checkout"]),
             selection=message["selection"],
             worker_level=message["worker_level"],
+            running_only=bool(message.get("running_only", False)),
         )
     elif message["operation"] in {"concurrency", "stop_workers"}:
         result = pool_operation(
@@ -685,6 +686,25 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             plan=message["plan"],
             logs_only=message["logs_only"],
             dry_run=message["dry_run"],
+            progress=lambda phase, completed, total: publish_progress(
+                registry.paths.control,
+                message_id,
+                phase=phase,
+                completed=completed,
+                total=total,
+            ),
+        )
+    elif message["operation"] == "gc":
+        from nro.orchestration.garbage_collection import collect
+        from nro.orchestration.scheduler_bus import publish_progress
+
+        result = collect(
+            registry,
+            checkout=Path(message["checkout"]),
+            site_values=values,
+            selection=message["selection"],
+            dry_run=message["dry_run"],
+            approved=message["approved"],
             progress=lambda phase, completed, total: publish_progress(
                 registry.paths.control,
                 message_id,

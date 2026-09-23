@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from nro.bin.gc import build_parser as gc_parser
 from nro.bin.log import build_parser as log_parser
 from nro.bin.purge import build_parser as purge_parser
 from nro.bin.run import build_parser as run_parser
@@ -90,6 +91,7 @@ def test_control_commands_select_modules_consistently() -> None:
         stop_parser,
         log_parser,
         purge_parser,
+        gc_parser,
     ):
         parser = parser_factory()
         actions = {action.dest: action for action in parser._actions}
@@ -108,7 +110,14 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
         "space": ["-s", "--space"],
         "smoothing": ["-S", "--smoothing"],
     }
-    for parser_factory in (run_parser, status_parser, stop_parser, log_parser, purge_parser):
+    for parser_factory in (
+        run_parser,
+        status_parser,
+        stop_parser,
+        log_parser,
+        purge_parser,
+        gc_parser,
+    ):
         actions = {action.dest: action.option_strings for action in parser_factory()._actions}
         assert {name: actions[name] for name in expected} == expected
 
@@ -133,6 +142,7 @@ def test_primary_user_commands_live_in_bin() -> None:
         "log",
         "set",
         "purge",
+        "gc",
         "publish",
         "qc",
         "scene",

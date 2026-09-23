@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Iterable
 
 from nro.configuration.paths import WORK_PATH
-from nro.engine.bids import parse_bids_entities
 from nro.engine.cli import (
     add_core_selection_arguments,
     core_selection,
@@ -17,10 +16,12 @@ from nro.engine.cli import (
     page_text,
 )
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
+from nro.orchestration.artifact_ownership import (
+    work_item_paths as _work_item_paths,
+)
 from nro.orchestration.catalog import MODULES, normalize_module
 from nro.orchestration.ownership import (
     remove_empty_ownership_root,
-    work_item_record_path,
 )
 from nro.orchestration.purge_paths import (
     _is_within,
@@ -85,178 +86,6 @@ def _matching_work_items(
             continue
         result.append(row)
     return result
-
-
-RUN_IDENTITY_ENTITIES = {"ses", "task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"}
-
-
-def _prefix_owned_paths(
-    root: Path,
-    prefix: str,
-    *,
-    entities: dict[str, str],
-    inventories: dict[Path, tuple[Path, ...]] | None = None,
-) -> list[Path]:
-    """Return files owned by one exact work-item prefix.
-
-    A simple subject prefix is not sufficient: for example, ``sub-01`` is also
-    a prefix of every run and of the subject's anatomical products. Compare
-    source-run identity when present, require the complete target prefix, and
-    exclude anatomy directories as a structural guardrail.
-    """
-    if not root.is_dir() or not prefix:
-        return []
-    expected = {key: str(value) for key, value in entities.items() if key in RUN_IDENTITY_ENTITIES}
-    inventory_key = root.resolve()
-    if inventories is None:
-        paths = tuple(sorted(root.rglob("*")))
-    else:
-        if inventory_key not in inventories:
-            inventories[inventory_key] = tuple(sorted(root.rglob("*")))
-        paths = inventories[inventory_key]
-    selected = []
-    for path in paths:
-        if not (path.is_file() or path.is_symlink()):
-            continue
-        relative_parts = path.relative_to(root).parts[:-1]
-        if "anat" in relative_parts or "freesurfer" in relative_parts:
-            continue
-        target_breadcrumb = path.name == f".{prefix}_complete"
-        if not target_breadcrumb and path.name != prefix and not path.name.startswith(prefix + "_"):
-            continue
-        if target_breadcrumb:
-            selected.append(path)
-            continue
-        candidate = {
-            key: str(value)
-            for key, value in parse_bids_entities(path.name).items()
-            if key in RUN_IDENTITY_ENTITIES
-        }
-        if candidate != expected:
-            continue
-        selected.append(path)
-    return selected
-
-
-def _work_item_paths(
-    work_item: dict,
-    *,
-    registry: Registry,
-    work_root: Path,
-    inventories: dict[Path, tuple[Path, ...]] | None = None,
-) -> tuple[list[Path], list[Path]]:
-    """Return work-item-owned derivative/control paths and external WORK paths."""
-    module = str(work_item["module"])
-    participant = str(work_item["participant"]).removeprefix("sub-")
-    sub_id = f"sub-{participant}"
-    output_root = Path(work_item["output_root"])
-    owned_output_root = output_root.parent if module == "anat" else output_root
-    output_prefix = str(work_item.get("output_prefix") or "")
-    derivatives_root = registry.paths.project_root / "derivatives" / "nro"
-    project_work_derivatives = work_root / registry.paths.project / "derivatives" / "nro"
-
-    derivative_paths: list[Path] = []
-    work_paths: list[Path] = []
-    entities = json.loads(work_item["entities_json"])
-    if module == "anat":
-        # Anatomical work can publish session references before it creates the
-        # final subject-level anat directory. The subject directory is the
-        # common ownership boundary for both partial and complete artifacts.
-        derivative_paths.append(owned_output_root)
-    elif module in {"dynconn", "microparcellation", "networks"}:
-        # Space and smoothing targets share the subject directory. The full
-        # output prefix identifies the files owned by this work item.
-        derivative_paths.extend(
-            _prefix_owned_paths(
-                output_root,
-                output_prefix,
-                entities=entities,
-                inventories=inventories,
-            )
-        )
-    elif module == "firstlevels":
-        # A subject root spans tasks, variants, levels, and spatial targets.
-        # Only the selected work item's full prefix is owned here.
-        derivative_paths.extend(
-            path
-            for path in output_root.rglob(f"{output_prefix}_*")
-            if path.is_file() or path.is_symlink()
-        )
-    else:
-        derivative_paths.extend(
-            _prefix_owned_paths(
-                output_root,
-                output_prefix,
-                entities=entities,
-                inventories=inventories,
-            )
-        )
-
-    if module == "anat":
-        anat_root = owned_output_root.parent
-        derivative_paths.append(anat_root / "code" / "freesurfer" / sub_id)
-
-    try:
-        relative_output = owned_output_root.relative_to(derivatives_root)
-    except ValueError:
-        relative_output = None
-    if relative_output is not None:
-        if module == "anat":
-            work_paths.append(project_work_derivatives / relative_output)
-        elif module == "func":
-            base = project_work_derivatives / relative_output
-            if entities.get("ses"):
-                base /= f"ses-{entities['ses']}"
-            work_paths.append(base / "func" / f"{output_prefix}_bold")
-        elif module == "clean":
-            base = project_work_derivatives / relative_output
-            if entities.get("ses"):
-                base /= f"ses-{entities['ses']}"
-            target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
-            filename_target = target
-            run_prefix = output_prefix.removesuffix(f"_{filename_target}")
-            work_paths.append(base / run_prefix / target)
-        elif module in {"dynconn", "microparcellation", "networks"}:
-            target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
-            work_paths.append(
-                project_work_derivatives
-                / module
-                / str(work_item["directory_label"])
-                / target
-                / sub_id
-            )
-        elif module == "firstlevels":
-            work_paths.append(
-                project_work_derivatives
-                / "firstlevels"
-                / str(work_item["directory_label"])
-                / output_prefix
-            )
-
-    derivative_paths.append(
-        work_item_record_path(
-            registry.paths.project_root,
-            str(work_item["configuration_class"]),
-            str(work_item["directory_label"]),
-            module,
-            str(work_item["work_item_key"]),
-        )
-    )
-    allowed_derivative_roots = (derivatives_root, registry.paths.control)
-    derivative_root_resolved = {root.resolve(strict=False) for root in allowed_derivative_roots}
-    derivative_paths = [
-        path
-        for path in dict.fromkeys(derivative_paths)
-        if any(_is_within(path, root) for root in allowed_derivative_roots)
-        and path.resolve(strict=False) not in derivative_root_resolved
-    ]
-    work_paths = [
-        path
-        for path in dict.fromkeys(work_paths)
-        if _is_within(path, project_work_derivatives)
-        and path.resolve(strict=False) != project_work_derivatives.resolve(strict=False)
-    ]
-    return derivative_paths, work_paths
 
 
 def _active_work_items(registry: Registry, work_item_ids: set[int]) -> list[dict]:

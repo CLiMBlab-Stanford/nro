@@ -176,11 +176,13 @@ Common controls are:
 nro stop -p 01 -P example
 nro set concurrency=100
 nro purge -p 01 -P example
+nro gc -p 01 -P example
 ```
 
 `purge` previews and confirms destructive cleanup. A bare purge selects all
 nro-controlled derivatives across all projects; `--logs` limits cleanup to
-eligible logs.
+eligible logs. `gc` preserves controlled derivatives while removing unclaimed
+files from the matching public and private derivative namespaces.
 
 The direct module form remains equivalent, for example:
 
