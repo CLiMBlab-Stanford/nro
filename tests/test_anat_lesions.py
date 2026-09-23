@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 
 from nro.modules.anat.contract import anatomical_output_contract
-from nro.modules.anat.lesion_policy import MASKER_MODEL, MASKER_REVISION, NEUROLIT_CHECKPOINTS
+from nro.modules.anat.lesion_policy import (
+    MASKER_MODEL,
+    MASKER_REVISION,
+    NEUROLIT_CHECKPOINTS,
+    lesion_reconstruction_contract,
+)
 from nro.modules.anat.lesions import (
     create_cut_surfaces_step,
     create_fastsurfer_lit_step,
@@ -219,6 +224,8 @@ def test_fastsurfer_lit_uses_pinned_read_only_model_data(tmp_path, monkeypatch) 
     assert reconstruct[reconstruct.index("--t1") + 1] == (
         "/output/sub-test/mri/inpainted.lit.nii.gz"
     )
+    assert reconstruct[reconstruct.index("--vox_size") + 1] == "1.0"
+    assert lesion_reconstruction_contract()["fastsurfer_voxel_size_mm"] == 1.0
     assert "--no_cereb" in reconstruct
     assert "--no_hypothal" in reconstruct
     assert "--no_cc" not in reconstruct
