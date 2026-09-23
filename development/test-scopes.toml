@@ -30,7 +30,7 @@ boundaries = ["tests/test_upgrade_rehearsal.py"]
 full = true
 
 [scope.bidsification]
-paths = ["nro/bidsify/**", "nro/bin/bidsify.py", "tests/test_bidsify*.py", "tests/test_ingestion_index.py", "tests/test_event_store.py"]
+paths = ["nro/bidsify/**", "nro/bin/bidsify.py", "tests/test_bidsify*.py", "tests/test_flywheel_credentials.py", "tests/test_ingestion_index.py", "tests/test_event_store.py"]
 tests = ["tests/test_bidsify.py", "tests/test_bidsify_discovery.py", "tests/test_bidsify_scanplans.py", "tests/test_ingestion_index.py"]
 boundaries = ["tests/test_scheduler_service.py"]
 

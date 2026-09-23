@@ -76,7 +76,9 @@ def ensure_group_maintainable(root: Path) -> None:
     root = Path(root)
     paths = [root]
     for parent, directories, names in os.walk(root, followlinks=False):
-        directories[:] = [name for name in directories if name != ".git"]
+        directories[:] = [
+            name for name in directories if name not in {".git", ".definition-drafts"}
+        ]
         paths.extend(Path(parent) / name for name in directories)
         paths.extend(Path(parent) / name for name in names)
     for path in paths:
