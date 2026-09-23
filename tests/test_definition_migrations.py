@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from nro.configuration.definition_migrations import (
+    LEGACY_MANAGED_NOTICES,
     MANAGED_NOTICE,
     MANIFEST,
     _begin_recovery,
@@ -80,6 +81,20 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path):
     }
     assert read_key(root, "cni", host="cni.example.org") == "private-key"
     assert ".definition-secrets" not in (root / MANIFEST).read_text()
+
+
+def test_schema_three_updates_managed_definition_cli_guidance(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    workflow = root / "workflows/main_workflow.yml"
+    workflow.write_text(workflow.read_text().replace(MANAGED_NOTICE, LEGACY_MANAGED_NOTICES[0], 1))
+    (root / MANIFEST).write_text(_manifest_text(root, 2))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    assert workflow.read_text().startswith(MANAGED_NOTICE)
+    assert LEGACY_MANAGED_NOTICES[0] not in workflow.read_text()
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

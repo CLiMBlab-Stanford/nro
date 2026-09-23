@@ -1,195 +1,158 @@
-# Create, edit, and delete definitions
+# Manage definitions
 
-`nro create`, `nro edit`, and `nro delete` manage task models, scientific
-configs, workflows, and source markup
-in the selected [definitions store](../definitions.md). They validate and
-save drafts or remove definitions without opening the registry or requesting
-work. Deletion does not require a valid definition.
+`nro def` manages individual definitions and complete
+[definitions stores](../definitions.md). These operations do not open the
+registry or request scientific work.
 
-Publication verifies the store manifest, then validates the changed definition
-and definitions that depend on it. For example, changing a config rechecks the
-workflows that select it. Unrelated models and event catalogs are not reparsed.
-Use `nro definitions validate` when a complete store audit is needed.
+## Edit or create a definition
+
+`edit` opens an existing definition or creates it when it is missing:
 
 ```bash
-nro create model newtask
-nro create config clean/alternative
-nro create workflow experiment
-nro create markup main
-
-nro edit model newtask/main
-nro edit config clean/alternative
-nro edit workflow experiment
-nro edit markup main
+nro def edit model newtask
+nro def edit model newtask alternative
+nro def edit config clean alternative
+nro def edit workflow experiment
+nro def edit markup main
 ```
 
-Model IDs are `TASK/VARIANT`; a task alone means `TASK/main`. Config IDs are
-`CLASS/ID`, where class is `anat`, `func`, `clean`, `microparcellation`,
-`dynconn`, `networks`, or `firstlevels`. Each module has its own configuration
-class and derivative directory. Workflow and markup IDs have no class prefix.
-Markup files select manual anatomicals and known-bad source paths by BIDS
-project and participant; see [source markup](../definitions.md#source-markup).
+Model arguments are `TASK [VARIANT]`; an omitted variant means `main`. Config
+arguments are `CLASS ID`. Workflow and markup definitions take one ID. The
+configuration classes are `anat`, `func`, `clean`, `microparcellation`,
+`dynconn`, `networks`, and `firstlevels`.
 
-If a create target exists, the interactive command announces that it is opening
-the existing definition for editing. Creation-only options such as `--from`
-are errors in this case. Noninteractive create never replaces an existing
-definition. Edit requires an existing target.
+The command opens a private draft with `$VISUAL`, then `$EDITOR`. If neither is
+set, it tries `nano` and then `vi`. Editor commands may contain options without
+shell evaluation; a GUI editor must wait until editing finishes, as in
+`code --wait`.
 
-## Model drafts from events
+When the editor writes the draft, nro validates it, prints the diff, and
+publishes it. Exiting without writing leaves the stored definition unchanged.
+There is no separate save prompt. An unchanged edit also leaves the definition
+untouched.
+
+Invalid drafts can be reopened. Interrupted, conflicting, failed, and invalid
+edits retain a private draft in the definitions store. The next edit offers to
+recover it or start over. Drafts are separated by operating-system user,
+ignored by Git, and excluded from store validation.
+
+Publication checks that the stored bytes have not changed since editing began.
+It then validates the changed definition and definitions that depend on it in
+one transaction. For example, changing a config rechecks workflows that select
+it. Use `nro def validate` for a complete store audit.
+
+## Initialize models, configs, and workflows
+
+A missing model can be inferred from source BIDS events:
 
 ```bash
-nro create model newtask -P myproject -p 01 02
-nro create model newtask/alternative --from newtask/main
+nro def edit model newtask -P myproject -p 01 02
+nro def edit model newtask alternative --from newtask main
 ```
 
-Without `--from` or `--file`, creation discovers source BOLD runs bearing the
-task label and resolves their inherited event tables. Omitted project and
-participant selectors mean all matches beneath the configured BIDS root;
-the command does not accept a per-invocation root. Alternatively, pass one or
-more local tables with `--events FILE ...`. Event files are read, but images
-are not.
+Without `--from` or `--file`, model initialization discovers source BOLD runs
+with the task label and resolves their inherited event tables. Omitted project
+and participant selectors mean all matches under the configured BIDS root.
+Pass `--events FILE ...` to use explicit local tables instead. The initializer
+prefers `trial_type`; `--conditions COLUMN` resolves another shared condition
+column noninteractively.
 
-The initializer prefers `trial_type` as the condition column. If there is no
-common `trial_type`, it asks for a common column; `--conditions COLUMN` supplies
-the choice explicitly. A `trial_type` column present in only some tables needs
-an explicit decision: narrow discovery or specify another common column.
-Missing tables, malformed timing, and ambiguous BIDS inheritance are errors.
+The generated model contains the observed condition union, the SPM HRF, and one
+contrast per condition against the implicit baseline. New inferred and copied
+models have `model_set: []`. Add `model_set: main` when the model should enter
+default requests. Review the design before fitting; event discovery cannot
+establish scientific suitability or estimability.
 
-The draft contains the union of observed conditions, the SPM HRF, and one
-contrast per condition against the implicit baseline. Run aggregation is set by
-the selected firstlevels configuration.
-Weights use condition shorthand, such as `E: {E: 1}`, under a shared
-`conditions: trial_type`. Labels that themselves start with the column prefix
-are explicitly qualified to preserve their meaning.
-Contrast names are made filename-safe while retaining the original condition
-labels in their weights. Conditions missing from individual tables remain in
-the model. The console report lists event columns, condition counts and table
-coverage, and unlabeled events. A shared inherited table is counted once, so
-table counts need not equal run counts.
-
-Other categorical or numeric event columns are reported but not added as
-predictors. Between-condition comparisons, modulator transformations, and HRF
-exceptions require scientific judgment. Review the generated baseline and
-design before fitting. See [task models](../task-models.md) for the YAML syntax.
-
-New inferred and copied models have `model_set: []`. Add `model_set: main`
-when a model should enter default requests. A model outside all sets can still
-be explicitly selected with `nro run -m firstlevels --model TASK/VARIANT`.
-Importing a local file with `--file` preserves its membership as written.
-
-## Config and workflow drafts
-
-A new config starts with no overrides and includes commented packaged defaults
-as reference. Add only the settings that should differ. Omitted keys continue
-to follow the class's packaged `main` configuration and any external `main`
-override. To copy an existing override file:
+A missing config starts as an empty override with its packaged `main` values in
+comments. Add only values that should differ. `--from ID` copies another config
+in the same class:
 
 ```bash
-nro create config clean/another --from clean/alternative
-nro create workflow another --from experiment
+nro def edit config clean another --from alternative
+nro def edit workflow another --from experiment
 ```
 
-Copying a class's `main` config also produces an empty override draft with
-commented defaults, so it does not pin every default. Config copies must belong
-to the same class. Workflow drafts list every class and its selected config ID;
-change the appropriate entry to use a new config. Creating a config alone does
-not select it in any workflow.
+Workflow drafts list every configuration class with `main` selected. Creating
+a config does not select it in a workflow.
 
-## Editor and save behavior
+## Local and noninteractive files
 
-The commands open a private draft with `$VISUAL`, then `$EDITOR` if VISUAL is
-unset. They fall back to `nano`, then `vi`, when available. Editor options are
-supported without shell evaluation; GUI editors must use an option that waits
-until editing is finished, such as `code --wait`.
-
-On exit, nro validates the draft, prints a diff, and asks before saving.
-Invalid drafts can be reopened. Cancelled, interrupted, conflicting, and failed
-edits retain a private draft inside the definitions store. The next edit of the
-same definition offers to recover the draft or start over. Users do not need to
-locate draft files themselves. Successful and unchanged edits clear the saved
-draft.
-
-Drafts are separated by operating-system user and inaccessible to other users.
-Their hidden directories match the store's `.gitignore` rules and are excluded
-from definition validation and version control. A second process cannot open the
-same user's draft while the first editor remains active.
-
-Validation checks model syntax, config keys and basic value types, and workflow
-references. Duplicate YAML keys are rejected. It does not establish numerical
-estimability, scientific suitability, or every parameter constraint enforced
-during execution. Scientific changes may affect artifact freshness when the
-registry is next assessed; model-set changes alone do not.
-
-Saving uses an atomic replacement and checks that the stored content has not
-changed since editing began. Concurrent authoring commands use file and store
-locks. The saved definition and store manifest are published in one validated
-transaction. Direct edits are rejected on later reads. Permission errors do not
-trigger elevation or redirection to another store. Coordinate changes to
-shared definitions with other users.
-
-## Local files and noninteractive use
-
-To prepare a local draft without registering it:
+`--output` writes an initialized local draft without registering it:
 
 ```bash
-nro create model newtask --events run1_events.tsv run2_events.tsv --output model.yml
-nro create config clean/alternative --output clean.yml
+nro def edit model newtask --events run1_events.tsv run2_events.tsv --output model.yml
+nro def edit config clean alternative --output clean.yml
 ```
 
-`--output` creates a new file outside the central store and never overwrites an
-existing file. It cannot be combined with `--file` or `--yes`.
-
-To publish a locally edited file without opening an editor:
+The output must be outside the definitions store and must not already exist.
+Publish a local file without opening an editor with `--file`:
 
 ```bash
-nro create model newtask/main --file model.yml --yes
-nro edit config clean/alternative --file clean.yml --yes
+nro def edit model newtask --file model.yml
+nro def edit config clean alternative --file clean.yml
 ```
 
-`--file` replaces the editor step; `-y`/`--yes` skips save confirmation. Both are
-required for noninteractive publication. Validation and conflict checks still
-apply. Without `--yes`, `--file` shows the diff and asks for confirmation in an
-interactive terminal. `--from`, `--file`, and event-discovery options cannot be
-combined as competing sources for a draft.
+Supplying `--file` is an explicit publication request, so no confirmation flag
+is required. Validation and conflict checks still apply. `--from`, `--file`,
+and event-discovery options cannot be combined as competing draft sources.
 
-## Delete and regenerate
-
-`delete` removes one definition after confirmation. It does not delete other
-variants, derivatives, or logs, and does not change registry demand or workers.
-Use `--yes` to skip confirmation, including in noninteractive scripts.
+Definitions without a typed editor use their store-relative path:
 
 ```bash
-nro delete model spatialFIN/main
-nro create model spatialFIN/main -P nptl
+nro def edit file hardware/gradient_unwarping.yml
+nro def edit file bidsify/main.yml --file ./main.yml
 ```
 
-This recreates a model from current events and initializer defaults. Custom
-contrasts, transformations, and model-set membership are not retained. Review
-the draft and set membership before saving. Config, workflow, and markup
-definitions use
-the same staged pattern:
+This path form validates the complete staged store before publication. Use
+`nro paths set` instead of `file` for protected `site/site.yml` settings.
+
+## List definitions
+
+`ls` reports active definitions and the inheritance layer supplying each one:
 
 ```bash
-nro delete config clean/alternative
-nro create config clean/alternative
-nro delete workflow experiment
-nro create workflow experiment
-nro delete markup alternative
-nro create markup alternative
+nro def ls config
+nro def ls config anat
+nro def ls model
+nro def ls model langlocSN
+nro def ls workflow
+nro def ls markup
+nro def ls file
 ```
 
-Deleting an external class `main` override restores the packaged defaults.
-Deleting a named config reports workflows that still select it. Full-store
-validation prevents publication until those references are changed in the same
-transaction or beforehand. Deleting workflow `main` warns that default
-requests will need it recreated. Missing definitions can affect later artifact
-assessments, so coordinate shared-store resets with other users.
+Add `--json` for machine-readable output. Config listings include packaged
+`main` definitions even when the external store does not override them.
 
-Deletion uses the authoring lock and snapshot check, and reports the path of a
-private recovery copy in the system temporary directory. Copy it elsewhere to
-retain it beyond temporary-file cleanup. Only the definition file is removed;
-parent directories and the small hidden authoring lock remain. No scientific
-outputs are purged.
+## Remove and regenerate
 
-`python -m nro.bin.create`, `python -m nro.bin.edit`, and
-`python -m nro.bin.delete` expose the same commands.
+`rm` removes one definition after confirmation. It does not remove derivatives,
+logs, registry records, or demand. `--yes` is available for noninteractive use.
+
+```bash
+nro def rm model spatialFIN main
+nro def edit model spatialFIN -P nptl
+
+nro def rm config clean alternative
+nro def rm workflow experiment
+nro def rm markup alternative
+```
+
+Removing an external class `main` override restores the packaged defaults.
+Removing a named config reports workflows that still select it, and validation
+prevents removal while unresolved references remain. Removal reports a
+temporary recovery copy. Copy it elsewhere if it must survive temporary-file
+cleanup.
+
+## Store operations
+
+The same command initializes, migrates, and validates whole stores:
+
+```bash
+nro def init /data/lab/nro-definitions
+nro def migrate
+nro def validate
+```
+
+`nro def apply` publishes several local files in one validated transaction.
+See [definitions stores](../definitions.md) for store selection, schema
+migrations, and version-control policy.

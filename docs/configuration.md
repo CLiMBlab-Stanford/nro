@@ -7,8 +7,8 @@ workflow selects configuration IDs, and `main` is the default workflow. Module
 pages show the packaged configurations and explain which steps consume their
 keys. A site's active values may differ when it defines an override.
 
-Use `nro create config CLASS/ID`, `nro create workflow ID`, or the corresponding
-`nro edit` commands to review and validate changes before saving. See
+Use `nro def edit config CLASS ID` or `nro def edit workflow ID` to create or
+edit definitions through a validated draft. See
 [definition authoring](commands/authoring.md) for local drafts and shared-store
 safeguards.
 
@@ -32,7 +32,7 @@ use the definitions store instead of assembling paths in scientific code.
 
 ## Validation and compilation
 
-Configuration loading and `create`/`edit` use the same compiler. It parses
+Configuration loading and `nro def edit` use the same compiler. It parses
 strict YAML, resolves site references, merges named overrides over `main`, and
 validates the resulting settings. Workflows resolve each selected configuration;
 an omitted class selects `main`. Missing references and unknown classes are

@@ -127,14 +127,14 @@ New definitions stores start without task models. Add reviewed models to set
 [first-level models](docs/modules/firstlevels.md) for model registration,
 supported BIDS Stats Models features, and inference limitations.
 
-Create a model draft from a task's BIDS events, or edit an existing definition:
+Edit a model or create it from a task's BIDS events when it is missing:
 
 ```bash
-nro create model newtask
-nro edit model newtask/main
+nro def edit model newtask
+nro def edit model newtask main
 ```
 
-The same commands support `config CLASS/ID` and `workflow ID`. See
+The same command supports `config CLASS ID`, `workflow ID`, and source markup. See
 [definition authoring](docs/commands/authoring.md) for validation, local drafts,
 and shared-store safeguards.
 
@@ -202,7 +202,7 @@ The equivalent engine entry point is
 Workflow settings are selected with `-w`; the default is `main`. Configuration,
 model, optional source-markup, and protected site settings live in a separate,
 version-controlled [definitions store](docs/definitions.md). Use
-`nro paths show` to find it and `nro definitions validate` to check its contents.
+`nro paths show` to find it and `nro def validate` to check its contents.
 
 ## Documentation
 

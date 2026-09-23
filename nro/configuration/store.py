@@ -212,7 +212,7 @@ class ConfigStore:
         for candidate in self.roots:
             if not candidate.is_dir():
                 raise WorkflowError(
-                    f"Definitions store does not exist: {candidate}; use nro definitions create"
+                    f"Definitions store does not exist: {candidate}; use nro def init"
                 )
             if (candidate / ".nro-incomplete").exists():
                 raise WorkflowError(f"Definitions publication is incomplete: {candidate}")
