@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import subprocess
@@ -977,13 +978,14 @@ def test_streaming_child_heartbeat_names_step_without_repeating_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     class Process:
         stderr = None
-        stdout = None
 
         def __init__(self) -> None:
             self.waits = 0
+            self.stdout = io.StringIO("\n\nFreeSurfer output\n   \n")
 
         def wait(self, *, timeout: float) -> int:
             self.waits += 1
@@ -1017,6 +1019,7 @@ def test_streaming_child_heartbeat_names_step_without_repeating_command(
     heartbeat = next(line for line in caplog.messages if "still running after" in line)
     assert heartbeat == "Surface Reconstruction still running after 61 seconds"
     assert "expensive-tool" not in heartbeat
+    assert capsys.readouterr().out == "FreeSurfer output\n"
 
 
 def test_module_dag_contract_rejects_topology_change_for_same_signature(

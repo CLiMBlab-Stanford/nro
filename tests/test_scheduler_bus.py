@@ -117,6 +117,22 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][1]["require_service"] is True
 
 
+def test_worker_resource_step_claim_uses_bound_worker_identity(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client.worker_id = "gpu-worker"
+    calls = []
+    monkeypatch.setattr(
+        client,
+        "_call",
+        lambda action, **fields: calls.append((action, fields)),
+    )
+
+    assert client.claim_resource_step("gpu-worker", resource_class="gpu", memory_gb=32) is None
+    assert calls == [("claim_resource_step", {"resource_class": "gpu", "memory_gb": 32})]
+    with pytest.raises(ValueError, match="identity differs"):
+        client.claim_resource_step("other-worker", resource_class="gpu", memory_gb=32)
+
+
 def test_worker_output_visibility_uses_direct_only_rpc(monkeypatch) -> None:
     client = object.__new__(WorkerSchedulerClient)
     client.endpoint = SimpleNamespace()
