@@ -262,7 +262,8 @@ records remain available for replay until the scheduler commits them. Neither th
 worker nor its scientific subprocess can open the scheduler database.
 
 Workers drain before wall-time and request successor capacity from the
-controller. The registry, not queued Slurm count, enforces shared concurrency.
+controller. The registry, not queued Slurm count, enforces the independent
+general and GPU concurrency limits.
 Confirmed OOMs increase the work-item memory tier geometrically up to the
 request ceiling; higher-tier workers may accept lower-tier work items.
 

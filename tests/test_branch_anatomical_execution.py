@@ -208,17 +208,15 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     assert (owner / "code/freesurfer").is_dir()
     manifest = next(s for s in graph.steps if s.completion_boundary)
     assert manifest.outputs == (owner / "sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",)
-    registrations = [step for step in graph.steps if step.name == "Register T2w to ACPC T1w"]
+    registrations = [step for step in graph.steps if step.name == "Register T2w to T1w Reference"]
     if modalities == ("T1w", "T2w"):
         assert len(registrations) == 1
         registration = registrations[0]
         assert registration.inputs[0].is_relative_to(context.paths.development / "dev" / "WORK")
-        assert registration.inputs[1] == (
-            owner / "sub-1/anat/sub-1_space-ACPC_desc-preproc_T1w.nii.gz"
-        )
+        assert registration.inputs[1] == (owner / "sub-1/anat/sub-1_desc-preproc_T1w.nii.gz")
         assert registration.outputs == (
-            owner / "sub-1/anat/sub-1_space-ACPC_desc-preproc_T2w.nii.gz",
-            owner / "sub-1/anat/sub-1_from-T2w_to-ACPC_mode-image_xfm.mat",
+            owner / "sub-1/anat/sub-1_space-T1w_desc-preproc_T2w.nii.gz",
+            owner / "sub-1/anat/sub-1_from-T2w_to-T1w_mode-image_xfm.mat",
         )
     else:
         assert not registrations
@@ -291,18 +289,19 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     )._graph.freeze()
     names = {step.name for step in graph.steps}
 
-    assert "FastSurfer-LIT Reconstruction" in names
+    assert "NeuroLIT Lesion Inpainting" in names
+    assert "FastSurfer Lesion Reconstruction" in names
     assert "FreeSurfer Recon-All" not in names
     assert "Automatic Lesion Masking" in names
     assert "Render Lesion Mask QC" in names
     assert "Cut Lesion from Cortical Surfaces" in names
     mask_step = next(step for step in graph.steps if step.name == "Automatic Lesion Masking")
-    fastsurfer_step = next(
-        step for step in graph.steps if step.name == "FastSurfer-LIT Reconstruction"
+    inpainting_step = next(
+        step for step in graph.steps if step.name == "NeuroLIT Lesion Inpainting"
     )
     assert "desc-preproc_T1w" in mask_step.inputs[0].name
-    assert "desc-fastSurferInput_T1w" in fastsurfer_step.inputs[0].name
-    assert fastsurfer_step.scientific_signature
+    assert "desc-fastSurferInput_T1w" in inpainting_step.inputs[0].name
+    assert inpainting_step.scientific_signature
     assert any(
         "selectedBiasCorrected" in path.name for step in graph.steps for path in step.outputs
     )

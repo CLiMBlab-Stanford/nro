@@ -100,6 +100,46 @@ class WorkerSchedulerClient:
         value = self._call("claim", resource_classes=list(resource_classes), memory_gb=memory_gb)
         return None if value is None else ExecutionEnvelope.from_dict(value)
 
+    def claim_resource_step(
+        self, *, resource_class: str, memory_gb: int
+    ) -> ExecutionEnvelope | None:
+        """Claim one ready runner step for this worker's exact resource class."""
+        value = self._call(
+            "claim_resource_step", resource_class=resource_class, memory_gb=memory_gb
+        )
+        return None if value is None else ExecutionEnvelope.from_dict(value)
+
+    def defer_resource_step(
+        self,
+        attempt_id: int,
+        *,
+        step_id: str,
+        resource_class: str,
+        memory_gb: int,
+    ) -> int:
+        """Release an attempt after queuing one resource-specific runner step."""
+        return int(
+            self._call(
+                "defer_resource_step",
+                attempt_id=attempt_id,
+                step_id=step_id,
+                resource_class=resource_class,
+                memory_gb=memory_gb,
+            )
+        )
+
+    def finish_resource_step(
+        self, task_id: int, attempt_id: int, *, state: str, **fields: Any
+    ) -> None:
+        """Publish the terminal result of one resource-specific runner step."""
+        self._call(
+            "finish_resource_step",
+            task_id=task_id,
+            attempt_id=attempt_id,
+            state=state,
+            **fields,
+        )
+
     def claim_ingestion(self, memory_gb: int) -> dict | None:
         """Claim one compatible ingestion stage, if any is ready."""
         return self._call("claim_ingestion", memory_gb=memory_gb)

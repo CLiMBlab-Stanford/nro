@@ -138,7 +138,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     registered = registry.register_workflow(workflow)
     output = tmp_path / "output.txt"
     output.write_text("synthetic completed derivative")
-    entities = {"task": "task", "model": "main", "space": "ACPC", "smoothing": "0"}
+    entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}
     spec = WorkItemSpec.create(
         key="firstlevels:" + "a" * 64,
         module="firstlevels",

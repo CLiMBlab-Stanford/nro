@@ -152,8 +152,8 @@ def manifest_anatomical_images(manifest: Path) -> tuple[Path, ...]:
         return ()
     values = (
         outputs.get("brain_image"),
-        outputs.get("acpc_t1w"),
-        outputs.get("subject_t2w"),
+        outputs.get("t1w"),
+        outputs.get("t2w"),
     )
     return tuple(
         path for path in manifest_paths(values, manifest) if path.name.endswith((".nii", ".nii.gz"))

@@ -1,4 +1,4 @@
-"""Update live lab-wide planner settings."""
+"""Update live lab-wide scheduler settings."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _parse_assignments(values: list[str]) -> dict[str, int]:
         name, separator, raw_value = assignment.partition("=")
         if not separator or not name or not raw_value:
             raise SystemExit(f"Invalid setting {assignment!r}; expected NAME=VALUE")
-        if name != "concurrency":
+        if name not in {"concurrency", "gpu_concurrency"}:
             print(
                 f"WARNING: ignoring unsupported registry setting: {name}",
                 file=sys.stderr,
@@ -33,15 +33,15 @@ def _parse_assignments(values: list[str]) -> dict[str, int]:
         try:
             value = int(raw_value)
         except ValueError as error:
-            raise SystemExit("concurrency must be an integer") from error
+            raise SystemExit(f"{name} must be an integer") from error
         if value < 1:
-            raise SystemExit("concurrency must be at least one")
+            raise SystemExit(f"{name} must be at least one")
         settings[name] = value
     return settings
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
-    """Update recognized active-request settings; warn for unsupported keys.
+    """Update recognized scheduler settings; warn for unsupported keys.
 
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
@@ -66,18 +66,25 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
     ):
         from nro.orchestration.scheduler_client import pool_operation
 
-        updated_requests = pool_operation(
-            Path(values["registry"]),
-            bids_root,
-            checkout=site.CHECKOUT,
-            operation="concurrency",
-            concurrency=settings["concurrency"],
-        )["updated_requests"]
+        updated_requests = 0
+        for name, value in settings.items():
+            updated_requests += pool_operation(
+                Path(values["registry"]),
+                bids_root,
+                checkout=site.CHECKOUT,
+                operation=name,
+                concurrency=value,
+            )["updated_requests"]
     else:
         registry = Registry.for_project("", bids_root=bids_root)
         if not registry.existing_database_path().is_file():
             raise SystemExit("No central nro registry found")
-        updated_requests = registry.set_active_concurrency(settings["concurrency"])
+        updated_requests = sum(
+            registry.set_active_concurrency(value)
+            if name == "concurrency"
+            else registry.set_gpu_concurrency(value)
+            for name, value in settings.items()
+        )
     if updated_requests == 0:
         raise SystemExit("No active requests have a concurrency setting to update")
     result = {
@@ -87,7 +94,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
-    print(f"Set concurrency={settings['concurrency']} on {updated_requests} active request(s).")
+    rendered = ", ".join(f"{name}={value}" for name, value in settings.items())
+    print(f"Set {rendered}; updated {updated_requests} registry setting(s).")
 
 
 if __name__ == "__main__":

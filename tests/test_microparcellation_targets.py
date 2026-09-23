@@ -7,12 +7,13 @@ import pytest
 from nro.engine.bids import BidsRun
 from nro.engine.clean_targets import expected_clean_target
 from nro.engine.surface_geometry import surface_geometry
-from nro.engine.targets import target_output_names
+from nro.engine.targets import supported_output_spaces, target_output_names
 from nro.engine.templates import (
     find_fsaverage_surface,
     find_fsaverage_template_surface,
     find_mni_gray_matter_mask,
 )
+from nro.modules.func.config import normalize_output_spaces
 from nro.modules.microparcellation.__main__ import (
     infer_gray_matter_mask,
 )
@@ -25,10 +26,17 @@ def _touch(path: Path) -> Path:
 
 
 def test_output_names_use_space_without_redundant_domain() -> None:
-    directory, prefix = target_output_names("sub-01", "ACPC", 2)
-    assert directory == "space-ACPC_smoothing-2mm"
-    assert prefix == "sub-01_space-ACPC_smoothing-2mm"
+    directory, prefix = target_output_names("sub-01", "T1w", 2)
+    assert directory == "space-T1w_smoothing-2mm"
+    assert prefix == "sub-01_space-T1w_smoothing-2mm"
     assert "domain-" not in directory + prefix
+
+
+def test_subject_volume_space_is_t1w_not_acpc() -> None:
+    assert supported_output_spaces("fsaverage6")[0] == "T1w"
+    assert normalize_output_spaces(("t1w",)) == ("T1w",)
+    with pytest.raises(SystemExit, match="Unknown output space"):
+        normalize_output_spaces(("ACPC",))
 
 
 def test_expected_target_is_derived_from_source_bids_and_requested_entities(

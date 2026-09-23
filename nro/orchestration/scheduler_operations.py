@@ -355,10 +355,15 @@ def logs(
 def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None) -> dict:
     """Apply explicit lab-wide pool controls from an authorized checkout."""
     BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
-    if operation == "concurrency":
+    if operation in {"concurrency", "gpu_concurrency"}:
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError("Concurrency must be a positive integer")
-        return {"updated_requests": registry.set_active_concurrency(concurrency)}
+        updated = (
+            registry.set_active_concurrency(concurrency)
+            if operation == "concurrency"
+            else registry.set_gpu_concurrency(concurrency)
+        )
+        return {"updated_requests": updated}
     if operation != "stop_workers":
         raise ValueError("Unknown pool operation")
     from nro.orchestration.worker_control import cancel_worker_allocations

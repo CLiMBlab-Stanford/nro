@@ -185,8 +185,8 @@ def build_module(
                     else ()
                 ),
                 *(
-                    (cfg.inputs.mni_to_acpc_transform,)
-                    if cfg.inputs.mni_to_acpc_transform is not None
+                    (cfg.inputs.mni_to_t1w_transform,)
+                    if cfg.inputs.mni_to_t1w_transform is not None
                     else ()
                 ),
                 *labeling_inputs,
@@ -742,7 +742,7 @@ def build_module(
                 space=cfg.inputs.space,
                 source_surfaces=cfg.inputs.source_surfaces,
                 anatomical_reference=cfg.inputs.anatomical_reference,
-                mni_to_acpc_transform=cfg.inputs.mni_to_acpc_transform,
+                mni_to_t1w_transform=cfg.inputs.mni_to_t1w_transform,
             )
             records = rank_reference_candidates(
                 vertex_stability.T,
@@ -784,8 +784,8 @@ def build_module(
                             else ()
                         ),
                         *(
-                            (cfg.inputs.mni_to_acpc_transform,)
-                            if cfg.inputs.mni_to_acpc_transform
+                            (cfg.inputs.mni_to_t1w_transform,)
+                            if cfg.inputs.mni_to_t1w_transform
                             else ()
                         ),
                         *labeling_inputs,
@@ -991,9 +991,9 @@ def build_module(
                 {
                     "manifest": str(cfg.inputs.anatomical_manifest),
                     "reference": str(cfg.inputs.anatomical_reference),
-                    "mni_to_acpc_transform": str(cfg.inputs.mni_to_acpc_transform),
+                    "mni_to_t1w_transform": str(cfg.inputs.mni_to_t1w_transform),
                 }
-                if cfg.labeling.enabled and cfg.inputs.space in {"ACPC", "fsnative"}
+                if cfg.labeling.enabled and cfg.inputs.space in {"T1w", "fsnative"}
                 else None
             ),
             "outputs": {name: manifest_value(path) for name, path in publication_outputs.items()},

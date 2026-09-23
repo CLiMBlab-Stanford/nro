@@ -54,7 +54,7 @@ def load_anatomical_domain(manifest: Path) -> tuple[AnatomicalDomain, dict[str, 
     outputs = document.get("outputs")
     if not isinstance(outputs, Mapping):
         raise ValueError(f"Anatomical manifest lacks outputs: {manifest}")
-    observed = _path(outputs.get("acpc_t1w"), field="outputs.acpc_t1w", manifest=manifest)
+    observed = _path(outputs.get("t1w"), field="outputs.t1w", manifest=manifest)
     brain_mask = _path(outputs.get("brain_mask"), field="outputs.brain_mask", manifest=manifest)
     subjects_dir = _path(
         document.get("freesurfer_subjects_dir"),
@@ -69,8 +69,8 @@ def load_anatomical_domain(manifest: Path) -> tuple[AnatomicalDomain, dict[str, 
     lesion_aware = isinstance(lesion, Mapping) and lesion.get("enabled") is True
     registration = (
         _path(
-            outputs.get("inpainted_acpc_t1w"),
-            field="outputs.inpainted_acpc_t1w",
+            outputs.get("inpainted_t1w"),
+            field="outputs.inpainted_t1w",
             manifest=manifest,
         )
         if lesion_aware

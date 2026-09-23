@@ -18,7 +18,7 @@ from nro.engine.paths import (
     anat_session_work_dir,
     module_artifact_root,
 )
-from nro.engine.pose import acpc_quality, create_acpc_grid, invert_itk_affine
+from nro.engine.pose import create_pose_normalized_grid, invert_itk_affine, pose_quality
 from nro.modules.anat.inputs import AnatImage, sort_anat_images
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
@@ -202,7 +202,7 @@ def _create_apply_brain_mask_step(
     )
 
 
-def _create_finalize_acpc_anatomy_step(
+def _create_finalize_anatomy_step(
     *,
     source: Path,
     mask: Path,
@@ -210,10 +210,10 @@ def _create_finalize_acpc_anatomy_step(
     env: dict[str, str],
     force: bool,
 ) -> Step:
-    """Restore a crisp ACPC brain boundary after continuous resampling."""
+    """Restore a crisp brain boundary after continuous pose resampling."""
     return Step.command_step(
         ["fslmaths", str(source), "-mas", str(mask), str(output)],
-        name="Finalize ACPC Anatomical Image",
+        name="Finalize Pose-Normalized Anatomical Image",
         outputs=(output,),
         inputs=(source, mask),
         force=force,
@@ -380,7 +380,7 @@ def _register_t2_to_t1(
     ]
     return Step.command_step(
         cmd,
-        name="Register T2w to ACPC T1w",
+        name="Register T2w to T1w Reference",
         env=env,
         outputs=(out_t2, out_mat),
         inputs=(t2_src, t1_ref),
@@ -392,7 +392,7 @@ def _register_t2_to_t1(
     )
 
 
-def _create_acpc_registration_step(
+def _create_pose_registration_step(
     *,
     source: Path,
     source_mask: Path,
@@ -403,7 +403,7 @@ def _create_acpc_registration_step(
     env: dict[str, str],
     force: bool,
 ) -> Step:
-    """Estimate the six-degree-of-freedom transform into template ACPC pose."""
+    """Estimate the six-degree-of-freedom transform into the standardized pose."""
     return Step.command_step(
         [
             "antsRegistration",
@@ -438,7 +438,7 @@ def _create_acpc_registration_step(
             "--smoothing-sigmas",
             "3x2x1x0vox",
         ],
-        name="Rigid ACPC Pose Registration",
+        name="Rigid Anatomical Pose Registration",
         env=env,
         outputs=(transform,),
         inputs=(source, source_mask, template, template_mask),
@@ -452,7 +452,7 @@ def _create_acpc_registration_step(
     )
 
 
-def _create_acpc_grid_step(
+def _create_pose_grid_step(
     *,
     source: Path,
     source_mask: Path,
@@ -462,13 +462,13 @@ def _create_acpc_grid_step(
     force: bool,
     margin_mm: float = 5.0,
 ) -> Step:
-    """Declare the source-resolution, template-oriented ACPC grid."""
+    """Declare the source-resolution, template-oriented anatomical grid."""
     return Step.python(
-        name="Construct ACPC Output Grid",
+        name="Construct Pose-Normalized Anatomical Grid",
         outputs=(output,),
         inputs=(source, source_mask, template, transform),
         force=force,
-        action=lambda: create_acpc_grid(
+        action=lambda: create_pose_normalized_grid(
             source, source_mask, template, transform, output, margin_mm=margin_mm
         ),
         parameters={
@@ -480,7 +480,7 @@ def _create_acpc_grid_step(
     )
 
 
-def _create_acpc_resampling_step(
+def _create_pose_resampling_step(
     *,
     source: Path,
     reference: Path,
@@ -490,7 +490,7 @@ def _create_acpc_resampling_step(
     force: bool,
     label: bool = False,
 ) -> Step:
-    """Apply the rigid pose transform once on the declared ACPC grid."""
+    """Apply the rigid pose transform once on the declared anatomical grid."""
     return Step.command_step(
         [
             "antsApplyTransforms",
@@ -507,7 +507,9 @@ def _create_acpc_resampling_step(
             "-t",
             str(transform),
         ],
-        name="Resample Anatomical Mask to ACPC" if label else "Resample Anatomy to ACPC",
+        name=(
+            "Resample Anatomical Mask to Reference" if label else "Resample Anatomy to Reference"
+        ),
         env=env,
         outputs=(output,),
         inputs=(source, reference, transform),
@@ -517,10 +519,10 @@ def _create_acpc_resampling_step(
     )
 
 
-def _create_acpc_inverse_step(*, source: Path, output: Path, force: bool) -> Step:
-    """Declare the exact inverse of the rigid ACPC affine."""
+def _create_pose_inverse_step(*, source: Path, output: Path, force: bool) -> Step:
+    """Declare the exact inverse of the rigid pose affine."""
     return Step.python(
-        name="Invert ACPC Pose Transform",
+        name="Invert Anatomical Pose Transform",
         outputs=(output,),
         inputs=(source,),
         force=force,
@@ -528,7 +530,7 @@ def _create_acpc_inverse_step(*, source: Path, output: Path, force: bool) -> Ste
     )
 
 
-def _create_acpc_qc_step(
+def _create_pose_qc_step(
     *,
     source: Path,
     source_mask: Path,
@@ -539,13 +541,13 @@ def _create_acpc_qc_step(
     output: Path,
     force: bool,
 ) -> Step:
-    """Validate rigid geometry and record compact ACPC alignment measures."""
+    """Validate rigid geometry and record compact pose-alignment measures."""
 
     def action() -> None:
-        write_json(output, acpc_quality(source, source_mask, aligned, template, transform, grid))
+        write_json(output, pose_quality(source, source_mask, aligned, template, transform, grid))
 
     return Step.python(
-        name="Validate ACPC Pose Alignment",
+        name="Validate Anatomical Pose Alignment",
         outputs=(output,),
         inputs=(source, source_mask, aligned, template, transform, grid),
         force=force,
@@ -908,7 +910,7 @@ def _create_t1_to_fsnative_affine_step(
             "--fslregout",
             str(output),
         ],
-        name="Construct ACPC-to-fsnative Affine",
+        name="Construct T1w-to-fsnative Affine",
         env=env,
         outputs=(output,),
         inputs=(subject_t1, fsnative_reference),
@@ -923,7 +925,7 @@ def _create_inverse_affine_step(
     output: Path,
     env: dict[str, str],
     force: bool,
-    name: str = "Invert ACPC-to-fsnative Affine",
+    name: str = "Invert T1w-to-fsnative Affine",
 ) -> Step:
     return Step.command_step(
         ["convert_xfm", "-omat", str(output), "-inverse", str(source)],

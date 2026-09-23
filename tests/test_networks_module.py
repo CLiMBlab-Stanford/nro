@@ -157,14 +157,14 @@ def _micro_inputs(
 def test_discovers_all_current_microparcellation_space_manifests(tmp_path: Path) -> None:
     manifests = (
         _manifest(tmp_path, "fsnative", "surface"),
-        _manifest(tmp_path, "ACPC", "volume"),
+        _manifest(tmp_path, "T1w", "volume"),
     )
 
     targets = discover_microparcellation_targets(manifests)
 
     assert [(target.domain, target.space, target.smoothing_mm) for target in targets] == [
         ("surface", "fsnative", 2),
-        ("volume", "ACPC", 2),
+        ("volume", "T1w", 2),
     ]
     assert len(targets[0].source_surfaces) == 2
     assert targets[1].source_surfaces == ()
@@ -307,7 +307,7 @@ def test_network_config_routes_branch_outputs(tmp_path):
         "feature/networks", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV"
     )
     context = ExecutionContext(paths, "demo", "networks:1", ())
-    manifest = _manifest(tmp_path / "upstream", "ACPC", "volume")
+    manifest = _manifest(tmp_path / "upstream", "T1w", "volume")
     config = ConfigStore().load_configuration("networks", "main").values
     _, cfg = networks_main.make_target_config(
         "demo", "01", "main", config, source_manifest=manifest, execution_context=context
@@ -336,18 +336,18 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
     dev = BranchPaths("dev", paths.bids, paths.work, paths.development)
     relative = Path("derivatives/nro/microparcellation/main/sub-01")
     upstream = dev.output_project("demo") / relative
-    manifest = _manifest(upstream, "ACPC", "volume")
-    prefix = "sub-01_space-ACPC_smoothing-2mm"
+    manifest = _manifest(upstream, "T1w", "volume")
+    prefix = "sub-01_space-T1w_smoothing-2mm"
     index = microparcellation_output_paths(upstream, prefix)["index"]
     index.write_text(
-        json.dumps({"space": "ACPC", "smoothing_fwhm_mm": 2, "target_manifest": str(manifest)})
+        json.dumps({"space": "T1w", "smoothing_fwhm_mm": 2, "target_manifest": str(manifest)})
     )
     anatomy = paths.source_project("demo") / "derivatives/nro/anat/main/sub-01/anat"
     anatomy.mkdir(parents=True)
     image = anatomy / "sub-01_T1w.nii.gz"
     image.touch()
     (anatomy / "sub-01_desc-preprocessAnat_manifest.json").write_text(
-        json.dumps({"outputs": {"brain_image": str(image), "xfms": {"mni_to_acpc": str(image)}}})
+        json.dumps({"outputs": {"brain_image": str(image), "xfms": {"mni_to_t1w": str(image)}}})
     )
     context = ExecutionContext(
         paths,
@@ -394,7 +394,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Runner, "execute", initialize_only)
     with pytest.raises(RuntimeError, match="Test stopped after initialization"):
-        networks_main.main(["-P", "demo", "-p", "01", "-s", "ACPC"], execution_context=context)
+        networks_main.main(["-P", "demo", "-p", "01", "-s", "T1w"], execution_context=context)
     assert len(graphs) == 1
     assert any(manifest in step.inputs for step in graphs[0].steps)
     completion = next(step for step in graphs[0].steps if step.completion_boundary)
@@ -496,8 +496,8 @@ def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> 
     manifest = tmp_path / "microparcellation_manifest.yaml"
     manifest.write_text("{}")
     cfg = ModuleConfig(
-        inputs=_micro_inputs(manifest, dlabel, pconn, domain="volume", space="ACPC"),
-        output=OutputConfig(tmp_path / "out", tmp_path / "work", "sub-01_space-ACPC"),
+        inputs=_micro_inputs(manifest, dlabel, pconn, domain="volume", space="T1w"),
+        output=OutputConfig(tmp_path / "out", tmp_path / "work", "sub-01_space-T1w"),
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
     )
@@ -523,7 +523,7 @@ def test_projects_mni_reference_onto_volumetric_cifti(tmp_path: Path, monkeypatc
         space="MNI152NLin2009cAsym",
         source_surfaces=(),
         anatomical_reference=None,
-        mni_to_acpc_transform=None,
+        mni_to_t1w_transform=None,
     )
 
     np.testing.assert_array_equal(projected["test"], reference_data[mask])
@@ -538,7 +538,7 @@ def test_native_reference_projection_loads_ants_composite_transform(
     reference_data = np.arange(8, dtype=np.float32).reshape(mask.shape)
     reference_path = tmp_path / "reference.nii.gz"
     nib.save(nib.Nifti1Image(reference_data, np.eye(4)), reference_path)
-    transform_path = tmp_path / "mni_to_acpc.h5"
+    transform_path = tmp_path / "mni_to_t1w.h5"
     transform_path.touch()
     monkeypatch.setattr(
         "nro.modules.networks.references.REFERENCE_ATLASES",
@@ -562,10 +562,10 @@ def test_native_reference_projection_loads_ants_composite_transform(
 
     projected = project_references_to_cifti(
         dlabel,
-        space="ACPC",
+        space="T1w",
         source_surfaces=(),
         anatomical_reference=reference_path,
-        mni_to_acpc_transform=transform_path,
+        mni_to_t1w_transform=transform_path,
     )
 
     assert calls == [(str(transform_path), None)]
@@ -607,12 +607,12 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
     )
     cfg = ModuleConfig(
         inputs=_micro_inputs(
-            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
+            micro_manifest, microparcels, connectivity, domain="volume", space="T1w"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
             work_directory=tmp_path / "work" / "networks",
-            prefix="sub-01_space-ACPC",
+            prefix="sub-01_space-T1w",
         ),
         connectivity=ConnectivityConfig(
             transform="clip_positive",
@@ -631,7 +631,7 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
     assert membership.header.get_axis(0).name.tolist() == ["Network 001", "Network 002"]
     manifest = yaml.safe_load(outputs["manifest"].read_text())
     assert manifest["domain"] == "volume"
-    assert manifest["space"] == "ACPC"
+    assert manifest["space"] == "T1w"
     assert manifest["n_surface_vertices"] is None
     assert manifest["n_gray_matter_voxels"] == 8
     assert "network_maps" not in manifest["outputs"]
@@ -692,12 +692,12 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
     )
     cfg = ModuleConfig(
         inputs=_micro_inputs(
-            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
+            micro_manifest, microparcels, connectivity, domain="volume", space="T1w"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
             work_directory=tmp_path / "work" / "networks",
-            prefix="sub-01_space-ACPC",
+            prefix="sub-01_space-T1w",
         ),
         connectivity=ConnectivityConfig(percentile_cutoff=None),
         parcellation_strategy="ica",
@@ -766,12 +766,12 @@ def test_volumetric_network_module_publishes_clustering_frequencies(
     )
     cfg = ModuleConfig(
         inputs=_micro_inputs(
-            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
+            micro_manifest, microparcels, connectivity, domain="volume", space="T1w"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
             work_directory=tmp_path / "work" / "networks",
-            prefix="sub-01_space-ACPC",
+            prefix="sub-01_space-T1w",
         ),
         connectivity=ConnectivityConfig(percentile_cutoff=None),
         parcellation_strategy="clustering",
@@ -822,12 +822,12 @@ def test_missing_public_network_metric_is_rebuilt(tmp_path: Path, monkeypatch) -
     )
     cfg = ModuleConfig(
         inputs=_micro_inputs(
-            micro_manifest, microparcels, connectivity, domain="volume", space="ACPC"
+            micro_manifest, microparcels, connectivity, domain="volume", space="T1w"
         ),
         output=OutputConfig(
             directory=tmp_path / "networks",
             work_directory=tmp_path / "work" / "networks",
-            prefix="sub-01_space-ACPC",
+            prefix="sub-01_space-T1w",
         ),
         connectivity=ConnectivityConfig(
             transform="clip_positive",

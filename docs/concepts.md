@@ -175,8 +175,8 @@ module-local planning functions.
 ### Registry
 
 The registry has two coordinated parts. The shared scheduler registry stores
-requests, attempts, workers, Slurm submissions, and the site-wide concurrency
-limit. Each development branch has a scientific registry that stores its
+requests, attempts, workers, Slurm submissions, and the general and GPU
+concurrency limits. Each development branch has a scientific registry that stores its
 discovered source tree, compiled workflows, work items, dependencies, and
 artifact observations. This separation lets the scheduler coordinate all
 branches without importing their code.

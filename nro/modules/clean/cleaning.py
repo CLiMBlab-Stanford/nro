@@ -769,7 +769,7 @@ def _expected_input_groups(
 
 def _main_sidecar_path(vols: list[Path], surfs: list[Path]) -> Path:
     for p in vols:
-        if "_space-ACPC_" in p.name:
+        if "_space-T1w_" in p.name:
             return sidecar_json_path(p)
     if vols:
         return sidecar_json_path(vols[0])

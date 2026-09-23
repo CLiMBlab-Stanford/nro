@@ -28,8 +28,8 @@ ANATOMICAL_MANIFEST_FIELDS = {
     "inputs.t2w": "string_list",
     "copied_session_files": "string_list",
     "outputs": "mapping",
-    "outputs.acpc_t1w": "nullable_string",
-    "outputs.acpc_t2w": "nullable_string",
+    "outputs.t1w": "nullable_string",
+    "outputs.t2w": "nullable_string",
     "outputs.myelin_map": "nullable_string",
     "outputs.brain_image": "string",
     "outputs.brain_mask": "string",
@@ -38,7 +38,7 @@ ANATOMICAL_MANIFEST_FIELDS = {
     "outputs.subcortical_masks": "mapping",
     "outputs.surfaces": "mapping",
     "outputs.mni_qc_images": "mapping",
-    "outputs.acpc_pose_qc": "string",
+    "outputs.pose_qc": "string",
     "outputs.xfms": "mapping",
     "freesurfer_subjects_dir": "string",
     "mni_template": "string",
@@ -56,8 +56,8 @@ LESION_MANIFEST_FIELDS = {
     "lesion.masker": "mapping",
     "lesion.reconstruction": "mapping",
     "lesion.boundary_margin_mm": "number",
-    "outputs.inpainted_acpc_t1w": "string",
-    "outputs.inpainted_acpc_t1w_metadata": "string",
+    "outputs.inpainted_t1w": "string",
+    "outputs.inpainted_t1w_metadata": "string",
     "outputs.lesion_mask": "string",
     "outputs.lesion_metadata": "string",
     "outputs.lesion_probability": "string",
@@ -69,7 +69,7 @@ LESION_MANIFEST_FIELDS = {
 
 
 def pose_normalization_contract() -> dict[str, object]:
-    """Describe the substantive ACPC pose-normalization method."""
+    """Describe how the participant anatomical reference is pose-normalized."""
     return {
         "extent": "anatomical_mask",
         "margin_mm": 5.0,

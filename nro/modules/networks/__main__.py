@@ -68,7 +68,7 @@ def _target_module_config(
     overwrite: bool | None,
     anatomical_manifest: Path | None,
     anatomical_reference: Path | None,
-    mni_to_acpc_transform: Path | None,
+    mni_to_t1w_transform: Path | None,
     source_surfaces: tuple[Path, ...],
 ) -> ModuleConfig:
     oslom = config["oslom"].copy()
@@ -100,7 +100,7 @@ def _target_module_config(
             source_surfaces=source_surfaces,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
-            mni_to_acpc_transform=mni_to_acpc_transform,
+            mni_to_t1w_transform=mni_to_t1w_transform,
         ),
         output=OutputConfig(
             directory=output,
@@ -129,7 +129,7 @@ def make_target_config(
     overwrite=None,
     source_manifest=None,
     anatomical_reference=None,
-    mni_to_acpc_transform=None,
+    mni_to_t1w_transform=None,
     anatomical_manifest=None,
     execution_context: ExecutionContext | None = None,
 ):
@@ -210,7 +210,7 @@ def make_target_config(
             overwrite=overwrite,
             anatomical_manifest=anatomical_manifest,
             anatomical_reference=anatomical_reference,
-            mni_to_acpc_transform=mni_to_acpc_transform,
+            mni_to_t1w_transform=mni_to_t1w_transform,
             source_surfaces=source_surfaces,
         ),
     )
@@ -286,16 +286,16 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     anat_manifest = json.loads(anat_manifest_path.read_text(encoding="utf-8"))
     anat_outputs = anat_manifest.get("outputs") or {}
     anatomical_reference_value = anat_outputs.get("brain_image")
-    mni_to_acpc_value = (anat_outputs.get("xfms") or {}).get("mni_to_acpc")
-    if not anatomical_reference_value or not mni_to_acpc_value:
+    mni_to_t1w_value = (anat_outputs.get("xfms") or {}).get("mni_to_t1w")
+    if not anatomical_reference_value or not mni_to_t1w_value:
         raise ValueError(
-            f"Anatomical manifest lacks outputs.brain_image or outputs.xfms.mni_to_acpc: "
+            f"Anatomical manifest lacks outputs.brain_image or outputs.xfms.mni_to_t1w: "
             f"{anat_manifest_path}"
         )
     anatomical_reference = Path(str(anatomical_reference_value))
-    mni_to_acpc_transform = Path(str(mni_to_acpc_value))
+    mni_to_t1w_transform = Path(str(mni_to_t1w_value))
     missing_anatomical_inputs = [
-        str(path) for path in (anatomical_reference, mni_to_acpc_transform) if not path.is_file()
+        str(path) for path in (anatomical_reference, mni_to_t1w_transform) if not path.is_file()
     ]
     if missing_anatomical_inputs:
         raise FileNotFoundError(
@@ -349,7 +349,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         source_manifest=source_manifest,
         anatomical_manifest=anat_manifest_path,
         anatomical_reference=anatomical_reference,
-        mni_to_acpc_transform=mni_to_acpc_transform,
+        mni_to_t1w_transform=mni_to_t1w_transform,
         execution_context=execution_context,
     )
     stderr(

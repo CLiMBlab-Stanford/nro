@@ -1,4 +1,4 @@
-"""Rigid anatomical pose transforms and deterministic ACPC output grids."""
+"""Rigid anatomical pose transforms and deterministic reference grids."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def _masked_corners(image, mask) -> np.ndarray:
         raise ValueError("The anatomical image and pose mask must share a grid")
     values = np.asarray(mask.dataobj)
     if values.ndim != 3:
-        raise ValueError("ACPC grid construction requires a three-dimensional pose mask")
+        raise ValueError("Pose-normalized grid construction requires a three-dimensional mask")
     occupied = np.isfinite(values) & (values > 0)
     if not np.any(occupied):
         raise ValueError("The anatomical pose mask is empty")
@@ -85,7 +85,7 @@ def _masked_corners(image, mask) -> np.ndarray:
     return np.array(list(itertools.product(*bounds)), dtype=np.float64)
 
 
-def create_acpc_grid(
+def create_pose_normalized_grid(
     source: Path,
     source_mask: Path,
     template: Path,
@@ -101,7 +101,7 @@ def create_acpc_grid(
     mask = nib.load(str(source_mask))
     reference = nib.load(str(template))
     if len(image.shape) < 3 or len(reference.shape) < 3:
-        raise ValueError("ACPC grid construction requires three-dimensional images")
+        raise ValueError("Pose-normalized grid construction requires three-dimensional images")
     moving_to_fixed_ras = _moving_to_fixed_ras(transform)
     corners = _masked_corners(image, mask)
     source_world = nib.affines.apply_affine(image.affine, corners)
@@ -109,7 +109,7 @@ def create_acpc_grid(
     directions = np.asarray(reference.affine[:3, :3], dtype=np.float64)
     directions /= np.linalg.norm(directions, axis=0)
     if not np.allclose(directions.T @ directions, np.eye(3), atol=1e-4):
-        raise ValueError("ACPC template axes are not orthogonal")
+        raise ValueError("Pose template axes are not orthogonal")
     coordinates = np.linalg.solve(directions, transformed.T).T
     lower = coordinates.min(axis=0) - float(margin_mm)
     upper = coordinates.max(axis=0) + float(margin_mm)
@@ -127,7 +127,7 @@ def create_acpc_grid(
     nib.save(grid, str(destination))
 
 
-def acpc_quality(
+def pose_quality(
     source: Path,
     source_mask: Path,
     aligned: Path,
@@ -144,7 +144,7 @@ def acpc_quality(
     determinant = float(np.linalg.det(rotation))
     orthogonality_error = float(np.max(np.abs(rotation.T @ rotation - np.eye(3))))
     if abs(determinant - 1.0) > 1e-3 or orthogonality_error > 1e-3:
-        raise ValueError("ACPC transform contains scale, shear, or reflection")
+        raise ValueError("Pose transform contains scale, shear, or reflection")
     angle = math.degrees(math.acos(float(np.clip((np.trace(rotation) - 1.0) / 2.0, -1, 1))))
     translation = float(np.linalg.norm(rigid_lps[:3, 3]))
 
@@ -161,7 +161,7 @@ def acpc_quality(
         and np.all(voxels <= np.asarray(grid_image.shape[:3], dtype=float) - 1 + 1e-3)
     )
     if not covered:
-        raise ValueError("ACPC grid does not cover the transformed anatomical mask")
+        raise ValueError("Pose-normalized grid does not cover the transformed anatomical mask")
 
     aligned_image = nib.load(str(aligned))
     reference = resample_from_to(nib.load(str(template)), aligned_image, order=1)

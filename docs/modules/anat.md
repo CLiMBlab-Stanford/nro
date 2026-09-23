@@ -17,11 +17,11 @@ Acquisition metadata and filename ordering resolve selection reproducibly.
 T1w and T2w availability determines the graph. Session outputs retain their
 acquisition geometry. The module selects participant T1w and T2w references
 independently, even when their sources come from different sessions. It rigidly
-aligns the selected T1w reference to the pose of the configured MNI template and
-resamples it once onto a source-resolution `ACPC` grid. The transform has six
+aligns the selected T1w image to the pose of the configured MNI template and
+resamples it once to construct the source-resolution T1w reference. The transform has six
 degrees of freedom, so it changes head position without scaling or deforming the
 brain. When both modalities exist, the module registers the selected T2w
-reference directly to the ACPC T1w reference. A T1w/T2w myelin proxy exists only
+reference directly to the T1w reference. A T1w/T2w myelin proxy exists only
 when both modalities are available.
 This ratio is not a quantitative myelin measurement. Review the manifest's
 selected sources before comparing subjects with different acquisition schemes.
@@ -38,21 +38,22 @@ selected sources before comparing subjects with different acquisition schemes.
    source image. Applying the same mask then standardizes the brain boundary
    without changing its grid.
 2. Select or combine T1w and T2w acquisitions independently. Estimate a rigid
-   T1w-to-ACPC transform with ANTs mutual-information registration. Construct a
+   pose transform from the selected image into the constructed participant
+   reference with ANTs mutual-information registration. Construct a
    deterministic template-oriented grid around the transformed anatomical mask
    at the selected source resolution. Include a 5 mm margin, verify mask
    coverage, and resample the T1w once with cubic B-spline interpolation.
    Resample the mask separately with nearest-neighbor interpolation and reapply
    it before publication. ANTs affine files encode the
    fixed-to-moving map used for resampling, so grid construction inverts that
-   map when projecting source-mask points into ACPC space.
+   map when projecting source-mask points into the participant reference.
    Publish both transform directions and numerical pose checks. If no T1w exists,
    use the selected T2w as the pose source.
 3. If both modalities exist, align the selected T2w reference directly to the
-   ACPC T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
+   T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
    inverse transforms and the optional T1w/T2w ratio.
 4. Run FreeSurfer 7.4.1 from its pinned official image. `autorecon1` receives
-   the ACPC reference with `-noskullstrip`; nro resamples the binary SynthStrip
+   the T1w reference with `-noskullstrip`; nro resamples the binary SynthStrip
    mask to FreeSurfer's conformed grid with nearest-neighbor interpolation and
    applies it to FreeSurfer's normalized `T1.mgz`. The result becomes
    `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and `autorecon3`.
@@ -66,7 +67,7 @@ selected sources before comparing subjects with different acquisition schemes.
    geometry in the requested native and template coordinate systems. The
    packaged configuration uses the pinned 41k-vertex-per-hemisphere
    `fsaverage6` geometry from the local TemplateFlow store.
-6. Register the ACPC anatomy to the configured MNI reference with ANTs SyN.
+6. Register the T1w anatomy to the configured MNI reference with ANTs SyN.
    Publish forward and inverse composite transforms and registration-check images.
    The fixed schedule is rigid and affine MI (32 bins, regular 25% sampling),
    then SyN with radius-4 cross-correlation. Linear stages use
@@ -81,7 +82,7 @@ selected sources before comparing subjects with different acquisition schemes.
 
 For a participant marked `lesion: true`, steps 4 and 5 use a separate fixed
 graph. nro's SynthStroke adapter estimates a stroke-lesion mask on the
-selected, bias-corrected ACPC T1w image. A separately extracted brain mask
+selected, bias-corrected T1w image. A separately extracted brain mask
 supports pose registration. FastSurfer receives an otherwise matched source
 image before N4 bias correction, as required by its input contract.
 Mechanical checks reject an empty, nonfinite,
@@ -108,23 +109,24 @@ published scenes copy them only when requested.
 
 Outputs live under
 `derivatives/nro/anat/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`, with session
-acquisitions under `ses-ID/anat` where applicable. Subject `anat` contains
-ACPC-aligned anatomical references, brain and gray-matter masks, cortical
+acquisitions under `ses-ID/anat` where applicable. Subject `anat` contains the
+pose-normalized T1w reference, aligned T2w reference, brain and gray-matter masks, cortical
 ribbon and subcortical masks, surfaces, metrics, and transforms. The publication
 manifest records exact paths rather than requiring downstream filename guesses.
 It also records the pose transforms, grid and registration checks, and the
-separate ACPC-to-MNI transforms.
+separate T1w-to-MNI transforms.
 
-Lesion-aware artifacts additionally contain the ACPC-grid mask and
+Lesion-aware artifacts additionally contain the T1w-grid mask and
 probability image, an explicitly labeled synthetic inpainted T1w alternative,
 a three-plane mask-overlay image, and one public-to-scaffold vertex table per
 hemisphere. Each hemisphere also has a validity summary with its scaffold and
 public vertex and face counts. The mask metadata records connected-component
 sizes, lesion volume, laterality, model hashes, and overlap with nonzero
-anatomical support. The FastSurfer-LIT lesion-impact summary is copied into the
-public artifact. The ordinary ACPC T1w remains the primary anatomy. Published
-surfaces contain surviving cortex only. Automatic masks and reconstructed
-boundaries require visual review.
+anatomical support. An nro-generated reconstruction summary records the
+FastSurfer-LIT version, reconstruction resolution, and any voxels restored to
+the FastSurfer mask from its segmentation. The ordinary T1w reference remains
+the primary anatomy. Published surfaces contain surviving cortex only.
+Automatic masks and reconstructed boundaries require visual review.
 
 The functional module reads this public anatomical-domain contract. For
 lesion-aware anatomy, registration tools that assume an intact brain use the
@@ -173,13 +175,14 @@ checkpoint hashes are pinned. Site setup stores the checkpoints under
 `fastsurfer_data` and workers mount them read-only. The SynthStroke model is
 stored separately under `synthstroke_data`. The override, image path,
 and `use_gpu` are the lesion block's only configuration fields and are execution
-settings. `use_gpu` controls both SynthStroke and FastSurfer-LIT execution.
+settings. SynthStroke runs on the general CPU worker. When `use_gpu` is true,
+the runner yields only NeuroLIT inpainting to a one-GPU worker; FastSurfer
+segmentation and surface reconstruction then resume on a general CPU worker.
 Containerized NeuroLIT preserves Slurm's assigned CUDA device and uses its
-version-pinned default batch size of eight slices. A lesion-marked participant
-with `use_gpu: true` is assigned to a dedicated Slurm worker that requests one
-GPU. That worker cannot claim ordinary work and exits when no GPU work is ready.
-If `use_gpu` is false, the lesion-aware graph runs on a general worker with CPU
-inference. Scheduling choices remain outside the scientific artifact contract.
+version-pinned default batch size of eight slices. A GPU worker cannot claim
+complete work items and exits when no GPU step is ready. If `use_gpu` is false,
+NeuroLIT also runs on the general worker. Scheduling choices remain outside the
+scientific artifact contract.
 The pinned scientific policy
 enters the work-item contract only for lesion-marked participants, so adding the
 feature does not rename or stale the ordinary anatomical lineage.

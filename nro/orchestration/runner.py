@@ -20,6 +20,7 @@ from typing import Callable, Optional, Sequence
 from nro.engine.execution import collect_bind_directories, strip_ansi
 from nro.engine.io import atomic_write_json
 from nro.orchestration.execution_context import ExecutionContext
+from nro.orchestration.resource_handoff import ResourceHandoff, ResourceHandoffExit
 from nro.orchestration.runner_graph import (
     NodeState,
     RunnerGraph,
@@ -159,6 +160,24 @@ class Runner:
             self._validate_step_destinations(step)
         state.graph = graph
 
+        target_step_id = os.environ.get("NRO_TARGET_STEP_ID") or None
+        current_resource = os.environ.get("NRO_WORKER_RESOURCE_CLASS") or None
+        handoff_path_value = os.environ.get("NRO_RESOURCE_HANDOFF") or None
+        completed_resource_steps = frozenset(
+            json.loads(os.environ.get("NRO_COMPLETED_RESOURCE_STEPS", "[]"))
+        )
+        ordered_steps = graph.ordered_steps()
+        if target_step_id is not None:
+            targets = [step for step in ordered_steps if step.id == target_step_id]
+            if not targets:
+                raise RuntimeError(f"Requested runner step does not exist: {target_step_id}")
+            required = targets[0].resource_class
+            if required is not None and current_resource != required:
+                raise RuntimeError(
+                    f"Runner step {target_step_id!r} requires {required!r}, "
+                    f"but the worker provides {current_resource!r}"
+                )
+
         ledger = os.environ.get("NRO_STEP_LEDGER")
         signature = os.environ.get("NRO_RUNNER_GRAPH_SIGNATURE", "direct")
         contract_path: Path | None = None
@@ -169,10 +188,10 @@ class Runner:
             graph.initialize_step_contract(contract_path, signature=signature)
 
         states: dict[str, NodeState] = {}
-        completion = [step for step in graph.ordered_steps() if step.completion_boundary]
+        completion = [step for step in ordered_steps if step.completion_boundary]
         if len(completion) > 1:
             raise RuntimeError("A module DAG may declare at most one completion boundary.")
-        if completion and not contract_changes:
+        if completion and not contract_changes and target_step_id is None:
             boundary = completion[0]
             boundary_run, boundary_reason = artifact_decision(
                 boundary.outputs,
@@ -190,7 +209,7 @@ class Runner:
                     graph.module_name.lower(),
                     boundary_reason,
                 )
-                for step in graph.ordered_steps():
+                for step in ordered_steps:
                     reason = (
                         boundary_reason
                         if step.id == boundary.id
@@ -207,7 +226,7 @@ class Runner:
                         )
                 return states
 
-        for step in graph.ordered_steps():
+        for step in ordered_steps:
             upstream_dirty = any(
                 states[parent] is NodeState.DIRTY for parent in graph.dependencies(step)
             )
@@ -217,7 +236,9 @@ class Runner:
             ]
             should_run, reason = artifact_decision(
                 step.outputs,
-                step.force or upstream_dirty or contract_change is not None,
+                (step.force and step.id not in completed_resource_steps)
+                or upstream_dirty
+                or contract_change is not None,
                 inputs=step.inputs,
             )
             if missing_outputs:
@@ -248,6 +269,32 @@ class Runner:
                     )
 
             if should_run:
+                required_resource = step.resource_class
+                if target_step_id is not None and step.id != target_step_id:
+                    self._request_resource_handoff(
+                        path=handoff_path_value,
+                        handoff=ResourceHandoff(
+                            kind="resume_parent",
+                            reason=(
+                                f"Step {step.id!r} became dirty before targeted step "
+                                f"{target_step_id!r} could run"
+                            ),
+                        ),
+                    )
+                if (
+                    required_resource is not None
+                    and current_resource is not None
+                    and required_resource != current_resource
+                ):
+                    self._request_resource_handoff(
+                        path=handoff_path_value,
+                        handoff=ResourceHandoff(
+                            kind="execute_step",
+                            step_id=step.id,
+                            resource_class=required_resource,
+                            reason=f"Step {step.name} requires a {required_resource} worker.",
+                        ),
+                    )
                 if contract_path is not None:
                     graph.invalidate_step_contract(
                         contract_path,
@@ -265,7 +312,30 @@ class Runner:
                     signature=signature,
                     step=step,
                 )
+            if target_step_id == step.id:
+                return states
         return states
+
+    @staticmethod
+    def _request_resource_handoff(*, path: str | None, handoff: ResourceHandoff) -> None:
+        """Publish one scheduler handoff request and terminate this module invocation."""
+        if path is None:
+            raise RuntimeError(
+                "A runner step requires another worker resource, but no scheduler handoff "
+                "channel is configured"
+            )
+        atomic_write_json(
+            Path(path),
+            {
+                "kind": handoff.kind,
+                "step_id": handoff.step_id,
+                "resource_class": handoff.resource_class,
+                "reason": handoff.reason,
+            },
+            sort_keys=True,
+            mode=0o664,
+        )
+        raise ResourceHandoffExit(handoff)
 
     def _skip_declared_step(self, step: Step, *, reason: str) -> None:
         if step.kind is StepKind.COMMAND:
@@ -1085,6 +1155,13 @@ class Runner:
         boundary_started = time.perf_counter()
         try:
             yield self
+        except ResourceHandoffExit as handoff:
+            self._logger.info(
+                "%s paused: %s",
+                module_name,
+                handoff.handoff.reason or "waiting for another worker resource",
+            )
+            raise
         except BaseException as error:
             failed_step, failed_name = state.failed_step or state.active_steps[-1]
             if state.failed_step is None:
@@ -1124,8 +1201,10 @@ class Runner:
                 raise error
             try:
                 if state.graph is not None:
-                    state.graph.validate_execution_contract()
-                if ledger and state.graph is not None:
+                    state.graph.validate_execution_contract(
+                        through_step=os.environ.get("NRO_TARGET_STEP_ID") or None
+                    )
+                if ledger and state.graph is not None and not os.environ.get("NRO_TARGET_STEP_ID"):
                     state.graph.reconcile_contract(
                         Path(ledger).with_name("runner-contract.json"),
                         signature=signature,

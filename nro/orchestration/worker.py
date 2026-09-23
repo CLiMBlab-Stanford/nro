@@ -37,6 +37,7 @@ from nro.orchestration.registry import (
     ensure_shared_directory,
     utcnow,
 )
+from nro.orchestration.resource_handoff import RESOURCE_HANDOFF_EXIT
 from nro.orchestration.resources import WORKER_COMPATIBILITY
 from nro.orchestration.scheduler_implementation import validate_worker_script
 
@@ -575,6 +576,32 @@ class Worker:
         log_path = work_item.log_path
         ensure_shared_directory(log_path.parent)
         step_ledger = log_path.parent / "current-steps.json"
+        handoff_path = log_path.parent / f"resource-handoff-{attempt_id}.json"
+        handoff_path.unlink(missing_ok=True)
+        resource_task_id = work_item.resource_task_id
+
+        def finish(
+            state: str,
+            *,
+            error_type: str | None = None,
+            error_message: str | None = None,
+        ) -> None:
+            if resource_task_id is None:
+                self.registry.finish_attempt(
+                    attempt_id,
+                    state=state,
+                    error_type=error_type,
+                    error_message=error_message,
+                )
+            else:
+                self.registry.finish_resource_step(
+                    resource_task_id,
+                    attempt_id,
+                    state=state,
+                    error_type=error_type,
+                    error_message=error_message,
+                )
+
         # These files describe one current attempt, just like the stored work-item.log. Do
         # not let obsolete branch-specific nodes from an older attempt leak
         # into the new database completion record's private-artifact inventory.
@@ -652,6 +679,16 @@ class Worker:
                         "NRO_RUNTIME_CONFIG": str(work_item.execution.runtime_config),
                         "NRO_CONFIGURATION_FINGERPRINT": work_item.config_fingerprint,
                         "NRO_RUNNER_GRAPH_SIGNATURE": started_runner_graph_signature,
+                        "NRO_WORKER_RESOURCE_CLASS": self.resource_class,
+                        "NRO_RESOURCE_HANDOFF": str(handoff_path),
+                        "NRO_COMPLETED_RESOURCE_STEPS": json.dumps(
+                            work_item.completed_resource_steps
+                        ),
+                        **(
+                            {"NRO_TARGET_STEP_ID": work_item.target_step_id}
+                            if work_item.target_step_id is not None
+                            else {}
+                        ),
                         **(
                             {
                                 "NRO_SOURCE_MARKUP": json.dumps(
@@ -673,13 +710,46 @@ class Worker:
                 cancelled = result.cancelled
                 scheduler_cancelled = result.scheduler_cancelled
                 return_code = result.return_code
+            if return_code == RESOURCE_HANDOFF_EXIT:
+                try:
+                    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise RuntimeError(
+                        "Runner requested a resource handoff without a readable request"
+                    ) from error
+                kind = handoff.get("kind")
+                if kind == "execute_step" and resource_task_id is None:
+                    self.registry.defer_resource_step(
+                        attempt_id,
+                        step_id=str(handoff["step_id"]),
+                        resource_class=str(handoff["resource_class"]),
+                        memory_gb=32,
+                    )
+                    _append_event(
+                        self.registry,
+                        work_item,
+                        {
+                            "event": "attempt_resource_handoff",
+                            "attempt_id": attempt_id,
+                            "step_id": handoff["step_id"],
+                            "resource_class": handoff["resource_class"],
+                        },
+                    )
+                    return
+                if kind == "resume_parent" and resource_task_id is not None:
+                    finish(
+                        "cancelled",
+                        error_type="ResourcePreconditionChanged",
+                        error_message=str(handoff.get("reason") or "Step inputs changed"),
+                    )
+                    return
+                raise RuntimeError(f"Invalid runner resource handoff: {handoff!r}")
             if not scheduler_cancelled and self._allocation_timed_out(return_code):
                 message = (
                     "Worker allocation reached its Slurm wall-time limit; "
                     "resume this work with a longer --time allocation"
                 )
-                self.registry.finish_attempt(
-                    attempt_id,
+                finish(
                     state="error",
                     error_type="Timeout",
                     error_message=message,
@@ -700,8 +770,7 @@ class Worker:
                 # Registry-issued cancellations already carry their durable
                 # cause.  A worker-level signal is infrastructure interruption
                 # and is safe to resume under existing demand.
-                self.registry.finish_attempt(
-                    attempt_id,
+                finish(
                     state="cancelled",
                     error_type=None if scheduler_cancelled else "WorkerTerminated",
                     error_message=None
@@ -717,7 +786,11 @@ class Worker:
             if return_code != 0:
                 message = _failure_summary(log_path, return_code)
                 if _looks_like_oom(log_path, return_code):
-                    next_memory = self.registry.record_oom(attempt_id, message=message)
+                    if resource_task_id is not None:
+                        finish("error", error_type="OutOfMemory", error_message=message)
+                        next_memory = None
+                    else:
+                        next_memory = self.registry.record_oom(attempt_id, message=message)
                     self._cancel_failed_descendants(work_item)
                     _append_event(
                         self.registry,
@@ -733,8 +806,7 @@ class Worker:
                     if next_memory is not None:
                         self._submit_adaptive_worker(next_memory)
                     return
-                self.registry.finish_attempt(
-                    attempt_id,
+                finish(
                     state="error",
                     error_type="CalledProcessError",
                     error_message=message,
@@ -759,8 +831,7 @@ class Worker:
                     "BIDS/workflow work-item DAG changed while the attempt was running; "
                     "discarding this completion and returning the work item to the ready queue"
                 )
-                self.registry.finish_attempt(
-                    attempt_id,
+                finish(
                     state="cancelled",
                     error_type="WorkItemGraphChanged",
                     error_message=message,
@@ -772,6 +843,19 @@ class Worker:
                         "event": "attempt_graph_changed",
                         "attempt_id": attempt_id,
                         "error": message,
+                    },
+                )
+                return
+            if resource_task_id is not None:
+                finish("success")
+                _append_event(
+                    self.registry,
+                    work_item,
+                    {
+                        "event": "resource_step_succeeded",
+                        "attempt_id": attempt_id,
+                        "resource_task_id": resource_task_id,
+                        "step_id": work_item.target_step_id,
                     },
                 )
                 return
@@ -803,7 +887,7 @@ class Worker:
                 started_at=completion_started,
             )
             completion_started = None
-            self.registry.finish_attempt(attempt_id, state="success")
+            finish("success")
             _append_event(
                 self.registry,
                 work_item,
@@ -818,9 +902,7 @@ class Worker:
             self.stop_requested = True
             self._log(str(error) + "; retaining the active attempt until shutdown is confirmed")
         except AttemptInvalidated as error:
-            self.registry.finish_attempt(
-                attempt_id, state="cancelled", error_type="UpstreamStale", error_message=str(error)
-            )
+            finish("cancelled", error_type="UpstreamStale", error_message=str(error))
             _append_event(
                 self.registry,
                 work_item,
@@ -828,8 +910,7 @@ class Worker:
             )
         except RegistryLockTimeout as error:
             message = f"Registry temporarily unavailable: {error}"
-            self.registry.finish_attempt(
-                attempt_id,
+            finish(
                 state="cancelled",
                 error_type="RegistryUnavailable",
                 error_message=message,
@@ -851,9 +932,7 @@ class Worker:
                     )
                 except BaseException:
                     pass
-            self.registry.finish_attempt(
-                attempt_id, state="error", error_type=type(error).__name__, error_message=message
-            )
+            finish("error", error_type=type(error).__name__, error_message=message)
             self._cancel_failed_descendants(work_item)
             _append_event(
                 self.registry,
@@ -865,6 +944,8 @@ class Worker:
                     "traceback": traceback.format_exc(),
                 },
             )
+        finally:
+            handoff_path.unlink(missing_ok=True)
 
     def _execute_ingestion(self, record: dict) -> None:
         """Supervise a noninteractive ingestion stage without derivative completion checks."""
@@ -1069,11 +1150,19 @@ class Worker:
                     self._log("draining before the Slurm wall-time limit")
                     self._submit_successor()
                     break
-                work_item = self.registry.claim_ready_work_item(
-                    self.worker_id,
-                    COMPATIBLE[self.resource_class],
-                    memory_gb=self.memory_gb,
-                )
+                work_item = None
+                if self.resource_class == "gpu" and hasattr(self.registry, "claim_resource_step"):
+                    work_item = self.registry.claim_resource_step(
+                        self.worker_id,
+                        resource_class=self.resource_class,
+                        memory_gb=self.memory_gb,
+                    )
+                if work_item is None and self.resource_class != "gpu":
+                    work_item = self.registry.claim_ready_work_item(
+                        self.worker_id,
+                        COMPATIBLE[self.resource_class],
+                        memory_gb=self.memory_gb,
+                    )
                 if work_item is None:
                     if not hasattr(self.registry, "claim_ingestion"):
                         from nro.bidsify.index import IngestionIndex
@@ -1108,15 +1197,20 @@ class Worker:
                 idle_since = time.monotonic()
                 idle_announced = False
                 attempt_id = work_item.attempt_id
+                assignment = (
+                    f"resource step {work_item.target_step_id!r} for work item"
+                    if work_item.resource_task_id is not None
+                    else "work item"
+                )
                 self._log(
-                    f"claimed work item {work_item.work_item_id} (module={work_item.module}; "
+                    f"claimed {assignment} {work_item.work_item_id} (module={work_item.module}; "
                     f"participant=sub-{work_item.participant}; attempt={attempt_id}); "
                     f"work-item log: {work_item.log_path}"
                 )
                 started_at = time.monotonic()
                 self._execute(work_item)
                 self._log(
-                    f"released work item {work_item.work_item_id} after "
+                    f"released {assignment} {work_item.work_item_id} after "
                     f"{time.monotonic() - started_at:.3f}s; {self._attempt_summary(attempt_id)}; "
                     f"work-item log: {work_item.log_path}"
                 )

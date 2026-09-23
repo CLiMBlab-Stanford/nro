@@ -25,6 +25,14 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
                (SELECT a.log_path FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
                (SELECT COUNT(*) FROM attempts a WHERE a.work_item_id=t.id AND a.oom_detected=1) AS oom_count,
                (SELECT a.memory_gb FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_memory_gb,
+               (SELECT task.state FROM resource_step_tasks task
+                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
+                   AND task.revision_fingerprint=t.revision_fingerprint
+                 ORDER BY task.id DESC LIMIT 1) AS resource_step_state,
+               (SELECT task.resource_class FROM resource_step_tasks task
+                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
+                   AND task.revision_fingerprint=t.revision_fingerprint
+                 ORDER BY task.id DESC LIMIT 1) AS waiting_resource_class,
                EXISTS(
                  SELECT 1 FROM request_work_items retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
                  WHERE retry_rt.work_item_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
@@ -154,6 +162,7 @@ def project_work_item_status(
             )
         )
         attempt = item.get("attempt_state")
+        resource_step = item.get("resource_step_state")
         if item["artifact_state"] == "fresh":
             state = "Success"
         elif not item.get("recomputable") and not item.get("demanded"):
@@ -169,6 +178,10 @@ def project_work_item_status(
             state = "Stopping"
         elif attempt == "running":
             state = "Running"
+        elif resource_step == "running" and item.get("demanded"):
+            state = "Running"
+        elif resource_step == "pending" and item.get("demanded"):
+            state = "Waiting"
         elif unfinished_dependencies and item.get("demanded"):
             state = "Waiting"
         elif attempt == "queued" or item.get("retry_requested"):

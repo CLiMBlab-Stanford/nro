@@ -426,6 +426,31 @@ def _apply_worker_operation(registry, message: dict) -> object:
                 memory_gb=int(message["memory_gb"]),
             )
         return None if envelope is None else envelope.as_dict()
+    if action == "claim_resource_step":
+        envelope = registry.current_worker_assignment(worker_id)
+        if envelope is None:
+            envelope = registry.claim_resource_step(
+                worker_id,
+                resource_class=str(message["resource_class"]),
+                memory_gb=int(message["memory_gb"]),
+            )
+        return None if envelope is None else envelope.as_dict()
+    if action == "defer_resource_step":
+        return registry.defer_resource_step(
+            int(message["attempt_id"]),
+            step_id=str(message["step_id"]),
+            resource_class=str(message["resource_class"]),
+            memory_gb=int(message["memory_gb"]),
+        )
+    if action == "finish_resource_step":
+        registry.finish_resource_step(
+            int(message["task_id"]),
+            int(message["attempt_id"]),
+            state=str(message["state"]),
+            error_type=message.get("error_type"),
+            error_message=message.get("error_message"),
+        )
+        return None
     if action == "claim_ingestion":
         from nro.bidsify.index import IngestionIndex
 
@@ -648,7 +673,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             worker_level=message["worker_level"],
             running_only=bool(message.get("running_only", False)),
         )
-    elif message["operation"] in {"concurrency", "stop_workers"}:
+    elif message["operation"] in {"concurrency", "gpu_concurrency", "stop_workers"}:
         result = pool_operation(
             registry,
             checkout=Path(message["checkout"]),

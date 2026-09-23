@@ -30,8 +30,9 @@ ordinary installations. Shared installations use
 `./install --maintain --with-lesion`; development branches use
 `./install --with-lesion` from their checkout.
 When lesion GPU execution is enabled, the scheduler submits a dedicated worker
-with `--gres=gpu:1`. The cluster must provide a GPU through that generic Slurm
-resource. GPU workers do not remain idle after their ready lesion work ends.
+with `--gres=gpu:1` only when the NeuroLIT step is ready. The cluster must
+provide a GPU through that generic Slurm resource. GPU workers do not remain
+idle after their ready lesion work ends.
 The installer includes the pinned official MARSS package. Pass `--without-marss`
 to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
 it whenever the multiband-factor threshold calls for correction.

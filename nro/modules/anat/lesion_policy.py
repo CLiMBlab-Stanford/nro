@@ -51,6 +51,7 @@ def lesion_reconstruction_contract() -> dict[str, object]:
         "fastsurfer_oci_digest": FASTSURFER_OCI_DIGEST,
         "fastsurfer_freesurfer_build": FASTSURFER_FREESURFER_BUILD,
         "fastsurfer_voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
+        "fastsurfer_mask_reconciliation": "segmentation_union",
         "neurolit_version": NEUROLIT_VERSION,
         "neurolit_record": NEUROLIT_RECORD,
         "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,

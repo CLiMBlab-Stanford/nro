@@ -67,14 +67,14 @@ def _plan_modules(registry, tmp_path, modules, workflow_ids=("main",)):
             name: registry.register_workflow(workflow) for name, workflow in workflows.items()
         },
         selectors={},
-        spaces=("fsnative", "ACPC"),
+        spaces=("fsnative", "T1w"),
         smoothing_levels=(0, 2),
         memory_gb=32,
         max_memory_gb=256,
     )
 
 
-def test_lesion_anatomy_requests_a_gpu_worker(tmp_path: Path) -> None:
+def test_lesion_anatomy_keeps_its_parent_work_item_on_cpu(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
@@ -103,7 +103,7 @@ def test_lesion_anatomy_requests_a_gpu_worker(tmp_path: Path) -> None:
 
     work_item = anat_planning.plan_work_items(context, {}, module_descriptor("anat"))[0]
 
-    assert work_item.resource_class == "gpu"
+    assert work_item.resource_class == "large"
 
 
 def test_request_pins_execution_without_changing_scientific_contract(branch_registry, tmp_path):
@@ -289,7 +289,7 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
         key
         for key in complete.requests[0].terminal_keys
         if complete.work_items[key].participant == "01"
-        and complete.work_items[key].entities["space"] == "ACPC"
+        and complete.work_items[key].entities["space"] == "T1w"
         and complete.work_items[key].entities["smoothing"] == "2"
         and complete.work_items[key].entities["task"] == "rest"
     )
@@ -321,7 +321,7 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
         (work_item.entities.get("space"), work_item.entities.get("smoothing"))
         for work_item in exact.work_items.values()
         if work_item.module == "clean"
-    } == {("ACPC", "2")}
+    } == {("T1w", "2")}
 
 
 def test_registered_targets_preserve_workflow_associations(branch_registry, tmp_path):
@@ -851,7 +851,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         registered=registered,
         registry=registry,
         bids_root=bids,
-        spaces=("fsnative", "ACPC"),
+        spaces=("fsnative", "T1w"),
         smoothing_levels=(0, 2),
     )
     by_module = {
@@ -861,8 +861,8 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
     expected_pairs = {
         ("fsnative", "0"),
         ("fsnative", "2"),
-        ("ACPC", "0"),
-        ("ACPC", "2"),
+        ("T1w", "0"),
+        ("T1w", "2"),
     }
 
     assert len(by_module["anat"]) == 1
