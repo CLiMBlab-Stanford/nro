@@ -523,12 +523,12 @@ def _main(argv=None) -> None:
 
         def prepare_shared() -> None:
             nonlocal shared_registry
-            from nro.engine.shared_installation import prepare_pool
-            from nro.engine.site_setup import edit_settings, save_settings
-            from nro.orchestration.registry import Registry
-            from nro.orchestration.releases import tagged_source
+            from nro.engine.site_setup import (
+                edit_settings,
+                migrate_site_configuration,
+                save_settings,
+            )
 
-            tagged_source(ROOT)
             if not site.exists():
                 if args.non_interactive:
                     save_settings(site, {})
@@ -536,6 +536,15 @@ def _main(argv=None) -> None:
                     edit_settings(path=site, maintain=True)
                     if not site.exists():
                         raise RuntimeError("Path setup was cancelled")
+            else:
+                # Migrate protected definitions before importing registry-backed
+                # installation modules, whose path constants resolve site settings.
+                migrate_site_configuration(site)
+            from nro.engine.shared_installation import prepare_pool
+            from nro.orchestration.registry import Registry
+            from nro.orchestration.releases import tagged_source
+
+            tagged_source(ROOT)
             values = settings(path=site)[0]
             shared_registry = Registry.for_project(
                 "",

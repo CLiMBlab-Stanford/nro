@@ -24,21 +24,42 @@ The default is `bids-validator`; this external program is not installed by the
 Python extra. Worker nodes need network access to Flywheel and shared staging.
 
 Each site defines its Flywheel servers and remote project scopes in the
-protected `site/site.yml` document. Configure credential values outside the
-repository. For example, the CLIMBLAB definitions store contains:
+protected `site/site.yml` document. For example, the CLIMBLAB definitions
+store contains:
 
-| Server | Host | Remote project scope | Credential environment variable |
-| --- | --- | --- | --- |
-| `cni` | `cni.flywheel.io` | `cashain/climblab` | `FW_API_KEY_CNI` |
-| `lucas` | `lucascenter.flywheel.io` | `shain/shain1` | `FW_API_KEY_LUCAS` |
+| Server | Host | Remote project scope |
+| --- | --- | --- |
+| `cni` | `cni.flywheel.io` | `cashain/climblab` |
+| `lucas` | `lucascenter.flywheel.io` | `shain/shain1` |
 
-The credential may be a token or a matching `HOST:TOKEN` value. nro creates an
-isolated SDK client; it does not change Flywheel CLI login state. Credentials
-must be present in the environment of the user and workers that inspect or
-download sessions. Workers started before a credential was supplied do not
-gain it automatically. Stop those workers and submit from the authenticated
-environment if needed. Tokens are never written into request records or worker
-scripts. Use the cluster's approved credential-management procedure.
+Each user stores a key for a configured server with a hidden prompt:
+
+```bash
+nro fw addkey cni
+nro fw list
+```
+
+The key may be a token or a matching `HOST:TOKEN` value accepted by `fw login`.
+`nro fw addkey SERVER KEY` is also accepted, but the positional value may be
+recorded in shell history or a process listing. Omit it for normal use.
+
+Keys live in the ignored `.definition-secrets` directory of the shared
+definitions store. They are separated by Unix user. Key files are writable but
+not readable by the store's group, so store maintainers can replace or delete
+them without learning their contents. They are absent from Git, the definitions
+manifest, request records, worker scripts, and branch definitions. Updating a
+key does not affect derivative freshness. `nro fw removekey SERVER` removes
+the invoking user's key.
+
+`nro bidsify` asks to collect and store a missing key before it contacts a
+selected server. Workers do not prompt. A worker that cannot read the submitting
+user's key stops with the matching `nro fw addkey SERVER` command. nro creates
+an isolated SDK client and does not change Flywheel CLI login state.
+
+The definitions migration removes legacy Flywheel credential-environment
+references but never reads or copies environment values. After upgrading from
+that layout, each user runs `nro fw addkey SERVER` once for each server they
+use.
 
 A site may also connect a local or Google Drive scan-plan directory and a
 site-owned parser. See [configure scan plans](scanplans.md) for the parser API,
@@ -47,11 +68,18 @@ fixed fallback table, authentication, and reconciliation rules.
 ## Select, review, and publish
 
 ```bash
+nro bidsify ls
+nro bidsify ls -f mysite -F group/study
 nro bidsify -f mysite -F group/study -P example
 nro status -P example
 nro bidsify --request REQUEST_ID
 nro bidsify --cancel REQUEST_ID
 ```
+
+`nro bidsify ls` lists configured server/project pairs and the sessions visible
+to the current user's credentials. The `-f` and `-F` options narrow the remote
+inventory. Listing does not create a request, inspect the registry, or start
+scheduler coordination.
 
 `-P` names one destination BIDS project. `--flywheel-project GROUP/PROJECT`
 names its source on Flywheel. These names need not match:
@@ -167,6 +195,7 @@ Preprocessing does not replace these choices with temporal matching.
 
 | Option | Meaning |
 | --- | --- |
+| `ls` | List configured servers, projects, and accessible remote sessions without creating work. |
 | `-f`, `--flywheel-server NAME` | Profile name, such as `cni` or `lucas`. |
 | `-P`, `--project NAME` | One destination BIDS project. |
 | `-F`, `--flywheel-project GROUP/PROJECT` | One configured source Flywheel project for new sessions. |
@@ -215,8 +244,9 @@ not proof that work stopped.
 
 The shared `DEFINITIONS/site/site.yml` document owns ingestion sources and
 routing. It contains Flywheel servers, destination-to-source project mappings,
-scan-plan locations, credential environment-variable names, session rules, and
-event lookup rules. These settings are common to every development branch.
+scan-plan locations, session rules, and event lookup rules. These settings are
+common to every development branch. Private Flywheel keys remain outside this
+tracked document.
 
 The default conversion profile is `DEFINITIONS/bidsify/main.yml`.
 `--config FILE` selects another complete profile. Profiles control conversion
@@ -227,7 +257,7 @@ scan-plan file are detected and reparsed when the request resumes.
 
 | Protected site key | Purpose |
 | --- | --- |
-| `servers` | Named `host`, `credential_env`, and `projects` lists. No credential values. |
+| `servers` | Named `host` and `projects` lists. Credential values are managed by `nro fw`. |
 | `project_sources` | BIDS project names mapped to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list; duplicate pairs are rejected. |
 | `scanplans.location`, `scanplans.credential_env` | Shared source and authentication variable described in [configure scan plans](scanplans.md). A null location disables scan-plan integration. |
 | `event_rules` | Additional `task` and absolute glob `pattern` pairs for candidates outside the catalog. All matches are shown; no ambiguous candidate is selected automatically. |

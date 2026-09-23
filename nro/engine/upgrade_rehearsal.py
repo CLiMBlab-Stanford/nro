@@ -18,11 +18,6 @@ from nro.configuration.definition_migrations import (
     store_schema,
 )
 from nro.engine.site_setup import save_settings
-from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
-from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.registry import SCHEMA_VERSION
-from nro.orchestration.scheduler_implementation import implementation_path
-from nro.orchestration.source_snapshots import SourceStore
 
 
 def _git(checkout: Path, *arguments: str) -> str:
@@ -142,12 +137,12 @@ def _prepare_pool(
     code = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from nro.configuration.definitions import ensure_store\n"
-        "from nro.engine.shared_installation import prepare_pool\n"
         "from nro.engine.site_setup import migrate_site_configuration\n"
-        "from nro.orchestration.registry import Registry\n"
         "control, bids, checkout, definitions, site = map(Path, sys.argv[1:])\n"
         "migrate_site_configuration(site)\n"
+        "from nro.configuration.definitions import ensure_store\n"
+        "from nro.engine.shared_installation import prepare_pool\n"
+        "from nro.orchestration.registry import Registry\n"
         "ensure_store(definitions)\n"
         "migrate_site_configuration(site)\n"
         "registry = Registry.for_project('', bids_root=bids, registry_path=control, "
@@ -235,6 +230,36 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
                 "binds": [],
             },
         )
+        previous_site = os.environ.get("NRO_SITE_CONFIG")
+        previous_checkout = os.environ.get("NRO_CHECKOUT")
+        previous_source = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
+        os.environ["NRO_SITE_CONFIG"] = str(site)
+        os.environ["NRO_CHECKOUT"] = str(synthetic)
+        os.environ["NRO_EXECUTION_SOURCE_ROOT"] = str(synthetic)
+        try:
+            # Import registry-backed helpers only after selecting the isolated
+            # rehearsal site. The installed site may legitimately use the old
+            # definitions schema that this candidate is meant to migrate.
+            from nro.orchestration.branch_registry import (
+                SCHEMA_VERSION as scientific_schema_version,
+            )
+            from nro.orchestration.control_paths import ControlPaths
+            from nro.orchestration.registry import SCHEMA_VERSION as scheduler_schema_version
+            from nro.orchestration.scheduler_implementation import implementation_path
+            from nro.orchestration.source_snapshots import SourceStore
+        finally:
+            if previous_site is None:
+                os.environ.pop("NRO_SITE_CONFIG", None)
+            else:
+                os.environ["NRO_SITE_CONFIG"] = previous_site
+            if previous_checkout is None:
+                os.environ.pop("NRO_CHECKOUT", None)
+            else:
+                os.environ["NRO_CHECKOUT"] = previous_checkout
+            if previous_source is None:
+                os.environ.pop("NRO_EXECUTION_SOURCE_ROOT", None)
+            else:
+                os.environ["NRO_EXECUTION_SOURCE_ROOT"] = previous_source
         _initialize_definitions(synthetic, site, definitions, python)
         environment = python.parent.parent
         release = {
@@ -274,11 +299,11 @@ def rehearse(checkout: Path, *, baseline: str | None = None) -> dict:
         _prepare_pool(synthetic, site, control, bids, definitions, python)
         with sqlite3.connect(database_path) as database:
             rebuilt_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
-        if rebuilt_schema != SCHEMA_VERSION:
+        if rebuilt_schema != scheduler_schema_version:
             raise RuntimeError("Rehearsal did not produce the candidate scheduler schema")
         with sqlite3.connect(scientific_path) as database:
             scientific_schema = int(database.execute("PRAGMA user_version").fetchone()[0])
-        if scientific_schema != SCIENTIFIC_SCHEMA_VERSION:
+        if scientific_schema != scientific_schema_version:
             raise RuntimeError("Rehearsal did not produce the candidate scientific schema")
         definitions_schema = store_schema(definitions)
         if definitions_schema != DEFINITIONS_SCHEMA_VERSION:

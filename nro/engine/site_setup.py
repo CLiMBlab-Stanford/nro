@@ -13,6 +13,7 @@ from nro.configuration.site import (
     DERIVED,
     LAB,
     PATH_KEYS,
+    _definitions_from_locator,
     generic_defaults,
     installation_record,
     read_overrides,
@@ -62,15 +63,10 @@ def save_settings(path: Path, overrides: dict) -> Path:
     for key, value in overrides.items():
         validate_setting(key, value)
     existing = read_overrides(path)
-    definitions = (
-        Path(
-            overrides.get(
-                "definitions", existing.get("definitions", settings(path=path)[0]["definitions"])
-            )
-        )
-        .expanduser()
-        .resolve()
-    )
+    definitions_value = overrides.get("definitions", existing.get("definitions"))
+    if definitions_value is None:
+        definitions_value = settings(path=path)[0]["definitions"]
+    definitions = Path(definitions_value).expanduser().resolve()
     protected_path = site_definition_path(definitions)
     if protected_path.is_file() and "definitions" in (set(existing) | set(overrides)):
         current, bidsify = read_site_definition(definitions)
@@ -108,12 +104,25 @@ def migrate_site_configuration(path: Path) -> Path:
     readable and can be repeated.
     """
     path = Path(path)
+    legacy = read_overrides(path)
+    definitions = _definitions_from_locator(path, legacy)
+    protected_path = site_definition_path(definitions)
+    if protected_path.is_file():
+        # A candidate release may need a newer definitions schema before its
+        # site-document reader can interpret the protected settings. Perform
+        # that validated migration before resolving the complete site.
+        from nro.configuration.definition_migrations import migrate_store
+        from nro.configuration.definitions import validate_store
+
+        migrate_store(
+            definitions,
+            validate=lambda candidate: validate_store(candidate, require_site=True),
+        )
     values, _ = settings(path=path)
     definitions = Path(values["definitions"]).expanduser().resolve()
     protected_path = site_definition_path(definitions)
     if protected_path.is_file():
         protected, bidsify = read_site_definition(definitions)
-        legacy = read_overrides(path)
         resolved = dict(protected)
         for key, (parent, suffix) in DERIVED.items():
             resolved.setdefault(key, str(Path(resolved[parent]) / suffix))
@@ -148,6 +157,15 @@ def migrate_site_configuration(path: Path) -> Path:
             if key in profile:
                 candidate = profile.pop(key)
                 changed = True
+                if key == "servers" and candidate not in (None, {}, []):
+                    candidate = {
+                        name: {
+                            item_key: item_value
+                            for item_key, item_value in server.items()
+                            if item_key != "credential_env"
+                        }
+                        for name, server in candidate.items()
+                    }
                 current = bidsify.get(key)
                 if (
                     candidate not in (None, {}, [])
@@ -193,7 +211,7 @@ def migrate_site_configuration(path: Path) -> Path:
                 atomic_write_text(
                     definitions / relative,
                     value.decode("utf-8"),
-                    mode=0o644,
+                    mode=0o664,
                     durable=True,
                 )
     _write_locator(path, definitions)

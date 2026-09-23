@@ -161,7 +161,10 @@ def run_stage(record: dict, registry, *, source=None, branch_paths=None) -> dict
     """Run one fixed stage; return its next state without asking questions."""
     root = secure_directory(Path(record["config"]["staging"]) / record["id"])
     if record["stage"] in {"inspect", "prepare"}:
-        source = source or FlywheelSource(record["config"]["servers"][record["server"]])
+        source = source or FlywheelSource(
+            record["config"]["servers"][record["server"]],
+            server_id=record["server"],
+        )
     if record["stage"] == "inspect":
         acquisitions = source.inventory(record["remote_session"])
         return {

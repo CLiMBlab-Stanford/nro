@@ -68,7 +68,7 @@ rejects a request prepared against a different protected site.
 The document has five top-level fields:
 
 ```yaml
-version: 1
+version: 2
 storage:
   bids: /data/BIDS
   work: /scratch/nro
@@ -103,6 +103,22 @@ optional resource overrides. When omitted, nro derives them from `images` or
 `templates`. The optional `lesion` Python extra supplies automatic
 stroke-lesion masking. An empty account is valid for Slurm sites that do not use
 one.
+
+## Private Flywheel credentials
+
+`site/site.yml` defines Flywheel server IDs, hosts, and permitted projects. It
+does not name environment variables or contain API keys. Each user registers a
+key with `nro fw addkey SERVER`; see [bidsification](commands/bidsify.md#before-first-use).
+
+The ignored `.definition-secrets` directory belongs to the shared store but is
+not part of its schema or integrity manifest. Key files are grouped by Unix
+user, use mode `0620`, and inherit the store group. Their directories allow
+group listing, replacement, and deletion without key reads. Store migrations
+and branch inheritance do not copy this directory.
+
+nro keeps every store file group-writable and every store directory
+group-writable, group-searchable, and setgid. It preserves existing read access;
+making a private file maintainable does not make it group-readable.
 
 ## Gradient-unwarping hardware
 

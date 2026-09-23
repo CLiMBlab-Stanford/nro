@@ -199,6 +199,10 @@ def test_installation_migrates_legacy_site_and_bidsify_settings(isolated_site, t
     assert protected["bids"] == "/legacy/BIDS"
     assert bidsify["default_server"] == "cni"
     assert bidsify["project_sources"]["study"][0]["project"] == "lab/study"
+    assert bidsify["servers"]["cni"] == {
+        "host": "cni.example.org",
+        "projects": ["lab/study"],
+    }
     migrated_profile = yaml.safe_load(profile_path.read_text())
     assert set(migrated_profile["scanplans"]) == {"parser"}
     assert "servers" not in migrated_profile
@@ -352,6 +356,7 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     }
     (root / bootstrap.RECORD).write_text(json.dumps(record))
     monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr(site_setup, "migrate_site_configuration", lambda path: path)
     monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
     events = []
     monkeypatch.setattr(
@@ -433,6 +438,7 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
     record_path.write_text(json.dumps(record))
     original = record_path.read_bytes()
     monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr(site_setup, "migrate_site_configuration", lambda path: path)
     monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
     monkeypatch.setattr(shared_installation, "prepare_pool", lambda *args, **options: None)
     monkeypatch.setattr(

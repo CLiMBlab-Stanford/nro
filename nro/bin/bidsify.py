@@ -1,12 +1,14 @@
 """Review and schedule Flywheel-to-BIDS ingestion without planning derivatives."""
 
 import argparse
+import getpass
 import json
 import os
 import sys
 from pathlib import Path
 
 from nro.bidsify.config import bids_label, identifier, load_config
+from nro.bidsify.credentials import has_key, store_key
 from nro.bidsify.discovery import inferred_session, session_choices
 from nro.bidsify.flywheel import FlywheelSource
 from nro.bidsify.identity import destination_label
@@ -28,6 +30,12 @@ from nro.orchestration.registry import Registry
 def build_parser(*, prog="nro bidsify"):
     """Build selectors for a single destination project and resumable ingestion requests."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=("ls",),
+        help="List configured Flywheel servers, projects, and accessible sessions",
+    )
     parser.add_argument(
         "-f",
         "--flywheel-server",
@@ -91,6 +99,73 @@ def select_source(
         if len(matched) == 1:
             return matched[0]
         print("Select one displayed source.")
+
+
+def authenticate(root: Path, config: dict, server: str) -> None:
+    """Offer private key setup before interactive Flywheel access."""
+    profile = config["servers"][server]
+    if has_key(root, server, host=profile["host"]):
+        return
+    print(f"Flywheel server {server!r} requires an API key for your Unix account.")
+    print(
+        f"Paste the value accepted by `fw login` for {profile['host']}. "
+        "Input is hidden and the key is not written to tracked definitions."
+    )
+    if ask("Authenticate now? Y/n", "y").lower() != "y":
+        raise ValueError(
+            f"Flywheel authentication is required; run `nro fw addkey {server}` and retry"
+        )
+    key = getpass.getpass(f"Flywheel API key for {server}: ")
+    store_key(root, server, key, host=profile["host"])
+    print(f"Stored Flywheel key for {server}.")
+
+
+def list_sources(
+    root: Path,
+    config: dict,
+    *,
+    server: str | None = None,
+    flywheel_project: str | None = None,
+) -> None:
+    """List configured Flywheel sources and their remotely accessible sessions."""
+    selected = [
+        (server_id, profile)
+        for server_id, profile in sorted(config["servers"].items())
+        if server is None or server_id == server
+    ]
+    if not selected:
+        if server is None:
+            raise ValueError("No Flywheel servers are configured")
+        raise ValueError(f"Unknown Flywheel server {server!r}")
+    matched_project = False
+    for server_id, profile in selected:
+        projects = [
+            project
+            for project in profile["projects"]
+            if flywheel_project is None or project == flywheel_project
+        ]
+        if not projects:
+            continue
+        matched_project = True
+        print(f"{server_id}\t{profile['host']}")
+        authenticate(root, config, server_id)
+        source = FlywheelSource(
+            {**profile, "projects": projects},
+            server_id=server_id,
+            definitions=root,
+        )
+        rows = source.sessions()
+        for project in projects:
+            print(f"  {project}")
+            sessions = [row for row in rows if row["remote_project"] == project]
+            if not sessions:
+                print("    (no sessions)")
+            for row in sessions:
+                print(f"    {row['id']}\t{row['label']}")
+    if not matched_project:
+        raise ValueError(
+            f"Unknown Flywheel project {flywheel_project!r} for the selected server(s)"
+        )
 
 
 def advance(store: IngestionStore, record: dict) -> dict:
@@ -269,8 +344,18 @@ def main(argv=None, *, prog="nro bidsify"):
         from nro.orchestration.scheduler_implementation import implementation_path
 
         site_values, _ = settings()
+        definitions = Path(site_values["definitions"]).expanduser().resolve()
         flywheel_server = args.flywheel_server or site_values.get("flywheel_server") or None
         flywheel_project = args.flywheel_project or site_values.get("flywheel_project") or None
+        config = load_config(args.config)
+        if args.action == "ls":
+            list_sources(
+                definitions,
+                config,
+                server=args.flywheel_server,
+                flywheel_project=args.flywheel_project,
+            )
+            return
         if not args.execution and (
             installation_record().get("mode") == "branch"
             or implementation_path(Path(settings()[0]["registry"])).exists()
@@ -293,7 +378,6 @@ def main(argv=None, *, prog="nro bidsify"):
             )
         else:
             registry = Registry.for_project("", bids_root=bids_root)
-        config = load_config(args.config)
         if not (args.request or args.cancel) and not config["servers"]:
             raise ValueError(
                 "Configure Flywheel servers in the definitions store: bidsify/main.yml"
@@ -341,7 +425,12 @@ def main(argv=None, *, prog="nro bidsify"):
                     records = [unfinished[i] for i in indices]
             if not records:
                 print(f"Source: {server}/{remote_project} -> BIDS project: {project}")
-                source = FlywheelSource({**config["servers"][server], "projects": [remote_project]})
+                authenticate(definitions, config, server)
+                source = FlywheelSource(
+                    {**config["servers"][server], "projects": [remote_project]},
+                    server_id=server,
+                    definitions=definitions,
+                )
                 remote = source.sessions()
                 discovery = session_choices(
                     remote,
@@ -439,8 +528,16 @@ def main(argv=None, *, prog="nro bidsify"):
                             replace=args.rebidsify,
                         )
                     )
+        authenticated: set[str] = set()
         for record in records:
             current = store.get(record["id"])
+            if (
+                current["stage"] in {"inspect", "prepare"}
+                and current["state"] not in {"published", "cancelled", "cancel_requested"}
+                and current["server"] not in authenticated
+            ):
+                authenticate(definitions, current["config"], current["server"])
+                authenticated.add(current["server"])
             if current["stage"] == "convert":
                 _select_scanplan(store, current)
             advance(store, store.get(record["id"]))

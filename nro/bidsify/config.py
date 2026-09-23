@@ -156,12 +156,10 @@ def load_config(
         raise ValueError("Servers must be a mapping")
     for name, server in value["servers"].items():
         identifier(name)
-        if set(server) != {"host", "credential_env", "projects"}:
+        if not isinstance(server, dict) or set(server) != {"host", "projects"}:
             raise ValueError(f"Invalid server fields: {name}")
         if not re.fullmatch(r"[A-Za-z0-9.-]+", server["host"]):
             raise ValueError("Server host must be a hostname, not a URL or credential")
-        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", server["credential_env"]):
-            raise ValueError("credential_env must name an environment variable")
         if not isinstance(server["projects"], list) or any(
             not isinstance(p, str) or len(p.split("/")) != 2 for p in server["projects"]
         ):

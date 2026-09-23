@@ -41,16 +41,18 @@ def definitions_fixture(tmp_path_factory):
     bidsify["servers"] = {
         "cni": {
             "host": "cni.example.org",
-            "credential_env": "TEST_CNI_KEY",
             "projects": ["test/demo"],
         },
         "lucas": {
             "host": "lucas.example.org",
-            "credential_env": "TEST_LUCAS_KEY",
             "projects": ["test/demo"],
         },
     }
     write_site_definition(root, settings, bidsify=bidsify)
+    from nro.bidsify.credentials import store_key
+
+    store_key(root, "cni", "test-cni-key", host="cni.example.org")
+    store_key(root, "lucas", "test-lucas-key", host="lucas.example.org")
     return root
 
 
