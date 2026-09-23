@@ -47,21 +47,21 @@ TASK_GUIDES = {
     "definitions": """
         MANAGE DEFINITIONS
 
-        Create, edit, or delete one typed definition:
+        Edit or create a typed definition, list definitions, or remove one:
 
-          nro create config MODULE/ID
-          nro edit workflow ID
-          nro delete markup ID
+          nro def edit config MODULE ID
+          nro def edit workflow ID
+          nro def ls config MODULE
+          nro def rm markup ID
 
         Initialize or check a complete definitions store:
 
-          nro definitions create [PATH]
-          nro definitions migrate [PATH]
-          nro definitions validate [PATH]
+          nro def init [PATH]
+          nro def migrate [PATH]
+          nro def validate [PATH]
 
-        `nro create` manages one definition. `nro definitions create` initializes
-        the store that contains definitions. Use `nro definitions edit RELATIVE`
-        for definition types without a specialized editor.
+        Use `nro def edit file RELATIVE` for definition types without a typed
+        editor. Interactive edits publish when the editor writes the draft.
     """,
     "inspection": """
         INSPECT WORK

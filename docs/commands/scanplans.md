@@ -6,7 +6,7 @@ scan-plan formats are not standardized. nro defines the parser output and
 handles source selection, validation, and reconciliation.
 
 This setup belongs in the definitions system. Parser code is trusted code:
-`nro definitions validate` imports it, and `nro bidsify` runs it as the current
+`nro def validate` imports it, and `nro bidsify` runs it as the current
 user. Review parser changes through the definitions store's normal version
 control process.
 
@@ -96,7 +96,7 @@ The input file may use any format. The return value must be a `ScanPlan` whose
 assignments do not belong in this output. The BIDS destination selected in the
 wizard remains authoritative.
 
-Run `nro definitions validate` after changing the parser. Validation checks
+Run `nro def validate` after changing the parser. Validation checks
 that the module loads and exports a callable `parse_scanplan`. Parser output is
 validated when a source file is selected.
 

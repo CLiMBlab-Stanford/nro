@@ -220,12 +220,12 @@ def test_installed_dispatcher_allows_connected_branch_commands(stores, monkeypat
     from nro import cli
 
     _, _, _, private, _ = stores
-    cli.main(["definitions", "validate", str(private), "--json"])
+    cli.main(["def", "validate", str(private), "--json"])
     assert str(private) in capsys.readouterr().out
     calls = []
     monkeypatch.setattr(cli, "_command_main", lambda command: lambda *a, **k: calls.append(command))
-    for command in ("create", "edit", "delete", "models", "run", "status", "stop"):
+    for command in ("def", "models", "run", "status", "stop"):
         cli.main([command])
-    assert calls == ["create", "edit", "delete", "models", "run", "status", "stop"]
+    assert calls == ["def", "models", "run", "status", "stop"]
     cli.main(["bidsify"])
     assert calls[-1] == "bidsify"

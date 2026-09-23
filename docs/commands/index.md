@@ -24,10 +24,10 @@ releases
 promotion
 ```
 
-`nro definitions create [PATH]` initializes a site-owned definitions store.
-`nro definitions validate [PATH]` checks every definition and reference without
-changing files. `nro definitions apply` publishes local files through a
-full-store transaction, and `nro definitions migrate` applies the current store
+`nro def init [PATH]` initializes a site-owned definitions store.
+`nro def validate [PATH]` checks every definition and reference without
+changing files. `nro def apply` publishes local files through a
+full-store transaction, and `nro def migrate` applies the current store
 schema in place. See [definitions stores](../definitions.md) for their layout,
 validation scope, and version-control policy.
 

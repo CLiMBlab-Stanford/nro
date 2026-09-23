@@ -1,6 +1,7 @@
 """Definition drafts, validation, and guarded publication in isolated stores."""
 
 import fcntl
+import importlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,15 +9,22 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.bin.create import main as create
-from nro.bin.delete import main as delete
-from nro.bin.edit import main as edit
 from nro.configuration import store as store_module
 from nro.configuration.authoring import definition_target, validate_definition
 from nro.configuration.store import ConfigStore
 from nro.engine import definition_editor
 from nro.modules.firstlevels.authoring import discover_event_files, model_draft
 from nro.modules.firstlevels.task_models import validate_task_model
+
+definition_cli = importlib.import_module("nro.bin.def")
+
+
+def edit(argv):
+    definition_cli.main(["edit", *argv])
+
+
+def remove(argv):
+    definition_cli.main(["rm", *argv])
 
 
 @pytest.fixture
@@ -164,42 +172,42 @@ def test_malformed_events_do_not_create_partial_drafts(tmp_path, text):
 def test_create_model_draft_and_register_local_file(store, tmp_path):
     events = _events(tmp_path / "events.tsv", ["A", "B"])
     output = tmp_path / "draft.yml"
-    create(["model", "newtask", "--events", str(events), "--output", str(output)])
+    edit(["model", "newtask", "--events", str(events), "--output", str(output)])
     target = store.root / "models/newtask/main.yml"
     assert not target.exists()
-    create(["model", "newtask", "--file", str(output), "--yes"])
+    edit(["model", "newtask", "--file", str(output)])
     assert target.read_text().endswith(output.read_text())
     with pytest.raises(SystemExit):
-        create(["model", "newtask", "--file", str(output), "--yes"])
-    edit(["model", "newtask", "--file", str(output), "--yes"])
+        edit(["model", "newtask", "--from", "other"])
+    edit(["model", "newtask", "--file", str(output)])
     assert yaml.safe_load(target.read_text())["model_set"] == []
 
 
 def test_config_and_workflow_initialization(store, tmp_path):
     config = tmp_path / "config.yml"
-    create(["config", "clean/alternative", "--output", str(config)])
+    edit(["config", "clean", "alternative", "--output", str(config)])
     assert yaml.safe_load(config.read_text()) is None
     assert "# Current main defaults" in config.read_text()
     config.write_text("minimum_temporal_rank: 25\n")
-    create(["config", "clean/alternative", "--file", str(config), "--yes"])
+    edit(["config", "clean", "alternative", "--file", str(config)])
     assert store.load_configuration("clean", "alternative").values["minimum_temporal_rank"] == 25
     workflow = _write(tmp_path / "workflow.yml", "clean: alternative\n")
-    create(["workflow", "experiment", "--file", str(workflow), "--yes"])
+    edit(["workflow", "experiment", "--file", str(workflow)])
     assert store.resolve("experiment").selections["clean"] == "alternative"
     expanded = tmp_path / "expanded.yml"
-    create(["workflow", "copy", "--from", "experiment", "--output", str(expanded)])
+    edit(["workflow", "copy", "--from", "experiment", "--output", str(expanded)])
     assert yaml.safe_load(expanded.read_text())["clean"] == "alternative"
     assert yaml.safe_load(expanded.read_text())["networks"] == "main"
 
 
 def test_markup_initialization_and_publication(store, tmp_path):
     draft = tmp_path / "markup.yml"
-    create(["markup", "alternative", "--output", str(draft)])
+    edit(["markup", "alternative", "--output", str(draft)])
     assert yaml.safe_load(draft.read_text()) == {}
     draft.write_text(
         "demo:\n  sub-01:\n    T1w: anat/sub-01_T1w.nii.gz\n    exclude:\n      - ses-bad\n"
     )
-    create(["markup", "alternative", "--file", str(draft), "--yes"])
+    edit(["markup", "alternative", "--file", str(draft)])
     assert (
         definition_target(store, "markup", "alternative")
         .path.read_text()
@@ -214,7 +222,7 @@ def test_markup_edit_does_not_revalidate_unrelated_event_catalog(store, tmp_path
     )
     draft = tmp_path / "markup.yml"
     draft.write_text("demo:\n  sub-01:\n    lesion: true\n")
-    edit(["markup", "main", "--file", str(draft), "--yes"])
+    edit(["markup", "main", "--file", str(draft)])
     assert definition_target(store, "markup", "main").path.read_text().endswith(draft.read_text())
 
     from nro.configuration.definitions import validate_store
@@ -225,7 +233,7 @@ def test_markup_edit_does_not_revalidate_unrelated_event_catalog(store, tmp_path
 
 def test_copy_model_removes_execution_membership(store, tmp_path):
     output = tmp_path / "draft.yml"
-    create(["model", "langlocSN/dev", "--from", "langlocSN/main", "--output", str(output)])
+    edit(["model", "langlocSN", "dev", "--from", "langlocSN", "main", "--output", str(output)])
     assert yaml.safe_load(output.read_text())["model_set"] == []
 
 
@@ -247,7 +255,7 @@ def test_validation_rejects_invalid_staged_definitions(store, kind, identifier, 
         validate_definition(store, definition_target(store, kind, identifier), text)
 
 
-def test_create_existing_routes_to_edit_and_preserves_comments(store, monkeypatch, capsys):
+def test_edit_existing_preserves_comments_without_save_confirmation(store, monkeypatch):
     target = definition_target(store, "config", "clean/main").path
     _write(target, "minimum_temporal_rank: 25\n")
     original = target.read_bytes()
@@ -260,10 +268,9 @@ def test_create_existing_routes_to_edit_and_preserves_comments(store, monkeypatc
         draft.write_text(draft.read_text() + "\n# Reviewed settings.\n")
         return subprocess.CompletedProcess(command, 0)
 
-    _interactive(monkeypatch, editor, ["y"])
-    create(["config", "clean/main"])
+    _interactive(monkeypatch, editor, [])
+    edit(["config", "clean", "main"])
     assert target.read_text().endswith("# Reviewed settings.\n")
-    assert "already exists; opening for editing" in capsys.readouterr().out
 
 
 def test_invalid_edit_can_be_corrected_before_publication(store, monkeypatch):
@@ -275,13 +282,13 @@ def test_invalid_edit_can_be_corrected_before_publication(store, monkeypatch):
         calls.append(command)
         Path(command[-1]).write_text("unknown: main\n" if len(calls) == 1 else "clean: main\n")
 
-    _interactive(monkeypatch, editor, ["y", "y"])
-    create(["workflow", "new"])
+    _interactive(monkeypatch, editor, ["y"])
+    edit(["workflow", "new"])
     assert len(calls) == 2
     assert target.read_text().endswith("clean: main\n")
 
 
-@pytest.mark.parametrize("outcome", ["cancel", "invalid", "editor_error", "interrupt", "conflict"])
+@pytest.mark.parametrize("outcome", ["invalid", "editor_error", "interrupt", "conflict"])
 def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, outcome, capsys):
     target = store.workflow_path("main")[1]
     original = target.read_text()
@@ -298,12 +305,9 @@ def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, 
         if outcome == "editor_error":
             raise subprocess.CalledProcessError(1, command)
 
-    _interactive(monkeypatch, editor, ["n"] if outcome in {"cancel", "invalid"} else ["y"])
-    if outcome == "cancel":
+    _interactive(monkeypatch, editor, ["n"] if outcome == "invalid" else [])
+    with pytest.raises(SystemExit):
         edit(["workflow", "main"])
-    else:
-        with pytest.raises(SystemExit):
-            edit(["workflow", "main"])
     expected = original + "# Another author's change.\n" if outcome == "conflict" else original
     assert target.read_text() == expected
     assert drafts[0].is_file()
@@ -313,27 +317,84 @@ def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, 
     assert "Draft retained" in capsys.readouterr().err
 
 
+def test_exiting_editor_without_write_does_not_publish_or_retain_fresh_draft(
+    store, monkeypatch, capsys
+):
+    target = store.workflow_path("main")[1]
+    original = target.read_bytes()
+
+    _interactive(monkeypatch, lambda command, **kwargs: None, [])
+    edit(["workflow", "main"])
+
+    assert target.read_bytes() == original
+    assert not definition_editor.definition_draft_path(target, store.root).exists()
+    assert "No editor write detected" in capsys.readouterr().out
+
+
+def test_editor_write_publishes_an_unchanged_new_draft(store, monkeypatch):
+    target = store.root / "workflows/new_workflow.yml"
+
+    def editor(command, **kwargs):
+        draft = Path(command[-1])
+        draft.write_text(draft.read_text())
+
+    _interactive(monkeypatch, editor, [])
+    edit(["workflow", "new"])
+
+    assert target.is_file()
+    assert store.resolve("new").workflow_id == "new"
+
+
+def test_exiting_new_definition_without_write_does_not_create_it(store, monkeypatch):
+    target = store.root / "workflows/new_workflow.yml"
+    _interactive(monkeypatch, lambda command, **kwargs: None, [])
+
+    edit(["workflow", "new"])
+
+    assert not target.exists()
+
+
+def test_exiting_reopened_invalid_draft_without_write_retains_it(store, monkeypatch):
+    target = store.workflow_path("main")[1]
+    calls = 0
+
+    def editor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            Path(command[-1]).write_text("unknown: main\n")
+
+    _interactive(monkeypatch, editor, ["y"])
+    edit(["workflow", "main"])
+
+    draft = definition_editor.definition_draft_path(target, store.root)
+    assert draft.read_text().endswith("unknown: main\n")
+
+
 def test_later_edit_offers_and_recovers_saved_draft(store, monkeypatch, capsys):
     target = store.workflow_path("main")[1]
     saved_text = "clean: main\n# unfinished work\n"
 
     def first_editor(command, **kwargs):
         Path(command[-1]).write_text(saved_text)
+        raise KeyboardInterrupt
 
-    _interactive(monkeypatch, first_editor, ["n"])
-    edit(["workflow", "main"])
+    _interactive(monkeypatch, first_editor, [])
+    with pytest.raises(SystemExit):
+        edit(["workflow", "main"])
 
     def second_editor(command, **kwargs):
         draft = Path(command[-1])
         assert draft.read_text().endswith(saved_text)
+        draft.write_text(draft.read_text() + "# recovered\n")
 
-    _interactive(monkeypatch, second_editor, ["", "y"])
+    _interactive(monkeypatch, second_editor, [""])
     edit(["workflow", "main"])
 
     report = capsys.readouterr()
     assert "A saved draft is available" in report.out
     assert "Recovered the saved draft" in report.out
-    assert target.read_text().endswith(saved_text)
+    assert target.read_text().endswith("# recovered\n")
     assert not definition_editor.definition_draft_path(target, store.root).exists()
 
 
@@ -343,9 +404,11 @@ def test_later_edit_can_discard_saved_draft_and_start_over(store, monkeypatch):
 
     def first_editor(command, **kwargs):
         Path(command[-1]).write_text("clean: main\n# discard me\n")
+        raise KeyboardInterrupt
 
-    _interactive(monkeypatch, first_editor, ["n"])
-    edit(["workflow", "main"])
+    _interactive(monkeypatch, first_editor, [])
+    with pytest.raises(SystemExit):
+        edit(["workflow", "main"])
 
     def second_editor(command, **kwargs):
         assert Path(command[-1]).read_text() == published
@@ -364,20 +427,16 @@ def test_noninteractive_edit_does_not_overwrite_saved_draft(store, monkeypatch, 
     source = _write(tmp_path / "replacement.yml", "clean: main\n# replacement\n")
 
     with pytest.raises(SystemExit):
-        edit(["workflow", "main", "--file", str(source), "--yes"])
+        edit(["workflow", "main", "--file", str(source)])
 
     assert draft.read_text() == "clean: main\n# saved work\n"
     assert not target.read_text().endswith("# replacement\n")
 
 
-def test_missing_edit_and_noninteractive_fallback_are_errors(store):
-    for command, argv in (
-        (edit, ["workflow", "absent"]),
-        (create, ["workflow", "main"]),
-        (create, ["workflow", "new"]),
-    ):
+def test_noninteractive_edit_without_file_is_an_error(store):
+    for argv in (["workflow", "absent"], ["workflow", "main"], ["workflow", "new"]):
         with pytest.raises(SystemExit):
-            command(argv)
+            edit(argv)
     assert not (store.root / "workflows/new_workflow.yml").exists()
 
 
@@ -407,7 +466,7 @@ def test_editor_fallback_prefers_nano(store, monkeypatch, available, expected):
 def test_existing_target_rejects_creation_options(store, monkeypatch, extra):
     _interactive(monkeypatch, lambda *a, **kw: pytest.fail("Editor must not start"), [])
     with pytest.raises(SystemExit):
-        create(["workflow", "main", *extra])
+        edit(["workflow", "main", *extra])
 
 
 def test_guarded_save_rejects_conflicts_and_preserves_modes(tmp_path):
@@ -439,12 +498,12 @@ def test_guarded_save_respects_another_authors_lock(tmp_path):
 def test_local_output_cannot_overwrite_or_bypass_store_publication(store, tmp_path):
     output = _write(tmp_path / "draft.yml", "keep this draft")
     with pytest.raises(SystemExit):
-        create(["workflow", "new", "--output", str(output)])
+        edit(["workflow", "new", "--output", str(output)])
     assert output.read_text() == "keep this draft"
     alias = tmp_path / "store-link"
     alias.symlink_to(store.root, target_is_directory=True)
     with pytest.raises(SystemExit):
-        create(["workflow", "new", "--output", str(alias / "workflows/new_workflow.yml")])
+        edit(["workflow", "new", "--output", str(alias / "workflows/new_workflow.yml")])
     assert not (store.root / "workflows/new_workflow.yml").exists()
 
 
@@ -456,7 +515,7 @@ def test_delete_model_then_recreate_from_event_defaults(store, tmp_path, capsys)
         target.parent / "alternative.yml",
         "model_set: []\nconditions: trial_type\ncontrasts:\n  A: {A: 1}\n",
     )
-    delete(["model", "newtask", "--yes"])
+    remove(["model", "newtask", "--yes"])
     report = capsys.readouterr().out
     backup = Path(report.split("Recovery copy: ", 1)[1].split(" (temporary", 1)[0])
     assert backup.read_bytes() == original
@@ -464,8 +523,8 @@ def test_delete_model_then_recreate_from_event_defaults(store, tmp_path, capsys)
     assert yaml.safe_load(unrelated.read_text())["contrasts"] == {"A": {"A": 1}}
     events = _events(tmp_path / "events.tsv", ["A", "B"])
     draft = tmp_path / "reset.yml"
-    create(["model", "newtask", "--events", str(events), "--output", str(draft)])
-    create(["model", "newtask", "--file", str(draft), "--yes"])
+    edit(["model", "newtask", "--events", str(events), "--output", str(draft)])
+    edit(["model", "newtask", "--file", str(draft)])
     model = yaml.safe_load(target.read_text())
     assert model["model_set"] == []
     assert model["contrasts"] == {"A": {"A": 1}, "B": {"B": 1}}
@@ -475,14 +534,14 @@ def test_delete_model_then_recreate_from_event_defaults(store, tmp_path, capsys)
 def test_delete_requires_confirmation(store, monkeypatch, response):
     target = _write(store.root / "workflows/experiment_workflow.yml", "{}\n")
     with pytest.raises(SystemExit):
-        delete(["workflow", "experiment"])
+        remove(["workflow", "experiment"])
     assert target.exists()
     _interactive(
         monkeypatch,
         lambda *args, **kwargs: pytest.fail("Deletion must not open an editor"),
         [response],
     )
-    delete(["workflow", "experiment"])
+    remove(["workflow", "experiment"])
     assert target.exists() == (response == "n")
 
 
@@ -496,21 +555,21 @@ def test_delete_rejects_changed_targets_after_confirmation(store, monkeypatch):
 
     monkeypatch.setattr("builtins.input", confirm)
     with pytest.raises(SystemExit):
-        delete(["workflow", "experiment"])
+        remove(["workflow", "experiment"])
     assert target.read_text() == "clean: main\n"
 
 
 def test_delete_main_config_restores_packaged_default_and_warns_about_references(store, capsys):
     main = _write(store.configs / "clean/main_clean.yml", "minimum_temporal_rank: 25\n")
     assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 25
-    delete(["config", "clean/main", "--yes"])
+    remove(["config", "clean", "main", "--yes"])
     assert not main.exists()
     assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 30
     assert "packaged main configuration" in capsys.readouterr().out
     alternative = _write(store.configs / "clean/alternative_clean.yml", "{}\n")
     workflow = _write(store.root / "workflows/experiment_workflow.yml", "clean: alternative\n")
     with pytest.raises(SystemExit):
-        delete(["config", "clean/alternative", "--yes"])
+        remove(["config", "clean", "alternative", "--yes"])
     assert alternative.exists()
     assert workflow.read_text() == "clean: alternative\n"
     assert "experiment" in capsys.readouterr().out
@@ -520,10 +579,26 @@ def test_delete_checks_identity_and_uses_authoring_lock(store):
     target = _write(store.root / "workflows/experiment_workflow.yml", "{}\n")
     for identifier in ("absent", "../experiment"):
         with pytest.raises(SystemExit):
-            delete(["workflow", identifier, "--yes"])
+            remove(["workflow", identifier, "--yes"])
     lock = target.with_name(f".{target.name}.edit.lock")
     with lock.open("w") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(SystemExit):
-            delete(["workflow", "experiment", "--yes"])
+            remove(["workflow", "experiment", "--yes"])
     assert target.exists()
+
+
+def test_definition_listing_reports_active_layers(store, capsys):
+    _write(store.configs / "anat/fast_anat.yml", "surface_reconstruction_engine: fastsurfer\n")
+    definition_cli.main(["ls", "config", "anat", "--json"])
+    rows = yaml.safe_load(capsys.readouterr().out)
+
+    assert {(row["id"], row["source"]) for row in rows} == {
+        ("main", "packaged"),
+        ("fast", "selected"),
+    }
+
+    definition_cli.main(["ls", "workflow"])
+    output = capsys.readouterr().out
+    assert output.startswith("ID")
+    assert "main" in output

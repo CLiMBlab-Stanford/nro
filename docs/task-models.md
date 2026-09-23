@@ -6,8 +6,8 @@ A task model defines event predictors and contrasts for
 [definitions store](definitions.md); its identifier is
 `TASK/VARIANT`. The directory defines the task, so the YAML does not repeat it.
 
-`nro create model TASK` drafts a model from matching BIDS events and opens it
-for review. `nro edit model TASK/VARIANT` edits an existing model. See
+`nro def edit model TASK [VARIANT]` opens an existing model or drafts a missing
+one from matching BIDS events. See
 [definition authoring](commands/authoring.md) for discovery selectors, local
 drafts, and save behavior.
 

@@ -353,7 +353,7 @@ an exam identifier. The proposed destination appears before the user
 confirms the request.
 
 Configure rules for other server naming conventions explicitly, then run
-`nro definitions validate`. New stores supply no naming assumptions. CLIMBLAB's
+`nro def validate`. New stores supply no naming assumptions. CLIMBLAB's
 CNI rules do not apply to Lucas. Publication always uses a subject/session
 hierarchy.
 

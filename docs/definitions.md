@@ -214,12 +214,11 @@ directory retains ordinary discovery. All module configurations selected by
 one workflow must select the same markup ID. This guarantees that the workflow
 DAG represents one consistent view of source BIDS.
 
-Use the ordinary authoring commands to manage markup:
+Use the typed definition editor to manage markup:
 
 ```bash
-nro create markup main
-nro edit markup main
-nro delete markup alternative
+nro def edit markup main
+nro def rm markup alternative
 ```
 
 Planning captures the resolved participant entry in the artifact contract.
@@ -231,7 +230,7 @@ itself make an artifact stale.
 ## Create and select a store
 
 ```bash
-nro definitions create /data/lab/nro-definitions
+nro def init /data/lab/nro-definitions
 nro paths set definitions=/data/lab/nro-definitions
 ```
 
@@ -265,8 +264,8 @@ recreating it. Creation never overwrites it on retry.
 ## Validate and edit
 
 ```bash
-nro definitions validate
-nro definitions validate /data/lab/nro-definitions --json
+nro def validate
+nro def validate /data/lab/nro-definitions --json
 ```
 
 Each store has a `.nro-definitions.yml` manifest containing its schema version
@@ -292,27 +291,27 @@ or availability of referenced software and external event files. Use `nro doctor
 for dependency checks. Both store commands support `--json` and exit nonzero on
 failure.
 
-Use [create, edit, and delete](commands/authoring.md) for configurations,
+Use [definition authoring](commands/authoring.md) for configurations,
 workflows, task models, and source markup. Use `nro paths set` for protected
 site values. For event catalogs, ingestion profiles, hardware policy, and
 scan-plan parsers, publish one or more local files as a validated transaction:
 
 ```bash
-nro definitions apply \
+nro def apply \
   --file events/mytask/index.yml=./index.yml \
   --file events/mytask/main.tsv=./main.tsv
-nro definitions apply --file bidsify/main.yml=./main.yml
+nro def apply --file bidsify/main.yml=./main.yml
 ```
 
-`nro definitions edit RELATIVE_PATH` is available for an existing definition
-that has no specialized editor. Transactions stage the complete store, update
+`nro def edit file RELATIVE_PATH` edits or creates a definition that has no
+typed editor. Transactions stage the complete store, update
 its manifest, validate every definition and reference, and then replace the
 affected files. A validation failure leaves the store unchanged. The editor
 retains unpublished work in private, ignored draft directories and offers it on
 the next edit of the same definition. Keep unrelated notes outside the
 structured definition directories.
 
-If a direct edit has already occurred, `nro definitions apply` can adopt it
+If a direct edit has already occurred, `nro def apply` can adopt it
 only when the transaction names every drifted path. This recovery behavior does
 not make direct editing a supported workflow.
 

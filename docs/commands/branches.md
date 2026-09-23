@@ -88,7 +88,7 @@ must not contain `site/site.yml`. It inherits that protected document from the
 shared repository. Other definitions resolve through the registered branch
 tree: current branch, nearest parent first, then the shared repository. A
 private store therefore needs to contain only its overrides. Alternatively,
-`nro definitions create
+`nro def init
 /path/to/development-definitions` creates a suitable starter store without
 selecting it or copying the lab's definitions. Selection is central:
 every installed checkout of the same branch uses the selected directory. No

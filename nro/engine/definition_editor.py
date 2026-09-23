@@ -194,7 +194,7 @@ def _prepare_draft(
     *,
     interactive: bool,
     explicit_source: bool,
-) -> bool:
+) -> str | None:
     """Create a draft or let an interactive user recover an existing one."""
     if draft.is_symlink():
         raise ValueError(f"Refusing a symbolic-link definition draft: {draft}")
@@ -216,16 +216,38 @@ def _prepare_draft(
             )
             if answer in {"", "r", "recover"}:
                 print("Recovered the saved draft.")
-                return True
+                return "recovered"
             if answer in {"s", "start", "start over"}:
                 break
             if answer in {"q", "quit", "cancel"}:
                 print("Cancelled; the stored definition and saved draft are unchanged.")
-                return False
+                return None
             print("Choose r to recover, s to start over, or q to cancel.")
     draft.write_text(initial, encoding="utf-8")
     draft.chmod(0o600)
-    return True
+    return "fresh"
+
+
+def _file_identity(path: Path) -> tuple[int, int, int, int, int]:
+    """Return metadata that changes when an editor writes or replaces a draft."""
+    status = path.stat()
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def _arm_write_detection(path: Path) -> tuple[int, int, int, int, int]:
+    """Backdate a draft before editing so even an identical write is visible."""
+    status = path.stat()
+    os.utime(
+        path,
+        ns=(status.st_atime_ns, max(0, status.st_mtime_ns - 2_000_000_000)),
+    )
+    return _file_identity(path)
 
 
 def review_definition(
@@ -235,21 +257,19 @@ def review_definition(
     expected: bytes | None,
     validate: Callable[[str], None],
     source: Path | None = None,
-    yes: bool = False,
     store_root: Path | None = None,
     validate_store: Callable[[Path], None] | None = None,
 ) -> bool:
-    """Edit a private draft, validate it, show a diff, and confirm publication.
+    """Edit a private draft and publish it after a successful editor write.
 
-    source supplies a local file instead of opening an editor. Noninteractive
-    publication requires source and yes. Unpublished work remains in a private,
-    ignored store draft and is offered on the next edit of the same definition.
+    source supplies a local file instead of opening an editor. Interactive edits
+    publish after the editor changes or rewrites the draft; exiting without a
+    write leaves the stored definition unchanged. Invalid or interrupted work
+    remains in a private draft and is offered on the next edit.
     """
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    if not interactive and (source is None or not yes):
-        raise ValueError(
-            "Use an interactive terminal, or --file FILE --yes; create --output FILE saves a local draft"
-        )
+    if not interactive and source is None:
+        raise ValueError("Use an interactive terminal or --file FILE")
     command = None
     if source is None:
         editor = (
@@ -267,17 +287,24 @@ def review_definition(
     draft = definition_draft_path(path, store_root)
     saved = False
     with _draft_lock(draft):
-        if not _prepare_draft(
+        draft_state = _prepare_draft(
             draft,
             initial_text,
             interactive=interactive,
             explicit_source=source is not None,
-        ):
+        )
+        if draft_state is None:
             return False
         try:
             while True:
                 if command:
+                    before_edit = _arm_write_detection(draft)
                     subprocess.run([*command, str(draft)], check=True)
+                    if _file_identity(draft) == before_edit:
+                        print("No editor write detected; the stored definition is unchanged.")
+                        saved = draft_state == "fresh"
+                        return False
+                    draft_state = "modified"
                 text = draft.read_text(encoding="utf-8")
                 from nro.configuration.definition_migrations import normalize_managed_text
 
@@ -312,12 +339,6 @@ def review_definition(
                     end="",
                 )
                 print("Scientific changes may affect artifact freshness on the next assessment.")
-                if not yes and input(f"Save {path}? [y/N] ").strip().lower() not in {
-                    "y",
-                    "yes",
-                }:
-                    print("Cancelled; the stored definition is unchanged.")
-                    return False
                 save_definition(
                     path,
                     text,

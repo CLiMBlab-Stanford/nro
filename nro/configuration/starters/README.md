@@ -20,12 +20,12 @@ databases, logs, and generated derivatives outside this repository.
 
 Use nro commands to generate, edit, delete, or import definitions. Managed YAML
 and Python files warn against direct editing, and the store manifest detects
-changes made outside those commands. Run `nro definitions validate PATH` to
+changes made outside those commands. Run `nro def validate PATH` to
 check the store. Select this directory
 with `nro paths set definitions=PATH`; shared installations require `--maintain`.
-Use `nro create`, `nro edit`, and `nro delete` for configs, workflows, models,
-and source markup.
-Use `nro definitions apply --file RELATIVE_PATH=LOCAL_FILE` for event catalogs,
+Use `nro def edit`, `nro def rm`, and `nro def ls` for configs, workflows,
+models, and source markup.
+Use `nro def apply --file RELATIVE_PATH=LOCAL_FILE` for event catalogs,
 ingestion profiles, hardware policy, and scan-plan parsers.
 
 New shared stores have no task models, event tables, or configured Flywheel

@@ -2,6 +2,7 @@
 
 import ctypes
 import errno
+import importlib
 import json
 import shutil
 from pathlib import Path
@@ -10,13 +11,14 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from nro.bin.definitions import main
 from nro.configuration import site
 from nro.configuration.definition_migrations import refresh_manifest, update_store
 from nro.configuration.definitions import _publish, create_store, ensure_store, validate_store
 from nro.configuration.site import read_site_definition
 from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.modules.firstlevels.task_models import load_task_model, scientific_model, select_models
+
+main = importlib.import_module("nro.bin.def").main
 
 
 def test_create_has_only_generic_starters(tmp_path):
@@ -140,7 +142,7 @@ def test_relocation_preserves_compiled_identities(definitions_fixture, tmp_path)
 
 def test_cli_does_not_select_created_store(tmp_path, capsys):
     selected = site.definitions_root()
-    main(["create", str(tmp_path / "store"), "--json"])
+    main(["init", str(tmp_path / "store"), "--json"])
     assert json.loads(capsys.readouterr().out)["models"] == 0
     assert site.definitions_root() == selected
     main(["validate", str(tmp_path / "store")])

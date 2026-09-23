@@ -49,7 +49,7 @@ def definition_target(store: ConfigStore, kind: str, identifier: str) -> Definit
             kind, identifier, store.root / "markup" / f"{identifier}_markup.yml"
         )
     if kind != "config" or len(identifier.split("/")) != 2:
-        raise ValueError("Config IDs must be CLASS/ID, for example clean/alternative")
+        raise ValueError("Config definitions require a class and an ID")
     configuration_class, config_id = identifier.split("/")
     if configuration_class not in CONFIGURATION_CLASSES:
         raise ValueError(f"Choose a configuration class from {', '.join(CONFIGURATION_CLASSES)}")
@@ -127,38 +127,61 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
     )
 
 
+def _parsed_identifier(args: argparse.Namespace) -> str:
+    """Return the canonical internal identifier for typed CLI arguments."""
+    if args.kind == "config":
+        return f"{args.configuration_class}/{args.config_id}"
+    if args.kind == "model":
+        return f"{args.task}/{args.variant}"
+    return args.identifier
+
+
+def _source_identifier(target: DefinitionTarget, parts: list[str]) -> str:
+    """Resolve ``--from`` arguments relative to the selected definition kind."""
+    if target.kind == "config":
+        if len(parts) != 1:
+            raise ValueError("Config --from requires one ID from the same configuration class")
+        return f"{target.configuration_class}/{parts[0]}"
+    if target.kind == "model":
+        if len(parts) not in {1, 2}:
+            raise ValueError("Model --from requires TASK and optional VARIANT")
+        return f"{parts[0]}/{parts[1] if len(parts) == 2 else 'main'}"
+    if len(parts) != 1:
+        raise ValueError(f"{target.kind.capitalize()} --from requires one ID")
+    return parts[0]
+
+
 def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
-    """Build definition-management parsers with object-specific options."""
+    """Build typed edit or removal parsers."""
     parser = argparse.ArgumentParser(
         prog=prog,
-        description=f"{action.capitalize()} a model, config, workflow, or markup definition.",
+        description=(
+            "Edit or create a model, config, workflow, or markup definition."
+            if action == "edit"
+            else "Remove a model, config, workflow, or markup definition."
+        ),
     )
     commands = parser.add_subparsers(dest="kind", required=True)
-    for kind, metavar in (
-        ("model", "TASK[/VARIANT]"),
-        ("config", "CLASS/ID"),
-        ("workflow", "ID"),
-        ("markup", "ID"),
-    ):
+    for kind in ("model", "config", "workflow", "markup"):
         command = commands.add_parser(kind)
-        command.add_argument("identifier", metavar=metavar)
-        if action != "delete":
+        if kind == "config":
+            command.add_argument("configuration_class", metavar="CLASS")
+            command.add_argument("config_id", metavar="ID")
+        elif kind == "model":
+            command.add_argument("task", metavar="TASK")
+            command.add_argument("variant", nargs="?", default="main", metavar="VARIANT")
+        else:
+            command.add_argument("identifier", metavar="ID")
+        if action == "edit":
             command.add_argument(
                 "--file", type=Path, help="Use a local YAML file instead of an editor"
             )
-        command.add_argument(
-            "-y",
-            "--yes",
-            action="store_true",
-            help=(
-                "Delete without confirmation"
-                if action == "delete"
-                else "Save without confirmation; noninteractive use also requires --file"
-            ),
-        )
-        if action == "create":
             command.add_argument(
-                "--from", dest="source", help="Copy an existing definition of the same kind"
+                "--from",
+                dest="source",
+                nargs="+",
+                metavar="ID",
+                help="Start from another definition of the same kind",
             )
             command.add_argument(
                 "--output", type=Path, help="Write a local draft without registration or an editor"
@@ -172,6 +195,10 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
                 command.add_argument(
                     "--conditions", help="Event column to use as categorical conditions"
                 )
+        else:
+            command.add_argument(
+                "-y", "--yes", action="store_true", help="Remove without confirmation"
+            )
     return parser
 
 
@@ -282,7 +309,7 @@ def _delete(store: ConfigStore, target: DefinitionTarget, expected: bytes, *, ye
         validate_store=_store_validator(store, target, deleting=True),
     )
     print(
-        f"Deleted {target.path}\nRecovery copy: {backup} (temporary; copy elsewhere to retain it)"
+        f"Removed {target.path}\nRecovery copy: {backup} (temporary; copy elsewhere to retain it)"
     )
 
 
@@ -294,44 +321,34 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
         if getattr(args, "file", None):
             args.file = args.file.expanduser()
         store = ConfigStore()
-        target = definition_target(store, args.kind, args.identifier)
+        target = definition_target(store, args.kind, _parsed_identifier(args))
         if not target.path.resolve().is_relative_to(store.root):
-            raise ValueError("Definition path escapes the central store through a symbolic link")
+            raise ValueError("Definition path escapes the selected store through a symbolic link")
         expected = read_definition(target.path)
-        if action in {"edit", "delete"} and expected is None:
-            raise ValueError(f"Definition does not exist: {target.path}; use nro create")
-        if action == "delete":
+        if action == "rm":
+            if expected is None:
+                raise ValueError(f"Definition does not exist: {target.path}")
             _delete(store, target, expected, yes=args.yes)
             return
-        if action == "create":
-            discovery = any(
-                getattr(args, name, None)
-                for name in ("events", "conditions", "project", "participant")
-            )
-            if args.source and args.file:
-                raise ValueError("Use either --from or --file")
-            if (args.source or args.file) and discovery:
-                raise ValueError("Event discovery options cannot be combined with --from or --file")
-            if getattr(args, "events", None) and any(
-                getattr(args, name, None) for name in ("project", "participant")
-            ):
-                raise ValueError("Use --events or BIDS discovery selectors, not both")
-            if args.output and (args.file or args.yes):
-                raise ValueError("--output cannot be combined with --file or --yes")
-            if expected is not None:
-                if args.source or args.file or args.output or discovery:
-                    raise ValueError(
-                        "Definition already exists; creation-only options do not apply. Use nro edit or a new ID"
-                    )
-                if not (sys.stdin.isatty() and sys.stdout.isatty()):
-                    raise ValueError(
-                        "Definition already exists; use nro edit in noninteractive mode"
-                    )
-                print(
-                    f"{args.kind.capitalize()} already exists; opening for editing: {target.path}"
-                )
-            if getattr(args, "events", None):
-                args.events = [path.expanduser() for path in args.events]
+        discovery = any(
+            getattr(args, name, None) for name in ("events", "conditions", "project", "participant")
+        )
+        if args.source and args.file:
+            raise ValueError("Use either --from or --file")
+        if (args.source or args.file) and discovery:
+            raise ValueError("Event discovery options cannot be combined with --from or --file")
+        if getattr(args, "events", None) and any(
+            getattr(args, name, None) for name in ("project", "participant")
+        ):
+            raise ValueError("Use --events or BIDS discovery selectors, not both")
+        if args.output and args.file:
+            raise ValueError("--output cannot be combined with --file")
+        if expected is not None and (args.source or args.output or discovery):
+            raise ValueError("Initialization options apply only when creating a missing definition")
+        if args.source:
+            args.source = _source_identifier(target, args.source)
+        if getattr(args, "events", None):
+            args.events = [path.expanduser() for path in args.events]
         if expected is not None:
             initial = expected.decode("utf-8")
         elif args.file:
@@ -342,12 +359,12 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
         def validate(text: str) -> None:
             validate_definition(store, target, text)
 
-        if action == "create" and args.output:
+        if args.output:
             validate(initial)
             output = args.output.expanduser().absolute()
             if output.resolve().is_relative_to(store.root):
                 raise ValueError(
-                    "--output must be outside the central store; omit it to register a definition"
+                    "--output must be outside the selected store; omit it to register a definition"
                 )
             save_definition(output, initial, expected=None)
             print(f"Draft written to {output}; not registered.")
@@ -358,7 +375,6 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
             expected=expected,
             validate=validate,
             source=args.file,
-            yes=args.yes,
             store_root=store.root,
             validate_store=_store_validator(store, target),
         )
