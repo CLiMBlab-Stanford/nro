@@ -24,21 +24,22 @@ from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping
 from nro.configuration.site import settings
 from nro.engine.io import atomic_output_path, atomic_write_json
 from nro.modules.anat.lesion_policy import (
-    FASTSURFER_OCI_DIGEST,
     MASKER_MODEL,
     MASKER_RESOURCES,
     MASKER_REVISION,
     NEUROLIT_CHECKPOINTS,
 )
+from nro.modules.anat.policy import FASTSURFER_OCI_DIGEST
 
+FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
 IMAGES = {
     "qunex": "docker://qunex/qunex_suite@sha256:a06befbb64f93ab289bbef94d1d00bf957c7cdff920f35e107f90b186ff9f09d",
     "synthstrip": "docker://freesurfer/synthstrip@sha256:801924ea011be040346c0e68f9c25d175ab5b869afbd156560b01fb74059f1b1",
     "synbold": "docker://ytzero/synbold-disco@sha256:18814dd2f419dfe8375632cf9239a0fb31a1300a2bfe66d234e599450af66555",
     "gradient_unwarp": GRADIENT_UNWARP_IMAGE,
     "freesurfer": "docker://freesurfer/freesurfer@sha256:10b6468cbd9fcd2db3708f4651d59ad75d4da849a2c5d8bb6dba217f08b8c46b",
+    "fastsurfer": FASTSURFER_IMAGE,
 }
-FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
 NEUROLIT_URLS = {
     name: f"https://zenodo.org/api/records/14510136/files/{name}/content"
     for name in NEUROLIT_CHECKPOINTS
@@ -50,11 +51,9 @@ SYNTHSTROKE_URLS = {
 _SHA256_CACHE: dict[Path, tuple[tuple[int, int, int, int, int], str]] = {}
 
 
-def required_images(*, with_lesion: bool = False) -> dict[str, str]:
+def required_images() -> dict[str, str]:
     """Return images needed by the site's configured scientific features."""
     images = dict(IMAGES)
-    if with_lesion:
-        images["fastsurfer"] = FASTSURFER_IMAGE
     if not gradient_unwarping_configured():
         images.pop("gradient_unwarp")
     return images
@@ -469,7 +468,7 @@ def check_installation(
 
         check(name, import_check)
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
-    images = required_images(with_lesion=with_lesion)
+    images = required_images()
     for key in images:
         check(key, lambda key=key: file(key))
     check("FreeSurfer license", lambda: file("license"))
@@ -500,7 +499,6 @@ def check_installation(
                 executable(values["runtime"]), Path(values["freesurfer"])
             ),
         )
-    if deep and with_lesion:
         check(
             "FastSurfer container identity",
             lambda: verify_fastsurfer_image(
@@ -600,9 +598,7 @@ def check_installation(
                 ],
             ),
         )
-        probe_images = ["synthstrip", "synbold", "freesurfer"]
-        if with_lesion:
-            probe_images.append("fastsurfer")
+        probe_images = ["synthstrip", "synbold", "freesurfer", "fastsurfer"]
         if "gradient_unwarp" in images:
             probe_images.append("gradient_unwarp")
         for key in probe_images:
@@ -669,19 +665,18 @@ def _install_image(key: str, source: str, *, offline: bool) -> None:
         )
 
 
-def install_images(*, offline=False, with_lesion=False) -> None:
+def install_images(*, offline: bool = False) -> None:
     """Acquire missing configured container images under resource locks.
 
     Stage and inspect downloads before publishing; write acquisition receipts.
     Existing nonempty images are reused. Offline mode rejects missing images.
     """
-    for key, source in required_images(with_lesion=with_lesion).items():
+    for key, source in required_images().items():
         _install_image(key, source, offline=offline)
 
 
 def install_lesion_resources(*, offline: bool = False) -> None:
     """Install only the pinned resources selected by the lesion feature."""
-    _install_image("fastsurfer", FASTSURFER_IMAGE, offline=offline)
     install_synthstroke_model(offline=offline)
     install_neurolit_checkpoints(offline=offline)
 

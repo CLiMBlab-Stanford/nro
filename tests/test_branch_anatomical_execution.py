@@ -168,6 +168,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         ),
         synthstrip,
         False,
+        "freesurfer",
         freesurfer_image=synthstrip,
     )
     inputs = anat.Inputs(
@@ -275,6 +276,7 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
         ContainerSpec(image=image, engine="true"),
         image,
         False,
+        "freesurfer",
         freesurfer_image=image,
         lesion=True,
         lesion_masker_command=masker,
@@ -290,8 +292,8 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     names = {step.name for step in graph.steps}
 
     assert "NeuroLIT Lesion Inpainting" in names
-    assert "FastSurfer Lesion Reconstruction" in names
-    assert "FreeSurfer Recon-All" not in names
+    assert "FastSurfer Lesion Reconstruction" not in names
+    assert "FreeSurfer Recon-All" in names
     assert "Automatic Lesion Masking" in names
     assert "Render Lesion Mask QC" in names
     assert "Cut Lesion from Cortical Surfaces" in names
@@ -300,8 +302,10 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
         step for step in graph.steps if step.name == "NeuroLIT Lesion Inpainting"
     )
     assert "desc-preproc_T1w" in mask_step.inputs[0].name
-    assert "desc-fastSurferInput_T1w" in inpainting_step.inputs[0].name
+    assert "desc-inpaintingInput_T1w" in inpainting_step.inputs[0].name
     assert inpainting_step.scientific_signature
+    reconstruction = next(step for step in graph.steps if step.name == "FreeSurfer Recon-All")
+    assert any(path.name == "inpainted.lit.nii.gz" for path in reconstruction.inputs)
     assert any(
         "selectedBiasCorrected" in path.name for step in graph.steps for path in step.outputs
     )
@@ -311,3 +315,21 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     assert any("surfaceVertexMapping" in str(path) for path in manifest.inputs)
     assert any("surfaceValidity" in str(path) for path in manifest.inputs)
     assert any("lesionReconstruction_summary" in str(path) for path in manifest.inputs)
+
+    fastsurfer_graph = anat.build_module(
+        anat.Inputs(
+            "sub-1",
+            (AnatImage(source, None, "T1w", "ses-1", {}, "series", 1.0),),
+            (),
+        ),
+        replace(options, surface_reconstruction_engine="fastsurfer"),
+        execution_context=context,
+    )._graph.freeze()
+    fastsurfer_names = {step.name for step in fastsurfer_graph.steps}
+    assert "FreeSurfer Recon-All" not in fastsurfer_names
+    assert "FastSurferVINN Segmentation" in fastsurfer_names
+    assert "FastSurfer Surface Reconstruction" in fastsurfer_names
+    fastsurfer_segmentation = next(
+        step for step in fastsurfer_graph.steps if step.name == "FastSurferVINN Segmentation"
+    )
+    assert any(path.name == "inpainted.lit.nii.gz" for path in fastsurfer_segmentation.inputs)

@@ -12,6 +12,7 @@ from nro.engine.image_paths import image_source_paths
 from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.lesion_policy import lesion_reconstruction_contract
+from nro.modules.anat.policy import surface_reconstruction_contract
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
@@ -86,11 +87,19 @@ def plan_work_items(
         raise ParticipantUnavailableError(f"No T1w or T2w images found under {context.subject_dir}")
     entities: dict[str, str] = {}
     config = context.workflow.configuration(descriptor.configuration_class).values
+    surface_engine = str(config["surface_reconstruction_engine"])
+    anatomical_images = raw_anatomical_images(context.subject_dir, context.source_markup)
+    if (
+        surface_engine == "fastsurfer"
+        and not context.source_markup.lesion
+        and not any(path.name.endswith(("_T1w.nii", "_T1w.nii.gz")) for path in anatomical_images)
+    ):
+        raise ParticipantUnavailableError("FastSurfer surface reconstruction requires T1w data")
     # Resource-specific runner steps are dispatched independently. The parent
     # anatomical work item always returns to the ordinary CPU pool.
     resource_class = descriptor.resource_class
     gradient_records, _ = gradient_unwarping_records(
-        list(raw_anatomical_images(context.subject_dir, context.source_markup)),
+        list(anatomical_images),
         mode=str(config["gradient_unwarping"]),
         markup=context.source_markup,
         definitions=context.definitions_roots,
@@ -102,7 +111,7 @@ def plan_work_items(
     }
     if context.source_markup.lesion:
         processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()
-        processing_values["surface_reconstruction"] = lesion_reconstruction_contract()
+    processing_values["surface_reconstruction"] = surface_reconstruction_contract(surface_engine)
     return (
         WorkItemSpec.create(
             key=work_item_key(

@@ -17,11 +17,11 @@ Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
 dependencies. The
 [bidsification guide](commands/bidsify.md) covers the required validator,
 server credentials, and staging configuration.
-Ordinary setup acquires the pinned official FreeSurfer 7.4.1 image for conventional
-anatomical reconstruction.
+Ordinary setup acquires pinned FreeSurfer 7.4.1 and FastSurfer 2.5.4 images for
+the selectable anatomical reconstruction engines.
 Pass `--with-lesion` to install PyTorch, MONAI, safetensors, and SOCKS proxy
 support used by lesion-aware anatomy. It also acquires the pinned SynthStroke
-model, the FastSurfer 2.5.4 image, and three NeuroLIT 0.6.1 checkpoints. The
+model and three NeuroLIT 0.6.1 checkpoints. The
 SynthStroke model lives in `synthstroke_data`; the NeuroLIT checkpoints total
 about 711 MiB and live in `fastsurfer_data`. Both are site-managed paths rather
 than user caches. Setup verifies every model file against a pinned SHA-256, and
@@ -379,9 +379,10 @@ publish completed files atomically. Image receipts record the source and the
 generated SIF's SHA-256. A receipt documents acquisition, not historical
 provenance for pre-existing resources.
 
-With `--with-lesion`, setup also obtains FastSurfer 2.5.4 from its pinned OCI
-digest, the pinned SynthStroke model revision from Hugging Face, and NeuroLIT
-0.6.1 checkpoints from the official Zenodo record. Every file is checked
+Setup obtains FastSurfer 2.5.4 from its pinned OCI digest for the optional
+anatomical reconstruction engine. With `--with-lesion`, it additionally obtains
+the pinned SynthStroke model revision from Hugging Face and NeuroLIT 0.6.1
+checkpoints from the official Zenodo record. Every file is checked
 against a pinned SHA-256 before publication. Workers use these site-managed
 resources read-only, so a scientific job never downloads or silently replaces
 model weights.

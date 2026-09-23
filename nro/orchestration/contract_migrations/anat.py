@@ -6,7 +6,13 @@ from nro.modules.anat.contract import (
     surface_reconstruction_contract,
 )
 
-from .core import INDETERMINATE, AddField, ContractMigration, ContractMigrationChain
+from .core import (
+    INDETERMINATE,
+    AddField,
+    ContractMigration,
+    ContractMigrationChain,
+    RemoveField,
+)
 
 CHAIN = ContractMigrationChain(
     module="anat",
@@ -66,6 +72,43 @@ CHAIN = ContractMigrationChain(
                     "processing.lesion_reconstruction.fastsurfer_voxel_size_mm",
                     default=FASTSURFER_RECONSTRUCTION_VOXEL_SIZE_MM,
                     historical=INDETERMINATE,
+                ),
+            ),
+        ),
+        ContractMigration(
+            destination=5,
+            summary="Select the surface-reconstruction engine explicitly",
+            configuration=(
+                AddField(
+                    "surface_reconstruction_engine",
+                    default="freesurfer",
+                    historical="freesurfer",
+                ),
+            ),
+        ),
+        ContractMigration(
+            destination=6,
+            summary="Separate lesion inpainting from configurable surface reconstruction",
+            contract=(
+                AddField(
+                    "processing.lesion_reconstruction.pipeline",
+                    default="inpainting_surface_reconstruction_excision",
+                    historical=INDETERMINATE,
+                ),
+                *(
+                    RemoveField(
+                        f"processing.lesion_reconstruction.{field}",
+                        reconstructible=True,
+                    )
+                    for field in (
+                        "surface_backend",
+                        "fastsurfer_version",
+                        "fastsurfer_source_revision",
+                        "fastsurfer_oci_digest",
+                        "fastsurfer_freesurfer_build",
+                        "fastsurfer_voxel_size_mm",
+                        "fastsurfer_mask_reconciliation",
+                    )
                 ),
             ),
         ),

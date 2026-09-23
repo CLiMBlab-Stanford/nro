@@ -124,7 +124,7 @@ def functional_case(tmp_path, monkeypatch):
         sdc_method="syn",
         output_spaces=("T1w", "fsnative", "fsaverage6", "MNI152NLin2009cAsym"),
         gradient_unwarp_image=tmp_path / "gradient.sif",
-        gradient_unwarp_runtime="singularity",
+        container_runtime="singularity",
         cicada_cmd=tmp_path / "cicada-python",
     )
     values["synbold_disco_image"].write_bytes(b"test image")

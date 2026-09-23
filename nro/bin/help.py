@@ -78,7 +78,7 @@ TASK_GUIDES = {
 
           nro find -P PROJECT -p PARTICIPANT -r task='Rest.*'
 
-        Open matching instance logs or worker logs:
+        Open matching work-item logs or worker logs:
 
           nro log -P PROJECT -p PARTICIPANT -m MODULE
           nro log --worker

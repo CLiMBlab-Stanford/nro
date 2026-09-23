@@ -39,7 +39,8 @@ compiled work-item contracts -----> branch scientific registry
   attempts, workers, publication, and recovery. Its catalog imports the narrow
   planning and artifact-contract interfaces exposed by each module. The
   scheduler does not import a module's DAG constructor or scientific execution
-  code.
+  code. A runner may yield a declared resource-specific step through the
+  scheduler, but the step remains owned by the module DAG and parent work item.
 - `nro.bin` owns user-facing command parsing and presentation. Commands call the
   configuration, orchestration, or engine interfaces; they do not implement a
   second scheduler or scientific pipeline.

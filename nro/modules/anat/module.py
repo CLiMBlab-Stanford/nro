@@ -53,11 +53,9 @@ from .constants import (
     _FREESURFER_GRAY_MATTER_SEGMENTATIONS,
     _FREESURFER_SUBCORTICAL_SEGMENTATIONS,
 )
+from .fastsurfer import create_fastsurfer_steps
 from .lesion_policy import (
     BOUNDARY_MARGIN_MM,
-    FASTSURFER_OCI_DIGEST,
-    FASTSURFER_SOURCE_REVISION,
-    FASTSURFER_VERSION,
     MASKER_MODEL,
     MASKER_REVISION,
     NEUROLIT_CHECKPOINTS,
@@ -67,14 +65,17 @@ from .lesion_policy import (
 )
 from .lesions import (
     create_cut_surfaces_step,
-    create_fastsurfer_lit_steps,
     create_inpainted_metadata_step,
     create_lesion_excluded_mask_step,
     create_lesion_mask_step,
     create_lesion_qc_step,
     create_lesion_reconstruction_summary_step,
+    create_neurolit_inpainting_plan,
 )
-from .policy import bias_correction_contract, surface_reconstruction_contract
+from .policy import (
+    bias_correction_contract,
+    surface_reconstruction_contract,
+)
 from .steps import (
     _aseg_label_ids,
     _brain_extract_anat_copy,
@@ -138,11 +139,12 @@ class Options:
     selection_strategy: str
     gradient_unwarping: str
     gradient_unwarp_image: Path
-    gradient_unwarp_runtime: str
+    container_runtime: str
     mni_template: Path
     container: Optional[ContainerSpec]
     synthstrip_image: Optional[Path]
     overwrite: bool
+    surface_reconstruction_engine: str
     freesurfer_image: Optional[Path] = None
     lesion: bool = False
     lesion_masker_command: Optional[Path] = None
@@ -187,9 +189,16 @@ def build_module(
     if opts.synthstrip_image is None:
         raise SystemExit("Missing SynthStrip image path.")
     require_nonempty_file(opts.synthstrip_image, "SynthStrip image")
-    if opts.freesurfer_image is None:
-        raise SystemExit("Missing FreeSurfer container path.")
-    require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
+    if opts.surface_reconstruction_engine not in {"freesurfer", "fastsurfer"}:
+        raise SystemExit(
+            f"Unsupported surface-reconstruction engine: {opts.surface_reconstruction_engine}"
+        )
+    if opts.surface_reconstruction_engine == "freesurfer":
+        if opts.freesurfer_image is None:
+            raise SystemExit("Missing FreeSurfer container path.")
+        require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
+    elif not inputs.t1w:
+        raise SystemExit("FastSurfer surface reconstruction requires at least one T1w image.")
     if opts.lesion:
         if not inputs.t1w:
             raise SystemExit("Lesion-aware anatomy requires at least one T1w image.")
@@ -210,19 +219,23 @@ def build_module(
             require_nonempty_file(lesion_masker_command, "lesion masker command")
             synthstroke_data = None
         if opts.fastsurfer_image is None:
-            raise SystemExit("Lesion-aware anatomy requires a configured FastSurfer image.")
+            raise SystemExit("Lesion-aware anatomy requires the NeuroLIT container image.")
         require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
         if opts.fastsurfer_data is None:
-            raise SystemExit("Lesion-aware anatomy requires configured FastSurfer-LIT data.")
+            raise SystemExit("Lesion-aware anatomy requires configured NeuroLIT data.")
         for checkpoint in NEUROLIT_CHECKPOINTS:
             require_nonempty_file(
                 opts.fastsurfer_data / "LIT" / "weights" / checkpoint,
-                f"FastSurfer-LIT checkpoint {checkpoint}",
+                f"NeuroLIT checkpoint {checkpoint}",
             )
     else:
         lesion_masker_command = None
         lesion_masker_module = None
         synthstroke_data = None
+        if opts.surface_reconstruction_engine == "fastsurfer":
+            if opts.fastsurfer_image is None:
+                raise SystemExit("FastSurfer reconstruction requires a configured image.")
+            require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
     require_nonempty_file(opts.mni_template, "MNI template")
     mni_brain_template = Path(
         str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
@@ -263,8 +276,10 @@ def build_module(
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             lesion_masker_command,
             synthstroke_data,
-            opts.freesurfer_image,
-            opts.fastsurfer_image if opts.lesion else None,
+            opts.freesurfer_image if opts.surface_reconstruction_engine == "freesurfer" else None,
+            opts.fastsurfer_image
+            if opts.lesion or opts.surface_reconstruction_engine == "fastsurfer"
+            else None,
             opts.fastsurfer_data if opts.lesion else None,
         ]
     )
@@ -302,6 +317,7 @@ def build_module(
 
     configuration = {
         "selection_strategy": opts.selection_strategy,
+        "surface_reconstruction_engine": opts.surface_reconstruction_engine,
         "gradient_unwarping": opts.gradient_unwarping,
         "fs_subject": opts.fs_subject,
         "mni_template": str(opts.mni_template),
@@ -314,7 +330,7 @@ def build_module(
             "masker_revision": MASKER_REVISION,
             "probability_threshold": PROBABILITY_THRESHOLD,
             "test_time_augmentation": TEST_TIME_AUGMENTATION,
-            "fastsurfer_version": FASTSURFER_VERSION,
+            "neurolit_version": NEUROLIT_VERSION,
             "boundary_margin_mm": BOUNDARY_MARGIN_MM,
         }
     configuration_snapshot = opts.work_dir / "configuration.json"
@@ -408,7 +424,7 @@ def build_module(
                     warp=gradient_warp,
                     metadata=gradient_metadata,
                     resolution=gradient_resolution,
-                    runtime=opts.gradient_unwarp_runtime,
+                    runtime=opts.container_runtime,
                     image=opts.gradient_unwarp_image,
                     force=opts.overwrite,
                 )
@@ -710,16 +726,16 @@ def build_module(
             force=opts.overwrite,
         )
     )
-    lesion_fastsurfer_t1: Optional[Path] = None
+    lesion_inpainting_t1: Optional[Path] = None
     if opts.lesion:
         assert lesion_raw_t1_selected is not None
-        lesion_fastsurfer_t1 = reference_work / f"{inputs.sub_id}_desc-fastSurferInput_T1w.nii.gz"
+        lesion_inpainting_t1 = reference_work / f"{inputs.sub_id}_desc-inpaintingInput_T1w.nii.gz"
         runner.add_step(
             _create_pose_resampling_step(
                 source=lesion_raw_t1_selected,
                 reference=reference_grid,
                 transform=source_to_reference,
-                output=lesion_fastsurfer_t1,
+                output=lesion_inpainting_t1,
                 env=env,
                 force=opts.overwrite,
             )
@@ -852,11 +868,15 @@ def build_module(
     lesion_qc: Optional[Path] = None
     inpainted_t1: Optional[Path] = None
     lesion_reconstruction_summary: Optional[Path] = None
+    reconstruction_t1 = subj_t1
+    reconstruction_t2 = subj_t2
+    reconstruction_mask = reference_mask
     if opts.lesion:
         assert subj_t1 is not None
-        assert lesion_fastsurfer_t1 is not None
+        assert lesion_inpainting_t1 is not None
         assert lesion_masker_command is not None
         assert opts.fastsurfer_image is not None
+        assert opts.fastsurfer_data is not None
         lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_mask.nii.gz"
         lesion_probability = (
             opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_probability.nii.gz"
@@ -889,41 +909,29 @@ def build_module(
                 force=opts.overwrite,
             )
         )
-        runner.add_steps(
-            create_fastsurfer_lit_steps(
-                run_child=runner.run_child,
-                runtime=opts.gradient_unwarp_runtime,
-                image=opts.fastsurfer_image,
-                data_directory=opts.fastsurfer_data,
-                t1w=lesion_fastsurfer_t1,
-                lesion_mask=lesion_mask,
-                subjects_dir=opts.freesurfer_subjects_dir,
-                subject=opts.fs_subject,
-                license_file=Path(env["FS_LICENSE"]),
-                version=FASTSURFER_VERSION,
-                use_gpu=opts.lesion_use_gpu,
-                threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
-                force=opts.overwrite,
-            )
+        inpainting = create_neurolit_inpainting_plan(
+            run_child=runner.run_child,
+            runtime=opts.container_runtime,
+            image=opts.fastsurfer_image,
+            data_directory=opts.fastsurfer_data,
+            t1w=lesion_inpainting_t1,
+            lesion_mask=lesion_mask,
+            subjects_dir=opts.freesurfer_subjects_dir,
+            subject=opts.fs_subject,
+            use_gpu=opts.lesion_use_gpu,
+            force=opts.overwrite,
         )
-        lesion_reconstruction_summary = (
-            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
-        )
-        runner.add_step(
-            create_lesion_reconstruction_summary_step(
-                subject_dir=subject_dir,
-                lesion_mask=lesion_mask,
-                output=lesion_reconstruction_summary,
-                force=opts.overwrite,
-            )
-        )
+        runner.add_step(inpainting.step)
+        reconstruction_t1 = inpainting.image
+        reconstruction_t2 = None
+        reconstruction_mask = inpainting.brain_mask
         inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-inpainted_T1w.nii.gz"
         runner.add_step(
             Step.command_step(
                 [
                     "mri_vol2vol",
                     "--mov",
-                    str(subject_dir / "mri" / "inpainted.lit.nii.gz"),
+                    str(inpainting.image),
                     "--targ",
                     str(subj_t1),
                     "--regheader",
@@ -945,24 +953,59 @@ def build_module(
                 observed_t1w=subj_t1,
                 lesion_mask=lesion_mask,
                 lesion_metadata=lesion_metadata,
-                reconstruction_summary=lesion_reconstruction_summary,
                 output=inpainted_t1.with_suffix("").with_suffix(".json"),
                 force=opts.overwrite,
             )
         )
-    else:
+    if opts.surface_reconstruction_engine == "freesurfer":
+        assert opts.freesurfer_image is not None
         runner.add_step(
             _create_recon_all_step(
                 run_child=runner.run_child,
                 env=env,
-                t1w=subj_t1,
-                t2w=subj_t2,
-                brain_mask=reference_mask,
+                t1w=reconstruction_t1,
+                t2w=reconstruction_t2,
+                brain_mask=reconstruction_mask,
                 subjects_dir=opts.freesurfer_subjects_dir,
                 fs_subject=opts.fs_subject,
-                runtime=opts.gradient_unwarp_runtime,
+                runtime=opts.container_runtime,
                 image=opts.freesurfer_image,
                 license_file=Path(env["FS_LICENSE"]),
+                force=opts.overwrite,
+            )
+        )
+    else:
+        assert reconstruction_t1 is not None
+        assert opts.fastsurfer_image is not None
+        threads = max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2")))
+        runner.add_steps(
+            create_fastsurfer_steps(
+                run_child=runner.run_child,
+                runtime=opts.container_runtime,
+                image=opts.fastsurfer_image,
+                t1w=reconstruction_t1,
+                staging_subjects_dir=opts.work_dir / "fastsurfer-segmentation",
+                subjects_dir=opts.freesurfer_subjects_dir,
+                subject=opts.fs_subject,
+                license_file=Path(env["FS_LICENSE"]),
+                segmentation_threads=threads,
+                surface_threads=threads,
+                force=opts.overwrite,
+            )
+        )
+    if opts.lesion:
+        assert lesion_mask is not None
+        lesion_reconstruction_summary = (
+            opts.out_dir / f"{inputs.sub_id}_desc-lesionReconstruction_summary.yaml"
+        )
+        runner.add_step(
+            create_lesion_reconstruction_summary_step(
+                subject_dir=subject_dir,
+                lesion_mask=lesion_mask,
+                surface_reconstruction=surface_reconstruction_contract(
+                    opts.surface_reconstruction_engine
+                ),
+                output=lesion_reconstruction_summary,
                 force=opts.overwrite,
             )
         )
@@ -1732,14 +1775,8 @@ def build_module(
             for path, resolution in gradient_resolutions.items()
         },
         "bias_correction": bias_correction_contract(),
-        "surface_reconstruction": (
-            {
-                "backend": "FastSurfer-LIT",
-                "version": FASTSURFER_VERSION,
-                "source_revision": FASTSURFER_SOURCE_REVISION,
-            }
-            if opts.lesion
-            else surface_reconstruction_contract()
+        "surface_reconstruction": surface_reconstruction_contract(
+            opts.surface_reconstruction_engine
         ),
         "inputs": {
             "t1w": [str(item.image) for item in inputs.t1w],
@@ -1805,12 +1842,15 @@ def build_module(
                 "test_time_augmentation": TEST_TIME_AUGMENTATION,
             },
             "reconstruction": {
-                "backend": "FastSurfer-LIT",
-                "version": FASTSURFER_VERSION,
-                "source_revision": FASTSURFER_SOURCE_REVISION,
-                "oci_digest": FASTSURFER_OCI_DIGEST,
+                "pipeline": "inpainting_surface_reconstruction_excision",
+                "inpainting_backend": "NeuroLIT",
                 "neurolit_version": NEUROLIT_VERSION,
                 "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
+                "surface_reconstruction": surface_reconstruction_contract(
+                    opts.surface_reconstruction_engine
+                ),
+                "scaffold_directory": str(subject_dir),
+                "canonical_surface_policy": "lesion_excised",
             },
             "boundary_margin_mm": BOUNDARY_MARGIN_MM,
         }
@@ -1906,6 +1946,11 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--selection-strategy", choices=["first", "robust_average"], default=cfg.selection_strategy
     )
     p.add_argument(
+        "--surface-reconstruction-engine",
+        choices=["freesurfer", "fastsurfer"],
+        default=cfg.surface_reconstruction_engine,
+    )
+    p.add_argument(
         "--gradient-unwarping",
         choices=["auto", "off"],
         default=cfg.gradient_unwarping,
@@ -1913,9 +1958,10 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--mni-template", type=Path, default=cfg.mni_template)
     p.add_argument("--synthstrip-container", type=Path, default=cfg.synthstrip_container)
     p.add_argument("--freesurfer-container", type=Path, default=cfg.freesurfer_container)
+    p.add_argument("--fastsurfer-container", type=Path, default=cfg.fastsurfer_container)
     p.add_argument("--lesion", action="store_true")
     p.add_argument("--lesion-masker-command", type=Path, default=cfg.lesion.masker_command)
-    p.add_argument("--fastsurfer-image", type=Path, default=cfg.lesion.fastsurfer_image)
+    p.add_argument("--lesion-fastsurfer-image", type=Path, default=cfg.lesion.fastsurfer_image)
     p.add_argument(
         "--lesion-use-gpu",
         action=argparse.BooleanOptionalAction,
@@ -1969,11 +2015,15 @@ def main(
     if synthstrip_image is None:
         raise SystemExit("Missing --synthstrip-container path.")
     freesurfer_image = resolve_project_path(args.freesurfer_container, project=project)
-    if freesurfer_image is None:
-        raise SystemExit("Missing --freesurfer-container path.")
     site, _ = site_settings()
     lesion_masker_command = resolve_project_path(args.lesion_masker_command, project=project)
-    fastsurfer_image = resolve_project_path(args.fastsurfer_image, project=project)
+    ordinary_fastsurfer_image = resolve_project_path(args.fastsurfer_container, project=project)
+    lesion_fastsurfer_image = resolve_project_path(args.lesion_fastsurfer_image, project=project)
+    fastsurfer_image = (
+        (lesion_fastsurfer_image or ordinary_fastsurfer_image)
+        if args.lesion
+        else ordinary_fastsurfer_image
+    )
     container = build_container(
         ContainerSettings.from_args(args),
         work_directory=work_dir,
@@ -1990,9 +2040,10 @@ def main(
             fs_subject=str(args.fs_subject or args.sub_id),
             fsaverage_template=str(args.fsaverage_template),
             selection_strategy=str(args.selection_strategy),
+            surface_reconstruction_engine=str(args.surface_reconstruction_engine),
             gradient_unwarping=str(args.gradient_unwarping),
             gradient_unwarp_image=Path(site["gradient_unwarp"]),
-            gradient_unwarp_runtime=str(site["runtime"]),
+            container_runtime=str(site["runtime"]),
             mni_template=mni_template,
             container=container,
             synthstrip_image=synthstrip_image,

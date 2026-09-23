@@ -106,6 +106,49 @@ def test_lesion_anatomy_keeps_its_parent_work_item_on_cpu(tmp_path: Path) -> Non
     assert work_item.resource_class == "large"
 
 
+def test_fastsurfer_anatomy_keeps_parent_on_cpu_and_records_backend(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo/sub-01"
+    _write(subject / "anat/sub-01_T1w.nii.gz")
+    definitions = tmp_path / "definitions"
+    shutil.copytree(ConfigStore().root, definitions)
+    _write(
+        definitions / "configs/anat/fast_anat.yml",
+        "surface_reconstruction_engine: fastsurfer\n",
+    )
+    _write(definitions / "workflows/fast_workflow.yml", "anat: fast\n")
+    refresh_manifest(definitions)
+    workflow = ConfigStore(definitions).resolve("fast")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(workflow)
+    context = SubjectPlanningContext(
+        project="demo",
+        participant="01",
+        sub_id="sub-01",
+        bids_root=bids,
+        project_root=bids / "demo",
+        subject_dir=subject,
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        runs=(),
+        aggregate_source_inputs=(),
+        target_pairs=(),
+        memory_gb=32,
+        max_memory_gb=256,
+        definitions_roots=(),
+        gradient_coefficients_root=tmp_path / "gradients",
+        source_markup=SubjectMarkup("main", "demo", subject),
+    )
+
+    work_item = anat_planning.plan_work_items(context, {}, module_descriptor("anat"))[0]
+
+    assert work_item.resource_class == "large"
+    assert work_item.work_item_contract["processing"]["surface_reconstruction"] == (
+        surface_reconstruction_contract("fastsurfer")
+    )
+
+
 def test_request_pins_execution_without_changing_scientific_contract(branch_registry, tmp_path):
     plan = _plan_modules(branch_registry, tmp_path, ("anat",))
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")

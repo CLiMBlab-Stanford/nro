@@ -19,7 +19,7 @@ the model format. FitLins is not a dependency.
 | FreeSurfer | Recon-all, segmentations, surfaces, boundary registration. | [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/fswiki/FreeSurferWiki) |
 | SynthStrip | Anatomical brain extraction. | [SynthStrip](https://surfer.nmr.mgh.harvard.edu/docs/synthstrip/) |
 | SynthStroke | Automatic stroke-lesion probability maps. | [SynthStroke](https://github.com/liamchalcroft/SynthStroke) |
-| FastSurfer-LIT | Lesion inpainting and cortical surface reconstruction. | [FastSurfer](https://github.com/Deep-MI/FastSurfer), [NeuroLIT weights](https://doi.org/10.5281/zenodo.14510136) |
+| FastSurfer / NeuroLIT | Optional cortical reconstruction; lesion inpainting. | [FastSurfer](https://github.com/Deep-MI/FastSurfer), [NeuroLIT weights](https://doi.org/10.5281/zenodo.14510136) |
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
 | HCP Pipelines | Hardware-specific gradient-distortion estimation and correction. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
@@ -52,8 +52,15 @@ source revision. It checks the downloaded model files against pinned SHA-256
 digests. Inference uses the optional `lesion` Python extra and does not copy the
 upstream training implementation into nro.
 
-Lesion inpainting and reconstruction use FastSurfer 2.5.4 at source revision
-`cdfccea` with NeuroLIT 0.6.1. The container and the axial, coronal, and sagittal
+Ordinary anatomy can use FastSurfer 2.5.4 as an alternative to FreeSurfer.
+FastSurferVINN segmentation runs at 1 mm on an on-demand GPU worker; surface
+reconstruction runs on a general CPU worker and produces the
+FreeSurfer-compatible files consumed by later anatomical steps.
+
+Lesion inpainting uses NeuroLIT 0.6.1 from the FastSurfer 2.5.4 image at source
+revision `cdfccea`. The configured FreeSurfer or FastSurfer backend then
+reconstructs the inpainted image through the ordinary reconstruction interface.
+The container and the axial, coronal, and sagittal
 checkpoint files have pinned SHA-256 identities in the anatomical scientific
 policy. The three checkpoints come from the FastSurfer-LIT Zenodo record and
 are mounted read-only during execution.
