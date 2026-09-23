@@ -298,3 +298,17 @@ class BranchPaths:
         if root.resolve() != root or not resolved.is_relative_to(root):
             raise ValueError("Output is outside the branch-owned derivative root")
         return resolved
+
+    def require_removal(self, path: Path, project: str, *, private: bool = False) -> Path:
+        """Authorize removal without following a final symlink outside the derivative root."""
+        root = (
+            self.private_project(project) if private else self.output_project(project)
+        ) / "derivatives"
+        path = Path(path).expanduser().absolute()
+        if ".." in path.parts or root.resolve() != root:
+            raise ValueError("Removal is outside the branch-owned derivative root")
+        location = path.parent.resolve(strict=False) / path.name
+        candidate = location if path.is_symlink() else path.resolve(strict=False)
+        if not candidate.is_relative_to(root):
+            raise ValueError("Removal is outside the branch-owned derivative root")
+        return location

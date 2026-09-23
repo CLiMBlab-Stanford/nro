@@ -16,6 +16,26 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _entry_location(path: Path) -> Path:
+    """Locate a directory entry without resolving its final symlink."""
+    return path.parent.resolve(strict=False) / path.name
+
+
+def _is_entry_within(path: Path, root: Path) -> bool:
+    """Test containment of an entry itself rather than its symlink target."""
+    try:
+        _entry_location(path).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _is_removal_within(path: Path, root: Path) -> bool:
+    """Authorize unlinking a symlink by its entry and other removal by its target."""
+    check = _is_entry_within if path.is_symlink() else _is_within
+    return check(path, root)
+
+
 def _remove_empty_parents(path: Path, *, root: Path) -> None:
     """Remove empty ancestors below root, stopping at the first nonempty directory."""
     root = root.resolve(strict=False)
@@ -40,7 +60,7 @@ def _remove_path(path: Path, *, dry_run: bool, prune_root: Path | None = None) -
         return False
     if dry_run:
         return True
-    if prune_root is not None and not _is_within(path, prune_root):
+    if prune_root is not None and not _is_removal_within(path, prune_root):
         raise ValueError(f"Purge path is outside its pruning root: {path}")
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
@@ -85,7 +105,7 @@ def _purge_attempt_logs(
         if not raw_path or raw_path in active_work_item_logs:
             continue
         path = Path(raw_path)
-        if _is_within(path, registry.paths.events) and _remove_path(
+        if _is_removal_within(path, registry.paths.events) and _remove_path(
             path,
             dry_run=dry_run,
             prune_root=registry.paths.events,

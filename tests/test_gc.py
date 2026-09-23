@@ -97,6 +97,10 @@ def test_gc_treats_anat_and_registered_work_directories_as_owned_trees(tmp_path:
     anat = next(row for row in rows if row["module"] == "anat")
     func = next(row for row in rows if row["module"] == "func")
     inside_anat = _write(Path(anat["output_root"]) / "unlisted-tool-output.dat")
+    external_template = tmp_path / "templates" / "fsaverage"
+    external_template.mkdir(parents=True)
+    inside_anat_symlink = Path(anat["output_root"]) / "fsaverage"
+    inside_anat_symlink.symlink_to(external_template, target_is_directory=True)
     func_work = _write(
         work
         / "demo"
@@ -123,6 +127,7 @@ def test_gc_treats_anat_and_registered_work_directories_as_owned_trees(tmp_path:
     )
 
     assert inside_anat not in public
+    assert inside_anat_symlink not in public
     assert func_work not in private
     assert private == (garbage_work,)
 

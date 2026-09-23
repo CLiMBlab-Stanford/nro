@@ -24,7 +24,7 @@ from nro.orchestration.ownership import (
     remove_empty_ownership_root,
 )
 from nro.orchestration.purge_paths import (
-    _is_within,
+    _is_removal_within,
     _purge_attempt_logs,
     _purge_inactive_worker_logs,
     _remove_path,
@@ -176,7 +176,7 @@ def _purge_reserved_work_items(
             registry.paths.control,
         )
         for path in derivatives:
-            prune_root = next(root for root in derivative_roots if _is_within(path, root))
+            prune_root = next(root for root in derivative_roots if _is_removal_within(path, root))
             derivative_count += int(_remove_path(path, dry_run=dry_run, prune_root=prune_root))
         work_root_boundary = work_root / registry.paths.project / "derivatives" / "nro"
         for path in work:
@@ -229,7 +229,7 @@ def _planned_paths(
             for path in derivatives:
                 if not path.exists() and not path.is_symlink():
                     continue
-                target = private if _is_within(path, registry.paths.control) else public
+                target = private if _is_removal_within(path, registry.paths.control) else public
                 target.add(path.absolute())
             private.update(path.absolute() for path in work if path.exists() or path.is_symlink())
     return sorted(public), sorted(private)
