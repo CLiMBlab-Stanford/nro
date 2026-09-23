@@ -33,6 +33,14 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
                  WHERE task.work_item_id=t.id AND task.generation=t.current_generation
                    AND task.revision_fingerprint=t.revision_fingerprint
                  ORDER BY task.id DESC LIMIT 1) AS waiting_resource_class,
+               (SELECT task.error_type FROM resource_step_tasks task
+                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
+                   AND task.revision_fingerprint=t.revision_fingerprint
+                 ORDER BY task.id DESC LIMIT 1) AS resource_step_error_type,
+               (SELECT task.error_message FROM resource_step_tasks task
+                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
+                   AND task.revision_fingerprint=t.revision_fingerprint
+                 ORDER BY task.id DESC LIMIT 1) AS resource_step_error_message,
                EXISTS(
                  SELECT 1 FROM request_work_items retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
                  WHERE retry_rt.work_item_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
@@ -181,7 +189,7 @@ def project_work_item_status(
         elif resource_step == "running" and item.get("demanded"):
             state = "Running"
         elif resource_step == "pending" and item.get("demanded"):
-            state = "Waiting"
+            state = "Queued"
         elif unfinished_dependencies and item.get("demanded"):
             state = "Waiting"
         elif attempt == "queued" or item.get("retry_requested"):
@@ -198,6 +206,12 @@ def project_work_item_status(
             state = "Queued"
         elif attempt == "cancelled" and item.get("error_type") == "UserCancelled":
             state = "Stopped"
+        elif (
+            resource_step == "cancelled" and item.get("resource_step_error_type") == "UserCancelled"
+        ):
+            state = "Stopped"
+            item["error_type"] = item["resource_step_error_type"]
+            item["error_message"] = item["resource_step_error_message"]
         elif item["artifact_state"] == "corrupt":
             state = "Corrupt"
         elif item["artifact_state"] == "missing":

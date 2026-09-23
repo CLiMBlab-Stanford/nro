@@ -93,9 +93,11 @@ class WorkerSchedulerClient:
         return None if value is None else ExecutionEnvelope.from_dict(value)
 
     def claim_resource_step(
-        self, *, resource_class: str, memory_gb: int
+        self, worker_id: str, *, resource_class: str, memory_gb: int
     ) -> ExecutionEnvelope | None:
         """Claim one ready runner step for this worker's exact resource class."""
+        if worker_id != self.worker_id:
+            raise ValueError("Worker identity differs from the scheduler client binding")
         value = self._call(
             "claim_resource_step", resource_class=resource_class, memory_gb=memory_gb
         )

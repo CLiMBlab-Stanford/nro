@@ -183,7 +183,10 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
         memory_gb=32,
     )
     assert registry.claim_ready_work_item("cpu", ("large",)) is None
-    assert registry.work_item_status_snapshot()[0]["status"] == "Waiting"
+    pending = registry.work_item_status_snapshot()[0]
+    assert pending["status"] == "Queued"
+    assert pending["waiting_resource_class"] == "gpu"
+    assert pending["unfinished_dependency_ids"] == ()
 
     task = registry.claim_resource_step("gpu", resource_class="gpu", memory_gb=32)
     assert task is not None
@@ -197,6 +200,44 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     assert resumed is not None
     assert resumed.work_item_id == parent.work_item_id
     assert resumed.completed_resource_steps == ("neurolit-inpainting",)
+
+
+def test_user_cancelled_resource_step_reports_stopped(tmp_path: Path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    spec = _spec(
+        key="anat:" + "b" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "anat.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(spec,),
+        terminal_work_item_keys=(spec.key,),
+        concurrency=2,
+        partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="neurolit-inpainting",
+        resource_class="gpu",
+        memory_gb=32,
+    )
+
+    registry.request_cancellation(modules=("anat",))
+    stopped = registry.work_item_status_snapshot()[0]
+    assert stopped["status"] == "Stopped"
+    assert stopped["error_type"] == "UserCancelled"
+    assert stopped["error_message"] == "Demand was cancelled before the resource step ran"
 
 
 def test_resource_step_completion_rejects_changed_upstream_generation(tmp_path: Path) -> None:

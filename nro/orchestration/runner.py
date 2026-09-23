@@ -8,6 +8,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -15,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from itertools import count
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, TextIO
 
 from nro.engine.execution import collect_bind_directories, strip_ansi
 from nro.engine.io import atomic_write_json
@@ -51,6 +53,14 @@ _RUNNER_EXECUTION: ContextVar[Optional[_RunnerExecutionState]] = ContextVar(
     "nro_runner_execution",
     default=None,
 )
+
+
+def _forward_nonblank_output(stream: TextIO) -> None:
+    """Forward substantive streaming output while suppressing empty log lines."""
+    for line in stream:
+        text = line.rstrip("\r\n")
+        if text.strip():
+            print(text, file=sys.stdout, flush=True)
 
 
 class Runner:
@@ -1464,27 +1474,44 @@ class Runner:
                     env=host_env,
                     cwd=str(cwd) if cwd else None,
                     text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    errors="replace",
                 )
-                while True:
-                    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-                    wait_for = 60.0 if remaining is None else min(60.0, remaining)
-                    try:
-                        return_code = proc.wait(timeout=wait_for)
-                        break
-                    except subprocess.TimeoutExpired:
-                        if deadline is not None and time.monotonic() >= deadline:
-                            proc.terminate()
-                            try:
-                                proc.wait(timeout=20)
-                            except subprocess.TimeoutExpired:
-                                proc.kill()
-                                proc.wait()
-                            raise subprocess.TimeoutExpired(full_cmd, timeout_seconds)
-                        self._logger.info(
-                            "%s still running after %.0f seconds",
-                            active_step_name,
-                            time.monotonic() - started_at,
+                if proc.stdout is None:
+                    raise RuntimeError("Streaming child process has no output pipe")
+                forwarder = threading.Thread(
+                    target=_forward_nonblank_output,
+                    args=(proc.stdout,),
+                    name="nro-child-output",
+                    daemon=True,
+                )
+                forwarder.start()
+                try:
+                    while True:
+                        remaining = (
+                            None if deadline is None else max(0.0, deadline - time.monotonic())
                         )
+                        wait_for = 60.0 if remaining is None else min(60.0, remaining)
+                        try:
+                            return_code = proc.wait(timeout=wait_for)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if deadline is not None and time.monotonic() >= deadline:
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=20)
+                                except subprocess.TimeoutExpired:
+                                    proc.kill()
+                                    proc.wait()
+                                raise subprocess.TimeoutExpired(full_cmd, timeout_seconds)
+                            self._logger.info(
+                                "%s still running after %.0f seconds",
+                                active_step_name,
+                                time.monotonic() - started_at,
+                            )
+                finally:
+                    forwarder.join()
                 if return_code:
                     raise subprocess.CalledProcessError(return_code, full_cmd)
             else:
