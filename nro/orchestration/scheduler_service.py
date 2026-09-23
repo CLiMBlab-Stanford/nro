@@ -23,6 +23,7 @@ from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.resources import SCHEDULABLE_RESOURCE_CLASSES
 from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
+from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
 from nro.orchestration.scheduler_operations import (
     installation_activity,
     installation_prepare,
@@ -38,6 +39,7 @@ from nro.orchestration.scheduler_operations import (
 from nro.orchestration.source_snapshots import SourceSnapshot
 
 _STOP = False
+MAINTENANCE_INTERVAL_SECONDS = 30.0
 
 
 def _request_stop(_signum, _frame) -> None:
@@ -413,10 +415,6 @@ def _apply_worker_operation(registry, message: dict) -> object:
     if action == "submission_complete":
         registry.mark_submission_complete(message.get("slurm_job_id"))
         return None
-    if action == "reconcile_submissions":
-        return registry.reconcile_scheduler_submissions()
-    if action == "recover_orphans":
-        return registry.recover_orphaned_attempts()
     if action == "claim":
         envelope = registry.current_worker_assignment(worker_id)
         if envelope is None:
@@ -508,26 +506,6 @@ def _apply_worker_operation(registry, message: dict) -> object:
             attempt_id=int(message["attempt_id"]),
             outputs=tuple(Path(path) for path in message["outputs"]),
         )
-    if action == "refresh":
-        from nro.orchestration.assessment import AssessmentConflict
-        from nro.orchestration.branch_reconciliation import reconcile_branch_requests
-        from nro.orchestration.manifests import assess_registry
-
-        cancelled = []
-        if registry.reserve_artifact_assessment():
-            try:
-                demanded = registry.demanded_work_item_ids()
-                if demanded:
-                    try:
-                        assess_registry(registry, work_item_ids=demanded, compiled=True)
-                    except AssessmentConflict:
-                        pass
-                reconcile_branch_requests(registry)
-                cancelled = registry.cancel_attempts_with_stale_upstreams()
-                registry.reconcile_requests()
-            finally:
-                registry.finish_artifact_assessment()
-        return len(cancelled)
     if action == "required_memory":
         return registry.required_memory_above(
             int(message["memory_gb"]),
@@ -1067,14 +1045,31 @@ def serve(
     heartbeat_thread.start()
     idle_since = None
     last_cleanup = 0.0
+    last_maintenance = 0.0
     try:
+        cancelled = refresh_scheduler_state(registry)
+        if cancelled:
+            print(
+                f"Scheduler cancelled {cancelled} attempt(s) with stale upstream artifacts",
+                flush=True,
+            )
+        last_maintenance = time.monotonic()
         publish_status_snapshot(registry, generation=generation, active=True)
         while not _STOP:
             now = time.monotonic()
+            changed = False
             if now - last_cleanup >= 3600.0:
                 collect_transport_garbage(control)
                 last_cleanup = now
-            changed = False
+            if now - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS and _registry_busy(registry):
+                cancelled = refresh_scheduler_state(registry)
+                if cancelled:
+                    print(
+                        f"Scheduler cancelled {cancelled} attempt(s) with stale upstream artifacts",
+                        flush=True,
+                    )
+                last_maintenance = time.monotonic()
+                changed = True
             handled_direct = False
             while True:
                 handled, direct_changed = _receive_direct(

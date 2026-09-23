@@ -309,18 +309,16 @@ def test_assessment_cannot_redirect_outputs(graph):
         apply_assessment(registry, snapshot, AssessmentReport.from_dict(value))
 
 
-def test_worker_defers_contended_assessment_without_stopping(graph, monkeypatch):
-    from nro.orchestration import worker
+def test_scheduler_defers_contended_assessment(graph, monkeypatch):
+    from nro.orchestration import scheduler_maintenance
 
     registry, _, _ = graph
 
     def conflict(*args, **kwargs):
         raise AssessmentConflict("test contention")
 
-    monkeypatch.setattr(worker, "assess_registry", conflict)
-    process = worker.Worker(registry, resource_class="large")
-    process._refresh_scheduler_state()
-    assert not process.stop_requested
+    monkeypatch.setattr(manifests, "assess_registry", conflict)
+    scheduler_maintenance.refresh_scheduler_state(registry)
     with registry.connection() as db:
         assert (
             db.execute(
