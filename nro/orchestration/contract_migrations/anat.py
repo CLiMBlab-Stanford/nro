@@ -1,7 +1,10 @@
 """Anatomical artifact-contract migrations."""
 
-from nro.modules.anat.contract import bias_correction_contract, surface_reconstruction_contract
-from nro.modules.anat.lesion_policy import FASTSURFER_VOXEL_SIZE_MM
+from nro.modules.anat.contract import (
+    FASTSURFER_RECONSTRUCTION_VOXEL_SIZE_MM,
+    bias_correction_contract,
+    surface_reconstruction_contract,
+)
 
 from .core import INDETERMINATE, AddField, ContractMigration, ContractMigrationChain
 
@@ -61,7 +64,7 @@ CHAIN = ContractMigrationChain(
             contract=(
                 AddField(
                     "processing.lesion_reconstruction.fastsurfer_voxel_size_mm",
-                    default=FASTSURFER_VOXEL_SIZE_MM,
+                    default=FASTSURFER_RECONSTRUCTION_VOXEL_SIZE_MM,
                     historical=INDETERMINATE,
                 ),
             ),
