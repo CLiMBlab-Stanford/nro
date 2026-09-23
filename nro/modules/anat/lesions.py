@@ -476,9 +476,7 @@ def create_lesion_reconstruction_summary_step(
             "CompleteScaffold": True,
         }
         if surface_reconstruction.get("backend") == "FastSurfer":
-            result["MaskReconciliation"] = json.loads(
-                reconciliation.read_text(encoding="utf-8")
-            )
+            result["MaskReconciliation"] = json.loads(reconciliation.read_text(encoding="utf-8"))
         return result
 
     def action() -> None:

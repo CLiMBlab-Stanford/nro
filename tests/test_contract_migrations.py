@@ -221,9 +221,7 @@ def test_decoupled_lesion_reconstruction_invalidates_only_lesion_anatomy() -> No
 
     assert migrated_ordinary_v5 == migrated_ordinary_v6
     assert migrated_lesion_v5 != migrated_lesion_v6
-    assert migrated_lesion_v5["processing"]["lesion_reconstruction"]["pipeline"] == (
-        INDETERMINATE
-    )
+    assert migrated_lesion_v5["processing"]["lesion_reconstruction"]["pipeline"] == (INDETERMINATE)
 
 
 def test_add_field_distinguishes_current_default_from_historical_value() -> None:
