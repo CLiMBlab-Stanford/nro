@@ -19,7 +19,6 @@ import yaml
 
 from nro.configuration.paths import BIDS_PATH
 from nro.engine.io import atomic_write_json
-from nro.orchestration.assessment import AssessmentConflict
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import ExecutionEnvelope
 from nro.orchestration.control_paths import ControlPaths
@@ -30,7 +29,6 @@ from nro.orchestration.execution import (
     SubprocessExecutionLauncher,
 )
 from nro.orchestration.execution_cache import cleanup_cache
-from nro.orchestration.manifests import assess_registry
 from nro.orchestration.registry import (
     Registry,
     RegistryLockTimeout,
@@ -1077,38 +1075,6 @@ class Worker:
                 f"after work_item {work_item.work_item_id} failed"
             )
 
-    def _refresh_scheduler_state(self) -> None:
-        """Periodically make the active registry agree with filesystem evidence."""
-        if hasattr(self.registry, "refresh_scheduler_state"):
-            cancelled = self.registry.refresh_scheduler_state()
-            if cancelled:
-                self._log(
-                    f"requested cancellation of {cancelled} active work-item attempt(s) "
-                    "whose upstream artifacts became stale"
-                )
-            return
-        if not self.registry.reserve_artifact_assessment():
-            return
-        try:
-            demanded = self.registry.demanded_work_item_ids()
-            if demanded:
-                try:
-                    assess_registry(self.registry, work_item_ids=demanded, compiled=True)
-                except AssessmentConflict:
-                    self._log("artifact assessment deferred because the registry kept changing")
-            from nro.orchestration.branch_reconciliation import reconcile_branch_requests
-
-            reconcile_branch_requests(self.registry)
-            cancelled = self.registry.cancel_attempts_with_stale_upstreams()
-            self.registry.reconcile_requests()
-            if cancelled:
-                self._log(
-                    f"requested cancellation of {len(cancelled)} active work-item attempt(s) "
-                    "whose upstream artifacts became stale"
-                )
-        finally:
-            self.registry.finish_artifact_assessment()
-
     def run(self) -> int:
         """Run the claim/execute loop until shutdown, draining, or idle timeout.
 
@@ -1130,18 +1096,12 @@ class Worker:
         )
         idle_since = time.monotonic()
         idle_announced = False
-        last_refresh_check = 0.0
         try:
-            self.registry.reconcile_scheduler_submissions()
             while not self.stop_requested:
                 if self.registry.worker_shutdown_requested(self.worker_id):
                     self.stop_requested = True
                     self._log("shutdown requested by owning user")
                     break
-                self.registry.recover_orphaned_attempts()
-                if time.monotonic() - last_refresh_check >= 30.0:
-                    self._refresh_scheduler_state()
-                    last_refresh_check = time.monotonic()
                 if (
                     self.deadline is not None
                     and self.deadline - time.monotonic() <= self.drain_seconds
@@ -1218,7 +1178,6 @@ class Worker:
                     self.stop_requested = True
                     self._log("shutdown requested by owning user")
                     break
-                self._refresh_scheduler_state()
                 self._expand_ready_pool()
             return 0
         except BaseException as error:

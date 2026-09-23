@@ -171,6 +171,12 @@ The registry decodes its SQL and JSON storage representation before returning
 the envelope. Worker execution therefore does not depend on database column
 names or manipulate a raw registry row.
 
+The scheduler maintains shared execution state before workers claim envelopes.
+It reconciles Slurm submissions, recovers orphaned attempts, and reassesses only
+demanded artifacts on one scheduler-wide cadence. A worker claim performs the
+smaller dependency-state update needed to expose newly ready work. Starting a
+batch of workers therefore does not repeat a full registry refresh per worker.
+
 ### ExecutionLauncher
 
 `ExecutionLauncher` is the boundary between worker scheduling and process

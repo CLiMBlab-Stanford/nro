@@ -85,14 +85,6 @@ class WorkerSchedulerClient:
         """Mark this worker's Slurm submission complete when it has one."""
         self._call("submission_complete", slurm_job_id=slurm_job_id)
 
-    def reconcile_scheduler_submissions(self) -> int:
-        """Ask the controller to reconcile known worker allocations."""
-        return int(self._call("reconcile_submissions"))
-
-    def recover_orphaned_attempts(self) -> int:
-        """Ask the controller to recover work owned by confirmed-dead workers."""
-        return int(self._call("recover_orphans"))
-
     def claim_ready_work_item(
         self, worker_id: str, resource_classes: Sequence[str], *, memory_gb: int = 32
     ) -> ExecutionEnvelope | None:
@@ -213,10 +205,6 @@ class WorkerSchedulerClient:
                 durable=False,
             )
         )
-
-    def refresh_scheduler_state(self) -> int:
-        """Reassess demanded artifacts and cancel obsolete attempts."""
-        return int(self._call("refresh"))
 
     def required_memory_above(
         self, memory_gb: int, *, resource_classes: Sequence[str] = ()

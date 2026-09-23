@@ -29,6 +29,7 @@ from nro.orchestration.registry import (
     discover_registry_projects,
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
+from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
 from nro.orchestration.worker import Worker, _looks_like_oom
 
 
@@ -2444,6 +2445,7 @@ def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, mo
         "nro.orchestration.registry.RegistryLock._slurm_terminal",
         staticmethod(lambda _job: True),
     )
+    refresh_scheduler_state(registry)
 
     Worker(
         registry,
@@ -2628,9 +2630,7 @@ def test_status_is_read_only_and_worker_cancels_stale_downstream(tmp_path: Path)
     status_main(["-p", "demo", "--json"])
     assert not registry.attempt_cancel_requested(claimed.attempt_id)
 
-    Worker(
-        registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01
-    )._refresh_scheduler_state()
+    refresh_scheduler_state(registry)
     assert registry.attempt_cancel_requested(claimed.attempt_id)
 
 
