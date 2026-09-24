@@ -67,12 +67,16 @@ def test_anatomy_configuration_migration_preserves_ordinary_scientific_identity(
 
 
 def test_freesurfer_contract_survives_introduction_of_engine_selector() -> None:
-    current = ConfigStore().load_configuration("anat", "main").values
+    resolved = ConfigStore().load_configuration("anat", "main")
+    current = resolved.values
     historical = {
-        key: value for key, value in current.items() if key != "surface_reconstruction_engine"
+        key: value
+        for key, value in current.items()
+        if key not in {"fastsurfer_container", "surface_reconstruction_engine"}
     }
-    old_fingerprint = configuration_fingerprint("anat", "main", historical)
-    new_fingerprint = configuration_fingerprint("anat", "main", current)
+    historical_full_fingerprint = configuration_fingerprint("anat", "main", historical)
+    old_fingerprint = "historical-anat-scientific-fingerprint"
+    new_fingerprint = resolved.module_fingerprint("anat")
     processing = {
         "source_markup": {"id": "main", "lesion": False},
         "bias_correction": {
@@ -106,10 +110,18 @@ def test_freesurfer_contract_survives_introduction_of_engine_selector() -> None:
 
     assert canonical_contract(
         old_contract,
-        {"id": "main", "fingerprint": old_fingerprint, "resolved": historical},
+        {
+            "id": "main",
+            "fingerprint": historical_full_fingerprint,
+            "resolved": historical,
+        },
     ) == canonical_contract(
         new_contract,
-        {"id": "main", "fingerprint": new_fingerprint, "resolved": current},
+        {
+            "id": "main",
+            "fingerprint": configuration_fingerprint("anat", "main", current),
+            "resolved": current,
+        },
     )
 
 

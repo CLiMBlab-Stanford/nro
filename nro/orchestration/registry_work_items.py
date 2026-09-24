@@ -8,6 +8,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 from nro.configuration.store import fingerprint
 from nro.orchestration import dependency_state
 from nro.orchestration.artifact_resolution import (
@@ -112,7 +114,21 @@ def upsert_work_item_graph(
                 if owner_branch is None:
                     from nro.orchestration.catalog import canonical_contract
 
-                    recorded_contract = canonical_contract(recorded_contract)
+                    completion = database.execute(
+                        """SELECT config_id,config_fingerprint,resolved_yaml
+                           FROM completions WHERE work_item_id=?""",
+                        (work_item_id,),
+                    ).fetchone()
+                    configuration = (
+                        {
+                            "id": completion["config_id"],
+                            "fingerprint": completion["config_fingerprint"],
+                            "resolved": yaml.safe_load(completion["resolved_yaml"]) or {},
+                        }
+                        if completion is not None
+                        else None
+                    )
+                    recorded_contract = canonical_contract(recorded_contract, configuration)
                 artifact_changed = fingerprint(recorded_contract) != record["artifact_fingerprint"]
             except (ValueError, TypeError, KeyError):
                 artifact_changed = True
