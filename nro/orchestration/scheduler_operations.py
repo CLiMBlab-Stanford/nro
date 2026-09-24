@@ -363,6 +363,8 @@ def logs(
 def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None) -> dict:
     """Apply explicit lab-wide pool controls from an authorized checkout."""
     BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
+    if operation == "settings":
+        return {"settings": registry.pool_settings()}
     if operation in {"concurrency", "gpu_concurrency"}:
         if type(concurrency) is not int or concurrency < 1:
             raise ValueError("Concurrency must be a positive integer")

@@ -21,6 +21,7 @@ COMMAND_HELP = {
     "def": "Edit, list, remove, and validate definitions.",
     "find": "List source BIDS images that match entity selectors.",
     "fw": "Manage private Flywheel credentials for configured servers.",
+    "get": "Read live planner settings.",
     "gc": "Remove unclaimed files from nro derivative namespaces.",
     "models": "Inspect, validate, register, and compile task models.",
     "setup": "Set up dependencies or connect to a shared installation.",

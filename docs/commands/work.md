@@ -189,11 +189,16 @@ operations. Coordinate with other users before installation maintenance.
 ## `nro set`
 
 ```bash
+nro set ls
+nro get
+nro get concurrency gpu_concurrency
 nro set concurrency=60
 nro set gpu_concurrency=2
 ```
 
-Accept one or more `NAME=VALUE` pairs. `concurrency` updates active requests and
+`nro set ls` lists every accepted name, its value constraint, its scope, and its
+effect. Add `--json` for structured output. Updates accept one or more
+`NAME=VALUE` pairs. `concurrency` updates active requests and
 limits the general worker pool. `gpu_concurrency` is a persistent scheduler
 setting, defaults to one, and limits resource-specific GPU steps independently.
 Unsupported keys warn and are skipped. Malformed pairs or invalid recognized
@@ -205,3 +210,8 @@ Workers observe it during normal check-in; a later `nro run --resume` or worker
 completion supplies newly useful capacity. Updating `concurrency` fails when no
 active request can be changed. `gpu_concurrency` may be set before a GPU step is
 ready.
+
+`nro get` returns every current setting as `NAME=VALUE`; positional names limit
+the result to those settings. `--json` returns a `settings` object instead.
+Because `concurrency` is defined by active derivative and ingestion requests, it
+is `unset` (`null` in JSON) when no active request supplies a limit.

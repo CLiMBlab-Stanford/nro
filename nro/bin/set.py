@@ -5,15 +5,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
+from nro.orchestration.pool_settings import SETTABLE_SETTINGS
 from nro.orchestration.registry import Registry
 
 
 def build_parser(*, prog: str = "nro.bin.set") -> argparse.ArgumentParser:
     """Construct the set parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    parser.add_argument("assignments", nargs="+", metavar="NAME=VALUE")
+    parser.add_argument(
+        "assignments",
+        nargs="*",
+        metavar="NAME=VALUE",
+        help="setting assignments, or ls to list accepted names",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -24,7 +31,7 @@ def _parse_assignments(values: list[str]) -> dict[str, int]:
         name, separator, raw_value = assignment.partition("=")
         if not separator or not name or not raw_value:
             raise SystemExit(f"Invalid setting {assignment!r}; expected NAME=VALUE")
-        if name not in {"concurrency", "gpu_concurrency"}:
+        if name not in SETTABLE_SETTINGS:
             print(
                 f"WARNING: ignoring unsupported registry setting: {name}",
                 file=sys.stderr,
@@ -40,13 +47,44 @@ def _parse_assignments(values: list[str]) -> dict[str, int]:
     return settings
 
 
+def _list_settings(*, as_json: bool) -> None:
+    settings = [
+        {"name": name, **asdict(specification)} for name, specification in SETTABLE_SETTINGS.items()
+    ]
+    if as_json:
+        print(json.dumps({"settings": settings}, indent=2))
+        return
+    widths = {
+        field: max(len(field.upper()), *(len(setting[field]) for setting in settings))
+        for field in ("name", "values", "scope")
+    }
+    print(
+        f"{'NAME':<{widths['name']}}  {'VALUES':<{widths['values']}}  "
+        f"{'SCOPE':<{widths['scope']}}  DESCRIPTION"
+    )
+    for setting in settings:
+        print(
+            f"{setting['name']:<{widths['name']}}  "
+            f"{setting['values']:<{widths['values']}}  "
+            f"{setting['scope']:<{widths['scope']}}  {setting['description']}"
+        )
+
+
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
     """Update recognized scheduler settings; warn for unsupported keys.
 
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
-    args = build_parser(prog=prog).parse_args(argv)
+    parser = build_parser(prog=prog)
+    args = parser.parse_args(argv)
+    if "ls" in args.assignments:
+        if args.assignments != ["ls"]:
+            parser.error("ls cannot be combined with setting assignments")
+        _list_settings(as_json=args.json)
+        return
+    if not args.assignments:
+        parser.error("provide ls or at least one NAME=VALUE assignment")
     settings = _parse_assignments(args.assignments)
     if not settings:
         result = {"settings": {}, "updated_requests": 0}
