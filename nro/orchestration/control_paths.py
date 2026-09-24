@@ -38,16 +38,6 @@ class ControlPaths:
         return self.scheduler / "service"
 
     @property
-    def service_inbox(self) -> Path:
-        """Return the inbox used by commands and workers."""
-        return self.service / "inbox"
-
-    @property
-    def service_responses(self) -> Path:
-        """Return the scheduler response directory."""
-        return self.service / "responses"
-
-    @property
     def service_progress(self) -> Path:
         """Return transient progress records for long scheduler operations."""
         return self.service / "progress"
@@ -120,8 +110,6 @@ class ControlPaths:
             self.scheduler,
             self.database,
             self.service,
-            self.service_inbox,
-            self.service_responses,
             self.service_progress,
             self.catalog,
             self.cache,

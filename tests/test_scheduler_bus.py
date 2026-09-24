@@ -26,17 +26,68 @@ def test_simultaneous_callers_elect_one_controller(tmp_path):
     assert scheduler_bus.read_launch(control)["token"] == winners[0].token
 
 
-def test_message_and_response_survive_independent_readers(tmp_path):
-    control = tmp_path / ".nro"
-    message_id = scheduler_bus.publish_message(control, {"operation": "example"})
-    path = scheduler_bus.message_path(control, message_id)
+def test_durable_request_response_is_replayed_from_registry(tmp_path):
+    from nro.orchestration.scheduler_requests import RequestCoordinator
 
-    record = scheduler_bus.consume_message(path)
-    scheduler_bus.publish_response(control, message_id, {"result": {"ok": True}})
-    scheduler_bus.acknowledge_message(path)
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "example"})
+    calls = []
+    coordinator = RequestCoordinator(
+        registry,
+        lambda received: calls.append(received["id"]) or {"result": {"ok": True}},
+    )
 
-    assert record["payload"] == {"operation": "example"}
-    assert scheduler_bus.read_response(control, message_id) == {"result": {"ok": True}}
+    assert coordinator.run(record) == {"result": {"ok": True}}
+    assert coordinator.run(record) == {"result": {"ok": True}}
+    assert calls == [record["id"]]
+
+
+def test_interrupted_durable_request_is_recovered(tmp_path):
+    from nro.orchestration.scheduler_requests import prepare, register
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "example"})
+    assert register(registry, record) is None
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE scheduler_requests SET state='running' WHERE id=?", (record["id"],))
+
+    assert prepare(registry) == (record,)
+    with registry.connection() as db:
+        assert db.execute(
+            "SELECT state FROM scheduler_requests WHERE id=?", (record["id"],)
+        ).fetchone()[0] == "pending"
+
+
+def test_concurrent_durable_retries_share_one_execution(tmp_path):
+    from nro.orchestration.scheduler_requests import RequestCoordinator
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "example"})
+    calls = []
+    coordinator = RequestCoordinator(
+        registry,
+        lambda received: calls.append(received["id"]) or {"result": "done"},
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = coordinator.submit(record, pool)
+        second = coordinator.submit(record, pool)
+        assert first.result() == {"result": "done"}
+        assert second.result() == {"result": "done"}
+    assert calls == [record["id"]]
+
+
+def test_scheduler_separates_polling_from_maintenance_execution() -> None:
+    executors = {name: object() for name in ("poll", "worker", "command", "maintenance")}
+    worker = {"payload": {"operation": "worker"}}
+    purge = {"payload": {"operation": "purge"}}
+
+    assert scheduler_service._executor_for(worker, executors, durable=False) is executors["poll"]
+    assert scheduler_service._executor_for(worker, executors) is executors["worker"]
+    assert scheduler_service._executor_for(purge, executors) is executors["maintenance"]
 
 
 def test_scheduler_progress_is_atomic_and_transient(tmp_path):
@@ -115,6 +166,7 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][0]["action"] == "heartbeat"
     assert calls[0][1]["durable"] is False
     assert calls[0][1]["require_service"] is True
+    assert calls[0][1]["timeout"] == 10.0
 
 
 def test_worker_resource_step_claim_uses_bound_worker_identity(monkeypatch) -> None:

@@ -8,8 +8,11 @@ import signal
 import socket
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -40,6 +43,26 @@ from nro.orchestration.source_snapshots import SourceSnapshot
 
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
+
+
+class _ActivitySignal:
+    """Count cross-thread activity without losing a concurrent notification."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._count = 0
+
+    def set(self) -> None:
+        """Record one or more events for the service loop."""
+        with self._lock:
+            self._count += 1
+
+    def consume(self) -> bool:
+        """Atomically report and clear activity observed so far."""
+        with self._lock:
+            active = bool(self._count)
+            self._count = 0
+            return active
 
 
 def _request_stop(_signum, _frame) -> None:
@@ -820,7 +843,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
 
 
 def _message_response(registry, record: dict, *, values: dict) -> dict:
-    """Execute one message; its durable response is the processed-message record."""
+    """Execute one validated scheduler request and encode its result."""
     from nro.orchestration.registry import Registry
 
     operation_registry = Registry.for_project(
@@ -856,59 +879,106 @@ def _quiet_message(record: dict) -> bool:
     )
 
 
-def _process_record(registry, record: dict, *, values: dict) -> dict:
-    """Commit one record once, publish its recovery response, and acknowledge it."""
-    from nro.orchestration.scheduler_bus import (
-        acknowledge_message,
-        clear_progress,
-        message_path,
-        publish_response,
-        read_response,
-    )
-
-    response = read_response(registry.paths.control, record["id"])
-    if response is None:
-        response = _message_response(registry, record, values=values)
-        publish_response(registry.paths.control, record["id"], response)
-    acknowledge_message(message_path(registry.paths.control, record["id"]))
-    clear_progress(registry.paths.control, record["id"])
-    return response
+_MAINTENANCE_OPERATIONS = {
+    "cache",
+    "gc",
+    "promotion_publish",
+    "publish",
+    "purge",
+    "repair_finish",
+    "repair_prepare",
+    "status",
+}
 
 
-def _receive_direct(
-    listener: socket.socket,
+def _executor_for(
+    record: dict,
+    executors: dict[str, ThreadPoolExecutor],
+    *,
+    durable: bool = True,
+) -> ThreadPoolExecutor:
+    """Route worker traffic away from long user maintenance operations."""
+    operation = record["payload"].get("operation")
+    if operation in {"worker", "output_visibility"}:
+        return executors["worker" if durable else "poll"]
+    if operation in _MAINTENANCE_OPERATIONS:
+        return executors["maintenance"]
+    return executors["command"]
+
+
+def _handle_connection(
+    connection: socket.socket,
     registry,
     *,
     values: dict,
     token: str,
-    generation: int,
-) -> tuple[bool, bool]:
-    """Handle one waiting TCP request and report whether state may have changed."""
+    coordinator,
+    executors: dict[str, ThreadPoolExecutor],
+    changed: _ActivitySignal,
+) -> None:
+    """Validate one connection and hand its work to the appropriate pool."""
     from nro.orchestration.scheduler_rpc import receive, send, validate_request
 
-    try:
-        connection, _peer = listener.accept()
-    except BlockingIOError:
-        return False, False
     with connection:
         connection.settimeout(60.0)
         try:
             envelope = receive(connection)
             record, durable = validate_request(envelope, token=token)
-            response = (
-                _process_record(registry, record, values=values)
-                if durable
-                else _message_response(registry, record, values=values)
-            )
-            changed = not _quiet_message(record)
+            executor = _executor_for(record, executors, durable=durable)
+            if durable:
+                future = coordinator.submit(record, executor)
+                if not _quiet_message(record):
+                    future.add_done_callback(lambda _future: changed.set())
+                try:
+                    response = future.result(timeout=0.05)
+                except FutureTimeout:
+                    response = {"pending": record["id"]}
+            else:
+                response = executor.submit(
+                    _message_response, registry, record, values=values
+                ).result()
+            if "pending" not in response and not _quiet_message(record):
+                changed.set()
         except BaseException as error:
             response = {"error": str(error), "error_type": type(error).__name__}
-            changed = False
         try:
             send(connection, response)
         except (ConnectionError, OSError):
             pass
-    return True, changed
+
+
+def _accept_connections(
+    listener: socket.socket,
+    readers: ThreadPoolExecutor,
+    registry,
+    **options,
+) -> int:
+    """Drain ready connections without executing their requests inline."""
+    accepted = 0
+    while True:
+        try:
+            connection, _peer = listener.accept()
+        except BlockingIOError:
+            return accepted
+        readers.submit(_handle_connection, connection, registry, **options)
+        accepted += 1
+
+
+def _listen(
+    listener: socket.socket,
+    readers: ThreadPoolExecutor,
+    registry,
+    *,
+    stop_event: threading.Event,
+    activity_event: _ActivitySignal,
+    **options,
+) -> None:
+    """Accept connections independently of maintenance and snapshot work."""
+    while not stop_event.is_set():
+        accepted = _accept_connections(listener, readers, registry, **options)
+        if accepted:
+            activity_event.set()
+        stop_event.wait(0.02 if accepted else 0.1)
 
 
 def _branch_reports(registry) -> dict[str, dict]:
@@ -964,6 +1034,7 @@ def _registry_busy(registry) -> bool:
     """Return whether active execution requires the service to remain available."""
     with registry.connection() as db:
         queries = (
+            "SELECT 1 FROM scheduler_requests WHERE state IN ('pending','running') LIMIT 1",
             "SELECT 1 FROM attempts WHERE state IN ('queued','running','cancel_requested') LIMIT 1",
             "SELECT 1 FROM workers WHERE state IN ('idle','running','draining','shutdown_requested') LIMIT 1",
             "SELECT 1 FROM scheduler_submissions WHERE state IN ('prepared','submitted','running','cancel_requested') LIMIT 1",
@@ -981,17 +1052,14 @@ def serve(
     from nro.configuration.site import settings
     from nro.orchestration.registry import Registry
     from nro.orchestration.scheduler_bus import (
-        acknowledge_message,
         activate,
         collect_transport_garbage,
-        consume_message,
         deactivate,
-        pending_messages,
         publish_active,
-        publish_response,
         publish_startup_error,
     )
     from nro.orchestration.scheduler_implementation import require_worker_source
+    from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
 
     global _STOP
     _STOP = False
@@ -1043,6 +1111,49 @@ def serve(
 
     heartbeat_thread = threading.Thread(target=renew_lease, name="scheduler-heartbeat")
     heartbeat_thread.start()
+    executors = {
+        "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
+        "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
+        "command": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-command"),
+        "maintenance": ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="scheduler-maintenance"
+        ),
+    }
+    readers = ThreadPoolExecutor(max_workers=16, thread_name_prefix="scheduler-rpc")
+    changed_event = _ActivitySignal()
+    request_activity = _ActivitySignal()
+    listener_stop = threading.Event()
+    coordinator = RequestCoordinator(
+        registry,
+        lambda record: _message_response(registry, record, values=values),
+    )
+
+    def note_completion(record: dict, future) -> None:
+        try:
+            future.result()
+        except BaseException:
+            pass
+        if not _quiet_message(record):
+            changed_event.set()
+
+    for record in prepare(registry):
+        future = coordinator.submit(record, _executor_for(record, executors))
+        future.add_done_callback(lambda completed, item=record: note_completion(item, completed))
+    listener_thread = threading.Thread(
+        target=_listen,
+        name="scheduler-listener",
+        args=(listener, readers, registry),
+        kwargs={
+            "stop_event": listener_stop,
+            "activity_event": request_activity,
+            "values": values,
+            "token": launch_token,
+            "coordinator": coordinator,
+            "executors": executors,
+            "changed": changed_event,
+        },
+    )
+    listener_thread.start()
     idle_since = None
     last_cleanup = 0.0
     last_maintenance = 0.0
@@ -1070,37 +1181,9 @@ def serve(
                     )
                 last_maintenance = time.monotonic()
                 changed = True
-            handled_direct = False
-            while True:
-                handled, direct_changed = _receive_direct(
-                    listener,
-                    registry,
-                    values=values,
-                    token=launch_token,
-                    generation=generation,
-                )
-                if not handled:
-                    break
-                handled_direct = True
-                changed = changed or direct_changed
-            batch = pending_messages(control)
-            for path in batch:
-                try:
-                    record = consume_message(path)
-                    _process_record(registry, record, values=values)
-                    changed = changed or not _quiet_message(record)
-                except BaseException as error:
-                    print(f"Scheduler deferred {path}: {type(error).__name__}: {error}", flush=True)
-                    try:
-                        publish_response(
-                            control,
-                            path.stem,
-                            {"error": str(error), "error_type": type(error).__name__},
-                        )
-                        acknowledge_message(path)
-                    except BaseException:
-                        # A transient filesystem error leaves the message for retry.
-                        pass
+            handled_direct = request_activity.consume()
+            if changed_event.consume():
+                changed = True
             if changed:
                 generation += 1
                 with registry.connection(write=True) as db:
@@ -1110,7 +1193,7 @@ def serve(
                     )
                 heartbeat_state["generation"] = generation
                 publish_status_snapshot(registry, generation=generation, active=True)
-            if batch or handled_direct or _registry_busy(registry):
+            if handled_direct or _registry_busy(registry):
                 idle_since = None
             elif idle_since is None:
                 idle_since = time.monotonic()
@@ -1122,22 +1205,22 @@ def serve(
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join()
+        listener_stop.set()
+        listener_thread.join()
         listener.close()
+        readers.shutdown(wait=True, cancel_futures=False)
+        for executor in executors.values():
+            executor.shutdown(wait=True, cancel_futures=False)
         deactivate(control, launch_token)
 
 
 def run_once(*, launch_token: str, bids_root: Path) -> int:
-    """Process pending requests under a launch claim without starting a service."""
+    """Process one retryable stdin request under a fenced launch claim."""
     from nro.configuration.site import settings
     from nro.orchestration.registry import Registry
-    from nro.orchestration.scheduler_bus import (
-        consume_message,
-        pending_messages,
-        publish_startup_error,
-        read_launch,
-        release_launch,
-    )
+    from nro.orchestration.scheduler_bus import publish_startup_error, read_launch, release_launch
     from nro.orchestration.scheduler_implementation import require_worker_source
+    from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
 
     values = settings()[0]
     control = Path(values["registry"])
@@ -1160,14 +1243,29 @@ def run_once(*, launch_token: str, bids_root: Path) -> int:
             )
         os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
         os.environ["NRO_SCHEDULER_GENERATION"] = str(generation)
-        while True:
-            batch = pending_messages(control, minimum_age=0.0)
-            if not batch:
-                break
-            for path in batch:
-                record = consume_message(path)
-                _process_record(registry, record, values=values)
+        envelope = json.loads(sys.stdin.read())
+        from nro.orchestration.scheduler_bus import validate_message
+
+        if not isinstance(envelope, dict) or set(envelope) != {"durable", "record"}:
+            raise ValueError("Invalid one-shot scheduler request")
+        durable = envelope["durable"]
+        if not isinstance(durable, bool):
+            raise ValueError("Invalid one-shot scheduler durability flag")
+        record = validate_message(envelope["record"])
+        coordinator = RequestCoordinator(
+            registry,
+            lambda item: _message_response(registry, item, values=values),
+        )
+        for pending in prepare(registry):
+            if pending["id"] != record["id"]:
+                coordinator.run(pending)
+        response = (
+            coordinator.run(record)
+            if durable
+            else _message_response(registry, record, values=values)
+        )
         publish_status_snapshot(registry, generation=generation, active=False)
+        print(json.dumps(response, separators=(",", ":"), sort_keys=True), flush=True)
         return 0
     except BaseException as error:
         publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")

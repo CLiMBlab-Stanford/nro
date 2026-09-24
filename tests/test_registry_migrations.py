@@ -47,6 +47,29 @@ def test_repository_registry_chains_match_their_immutable_baselines() -> None:
     assert "CREATE TABLE work_items" in render("scientific")
 
 
+def test_scheduler_request_migration_preserves_version_22_registry(tmp_path: Path) -> None:
+    from nro.orchestration.registry_schema import SCHEMA
+
+    path = tmp_path / "registry.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(f"PRAGMA application_id={SCHEMA.application_id}")
+        database.executescript(SCHEMA.sql(version=22))
+        database.execute("PRAGMA user_version=22")
+        database.execute("INSERT INTO metadata VALUES ('schema_version','22')")
+
+    backup = migrate_database(path, SCHEMA)
+
+    assert backup is not None
+    with sqlite3.connect(path) as database:
+        assert database.execute("PRAGMA user_version").fetchone()[0] == SCHEMA.version
+        assert database.execute(
+            "SELECT value FROM metadata WHERE key='schema_version'"
+        ).fetchone()[0] == str(SCHEMA.version)
+        assert database.execute(
+            "SELECT name FROM sqlite_schema WHERE name='scheduler_requests'"
+        ).fetchone() == ("scheduler_requests",)
+
+
 def test_migration_preserves_rows_and_matches_a_fresh_generated_schema(tmp_path: Path) -> None:
     path = tmp_path / "registry.sqlite3"
     _database(path)

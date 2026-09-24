@@ -29,6 +29,7 @@ from nro.orchestration.registry import (
     discover_registry_projects,
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
+from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
 from nro.orchestration.worker import Worker, _looks_like_oom
 
@@ -2106,9 +2107,15 @@ def test_cancellation_can_target_one_exact_request(tmp_path: Path) -> None:
     assert registry.work_item_rows()[0]["demanded"] == 1
 
 
-@pytest.mark.parametrize("launcher_cancelled", [False, True])
+@pytest.mark.parametrize(
+    ("launcher_cancelled", "scheduler_timeout"),
+    [(False, False), (True, False), (False, True)],
+)
 def test_worker_walltime_sigterm_is_reported_as_timeout(
-    tmp_path: Path, launcher_cancelled: bool
+    tmp_path: Path,
+    monkeypatch,
+    launcher_cancelled: bool,
+    scheduler_timeout: bool,
 ) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
@@ -2141,7 +2148,19 @@ def test_worker_walltime_sigterm_is_reported_as_timeout(
             pass
 
         def run(self, *args, **kwargs) -> ExecutionResult:
+            assert kwargs["cancellation_state"]() == (False, False)
             return ExecutionResult(-signal.SIGTERM, launcher_cancelled, False)
+
+    if scheduler_timeout:
+
+        def unavailable(_attempt_id):
+            raise SchedulerError("Central scheduler did not respond within 10 seconds")
+
+        monkeypatch.setattr(
+            registry,
+            "attempt_cancel_requested",
+            unavailable,
+        )
 
     worker = Worker(
         registry,

@@ -103,8 +103,8 @@ shared scheduler SQLite database. Checkout processes may compile scientific
 state in their branch-owned registries, which contain no attempts or worker-pool
 state. On a Slurm site, work-producing commands submit the controller through
 Slurm; local deployments run it directly. User commands and workers send requests
-over TCP. Each request is also journaled in the control filesystem until its registry
-change commits. A replacement controller can replay an unresolved request.
+over TCP. Retryable requests and responses are recorded in SQLite before execution. A
+replacement controller can replay an unresolved request.
 Atomic launch election and fencing permit only the current controller to act.
 The controller uses rollback journaling and short transactions; no transaction
 spans scientific computation, Slurm waiting, network waiting, or bulk filesystem
@@ -137,8 +137,8 @@ because those records cross a process, bootstrap, or filesystem-transaction boun
   controller can open them;
 - immutable workflow, site, and source snapshots are execution inputs for pinned
   subprocesses;
-- the scheduler request journal allows a replacement controller to replay a request
-  whose client or controller died before acknowledging it;
+- scheduler request rows let a replacement controller replay a request whose client or
+  controller died before acknowledging it;
 - the atomic status snapshot supports fast observation while no controller is live;
 - logs and runner ledgers explain execution and support step-level resumption; and
 - ingestion and promotion journals recover multi-file publication operations that a
@@ -183,8 +183,8 @@ sets and provide portable metadata to downstream tools.
 
 Requests likewise live only in the coordinator database. The scheduler does not
 write a second per-request JSON archive. Files in private control storage are
-limited to boundaries that SQLite cannot replace: durable RPC delivery, service
-election, immutable execution inputs, logs, filesystem-transaction journals, and
+limited to boundaries that SQLite cannot replace: service election, immutable execution
+inputs, logs, filesystem-transaction journals, and
 public ownership recovery.
 
 Registration rejects two distinct work items that claim the same public output.

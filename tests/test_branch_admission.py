@@ -690,6 +690,7 @@ def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
     from nro.orchestration import manifests
 
     assessments = []
+    visible_one = tuple(first["visible_ids"])
     assess_registry = manifests.assess_registry
 
     def observe_assessment(*args, **kwargs):
@@ -698,7 +699,13 @@ def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
 
     monkeypatch.setattr(manifests, "assess_registry", observe_assessment)
     status(registry, checkout=one[0], mode="verify")
-    assert assessments == [{"compiled": False, "recover_public": True}]
+    assert assessments == [
+        {
+            "work_item_ids": set(visible_one),
+            "compiled": False,
+            "recover_public": True,
+        }
+    ]
     result = stop(registry, checkout=one[0], selection={"force": True})
     assert result["requests"] == 1
     with registry.connection() as db:

@@ -185,12 +185,10 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
         raise
 
 
-def _run_once(endpoint: SchedulerEndpoint) -> bool:
-    """Run the pinned coordinator locally for a bounded request batch."""
+def _run_once(endpoint: SchedulerEndpoint, record: dict, *, durable: bool = True) -> dict | None:
+    """Run one retryable request through a fenced local coordinator."""
     from nro.orchestration.scheduler_bus import (
         claim_launch,
-        consume_message,
-        pending_messages,
         read_progress,
         release_launch,
         update_launch_job,
@@ -198,7 +196,7 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
 
     claim = claim_launch(endpoint.control)
     if claim is None:
-        return False
+        return None
     command = endpoint.source.command(
         (
             str(endpoint.python),
@@ -221,27 +219,27 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
     try:
         process = subprocess.Popen(
             command,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             env=environment,
         )
         update_launch_job(claim, f"local-{process.pid}")
-        notice_text = "Applying scheduler updates..."
-        pending_ids = []
-        for path in pending_messages(endpoint.control, minimum_age=0.0):
-            pending_ids.append(path.stem)
-            try:
-                payload = consume_message(path)["payload"]
-            except (OSError, ValueError):
-                continue
-            if payload.get("operation") in {"purge", "gc"}:
-                operation = str(payload["operation"])
-                count = len(payload.get("plan", ())) if operation == "purge" else 0
-                suffix = f" for {count:,} work items" if count else ""
-                notice_text = f"Applying pending {operation}{suffix}..."
-                break
+        assert process.stdin is not None
+        process.stdin.write(
+            json.dumps(
+                {"durable": durable, "record": record},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        process.stdin.close()
+        process.stdin = None
+        operation = str(record["payload"].get("operation") or "request")
+        count = len(record["payload"].get("plan", ())) if operation == "purge" else 0
+        suffix = f" for {count:,} work items" if count else ""
+        notice_text = f"Applying {operation}{suffix}..."
         started = time.monotonic()
         frame = 0
         notice = False
@@ -252,15 +250,7 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
                     break
                 except subprocess.TimeoutExpired:
                     if time.monotonic() - started >= 0.75:
-                        progress = next(
-                            (
-                                record
-                                for identifier in pending_ids
-                                if (record := read_progress(endpoint.control, identifier))
-                                is not None
-                            ),
-                            None,
-                        )
+                        progress = read_progress(endpoint.control, str(record["id"]))
                         notice = (
                             _wait_notice(frame, _progress_notice(progress, notice_text)) or notice
                         )
@@ -272,7 +262,13 @@ def _run_once(endpoint: SchedulerEndpoint) -> bool:
         if process.returncode:
             detail = stderr.strip() or stdout.strip() or f"status {process.returncode}"
             raise SchedulerError(f"One-shot scheduler update failed: {detail}")
-        return True
+        try:
+            response = json.loads(stdout)
+        except json.JSONDecodeError as error:
+            raise SchedulerError("One-shot scheduler returned an invalid response") from error
+        if not isinstance(response, dict):
+            raise SchedulerError("One-shot scheduler returned an invalid response")
+        return response
     except BaseException:
         release_launch(endpoint.control, claim.token)
         raise
@@ -283,19 +279,20 @@ def _ensure_coordinator(
     *,
     require_service: bool,
     start_epoch: bool = False,
-) -> None:
+) -> bool:
     """Provide a live service or a fenced one-shot coordinator as requested."""
     from nro.orchestration.scheduler_bus import clear_shutdown, read_active, shutdown_pending
 
     if start_epoch:
         clear_shutdown(endpoint.control)
     elif require_service and shutdown_pending(endpoint.control):
-        return
+        return False
     if read_active(endpoint.control) is None:
         if require_service:
             _start_service(endpoint)
         else:
-            _run_once(endpoint)
+            return False
+    return True
 
 
 def exchange(
@@ -311,33 +308,27 @@ def exchange(
     """Send one request directly, with a recovery record when required."""
     if descriptors:
         raise ValueError("The durable scheduler transport does not accept file descriptors")
-    if not durable and not require_service:
-        raise ValueError("Direct-only scheduler calls require a live service")
     from nro.orchestration.scheduler_bus import (
-        consume_message,
         create_message,
-        message_path,
-        publish_message,
         read_active,
         read_launch,
         read_progress,
-        read_response,
         read_startup_error,
     )
 
-    if durable:
-        kind = "worker" if message.get("operation") == "worker" else "command"
-        message_id = publish_message(endpoint.control, message, kind=kind)
-        record = consume_message(message_path(endpoint.control, message_id))
-    else:
-        record = create_message(message, kind="worker")
-        message_id = str(record["id"])
+    kind = "worker" if message.get("operation") == "worker" else "command"
+    record = create_message(message, kind=kind)
+    message_id = str(record["id"])
     try:
-        _ensure_coordinator(
+        service_available = _ensure_coordinator(
             endpoint,
             require_service=require_service,
             start_epoch=start_epoch,
         )
+        if not service_available and not require_service:
+            response = _run_once(endpoint, record, durable=durable)
+            if response is not None:
+                return _response_result(response)
     except Exception as error:
         raise SchedulerError(f"Could not start scheduler coordination: {error}") from error
     started = time.monotonic()
@@ -358,12 +349,6 @@ def exchange(
                 raise SchedulerError(
                     "Central scheduler could not start: " + str(startup_error["error"])
                 )
-        response = read_response(endpoint.control, message_id) if durable else None
-        if response is not None and not message_path(endpoint.control, message_id).exists():
-            if notice:
-                sys.stderr.write(_CLEAR)
-                sys.stderr.flush()
-            return _response_result(response)
         now = time.monotonic()
         active = read_active(endpoint.control)
         if active is not None:
@@ -380,20 +365,23 @@ def exchange(
 
                 attempted_endpoint = endpoint_identity
                 response = None
-                if not (durable and message.get("operation") in {"purge", "gc"}):
-                    try:
-                        direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
-                        response = request(
-                            active,
-                            record,
-                            timeout=direct_timeout,
-                            durable=durable,
-                        )
-                    except (ConnectionError, OSError, TimeoutError, ValueError):
-                        response = None
+                try:
+                    direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
+                    response = request(
+                        active,
+                        record,
+                        timeout=direct_timeout,
+                        durable=durable,
+                    )
+                except (ConnectionError, OSError, TimeoutError, ValueError):
+                    response = None
                 if response is not None:
                     if response.get("error") == "Scheduler endpoint is obsolete":
                         response = None
+                        continue
+                    if response.get("pending") == message_id:
+                        attempted_endpoint = None
+                        time.sleep(0.1)
                         continue
                     if notice:
                         sys.stderr.write(_CLEAR)
@@ -421,14 +409,21 @@ def exchange(
                 sys.stderr.flush()
             raise SchedulerError(
                 f"Central scheduler did not respond within {timeout:g} seconds; "
-                f"request {message_id} remains queued"
+                f"request {message_id} remains recorded"
             )
         if now - last_recovery_check >= 5.0:
-            _ensure_coordinator(
+            service_available = _ensure_coordinator(
                 endpoint,
                 require_service=require_service,
                 start_epoch=False,
             )
+            if not service_available and not require_service:
+                response = _run_once(endpoint, record, durable=durable)
+                if response is not None:
+                    if notice:
+                        sys.stderr.write(_CLEAR)
+                        sys.stderr.flush()
+                    return _response_result(response)
             last_recovery_check = now
             attempted_endpoint = None
         elapsed = now - started
@@ -555,6 +550,7 @@ def status(control: Path, bids_root: Path, *, checkout: Path, mode: str) -> dict
         _endpoint(control, bids_root),
         dict(operation="status", checkout=str(checkout), mode=mode),
         timeout=UPDATED_STATUS_TIMEOUT_SECONDS,
+        durable=False,
     )
 
 
