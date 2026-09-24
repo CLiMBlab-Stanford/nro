@@ -1251,10 +1251,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     """Run one reusable worker until it drains or receives shutdown."""
     args = build_parser().parse_args(argv)
-    direct_registry = Registry.for_project("", bids_root=args.bids_root)
+    from nro.configuration.site import settings
     from nro.orchestration.scheduler_implementation import require_worker_source
 
-    require_worker_source(direct_registry.paths.control)
+    control = Path(settings()[0]["registry"])
+    require_worker_source(control)
+    direct_registry = Registry.for_project("", bids_root=args.bids_root, registry_path=control)
     from nro.orchestration.worker_client import WorkerSchedulerClient
 
     worker_id = args.worker_id or (

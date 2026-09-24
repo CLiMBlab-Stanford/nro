@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 
 from nro.configuration.site import installation_record, settings
@@ -41,6 +42,15 @@ _COORDINATION_SITE_KEYS = frozenset(
         "binds",
     }
 )
+
+_CENTRAL_SOURCE_VERIFIED: ContextVar[bool] = ContextVar(
+    "nro_central_source_verified", default=False
+)
+
+
+def central_source_verified() -> bool:
+    """Return whether this process verified the active central implementation."""
+    return _CENTRAL_SOURCE_VERIFIED.get()
 
 
 def _coordination_site(values: dict) -> dict:
@@ -306,6 +316,7 @@ def require_worker_source(control: Path) -> None:
         and launched_root == str(package_root)
         and launched_digest == source_fingerprint(package_root)
     ):
+        _CENTRAL_SOURCE_VERIFIED.set(True)
         return
     if launched_root is not None or launched_digest is not None:
         expected_root = ControlPaths(control).implementations / record["source_digest"]
@@ -315,6 +326,7 @@ def require_worker_source(control: Path) -> None:
             and package_root == expected_root
             and str(Path(sys.executable)) == record["python"]
         ):
+            _CENTRAL_SOURCE_VERIFIED.set(True)
             return
         raise ValueError("Worker did not start from the active central implementation")
     if (
@@ -323,6 +335,7 @@ def require_worker_source(control: Path) -> None:
         or source_fingerprint(package_root) != record["source_digest"]
     ):
         raise ValueError("Start workers through nro run using the active central implementation")
+    _CENTRAL_SOURCE_VERIFIED.set(True)
 
 
 def run_local_worker(
