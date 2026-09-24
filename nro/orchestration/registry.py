@@ -1290,7 +1290,26 @@ class Registry(WorkflowRegistry):
                    ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
                 (str(concurrency),),
             )
-        return 1
+            return 1
+
+    def pool_settings(self) -> dict[str, int | None]:
+        """Return effective general and GPU worker-pool limits."""
+        with self.connection() as db:
+            from nro.bidsify.index import IngestionIndex
+
+            derivative = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(concurrency), 0) FROM requests WHERE state='active'"
+                ).fetchone()[0]
+            )
+            _active, _ready, ingestion = IngestionIndex(self).summary()
+            gpu_row = db.execute(
+                "SELECT value FROM metadata WHERE key='gpu_concurrency'"
+            ).fetchone()
+            return {
+                "concurrency": max(derivative, ingestion) or None,
+                "gpu_concurrency": int(gpu_row[0]) if gpu_row is not None else 1,
+            }
 
     def work_item_rows(self, *, read_only: bool = False) -> list[dict]:
         """Read work-item records with their current orchestration and artifact state."""

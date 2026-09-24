@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from nro.bin.get import main as get_main
 from nro.bin.run import (
     _resumable_rows,
     _resume_workflows,
@@ -1422,6 +1423,26 @@ def test_set_ignores_invocation_with_only_unsupported_settings(capsys) -> None:
     assert "unsupported registry setting: future-setting" in captured.err
 
 
+def test_set_lists_supported_settings_without_registry_access(capsys) -> None:
+    set_main(["ls", "--json"])
+
+    result = json.loads(capsys.readouterr().out)
+    assert [setting["name"] for setting in result["settings"]] == [
+        "concurrency",
+        "gpu_concurrency",
+    ]
+    assert all(setting["values"] == "integer >= 1" for setting in result["settings"])
+    assert result["settings"][0]["scope"] == "active requests"
+    assert result["settings"][1]["scope"] == "persistent scheduler"
+
+
+def test_set_rejects_listing_combined_with_an_assignment(capsys) -> None:
+    with pytest.raises(SystemExit):
+        set_main(["ls", "concurrency=2"])
+
+    assert "ls cannot be combined" in capsys.readouterr().err
+
+
 def test_set_records_independent_gpu_concurrency_without_active_demand(
     tmp_path: Path,
     capsys,
@@ -1440,6 +1461,52 @@ def test_set_records_independent_gpu_concurrency_without_active_demand(
             database.execute("SELECT value FROM metadata WHERE key='gpu_concurrency'").fetchone()[0]
             == "3"
         )
+
+
+def test_get_returns_selected_effective_scheduler_settings(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    bids = tmp_path / "bids"
+    _write(bids / "demo/sub-01/anat/sub-01_T1w.nii.gz")
+    run_main(
+        [
+            "-p",
+            "01",
+            "-P",
+            "demo",
+            "-m",
+            "anat",
+            "--concurrency",
+            "7",
+            "--no-submit",
+            "--json",
+        ]
+    )
+    capsys.readouterr()
+    Registry.for_project("", bids_root=bids).set_gpu_concurrency(3)
+
+    get_main(["gpu_concurrency", "concurrency", "--json"])
+
+    assert json.loads(capsys.readouterr().out) == {
+        "settings": {"gpu_concurrency": 3, "concurrency": 7}
+    }
+
+
+def test_get_reports_unset_concurrency_without_active_demand(tmp_path: Path, capsys) -> None:
+    registry = Registry.for_project("", bids_root=tmp_path / "bids")
+    registry.initialize()
+
+    get_main(["concurrency"])
+
+    assert capsys.readouterr().out == "concurrency=unset\n"
+
+
+def test_get_rejects_unknown_settings(capsys) -> None:
+    with pytest.raises(SystemExit):
+        get_main(["not-a-setting"])
+
+    assert "unknown setting(s): not-a-setting" in capsys.readouterr().err
 
 
 def test_status_reports_blocked_work_items_and_their_root_errors(

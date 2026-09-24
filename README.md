@@ -174,6 +174,8 @@ Common controls are:
 
 ```bash
 nro stop -p 01 -P example
+nro set ls
+nro get
 nro set concurrency=100
 nro purge -p 01 -P example
 nro gc -p 01 -P example

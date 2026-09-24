@@ -674,7 +674,12 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             worker_level=message["worker_level"],
             running_only=bool(message.get("running_only", False)),
         )
-    elif message["operation"] in {"concurrency", "gpu_concurrency", "stop_workers"}:
+    elif message["operation"] in {
+        "concurrency",
+        "gpu_concurrency",
+        "settings",
+        "stop_workers",
+    }:
         result = pool_operation(
             registry,
             checkout=Path(message["checkout"]),
