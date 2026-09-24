@@ -73,6 +73,31 @@ def raw_anatomical_inputs(
     return tuple(dict.fromkeys(result))
 
 
+def _effective_markup_contract(subject_dir: Path, markup: SubjectMarkup) -> dict[str, object]:
+    """Capture only exclusions that can alter automatic anatomical selection."""
+    candidates = []
+    for pattern in (
+        "anat/*_T1w.nii*",
+        "anat/*_T2w.nii*",
+        "ses-*/anat/*_T1w.nii*",
+        "ses-*/anat/*_T2w.nii*",
+    ):
+        candidates.extend(subject_dir.glob(pattern))
+    automatic = [
+        path
+        for path in candidates
+        if (path.name.endswith(("_T1w.nii", "_T1w.nii.gz")) and not markup.t1w)
+        or (path.name.endswith(("_T2w.nii", "_T2w.nii.gz")) and not markup.t2w)
+    ]
+    value = markup.as_dict()
+    value["exclude"] = [
+        str(root)
+        for root in markup.excluded
+        if any(path == root or path.is_relative_to(root) for path in automatic)
+    ]
+    return value
+
+
 def plan_work_items(
     context: SubjectPlanningContext,
     upstream: Mapping[str, tuple[WorkItemSpec, ...]],
@@ -108,6 +133,7 @@ def plan_work_items(
     processing_values: dict[str, object] = {
         "gradient_unwarping": gradient_records,
         "output_metadata": anatomical_output_contract(lesion=context.source_markup.lesion),
+        "source_markup": _effective_markup_contract(context.subject_dir, context.source_markup),
     }
     if context.source_markup.lesion:
         processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()

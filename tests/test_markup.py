@@ -12,7 +12,11 @@ from nro.configuration.parsing import DefinitionError
 from nro.configuration.store import ConfigStore, WorkflowError
 from nro.engine.bids import discover_raw_runs
 from nro.modules.anat.inputs import load_anat_image
-from nro.modules.anat.planning import raw_anatomical_images, raw_anatomical_inputs
+from nro.modules.anat.planning import (
+    _effective_markup_contract,
+    raw_anatomical_images,
+    raw_anatomical_inputs,
+)
 
 
 def _write(path: Path, text: str = "x") -> Path:
@@ -76,6 +80,42 @@ def test_missing_markup_fields_retain_automatic_discovery(tmp_path: Path) -> Non
     assert [run.path for run in discover_raw_runs(subject, markup=markup)] == [retained_run]
     assert markup.is_excluded(excluded_run)
     assert not markup.is_excluded(automatic_t1)
+
+
+def test_anatomical_contract_omits_exclusions_that_cannot_change_selection(tmp_path: Path) -> None:
+    subject = tmp_path / "BIDS/nptl/sub-t20"
+    selected_t1 = _write(subject / "ses-selected/anat/sub-t20_ses-selected_T1w.nii.gz")
+    selected_t2 = _write(subject / "ses-selected/anat/sub-t20_ses-selected_T2w.nii.gz")
+    _write(subject / "ses-bad/anat/sub-t20_ses-bad_T1w.nii.gz")
+    excluded = subject / "ses-bad"
+    markup = SubjectMarkup(
+        "main",
+        "nptl",
+        subject,
+        t1w=(selected_t1,),
+        t2w=(selected_t2,),
+        excluded=(excluded,),
+    )
+
+    assert _effective_markup_contract(subject, markup)["exclude"] == []
+
+
+def test_anatomical_contract_retains_exclusions_that_filter_automatic_inputs(
+    tmp_path: Path,
+) -> None:
+    subject = tmp_path / "BIDS/nptl/sub-t20"
+    selected_t1 = _write(subject / "ses-selected/anat/sub-t20_ses-selected_T1w.nii.gz")
+    _write(subject / "ses-bad/anat/sub-t20_ses-bad_T2w.nii.gz")
+    excluded = subject / "ses-bad"
+    markup = SubjectMarkup(
+        "main",
+        "nptl",
+        subject,
+        t1w=(selected_t1,),
+        excluded=(excluded,),
+    )
+
+    assert _effective_markup_contract(subject, markup)["exclude"] == [str(excluded)]
 
 
 def test_anatomical_discovery_deduplicates_session_aliases(tmp_path: Path) -> None:

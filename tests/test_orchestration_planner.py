@@ -11,7 +11,7 @@ import nro.modules.func.planning as func_planning
 from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.markup import SubjectMarkup
-from nro.configuration.store import ConfigStore
+from nro.configuration.store import ConfigStore, configuration_fingerprint, fingerprint
 from nro.modules.anat import planning as anat_planning
 from nro.modules.anat.contract import (
     anatomical_output_contract,
@@ -611,6 +611,85 @@ def test_active_demand_uses_the_latest_execution_recipe(tmp_path: Path) -> None:
 
     row = registry.work_item_rows()[0]
     assert tuple(json.loads(row["command_json"])) == (*work_item.command, "--verbose")
+
+
+def test_registration_migrates_completed_historical_module_configuration(tmp_path: Path) -> None:
+    source = tmp_path / "source.nii.gz"
+    _write(source)
+    workflow = ConfigStore().resolve("main")
+    configuration = workflow.configuration("anat")
+    historical = {
+        key: value
+        for key, value in configuration.values.items()
+        if key not in {"fastsurfer_container", "surface_reconstruction_engine"}
+    }
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    work_item = WorkItemSpec.create(
+        key="anat:" + "9" * 64,
+        module="anat",
+        project="demo",
+        participant="01",
+        entities={},
+        scope="subject",
+        module_lineage_id=registered.lineages["anat"],
+        config_fingerprint=configuration.module_fingerprint("anat"),
+        directory_label=registered.directory_for("anat"),
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        command=("python", "-m", "nro.modules.anat"),
+        dependencies=(),
+        input_paths=(source,),
+        output_root=tmp_path / "output",
+        output_prefix="sub-01",
+        resource_class="large",
+        expected_outputs=(tmp_path / "output" / "manifest.json",),
+    )
+    registry.register_work_items((work_item,))
+    old_contract = json.loads(json.dumps(work_item.work_item_contract))
+    old_contract["contract_schema"] = 4
+    old_contract["configuration"] = "historical-anat-scientific-fingerprint"
+    with registry.connection(write=True) as database:
+        row = database.execute(
+            "SELECT id,revision_fingerprint,command_json FROM work_items WHERE work_item_key=?",
+            (work_item.key,),
+        ).fetchone()
+        lineage = database.execute(
+            "SELECT lineage_fingerprint FROM module_lineages WHERE id=?",
+            (registered.lineages["anat"],),
+        ).fetchone()
+        serialized = json.dumps(old_contract, sort_keys=True, separators=(",", ":"))
+        database.execute(
+            """UPDATE work_items
+               SET artifact_contract_json=?,artifact_fingerprint=?,
+                   artifact_state='fresh',artifact_reason='Completed successfully'
+               WHERE id=?""",
+            (serialized, fingerprint(old_contract), row["id"]),
+        )
+        database.execute(
+            """INSERT INTO completions(
+                   work_item_id,attempt_id,generation,completed_at,revision_fingerprint,
+                   artifact_contract_json,artifact_fingerprint,config_id,config_fingerprint,
+                   lineage_fingerprint,resolved_yaml,provenance_json,command_json
+               ) VALUES (?,NULL,1,'2026-01-01T00:00:00+00:00',?,?,?,?,?,?,?,?,?)""",
+            (
+                row["id"],
+                row["revision_fingerprint"],
+                serialized,
+                fingerprint(old_contract),
+                "main",
+                configuration_fingerprint("anat", "main", historical),
+                lineage["lineage_fingerprint"],
+                yaml.safe_dump(historical),
+                "{}",
+                row["command_json"],
+            ),
+        )
+
+    registry.register_work_items((work_item,))
+
+    row = registry.work_item_rows()[0]
+    assert row["artifact_state"] == "fresh"
+    assert json.loads(row["artifact_contract_json"]) == work_item.work_item_contract
 
 
 def test_existing_work_item_adopts_changed_dependency_topology(tmp_path: Path) -> None:

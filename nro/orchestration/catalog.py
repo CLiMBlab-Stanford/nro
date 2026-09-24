@@ -211,8 +211,14 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
     resolved = configuration.get("resolved") if isinstance(configuration, dict) else None
     contract, migrated_configuration = migrate_contract(recorded_contract, resolved)
     descriptor = module_descriptor(contract["module"])
-    if isinstance(configuration, dict) and contract.get("configuration") == configuration.get(
-        "fingerprint"
+    configuration_was_migrated = recorded_contract.get("contract_schema") != contract.get(
+        "contract_schema"
+    )
+    configuration_matches_contract = isinstance(configuration, dict) and contract.get(
+        "configuration"
+    ) == configuration.get("fingerprint")
+    if isinstance(configuration, dict) and (
+        configuration_was_migrated or configuration_matches_contract
     ):
         kind = descriptor.configuration_class
         values = resolved
@@ -227,7 +233,6 @@ def canonical_contract(contract: dict, configuration: dict | None = None) -> dic
                         identifier,
                         migrated_configuration,
                         scientific=True,
-                        complete_snapshot=True,
                     ),
                 }
     processing = contract.get("processing")
