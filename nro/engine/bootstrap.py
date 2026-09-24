@@ -604,7 +604,11 @@ def _main(argv=None) -> None:
             # environment.
             environment = ROOT / ".nro-env"
         else:
-            environment = Path(existing["environment"]) if existing else ROOT / ".nro-env"
+            environment = (
+                Path(existing["environment"])
+                if existing and existing.get("environment")
+                else ROOT / ".nro-env"
+            )
         if mode == "branch" and existing and environment.exists():
             check_branch_environment(site, environment)
         record = {
@@ -621,6 +625,8 @@ def _main(argv=None) -> None:
         }
         if branch_name:
             record["branch"] = branch_name
+        if environment is not None:
+            record["environment"] = str(environment)
         if mode != "shared":
             write_record(record_path, record)
         uv_env = ROOT / ".nro-bootstrap"
@@ -731,7 +737,26 @@ def _main(argv=None) -> None:
             subprocess.run(command, cwd=ROOT, env=env, check=True)
             binding = json.loads(paths.catalog.read_text())[branch_name]
             record.update(registry_id=binding["registry_id"], branch_catalog=str(paths.catalog))
-            prepare_branch_definitions(site, record)
+            subprocess.run(
+                [
+                    python,
+                    "-I",
+                    "-B",
+                    "-m",
+                    "nro.engine.branch_definition_setup",
+                    "--site",
+                    str(site),
+                    "--checkout",
+                    str(ROOT),
+                    "--branch",
+                    record["branch"],
+                    "--registry-id",
+                    record["registry_id"],
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+            )
         record["ready"] = True
         if mode == "shared":
             from nro.engine.shared_installation import publish

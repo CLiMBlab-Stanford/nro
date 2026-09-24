@@ -260,3 +260,37 @@ def test_branch_install_migrates_only_its_private_layer(tmp_path, monkeypatch):
     validate_store_integrity(private)
     assert _files(shared) == before_shared
     assert _files(parent) == before_parent
+
+
+def test_branch_definition_setup_passes_complete_branch_identity(tmp_path, monkeypatch):
+    from nro.engine import branch_definition_setup
+
+    captured = {}
+    monkeypatch.setattr(
+        branch_definition_setup,
+        "prepare_branch_definitions",
+        lambda site, record: captured.update(site=site, record=record),
+    )
+    checkout = tmp_path / "checkout"
+
+    branch_definition_setup.main(
+        [
+            "--site",
+            str(tmp_path / "site.toml"),
+            "--checkout",
+            str(checkout),
+            "--branch",
+            "dev",
+            "--registry-id",
+            "branch-id",
+        ]
+    )
+
+    assert captured == {
+        "site": tmp_path / "site.toml",
+        "record": {
+            "checkout": str(checkout.resolve()),
+            "branch": "dev",
+            "registry_id": "branch-id",
+        },
+    }
