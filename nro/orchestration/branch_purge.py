@@ -228,4 +228,5 @@ def purge(
         removed, retained = registry.forget_purged_work_items(ids)
         counts["scheduler_records"] = removed
         counts["retained_dependency_records"] = len(retained)
+        counts["retained_dependency_modules"] = registry.retained_dependency_modules(retained)
     return counts

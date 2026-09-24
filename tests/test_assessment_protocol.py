@@ -328,6 +328,24 @@ def test_scheduler_defers_contended_assessment(graph, monkeypatch):
         )
 
 
+def test_scheduler_maintenance_uses_mixed_contract_assessment(graph, monkeypatch):
+    from nro.orchestration import scheduler_maintenance
+
+    registry, _, _ = graph
+    calls = []
+    monkeypatch.setattr(
+        manifests,
+        "assess_registry",
+        lambda selected, **options: calls.append((selected, options)) or {},
+    )
+
+    scheduler_maintenance.refresh_scheduler_state(registry)
+
+    assert len(calls) == 1
+    assert calls[0][0] is registry
+    assert calls[0][1]["compiled"] is False
+
+
 def test_worker_validates_registered_contract_without_scientific_catalog(graph, monkeypatch):
     import nro.orchestration.catalog as catalog
 

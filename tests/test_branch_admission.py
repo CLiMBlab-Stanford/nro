@@ -698,7 +698,7 @@ def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
 
     monkeypatch.setattr(manifests, "assess_registry", observe_assessment)
     status(registry, checkout=one[0], mode="verify")
-    assert assessments == [{"compiled": True, "recover_public": True}]
+    assert assessments == [{"compiled": False, "recover_public": True}]
     result = stop(registry, checkout=one[0], selection={"force": True})
     assert result["requests"] == 1
     with registry.connection() as db:

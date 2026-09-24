@@ -452,6 +452,16 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
             f"{verb} {result['work_items']} work item(s), {result['derivative_paths']} derivative/control paths, "
             f"{result['work_paths']} WORK paths, and {result['attempt_logs'] + result['worker_logs']} logs."
         )
+        retained = int(result.get("retained_dependency_records", 0))
+        if retained:
+            modules = result.get("retained_dependency_modules", {})
+            details = ", ".join(f"{module} ({count})" for module, count in sorted(modules.items()))
+            suffix = f": {details}" if details else ""
+            print(
+                f"Retained {retained} scheduler record(s) because unselected downstream "
+                f"work still depends on them{suffix}. Include those modules in the purge "
+                "selection to remove the retained records."
+            )
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:

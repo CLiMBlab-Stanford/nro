@@ -2070,6 +2070,42 @@ def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> N
     assert registry.work_item_rows()[0]["demanded"] == 1
 
 
+def test_cancellation_can_target_one_exact_request(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "6" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "result.txt",
+    )
+    request_ids = [
+        registry.create_request(
+            registered=registered,
+            target_module="networks",
+            selectors={},
+            work_items=(work_item,),
+            terminal_work_item_keys=(work_item.key,),
+            concurrency=1,
+            partition=None,
+            user_name="alice",
+        )
+        for _index in range(2)
+    ]
+
+    result = registry.request_cancellation(
+        request_ids=(request_ids[0],), user_name="alice", include_dependents=False
+    )
+
+    assert result["requests"] == 1
+    states = {row["id"]: row["state"] for row in registry.request_rows()}
+    assert states == {request_ids[0]: "cancelled", request_ids[1]: "active"}
+    assert registry.work_item_rows()[0]["demanded"] == 1
+
+
 @pytest.mark.parametrize("launcher_cancelled", [False, True])
 def test_worker_walltime_sigterm_is_reported_as_timeout(
     tmp_path: Path, launcher_cancelled: bool

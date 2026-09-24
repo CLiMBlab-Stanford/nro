@@ -2094,6 +2094,14 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             return forget_purged_work_items(db, ids)
 
+    def retained_dependency_modules(self, work_item_ids: Iterable[int]) -> dict[str, int]:
+        """Count surviving downstream records that protect selected ancestors."""
+        from nro.orchestration.registry_work_items import retained_dependency_modules
+
+        ids = tuple(sorted(set(work_item_ids)))
+        with self.connection() as db:
+            return retained_dependency_modules(db, ids)
+
     def reserve_artifact_assessment(
         self,
         *,
@@ -2370,6 +2378,7 @@ class Registry(WorkflowRegistry):
         user_name: str | None = None,
         force: bool = False,
         branch_registry_id: str | None = None,
+        request_ids: Sequence[str] = (),
     ) -> dict[str, int]:
         """Cancel matching demand and signal attempts no longer needed by any request.
 
@@ -2382,6 +2391,7 @@ class Registry(WorkflowRegistry):
         module_set = set(modules)
         workflow_set = set(workflows)
         lineage_set = set(lineages)
+        request_id_set = set(request_ids)
         selectors = selectors or {}
         owner = user_name or getpass.getuser()
         with self.connection(write=True) as db:
@@ -2418,6 +2428,7 @@ class Registry(WorkflowRegistry):
                     (self.paths.project,),
                 )
                 if (force or str(row["user_name"]) == owner)
+                and (not request_id_set or str(row["id"]) in request_id_set)
                 and (branch_requests is None or row["id"] in branch_requests)
                 and (
                     not workflow_set

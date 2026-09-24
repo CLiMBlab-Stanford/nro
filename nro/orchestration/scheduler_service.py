@@ -124,7 +124,7 @@ def admit_many(
         source.verify_manifest()
     from nro.orchestration.manifests import assess_registry
 
-    assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=True)
+    assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=False)
     from nro.orchestration.registry import Registry
 
     branches = BranchStore(registry.paths.control)
@@ -218,7 +218,7 @@ def _admit(
     if assess:
         from nro.orchestration.manifests import assess_registry
 
-        assess_registry(registry, projects=(context.project,), compiled=True)
+        assess_registry(registry, projects=(context.project,), compiled=False)
     if payload["branch"] == "main":
         from nro.orchestration.scheduler_implementation import implementation_path
 
