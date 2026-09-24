@@ -55,9 +55,12 @@ def test_interrupted_durable_request_is_recovered(tmp_path):
 
     assert prepare(registry) == (record,)
     with registry.connection() as db:
-        assert db.execute(
-            "SELECT state FROM scheduler_requests WHERE id=?", (record["id"],)
-        ).fetchone()[0] == "pending"
+        assert (
+            db.execute(
+                "SELECT state FROM scheduler_requests WHERE id=?", (record["id"],)
+            ).fetchone()[0]
+            == "pending"
+        )
 
 
 def test_concurrent_durable_retries_share_one_execution(tmp_path):

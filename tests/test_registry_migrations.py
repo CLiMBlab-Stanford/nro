@@ -62,9 +62,9 @@ def test_scheduler_request_migration_preserves_version_22_registry(tmp_path: Pat
     assert backup is not None
     with sqlite3.connect(path) as database:
         assert database.execute("PRAGMA user_version").fetchone()[0] == SCHEMA.version
-        assert database.execute(
-            "SELECT value FROM metadata WHERE key='schema_version'"
-        ).fetchone()[0] == str(SCHEMA.version)
+        assert database.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[
+            0
+        ] == str(SCHEMA.version)
         assert database.execute(
             "SELECT name FROM sqlite_schema WHERE name='scheduler_requests'"
         ).fetchone() == ("scheduler_requests",)
