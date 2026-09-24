@@ -137,9 +137,11 @@ def _prepare_pool(
     code = (
         "import sys\n"
         "from pathlib import Path\n"
+        "from nro.engine import installation_layers\n"
         "from nro.engine.site_setup import migrate_site_configuration\n"
         "control, bids, checkout, definitions, site = map(Path, sys.argv[1:])\n"
         "migrate_site_configuration(site)\n"
+        "installation_layers.capture_shared_application(checkout)\n"
         "from nro.configuration.definitions import ensure_store\n"
         "from nro.engine.shared_installation import prepare_pool\n"
         "from nro.orchestration.registry import Registry\n"

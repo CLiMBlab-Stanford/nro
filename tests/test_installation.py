@@ -356,9 +356,13 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     }
     (root / bootstrap.RECORD).write_text(json.dumps(record))
     monkeypatch.setattr(bootstrap, "ROOT", root)
-    monkeypatch.setattr(site_setup, "migrate_site_configuration", lambda path: path)
-    monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
     events = []
+    monkeypatch.setattr(
+        site_setup,
+        "migrate_site_configuration",
+        lambda path: events.append(("migrate", path)) or path,
+    )
+    monkeypatch.setattr("nro.orchestration.releases.tagged_source", lambda checkout: ())
     monkeypatch.setattr(
         shared_installation,
         "prepare_pool",
@@ -391,9 +395,13 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     monkeypatch.setattr(
         installation_layers,
         "prepare_shared_dependencies",
-        lambda *args, **kwargs: (dependencies, "d" * 64),
+        lambda *args, **kwargs: events.append(("dependencies", root)) or (dependencies, "d" * 64),
     )
-    monkeypatch.setattr(installation_layers, "capture_shared_application", lambda root: application)
+    monkeypatch.setattr(
+        installation_layers,
+        "capture_shared_application",
+        lambda selected: events.append(("application", selected)) or application,
+    )
     commands = []
     monkeypatch.setattr(
         bootstrap.subprocess,
@@ -404,7 +412,13 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
 
     bootstrap.main(["--maintain", "--offline"])
 
-    assert events == [("drain", root), ("publish", root)]
+    assert events == [
+        ("migrate", site),
+        ("dependencies", root),
+        ("application", root),
+        ("drain", root),
+        ("publish", root),
+    ]
     assert "nro.bin.setup" in commands[0]
     assert "--prepared-maintenance" in commands[0]
     saved = json.loads((root / bootstrap.RECORD).read_text())
