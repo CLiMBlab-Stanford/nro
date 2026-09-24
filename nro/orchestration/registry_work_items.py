@@ -111,7 +111,7 @@ def upsert_work_item_graph(
             work_item_id = int(existing["id"])
             try:
                 recorded_contract = json.loads(existing["artifact_contract_json"])
-                if owner_branch is None:
+                if owner_branch in {None, "main"}:
                     from nro.orchestration.catalog import canonical_contract
 
                     completion = database.execute(

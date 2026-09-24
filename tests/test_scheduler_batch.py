@@ -1,7 +1,8 @@
 from contextlib import nullcontext
 from types import SimpleNamespace
 
-from nro.orchestration import manifests, scheduler_service
+from nro.orchestration import manifests, scheduler_operations, scheduler_service
+from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceSnapshot
 
@@ -72,4 +73,35 @@ def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path)
         (topology, db, ("candidate:one",)),
         (topology, db, ("candidate:one",)),
         (topology, db, ("candidate:two",)),
+    ]
+
+
+def test_status_uses_main_science_only_for_main_contract_migrations(monkeypatch, tmp_path):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    branches = BranchStore(registry.paths.control)
+    main = tmp_path / "main"
+    feature = tmp_path / "feature"
+    main.mkdir()
+    feature.mkdir()
+    revision = branches.initialize().revision
+    monkeypatch.setattr(
+        "nro.orchestration.branches.checkout_identity",
+        lambda checkout: (checkout, checkout.name, "revision"),
+    )
+    branches.authorize_checkout("main", main, revision=revision)
+    branches.register("feature", "dev", revision=branches.read().revision, checkout=feature)
+    assessed = []
+    monkeypatch.setattr(
+        manifests,
+        "assess_registry",
+        lambda selected, **kwargs: assessed.append((selected, kwargs)),
+    )
+
+    scheduler_operations.status(registry, checkout=main, mode="verify")
+    scheduler_operations.status(registry, checkout=feature, mode="verify")
+
+    assert assessed == [
+        (registry, {"compiled": False, "recover_public": True}),
+        (registry, {"compiled": True, "recover_public": True}),
     ]
