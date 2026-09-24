@@ -558,10 +558,13 @@ def require_execution_support(
     if record.get("mode") == "shared" and not record.get("ready") and not installation_maintenance:
         raise ValueError("The shared installation is undergoing setup or maintenance")
     if record.get("mode") == "branch":
-        raise ValueError(
-            "Development installations must use nro run and the central scheduler; "
-            "direct production registry access and unbound execution are not permitted."
-        )
+        from nro.orchestration.scheduler_implementation import central_source_verified
+
+        if not central_source_verified():
+            raise ValueError(
+                "Development installations must use nro run and the central scheduler; "
+                "direct production registry access and unbound execution are not permitted."
+            )
     if scientific:
         from nro.orchestration.branch_store import BranchStore
         from nro.orchestration.releases import ReleaseStore

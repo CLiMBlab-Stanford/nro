@@ -172,6 +172,25 @@ def test_incomplete_shared_installation_allows_only_explicit_maintenance(monkeyp
     site.require_execution_support(installation_maintenance=True)
 
 
+def test_verified_central_coordinator_can_serve_a_branch_invocation(monkeypatch):
+    from nro.orchestration import scheduler_implementation
+
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch", "ready": True})
+    monkeypatch.setattr(scheduler_implementation, "central_source_verified", lambda: True)
+
+    site.require_execution_support()
+
+
+def test_unverified_branch_process_cannot_access_registry(monkeypatch):
+    from nro.orchestration import scheduler_implementation
+
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch", "ready": True})
+    monkeypatch.setattr(scheduler_implementation, "central_source_verified", lambda: False)
+
+    with pytest.raises(ValueError, match="central scheduler"):
+        site.require_execution_support()
+
+
 def test_journal_before_record_replacement_blocks_execution_and_resumes(installations, monkeypatch):
     old, main, _, _ = installations
     root = Path(old["checkout"])
