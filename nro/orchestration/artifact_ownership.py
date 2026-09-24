@@ -161,7 +161,7 @@ def work_item_paths(
                 str(work_item["configuration_class"]),
                 str(work_item["directory_label"]),
                 module,
-                str(work_item["work_item_key"]),
+                str(work_item.get("logical_key") or work_item["work_item_key"]),
             )
         )
     allowed_derivative_roots = (derivatives_root, registry.paths.control)

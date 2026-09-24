@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import nibabel as nib
 import numpy as np
 import pytest
@@ -192,6 +194,7 @@ def test_neurolit_inpainting_uses_pinned_read_only_model_data(tmp_path, monkeypa
         for output in plan.step.outputs:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text("result")
+            os.utime(output, (1, 1))
 
     plan = create_neurolit_inpainting_plan(
         run_child=run_child,
@@ -221,6 +224,7 @@ def test_neurolit_inpainting_uses_pinned_read_only_model_data(tmp_path, monkeypa
     )
     assert plan.step.resource_class == "gpu"
     assert plan.step.validate is not None and plan.step.validate()[0]
+    assert all(output.stat().st_mtime_ns >= t1w.stat().st_mtime_ns for output in plan.step.outputs)
     assert plan.image.name == "inpainted.lit.nii.gz"
     assert lesion_reconstruction_contract()["pipeline"] == (
         "inpainting_surface_reconstruction_excision"

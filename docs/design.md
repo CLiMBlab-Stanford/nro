@@ -58,7 +58,11 @@ substitutes for the full fingerprint.
 
 Public artifacts are durable results under a project's `derivatives/nro` tree.
 Private intermediates live under WORK and support resumption. Ownership receipts
-keep historical results discoverable after a workflow is renamed or removed.
+form a hidden, lineage-local recovery index; SQLite remains authoritative during
+normal operation. Registry reconstruction starts from receipts backed by declared
+public outputs and retains the dependency receipts needed to describe those
+artifacts. Purge removes unreferenced receipts and empty directories, but preserves
+a missing upstream receipt while a surviving artifact still depends on it.
 Completion requires the current output contract, not merely a directory or a
 successful historical attempt.
 

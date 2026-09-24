@@ -86,8 +86,10 @@ CONTROL/
 Independent schema markers validate the private scheduler and scientific
 registry layouts. They do not contribute to scientific freshness. Shared
 maintenance migrates schemas at or after the supported baseline and reconstructs
-older private state from durable public ownership records. It retains rollback state
-until replacement registries pass integrity and identity checks. The
+older private state from durable public ownership records. An output-backed receipt
+seeds reconstruction; missing ancestors are retained only when they describe a
+surviving artifact's dependency chain. Maintenance retains rollback state until
+replacement registries pass integrity and identity checks. The
 [migration contract](registry-migrations.md) derives each supported schema from an
 immutable baseline and restricted, ordered changes.
 
