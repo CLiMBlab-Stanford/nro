@@ -1,8 +1,9 @@
 """Unit tests for compact branch-to-scheduler request handoff."""
 
+import signal
 from dataclasses import replace
 
-from nro.orchestration.branch_requests import _request_groups
+from nro.orchestration.branch_requests import _defer_first_interrupt, _request_groups
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planner import RequestPlan
 from nro.orchestration.workflow_registry import RegisteredWorkflow
@@ -70,3 +71,11 @@ def test_request_groups_combine_independent_endpoints_per_workflow():
     combined = next(group for group in groups if group.project == "demo")
     assert tuple(combined.work_items) == (first.key, second.key)
     assert combined.terminal_keys == [first.key, second.key]
+
+
+def test_first_interrupt_is_deferred_until_admission_finishes():
+    with _defer_first_interrupt() as was_interrupted:
+        signal.raise_signal(signal.SIGINT)
+        assert was_interrupted()
+
+    assert was_interrupted()

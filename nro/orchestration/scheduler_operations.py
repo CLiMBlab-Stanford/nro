@@ -151,7 +151,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
 
     if mode == "verify":
         registry.reconcile_attempt_timeouts()
-        assess_registry(registry, compiled=name != "main", recover_public=True)
+        assess_registry(registry, compiled=False, recover_public=True)
     elif mode not in {"cached", "preview"}:
         raise ValueError("Unknown status mode")
     states = preview_registry(registry, compiled=True) if mode == "preview" else None

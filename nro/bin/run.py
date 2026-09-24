@@ -78,6 +78,38 @@ def _report_unavailable(plan: PlanningResult) -> None:
         )
 
 
+def _cancel_interrupted_requests(
+    cancel,
+    control: Path,
+    bids_root: Path,
+    checkout: Path,
+    requests: tuple[tuple[str, str], ...],
+) -> None:
+    """Withdraw requests committed before an interrupted run could return."""
+    try:
+        result = cancel(
+            control,
+            bids_root,
+            checkout=checkout,
+            requests=requests,
+        )
+    except Exception as error:
+        identifiers = ", ".join(request_id for _project, request_id in requests)
+        print(
+            "Run was interrupted after request admission, and automatic withdrawal failed: "
+            f"{error}. Use `nro stop` with the original selectors. Admitted request IDs: "
+            f"{identifiers}",
+            file=sys.stderr,
+        )
+        raise SystemExit(130) from None
+    print(
+        "Run interrupted; withdrew "
+        f"{result['requests']} request(s) and {result['work_items']} demand link(s).",
+        file=sys.stderr,
+    )
+    raise SystemExit(130)
+
+
 def _resumable_rows(
     rows: list[dict], selection: CoreSelection, *, visible_ids: set[int] | None = None
 ) -> list[dict]:
@@ -601,45 +633,68 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if branch_execution:
         if args.local and args.no_submit:
             raise SystemExit("--local and --no-submit are mutually exclusive")
-        from nro.orchestration.branch_requests import register_requests
-        from nro.orchestration.scheduler_client import supply
+        from nro.orchestration.branch_requests import (
+            RequestAdmissionInterrupted,
+            register_requests,
+            request_projects,
+        )
+        from nro.orchestration.scheduler_client import cancel_requests, supply
 
-        request_ids = register_requests(
-            registry,
-            plan,
-            selectors={
-                "runs": selection.runs,
-                "spaces": list(selection.spaces),
-                "smoothing": list(selection.smoothing),
-                "models": list(selection.models),
-                "model_sets": list(selection.model_sets or (() if selection.models else ("main",))),
-            },
-            concurrency=args.concurrency,
-            partition=args.partition,
-            expected_revisions=scientific_revisions,
-            inherit=not args.no_inherit,
-        )
-        result = supply(
-            Path(values["registry"]),
-            bids_root,
-            checkout=site.CHECKOUT,
-            request_ids=request_ids,
-            options={
-                key: getattr(args, key)
-                for key in (
-                    "local",
-                    "no_submit",
-                    "memory",
-                    "max_memory",
-                    "partition",
-                    "account",
-                    "time",
-                    "cpus",
-                    "worker_idle_timeout",
-                    "drain_minutes",
-                )
-            },
-        )
+        control = Path(values["registry"])
+        projects_by_request = request_projects(plan)
+        try:
+            request_ids = register_requests(
+                registry,
+                plan,
+                selectors={
+                    "runs": selection.runs,
+                    "spaces": list(selection.spaces),
+                    "smoothing": list(selection.smoothing),
+                    "models": list(selection.models),
+                    "model_sets": list(
+                        selection.model_sets or (() if selection.models else ("main",))
+                    ),
+                },
+                concurrency=args.concurrency,
+                partition=args.partition,
+                expected_revisions=scientific_revisions,
+                inherit=not args.no_inherit,
+            )
+        except RequestAdmissionInterrupted as interrupted:
+            _cancel_interrupted_requests(
+                cancel_requests,
+                control,
+                bids_root,
+                site.CHECKOUT,
+                interrupted.requests,
+            )
+        requests = tuple(zip(projects_by_request, request_ids, strict=True))
+        try:
+            result = supply(
+                control,
+                bids_root,
+                checkout=site.CHECKOUT,
+                request_ids=request_ids,
+                options={
+                    key: getattr(args, key)
+                    for key in (
+                        "local",
+                        "no_submit",
+                        "memory",
+                        "max_memory",
+                        "partition",
+                        "account",
+                        "time",
+                        "cpus",
+                        "worker_idle_timeout",
+                        "drain_minutes",
+                    )
+                },
+            )
+        except KeyboardInterrupt:
+            _cancel_interrupted_requests(
+                cancel_requests, control, bids_root, site.CHECKOUT, requests
+            )
         result.update(
             requests=request_ids,
             projects=list(planned_projects),

@@ -27,7 +27,7 @@ def refresh_scheduler_state(registry: Registry) -> int:
             demanded = registry.demanded_work_item_ids()
             if demanded:
                 try:
-                    assess_registry(registry, work_item_ids=demanded, compiled=True)
+                    assess_registry(registry, work_item_ids=demanded, compiled=False)
                 except AssessmentConflict:
                     pass
             reconcile_branch_requests(registry)

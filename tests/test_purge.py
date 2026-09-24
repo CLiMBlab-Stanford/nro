@@ -208,6 +208,7 @@ def test_purge_record_cleanup_preserves_only_required_ancestors(tmp_path: Path) 
 
     assert removed == 0
     assert retained == (func10["id"],)
+    assert registry.retained_dependency_modules(retained) == {"clean": 1}
 
 
 def test_func_purge_cannot_remove_anat_for_minimal_run_prefix(tmp_path: Path, capsys) -> None:

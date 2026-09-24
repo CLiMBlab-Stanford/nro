@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -568,6 +569,39 @@ def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, select
         dict(operation="stop", checkout=str(checkout), project=project, selection=selection),
         timeout=CONTROL_RPC_TIMEOUT_SECONDS,
     )
+
+
+def cancel_requests(
+    control: Path,
+    bids_root: Path,
+    *,
+    checkout: Path,
+    requests: Sequence[tuple[str, str]],
+) -> dict[str, int]:
+    """Withdraw exact requests created by an interrupted run invocation."""
+    grouped: dict[str, list[str]] = {}
+    for project, request_id in requests:
+        grouped.setdefault(project, []).append(request_id)
+    totals = {"work_items": 0, "requests": 0, "attempts": 0}
+    for project, request_ids in grouped.items():
+        result = stop(
+            control,
+            bids_root,
+            checkout=checkout,
+            project=project,
+            selection={
+                "participants": (),
+                "modules": (),
+                "workflows": (),
+                "lineages": (),
+                "selectors": {},
+                "include_dependents": False,
+                "request_ids": request_ids,
+            },
+        )
+        for key in totals:
+            totals[key] += int(result[key])
+    return totals
 
 
 def logs(

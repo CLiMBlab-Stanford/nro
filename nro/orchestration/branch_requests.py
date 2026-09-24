@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
@@ -36,6 +40,40 @@ class _RequestGroup:
     terminal_keys: list[str]
 
 
+class RequestAdmissionInterrupted(KeyboardInterrupt):
+    """Report requests committed while the caller deferred an interrupt."""
+
+    def __init__(self, requests: Sequence[tuple[str, str]]) -> None:
+        super().__init__()
+        self.requests = tuple(requests)
+
+
+@contextmanager
+def _defer_first_interrupt():
+    """Let one short admission RPC finish before delivering its first SIGINT."""
+    if threading.current_thread() is not threading.main_thread():
+        yield lambda: False
+        return
+    interrupted = False
+    previous = signal.getsignal(signal.SIGINT)
+
+    def handle_interrupt(signum, frame):
+        nonlocal interrupted
+        if interrupted:
+            signal.default_int_handler(signum, frame)
+        interrupted = True
+        os.write(
+            2,
+            b"\nFinishing atomic request admission; press Ctrl-C again to stop immediately.\n",
+        )
+
+    signal.signal(signal.SIGINT, handle_interrupt)
+    try:
+        yield lambda: interrupted
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def _request_groups(requests: Sequence[RequestPlan]) -> tuple[_RequestGroup, ...]:
     """Coalesce one invocation's endpoints by project and workflow."""
     groups: dict[tuple[str, str], _RequestGroup] = {}
@@ -50,6 +88,11 @@ def _request_groups(requests: Sequence[RequestPlan]) -> tuple[_RequestGroup, ...
     for group in groups.values():
         group.terminal_keys[:] = dict.fromkeys(group.terminal_keys)
     return tuple(groups.values())
+
+
+def request_projects(plan) -> tuple[str, ...]:
+    """Return projects in the same order as one admission result."""
+    return tuple(group.project for group in _request_groups(plan.requests))
 
 
 def register_requests(
@@ -104,8 +147,9 @@ def register_requests(
             site_values=dict(plan.site_settings),
         )
         central = command(control, paths.bids)
+        groups = _request_groups(plan.requests)
         entries = []
-        for request in _request_groups(plan.requests):
+        for request in groups:
             payload = dict(
                 protocol=1,
                 branch=name,
@@ -133,12 +177,18 @@ def register_requests(
                 demand=demand,
             )
             entries.append(dict(project=request.project, payload=payload))
-        result = exchange(
-            central,
-            dict(
-                operation="admit_many",
-                checkout=str(CHECKOUT),
-                entries=entries,
-            ),
-        )
-    return result["request_ids"]
+        with _defer_first_interrupt() as was_interrupted:
+            result = exchange(
+                central,
+                dict(
+                    operation="admit_many",
+                    checkout=str(CHECKOUT),
+                    entries=entries,
+                ),
+            )
+        request_ids = result["request_ids"]
+        if was_interrupted():
+            raise RequestAdmissionInterrupted(
+                tuple(zip((group.project for group in groups), request_ids, strict=True))
+            )
+    return request_ids

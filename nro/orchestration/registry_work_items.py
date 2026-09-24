@@ -449,3 +449,27 @@ def forget_purged_work_items(
     )
     database.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", values)
     return len(deletable), tuple(sorted(existing - deletable))
+
+
+def retained_dependency_modules(
+    database: sqlite3.Connection,
+    retained_work_item_ids: Sequence[int],
+) -> dict[str, int]:
+    """Count surviving work items that directly protect retained ancestors."""
+    retained = {int(value) for value in retained_work_item_ids}
+    if not retained:
+        return {}
+    placeholders = ",".join("?" for _ in retained)
+    rows = database.execute(
+        f"""SELECT DISTINCT child.id, child.module
+            FROM work_item_dependencies edges
+            JOIN work_items child ON child.id=edges.work_item_id
+            WHERE edges.upstream_work_item_id IN ({placeholders})
+              AND edges.work_item_id NOT IN ({placeholders})""",
+        (*tuple(sorted(retained)), *tuple(sorted(retained))),
+    )
+    counts: dict[str, int] = {}
+    for row in rows:
+        module = str(row["module"])
+        counts[module] = counts.get(module, 0) + 1
+    return dict(sorted(counts.items()))
