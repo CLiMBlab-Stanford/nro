@@ -415,6 +415,12 @@ def create_neurolit_inpainting_plan(
             direct=True,
             stream_output=True,
         )
+        # NeuroLIT may preserve the source timestamp on copied mask products.
+        # Mark every realized product at step completion so runner freshness
+        # reflects this execution rather than the copied file's source age.
+        for output in (inpainted, inpaint_mask, original_mask):
+            if output.is_file():
+                output.touch()
 
     def inpaint_valid() -> tuple[bool, str]:
         missing = [

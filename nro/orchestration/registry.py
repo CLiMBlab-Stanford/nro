@@ -2094,6 +2094,26 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             return forget_purged_work_items(db, ids)
 
+    def purge_record_partition(
+        self, work_item_ids: Iterable[int]
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Return records deletable by purge and selected records still referenced."""
+        from nro.orchestration.registry_work_items import purge_record_partition
+
+        ids = tuple(sorted(set(work_item_ids)))
+        with self.connection() as db:
+            return purge_record_partition(db, ids)
+
+    def forget_purged_work_items_detailed(
+        self, work_item_ids: Iterable[int]
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Remove purge records and return their exact deleted and retained IDs."""
+        from nro.orchestration.registry_work_items import forget_purged_work_items_detailed
+
+        ids = tuple(sorted(set(work_item_ids)))
+        with self.connection(write=True) as db:
+            return forget_purged_work_items_detailed(db, ids)
+
     def retained_dependency_modules(self, work_item_ids: Iterable[int]) -> dict[str, int]:
         """Count surviving downstream records that protect selected ancestors."""
         from nro.orchestration.registry_work_items import retained_dependency_modules

@@ -1,10 +1,12 @@
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from nro.orchestration import manifests, scheduler_operations, scheduler_service
 from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceSnapshot
 
@@ -163,3 +165,64 @@ def test_status_uses_mixed_contract_assessment_for_every_checkout(monkeypatch, t
             {"work_item_ids": set(), "compiled": False, "recover_public": True},
         ),
     ]
+
+
+def test_main_status_does_not_adopt_another_branch_recovery_record(monkeypatch, tmp_path):
+    from nro.configuration.store import ConfigStore
+    from nro.orchestration import branches as branches_module
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    branches = BranchStore(registry.paths.control)
+    checkout = tmp_path / "main"
+    checkout.mkdir()
+    monkeypatch.setattr(
+        branches_module,
+        "checkout_identity",
+        lambda path: (Path(path), "main", "a" * 40),
+    )
+    snapshot = branches.initialize()
+    branches.authorize_checkout("main", checkout, revision=snapshot.revision)
+    topology = branches.read().topology
+    dev_owner = topology.records["dev"].registry_id
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+
+    def spec(key: str) -> WorkItemSpec:
+        output = tmp_path / f"{key}.txt"
+        return WorkItemSpec.create(
+            key=key,
+            module="anat",
+            project="demo",
+            participant="01",
+            entities={},
+            scope="subject",
+            module_lineage_id=registered.lineages["anat"],
+            config_fingerprint="configuration",
+            directory_label=registered.directories["anat"],
+            runtime_config=registry.runtime_config_path(registered, "anat"),
+            command=("python", "-m", "nro.modules.anat"),
+            dependencies=(),
+            input_paths=(),
+            output_root=output.parent,
+            output_prefix=key,
+            expected_outputs=(output,),
+            output_format="test",
+            resource_class="small",
+        )
+
+    legacy, recovered = spec("legacy-main"), spec("recovered-dev")
+    ids = registry.register_work_items((legacy, recovered))
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE work_items SET artifact_state='stale' WHERE id IN (?,?)",
+            (ids[legacy.key], ids[recovered.key]),
+        )
+        db.execute(
+            "INSERT INTO branch_work_items VALUES (?,?,?,?)",
+            (dev_owner, recovered.key, ids[recovered.key], "{}"),
+        )
+
+    report = scheduler_operations.status(registry, checkout=checkout, mode="cached")
+
+    assert report["visible_ids"] == [ids[legacy.key]]
+    assert [row["id"] for row in report["rows"]] == [ids[legacy.key]]

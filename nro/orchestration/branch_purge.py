@@ -21,6 +21,45 @@ from nro.orchestration.purge_paths import (
 from nro.orchestration.registry import Registry, utcnow
 
 
+def _receipt_rows(registry, work_item_ids: set[int]) -> dict[int, dict]:
+    """Return the location metadata needed to remove ownership receipts."""
+    if not work_item_ids:
+        return {}
+    placeholders = ",".join("?" for _ in work_item_ids)
+    with registry.connection() as db:
+        rows = db.execute(
+            f"""SELECT i.id,i.project,i.module,i.work_item_key,
+                       lineage.configuration_class,lineage.directory_label,
+                       execution.logical_key,execution.context_json
+                FROM work_items i
+                JOIN module_lineages lineage ON lineage.id=i.module_lineage_id
+                LEFT JOIN work_item_execution execution ON execution.work_item_id=i.id
+                WHERE i.id IN ({placeholders})""",
+            tuple(sorted(work_item_ids)),
+        ).fetchall()
+    return {int(row["id"]): dict(row) for row in rows}
+
+
+def _receipt_location(registry, row: dict) -> tuple[Path, tuple[Path, str, str]]:
+    """Resolve one receipt and the lineage root that owns it."""
+    from nro.orchestration.ownership import work_item_record_path
+
+    project_root = registry.paths.bids_root / str(row["project"])
+    if row.get("context_json"):
+        context = ExecutionContext.from_dict(json.loads(row["context_json"]))
+        project_root = context.paths.output_project(str(row["project"]))
+    configuration_class = str(row["configuration_class"])
+    directory_label = str(row["directory_label"])
+    path = work_item_record_path(
+        project_root,
+        configuration_class,
+        directory_label,
+        str(row["module"]),
+        str(row.get("logical_key") or row["work_item_key"]),
+    )
+    return path, (project_root, configuration_class, directory_label)
+
+
 def _protected_output_index(paths) -> tuple[frozenset[str], tuple[str, ...]]:
     """Resolve protected outputs once and index them for ancestor queries."""
     exact = frozenset(str(_entry_location(Path(path))) for path in paths)
@@ -115,6 +154,13 @@ def purge(
         if logs_only and (item["public"] or item["private"]):
             raise ValueError("Log-only purge cannot delete derivative paths")
 
+    deletable_ids, _retained_ids = registry.purge_record_partition(ids)
+    receipt_rows = _receipt_rows(registry, ids | set(deletable_ids))
+    receipt_locations = {
+        work_item_id: _receipt_location(registry, row) for work_item_id, row in receipt_rows.items()
+    }
+    receipt_paths = {path for path, _root in receipt_locations.values()}
+
     def report(phase: str, completed: int, total: int) -> None:
         if progress is not None:
             progress(phase, completed, total)
@@ -185,11 +231,22 @@ def purge(
                     )
                     for raw in item[kind]:
                         path = Path(raw)
+                        if path in receipt_paths:
+                            continue
                         targets[path] = next(
                             root for root in roots if _is_removal_within(path, root)
                         )
                 groups.append((counter, targets))
-            total_paths = sum(len(targets) for _counter, targets in groups)
+            planned_receipts = {
+                receipt_locations[work_item_id][0]
+                for work_item_id in deletable_ids
+                if work_item_id in receipt_locations
+                and (
+                    receipt_locations[work_item_id][0].exists()
+                    or receipt_locations[work_item_id][0].is_symlink()
+                )
+            }
+            total_paths = sum(len(targets) for _counter, targets in groups) + len(planned_receipts)
             completed_paths = 0
             report("Removing artifact paths", 0, total_paths)
             for counter, targets in groups:
@@ -204,7 +261,12 @@ def purge(
                     completed_paths += 1
                     if completed_paths % 25 == 0 or completed_paths == total_paths:
                         report("Removing artifact paths", completed_paths, total_paths)
-            if not dry_run:
+            if dry_run:
+                counts["derivative_paths"] += len(planned_receipts)
+                completed_paths += len(planned_receipts)
+                if planned_receipts:
+                    report("Removing artifact paths", completed_paths, total_paths)
+            else:
                 with registry.connection(write=True) as db:
                     db.executemany(
                         "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
@@ -226,8 +288,29 @@ def purge(
     counts["worker_logs"] = _purge_inactive_worker_logs(registry, dry_run=dry_run)
     report("Removing logs", 1, 1)
     if not logs_only and not dry_run:
-        removed, retained = registry.forget_purged_work_items(ids)
-        counts["scheduler_records"] = removed
+        from nro.orchestration.ownership import lineage_root, remove_empty_ownership_root
+
+        deleted, retained = registry.forget_purged_work_items_detailed(ids)
+        for work_item_id in deleted:
+            location = receipt_locations.get(work_item_id)
+            if location is None:
+                continue
+            path, root = location
+            counts["derivative_paths"] += int(
+                _remove_path(
+                    path,
+                    dry_run=False,
+                    prune_root=lineage_root(*root),
+                )
+            )
+            completed_paths += 1
+        for work_item_id in deleted:
+            location = receipt_locations.get(work_item_id)
+            if location is not None:
+                remove_empty_ownership_root(*location[1])
+        if planned_receipts:
+            report("Removing artifact paths", completed_paths, total_paths)
+        counts["scheduler_records"] = len(deleted)
         counts["retained_dependency_records"] = len(retained)
         counts["retained_dependency_modules"] = registry.retained_dependency_modules(retained)
     return counts

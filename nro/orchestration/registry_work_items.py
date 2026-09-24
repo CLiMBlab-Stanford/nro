@@ -357,11 +357,11 @@ def cancel_purged_demand(
     return cancelled
 
 
-def forget_purged_work_items(
+def purge_record_partition(
     database: sqlite3.Connection,
     work_item_ids: Sequence[int],
-) -> tuple[int, tuple[int, ...]]:
-    """Delete unreferenced scheduler records for purged work items.
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Partition purge targets and their orphaned missing ancestors.
 
     A selected item remains when a registered item outside the purge still
     depends on it. Such a row is part of the surviving artifact's saved DAG,
@@ -369,7 +369,7 @@ def forget_purged_work_items(
     """
     selected = {int(value) for value in work_item_ids}
     if not selected:
-        return 0, ()
+        return (), ()
     existing = {
         int(row["id"])
         for row in database.execute(
@@ -377,7 +377,57 @@ def forget_purged_work_items(
             tuple(sorted(selected)),
         )
     }
-    deletable = set(existing)
+    candidates = set(existing)
+    frontier = set(existing)
+    while frontier:
+        placeholders = ",".join("?" for _ in frontier)
+        ancestors = {
+            int(row["id"])
+            for row in database.execute(
+                f"""SELECT DISTINCT upstream.id
+                    FROM work_item_dependencies dependency
+                    JOIN work_items upstream ON upstream.id=dependency.upstream_work_item_id
+                    WHERE dependency.work_item_id IN ({placeholders})
+                      AND upstream.artifact_state='missing'""",
+                tuple(sorted(frontier)),
+            )
+            if int(row["id"]) not in candidates
+        }
+        candidates.update(ancestors)
+        frontier = ancestors
+
+    affected = set(existing)
+    frontier = set(existing)
+    while frontier:
+        placeholders = ",".join("?" for _ in frontier)
+        descendants = {
+            int(row["work_item_id"])
+            for row in database.execute(
+                f"""SELECT DISTINCT work_item_id FROM work_item_dependencies
+                    WHERE upstream_work_item_id IN ({placeholders})""",
+                tuple(sorted(frontier)),
+            )
+            if int(row["work_item_id"]) not in affected
+        }
+        affected.update(descendants)
+        frontier = descendants
+
+    deletable = set(candidates)
+    if candidates:
+        placeholders = ",".join("?" for _ in candidates)
+        independently_demanded = {
+            int(row["work_item_id"])
+            for row in database.execute(
+                f"""SELECT DISTINCT links.work_item_id
+                    FROM request_work_items links
+                    JOIN requests request ON request.id=links.request_id
+                    WHERE links.work_item_id IN ({placeholders})
+                      AND links.demand_state='active' AND request.state='active'""",
+                tuple(sorted(candidates)),
+            )
+            if int(row["work_item_id"]) not in affected
+        }
+        deletable.difference_update(independently_demanded)
     while deletable:
         placeholders = ",".join("?" for _ in deletable)
         protected = {
@@ -392,11 +442,20 @@ def forget_purged_work_items(
         if not protected:
             break
         deletable.difference_update(protected)
+    return tuple(sorted(deletable)), tuple(sorted(existing - deletable))
+
+
+def forget_purged_work_items_detailed(
+    database: sqlite3.Connection,
+    work_item_ids: Sequence[int],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Delete purge records and return their exact deleted and retained IDs."""
+    deletable, retained = purge_record_partition(database, work_item_ids)
     if not deletable:
-        return 0, tuple(sorted(existing))
+        return (), retained
 
     placeholders = ",".join("?" for _ in deletable)
-    values = tuple(sorted(deletable))
+    values = tuple(deletable)
     attempt_ids = tuple(
         int(row["id"])
         for row in database.execute(
@@ -448,7 +507,16 @@ def forget_purged_work_items(
         f"DELETE FROM work_item_execution WHERE work_item_id IN ({placeholders})", values
     )
     database.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", values)
-    return len(deletable), tuple(sorted(existing - deletable))
+    return values, retained
+
+
+def forget_purged_work_items(
+    database: sqlite3.Connection,
+    work_item_ids: Sequence[int],
+) -> tuple[int, tuple[int, ...]]:
+    """Delete unreferenced scheduler records for purged work items."""
+    deleted, retained = forget_purged_work_items_detailed(database, work_item_ids)
+    return len(deleted), retained
 
 
 def retained_dependency_modules(

@@ -162,7 +162,9 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
                 for row in db.execute(
                     """SELECT i.id FROM work_items i
                     LEFT JOIN work_item_execution e ON e.work_item_id=i.id
-                    WHERE e.work_item_id IS NULL AND i.artifact_state!='missing'"""
+                    LEFT JOIN branch_work_items b ON b.work_item_id=i.id
+                    WHERE e.work_item_id IS NULL AND b.work_item_id IS NULL
+                      AND i.artifact_state!='missing'"""
                 )
             )
     if mode == "verify":

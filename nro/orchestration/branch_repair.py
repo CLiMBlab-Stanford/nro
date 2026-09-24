@@ -26,6 +26,27 @@ class PublicOwnership:
     errors: list[str]
 
 
+def _recoverable_ownership_records(
+    records: list[tuple[dict, Path]],
+) -> list[tuple[dict, Path]]:
+    """Keep disk-backed artifacts and the receipts needed for their DAGs."""
+    by_key = {str(record["work_item_key"]): (record, path) for record, path in records}
+    retained = {
+        key
+        for key, (record, _path) in by_key.items()
+        if any(Path(value).is_file() for value in record["artifact_contract"]["output"]["expected"])
+    }
+    pending = list(retained)
+    while pending:
+        record, _path = by_key[pending.pop()]
+        for dependency in record["artifact_contract"].get("dependencies", ()):
+            dependency = str(dependency)
+            if dependency in by_key and dependency not in retained:
+                retained.add(dependency)
+                pending.append(dependency)
+    return [by_key[key] for key in by_key if key in retained]
+
+
 def _has_public_evidence(row) -> bool:
     """Return whether a registered work item still has a declared public file."""
     paths = [Path(value) for value in json.loads(row["expected_outputs_json"])]
@@ -171,7 +192,7 @@ def _recover_public_work_items(
 
 
 def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
-    """Read complete public ownership records for one branch output namespace."""
+    """Read ownership records backed by a declared public output."""
     from nro.configuration.site import settings
 
     values = settings()[0]
@@ -196,7 +217,8 @@ def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
     lineages, records, errors = read_ownership_records(output_bids, projects)
     lineages, records, incomplete = complete_ownership_records(lineages, records)
     errors.extend(incomplete)
-    return PublicOwnership(lineages, records, errors)
+    selected = _recoverable_ownership_records(records)
+    return PublicOwnership(lineages if selected else [], selected, errors)
 
 
 def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:

@@ -59,8 +59,9 @@ def work_item_record_path(
 def remove_empty_ownership_root(
     project_root: Path, configuration_class: str, directory_label: str
 ) -> None:
-    """Remove a lineage marker after its final work-item receipt is purged."""
-    control = lineage_root(project_root, configuration_class, directory_label) / OWNERSHIP_DIRECTORY
+    """Remove empty ownership and lineage directories after their final receipt."""
+    lineage = lineage_root(project_root, configuration_class, directory_label)
+    control = lineage / OWNERSHIP_DIRECTORY
     work_items = control / "work_items"
     if work_items.is_dir():
         for module_directory in work_items.iterdir():
@@ -79,7 +80,15 @@ def remove_empty_ownership_root(
     try:
         control.rmdir()
     except OSError:
-        pass
+        return
+    boundary = module_namespace_root(project_root, configuration_class)
+    current = lineage
+    while current != boundary:
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
 
 
 def _lineage_rows(registry: "Registry", lineage_id: int) -> tuple[dict, list[dict]]:

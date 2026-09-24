@@ -4,16 +4,19 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from nro.configuration.store import ConfigStore
+from nro.orchestration.artifact_ownership import work_item_paths
 from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_admission import admit_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.completion_records import completion_record
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.ownership import lineage_record_path, work_item_record_path
 from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceStore
@@ -201,6 +204,71 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
     assert all(state == "fresh" for state, _ in assess_registry(registry).values())
     assert all(state == "fresh" for state, _ in assess_registry(registry, compiled=True).values())
     assert "nro.probe_one" not in sys.modules and "nro.probe_two" not in sys.modules
+
+
+def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup):
+    from nro.orchestration.branch_purge import purge, snapshot
+
+    registry, _branches, _site, prepare = setup
+    prepared = prepare("one")
+    checkout, paths, spec, _plan, registered, *_ = prepared
+    worker = Worker(registry, resource_class="large", poll_interval=0.01)
+    registry.register_worker(worker.worker_id, resource_class="large")
+    claim = registry.claim_ready_work_item(worker.worker_id, ("small",))
+    assert claim is not None
+    worker._execute(claim)
+
+    site_values = {
+        "bids": str(paths.bids),
+        "work": str(paths.work),
+        "development": str(paths.development),
+    }
+    view = snapshot(registry, checkout=checkout, site_values=site_values)
+    row = next(item for item in view["rows"] if item["module"] == spec.module)
+    context = ExecutionContext.from_dict(row["execution_context"])
+    facade = SimpleNamespace(
+        paths=SimpleNamespace(
+            project=row["project"],
+            control=registry.paths.control,
+            project_root=context.paths.output_project(row["project"]),
+        )
+    )
+    public, private = work_item_paths(
+        row,
+        registry=facade,
+        work_root=context.paths.private_project(row["project"]).parent,
+    )
+    public = [path for path in public if path.exists() or path.is_symlink()]
+    private = [path for path in private if path.exists() or path.is_symlink()]
+    receipt = work_item_record_path(
+        paths.output_project("demo"),
+        "anat",
+        registered.directories["anat"],
+        spec.module,
+        spec.key,
+    )
+    lineage = receipt.parents[3]
+    assert receipt in public
+
+    result = purge(
+        registry,
+        checkout=checkout,
+        site_values=site_values,
+        plan=[
+            {
+                "id": row["id"],
+                "token": row["purge_token"],
+                "public": list(map(str, public)),
+                "private": list(map(str, private)),
+            }
+        ],
+        logs_only=False,
+        dry_run=False,
+    )
+
+    assert result["scheduler_records"] == 1
+    assert not receipt.exists()
+    assert not lineage.exists()
 
 
 @pytest.mark.parametrize("conflict", (False, True))

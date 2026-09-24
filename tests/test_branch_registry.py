@@ -292,6 +292,16 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         property(lambda _spec: pytest.fail("Recovery recompiled a recorded artifact contract")),
     )
 
+    output.unlink()
+    assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
+    assert assessments == []
+    with registry.connection() as db:
+        assert (
+            db.execute("SELECT 1 FROM branch_work_items WHERE registry_id=?", (owner,)).fetchone()
+            is None
+        )
+
+    output.write_text("complete")
     assert _recover_public_work_items(registry, branch="dev", registry_id=owner) == []
     assert assessments == [{"projects": ("demo",), "compiled": True, "recover_public": True}]
     with registry.connection() as db:
@@ -334,6 +344,33 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         item for item in registry.work_item_rows() if item["work_item_key"].endswith(spec.key)
     )
     assert row["recomputable"] == 1
+
+
+def test_public_recovery_keeps_only_output_backed_dependency_closures(tmp_path):
+    from nro.orchestration.branch_repair import _recoverable_ownership_records
+
+    parent_output = tmp_path / "parent.txt"
+    child_output = tmp_path / "child.txt"
+    orphan_output = tmp_path / "orphan.txt"
+    child_output.write_text("present")
+
+    def record(key, output, dependencies=()):
+        return (
+            {
+                "work_item_key": key,
+                "artifact_contract": {
+                    "dependencies": list(dependencies),
+                    "output": {"expected": [str(output)]},
+                },
+            },
+            tmp_path / f"{key}.json",
+        )
+
+    parent = record("parent", parent_output)
+    child = record("child", child_output, ("parent",))
+    orphan = record("orphan", orphan_output)
+
+    assert _recoverable_ownership_records([parent, child, orphan]) == [parent, child]
 
 
 def test_branch_ownership_rejects_changed_configuration_identity(tmp_path):
