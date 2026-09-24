@@ -11,9 +11,12 @@ import sys
 import tomllib
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from nro.engine.io import atomic_write_json
-from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore
+
+if TYPE_CHECKING:
+    from nro.orchestration.source_snapshots import SourceSnapshot
 
 DEPENDENCY_PROTOCOL = 1
 
@@ -228,6 +231,8 @@ def prepare_shared_dependencies(
 
 def capture_shared_application(root: Path) -> SourceSnapshot:
     """Publish release source separately from its reusable dependencies."""
+    from nro.orchestration.source_snapshots import SourceStore
+
     root = root.resolve()
     return SourceStore(root / ".nro-environments" / "applications").capture(root)
 

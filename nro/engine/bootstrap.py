@@ -518,11 +518,11 @@ def _main(argv=None) -> None:
     if args.drain and mode != "shared":
         parser.error("--drain applies only to shared installation maintenance")
     shared_registry = None
+    prepare_shared_site = None
     prepare_shared = None
     if mode == "shared":
 
-        def prepare_shared() -> None:
-            nonlocal shared_registry
+        def prepare_shared_site() -> None:
             from nro.engine.site_setup import (
                 edit_settings,
                 migrate_site_configuration,
@@ -536,10 +536,13 @@ def _main(argv=None) -> None:
                     edit_settings(path=site, maintain=True)
                     if not site.exists():
                         raise RuntimeError("Path setup was cancelled")
-            else:
-                # Migrate protected definitions before importing registry-backed
-                # installation modules, whose path constants resolve site settings.
-                migrate_site_configuration(site)
+            # Migrate protected definitions before importing application-layer
+            # machinery. Source capture uses the registry lock implementation,
+            # whose module resolves protected site settings during import.
+            migrate_site_configuration(site)
+
+        def prepare_shared() -> None:
+            nonlocal shared_registry
             from nro.engine.shared_installation import prepare_pool
             from nro.orchestration.registry import Registry
             from nro.orchestration.releases import tagged_source
@@ -591,6 +594,8 @@ def _main(argv=None) -> None:
     with maintenance_lock(ROOT, mode):
         if mode != "shared" and mode != "branch":
             check_workers(site)
+        if prepare_shared_site is not None:
+            prepare_shared_site()
         if mode == "shared":
             environment = None
         elif mode == "branch" and existing and existing.get("dependency_key"):

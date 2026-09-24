@@ -1,6 +1,9 @@
 """Definitions-store migration, integrity, and ownership tests."""
 
+import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -84,6 +87,53 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path, m
     }
     assert read_key(root, "cni", host="cni.example.org") == "private-key"
     assert ".definition-secrets" not in (root / MANIFEST).read_text()
+
+
+def test_application_layer_import_precedes_schema_one_site_migration(tmp_path):
+    """Match the shared installer's import and migration order for an old store."""
+    root = create_store(tmp_path / "definitions")
+    site = root / "site/site.yml"
+    value = yaml.safe_load(site.read_text())
+    value["version"] = 1
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 1))
+    locator = tmp_path / "site.toml"
+    locator.write_text(f'definitions = "{root}"\n')
+    checkout = Path(__file__).resolve().parents[1]
+    code = """
+import sys
+from pathlib import Path
+from nro.engine import installation_layers
+from nro.engine.site_setup import migrate_site_configuration
+
+site, checkout, applications = map(Path, sys.argv[1:])
+migrate_site_configuration(site)
+from nro.orchestration.source_snapshots import SourceStore
+SourceStore(applications).capture(checkout)
+"""
+    subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            code,
+            str(locator),
+            str(checkout),
+            str(tmp_path / "applications"),
+        ],
+        cwd=checkout,
+        env={
+            **os.environ,
+            "NRO_EXECUTION_SOURCE_ROOT": str(checkout),
+            "NRO_SITE_CONFIG": str(locator),
+            "PYTHONPATH": str(checkout),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=True,
+    )
+
+    assert yaml.safe_load(site.read_text())["version"] == 2
+    validate_store(root, require_site=True)
 
 
 def test_schema_three_updates_managed_definition_cli_guidance(tmp_path):
