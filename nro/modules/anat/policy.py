@@ -43,5 +43,5 @@ def surface_reconstruction_contract(engine: str = "freesurfer") -> dict[str, obj
         "voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
         "mask_reconciliation": "segmentation_union",
         "freesurfer_parcellation": True,
-        "options": ["fsaparc", "no_cereb", "no_hypothal", "no_cc"],
+        "options": ["fsaparc", "no_cereb", "no_hypothal"],
     }
