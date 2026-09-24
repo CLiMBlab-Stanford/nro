@@ -195,8 +195,14 @@ class ResolvedWorkflow:
 class ConfigStore:
     """Resolve IDs through the active definitions inheritance chain."""
 
-    def __init__(self, root: Path | None = None, *, roots: tuple[Path, ...] | None = None) -> None:
-        """Use active inherited stores, or one explicit store for drafts and validation."""
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        roots: tuple[Path, ...] | None = None,
+        site_values: Mapping[str, object] | None = None,
+    ) -> None:
+        """Use active stores and site values, or explicit ones for staged validation."""
         if root is not None and roots is not None:
             raise ValueError("Specify either root or roots, not both")
         self.roots = (
@@ -207,6 +213,7 @@ class ConfigStore:
             else definitions_roots()
         )
         self.root = self.roots[0]
+        self.site_values = dict(site_values) if site_values is not None else None
         from nro.configuration.definition_migrations import validate_store_integrity
 
         for candidate in self.roots:
@@ -313,7 +320,7 @@ class ConfigStore:
         try:
             override = normalize_fields(
                 SCHEMAS[configuration_class],
-                resolve_resources(declared),
+                resolve_resources(declared, site_values=self.site_values),
                 location=configuration_class,
                 complete=False,
             )
@@ -369,7 +376,7 @@ class ConfigStore:
         try:
             base = compile_configuration(
                 configuration_class,
-                resolve_resources(self._read_mapping(default_path)),
+                resolve_resources(self._read_mapping(default_path), site_values=self.site_values),
             )
         except (ValueError, TypeError) as error:
             raise WorkflowError(f"{default_path}: {error}") from error

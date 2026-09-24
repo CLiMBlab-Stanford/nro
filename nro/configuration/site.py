@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tomllib
+from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -618,9 +619,9 @@ def definition_write(path: Path):
         yield
 
 
-def resolve_resources(value: object) -> object:
-    """Replace explicit site references before validating workflow options."""
-    values, _ = settings()
+def resolve_resources(value: object, *, site_values: Mapping[str, object] | None = None) -> object:
+    """Replace explicit site references using supplied or active site values."""
+    values = dict(site_values) if site_values is not None else settings()[0]
 
     def resolve(item: object) -> object:
         if isinstance(item, str) and item.startswith("site:"):

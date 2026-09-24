@@ -11,6 +11,7 @@ import yaml
 
 from nro.configuration.events import EventStore, task_key
 from nro.configuration.site import (
+    DERIVED,
     definitions_root,
     read_site_definition,
     site_definition_path,
@@ -57,7 +58,6 @@ def validate_store(
         inherited_site = Path(inherited_site).expanduser().resolve()
         if inherited_site not in inherited_roots:
             inherited_roots = (*inherited_roots, inherited_site)
-    store = ConfigStore(roots=(root, *inherited_roots))
     errors = []
     counts = dict(
         site=0,
@@ -112,14 +112,40 @@ def validate_store(
         files[category] = sorted(paths)
 
     expected_site = site_definition_path(root)
+    site_values = None
     for path in files["site"]:
         if path != expected_site:
             errors.append(f"Expected site/site.yml: {path}")
     if not expected_site.is_file():
         if require_site:
             errors.append(f"Missing protected site definition: {expected_site}")
-    elif check(expected_site, lambda: read_site_definition(root)) is not None:
-        counts["site"] = 1
+        if inherited_site is not None:
+            inherited_document = check(
+                site_definition_path(inherited_site),
+                lambda: read_site_definition(inherited_site),
+            )
+            if inherited_document is not None:
+                site_values = inherited_document[0]
+    else:
+        site_document = check(expected_site, lambda: read_site_definition(root))
+        if site_document is not None:
+            counts["site"] = 1
+            site_values = site_document[0]
+
+    if site_values is not None:
+        site_values = dict(site_values)
+        for key, (parent, suffix) in DERIVED.items():
+            site_values.setdefault(key, str(Path(site_values[parent]) / suffix))
+    store = ConfigStore(
+        roots=(root, *inherited_roots),
+        site_values=(
+            site_values
+            if site_values is not None
+            else {}
+            if require_site or inherited_site is not None
+            else None
+        ),
+    )
 
     for kind in CONFIGURATION_CLASSES:
         check(store.configs / kind, lambda kind=kind: store.load_configuration(kind, "main"))

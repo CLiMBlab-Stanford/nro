@@ -51,7 +51,7 @@ def test_new_store_is_group_maintainable_without_adding_read_access(tmp_path):
             assert mode & 0o010
 
 
-def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path):
+def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path, monkeypatch):
     from nro.bidsify.credentials import read_key, store_key
 
     root = create_store(tmp_path / "definitions")
@@ -68,6 +68,9 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path):
     }
     site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
     (root / MANIFEST).write_text(_manifest_text(root, 1))
+    locator = tmp_path / "site.toml"
+    locator.write_text(f'definitions = "{root}"\n')
+    monkeypatch.setenv("NRO_SITE_CONFIG", str(locator))
 
     assert migrate_store(
         root, validate=lambda candidate: validate_store(candidate, require_site=True)
