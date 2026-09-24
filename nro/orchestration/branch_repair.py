@@ -34,10 +34,7 @@ def _recoverable_ownership_records(
     retained = {
         key
         for key, (record, _path) in by_key.items()
-        if any(
-            Path(value).is_file()
-            for value in record["artifact_contract"]["output"]["expected"]
-        )
+        if any(Path(value).is_file() for value in record["artifact_contract"]["output"]["expected"])
     }
     pending = list(retained)
     while pending:

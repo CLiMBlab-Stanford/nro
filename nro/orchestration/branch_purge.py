@@ -157,8 +157,7 @@ def purge(
     deletable_ids, _retained_ids = registry.purge_record_partition(ids)
     receipt_rows = _receipt_rows(registry, ids | set(deletable_ids))
     receipt_locations = {
-        work_item_id: _receipt_location(registry, row)
-        for work_item_id, row in receipt_rows.items()
+        work_item_id: _receipt_location(registry, row) for work_item_id, row in receipt_rows.items()
     }
     receipt_paths = {path for path, _root in receipt_locations.values()}
 
@@ -247,9 +246,7 @@ def purge(
                     or receipt_locations[work_item_id][0].is_symlink()
                 )
             }
-            total_paths = sum(len(targets) for _counter, targets in groups) + len(
-                planned_receipts
-            )
+            total_paths = sum(len(targets) for _counter, targets in groups) + len(planned_receipts)
             completed_paths = 0
             report("Removing artifact paths", 0, total_paths)
             for counter, targets in groups:

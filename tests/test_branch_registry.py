@@ -297,9 +297,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     assert assessments == []
     with registry.connection() as db:
         assert (
-            db.execute(
-                "SELECT 1 FROM branch_work_items WHERE registry_id=?", (owner,)
-            ).fetchone()
+            db.execute("SELECT 1 FROM branch_work_items WHERE registry_id=?", (owner,)).fetchone()
             is None
         )
 
