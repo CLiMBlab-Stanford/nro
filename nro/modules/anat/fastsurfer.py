@@ -28,6 +28,7 @@ _SEGMENTATION_OUTPUTS = (
     "mri/orig.mgz",
     "mri/orig_nu.mgz",
     "mri/aparc.DKTatlas+aseg.deep.mgz",
+    "mri/aseg.auto.mgz",
     "mri/mask.mgz",
 )
 
@@ -236,7 +237,6 @@ def create_fastsurfer_plan(
         "/license.txt",
         "--no_cereb",
         "--no_hypothal",
-        "--no_cc",
         "--vox_size",
         str(FASTSURFER_VOXEL_SIZE_MM),
     )
@@ -386,7 +386,7 @@ def create_fastsurfer_steps(
         "oci_digest": FASTSURFER_OCI_DIGEST,
         "voxel_size_mm": FASTSURFER_VOXEL_SIZE_MM,
         "mask_reconciliation": "segmentation_union",
-        "options": ["fsaparc", "no_cereb", "no_hypothal", "no_cc"],
+        "options": ["fsaparc", "no_cereb", "no_hypothal"],
     }
     return (
         Step.python(

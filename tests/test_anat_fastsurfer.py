@@ -44,6 +44,9 @@ def test_fastsurfer_plan_separates_gpu_segmentation_from_cpu_surfaces(tmp_path) 
     assert plan.segmentation.command[plan.segmentation.command.index("--vox_size") + 1] == str(
         FASTSURFER_VOXEL_SIZE_MM
     )
+    assert "--no_cc" not in plan.segmentation.command
+    assert "--no_cc" not in plan.surfaces.command
+    assert plan.subject_directory / "mri" / "aseg.auto.mgz" in plan.segmentation.outputs
 
 
 def test_fastsurfer_contract_excludes_execution_resource_routing() -> None:
