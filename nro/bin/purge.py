@@ -455,9 +455,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
         retained = int(result.get("retained_dependency_records", 0))
         if retained:
             modules = result.get("retained_dependency_modules", {})
-            details = ", ".join(
-                f"{module} ({count})" for module, count in sorted(modules.items())
-            )
+            details = ", ".join(f"{module} ({count})" for module, count in sorted(modules.items()))
             suffix = f": {details}" if details else ""
             print(
                 f"Retained {retained} scheduler record(s) because unselected downstream "

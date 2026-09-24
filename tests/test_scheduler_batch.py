@@ -67,9 +67,7 @@ def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path)
 
     assert result == ["one", "one", "two"]
     assert verified == ["a" * 64]
-    assert assessed == [
-        (registry, {"projects": ("one", "two"), "compiled": False})
-    ]
+    assert assessed == [(registry, {"projects": ("one", "two"), "compiled": False})]
     assert all(call[2]["assess"] is False for call in admitted)
     assert all(call[2]["source_verified"] is True for call in admitted)
     assert all(call[2]["expected_site"] == "site" for call in admitted)
@@ -111,9 +109,7 @@ def test_batch_rolls_back_every_admission_when_a_later_entry_fails(monkeypatch, 
         nonlocal calls
         calls += 1
         db = kwargs["locked"][1]
-        db.execute(
-            "INSERT OR REPLACE INTO metadata(key,value) VALUES ('batch-test', 'written')"
-        )
+        db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES ('batch-test', 'written')")
         if calls == 2:
             raise RuntimeError("later admission failed")
         return "request-one"
