@@ -685,7 +685,13 @@ def test_registration_migrates_completed_historical_module_configuration(tmp_pat
             ),
         )
 
-    registry.register_work_items((work_item,))
+    with registry.connection(write=True) as database:
+        registry._upsert_work_item_graph_locked(
+            database,
+            ((work_item, work_item.as_record()),),
+            now="2026-01-02T00:00:00+00:00",
+            owner_branch="main",
+        )
 
     row = registry.work_item_rows()[0]
     assert row["artifact_state"] == "fresh"
