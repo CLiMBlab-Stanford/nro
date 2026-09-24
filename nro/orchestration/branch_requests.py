@@ -44,6 +44,7 @@ class RequestAdmissionInterrupted(KeyboardInterrupt):
     """Report requests committed while the caller deferred an interrupt."""
 
     def __init__(self, requests: Sequence[tuple[str, str]]) -> None:
+        """Retain the project and identifier of every committed request."""
         super().__init__()
         self.requests = tuple(requests)
 
