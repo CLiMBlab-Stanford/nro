@@ -109,14 +109,14 @@ def migrate_site_configuration(path: Path) -> Path:
     protected_path = site_definition_path(definitions)
     if protected_path.is_file():
         # A candidate release may need a newer definitions schema before its
-        # site-document reader can interpret the protected settings. Perform
-        # that validated migration before resolving the complete site.
+        # site-document reader can interpret the protected settings. This runs
+        # before the application environment exists, so validate the protected
+        # site document here and defer full catalog validation to nro.bin.setup.
         from nro.configuration.definition_migrations import migrate_store
-        from nro.configuration.definitions import validate_store
 
         migrate_store(
             definitions,
-            validate=lambda candidate: validate_store(candidate, require_site=True),
+            validate=lambda candidate: read_site_definition(candidate),
         )
     values, _ = settings(path=path)
     definitions = Path(values["definitions"]).expanduser().resolve()

@@ -101,8 +101,17 @@ def test_application_layer_import_precedes_schema_one_site_migration(tmp_path):
     locator.write_text(f'definitions = "{root}"\n')
     checkout = Path(__file__).resolve().parents[1]
     code = """
+import importlib.abc
 import sys
 from pathlib import Path
+
+class RejectApplicationDependencies(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname.split('.', 1)[0] in {'numpy', 'pandas'}:
+            raise ImportError(f'application dependency imported during bootstrap: {fullname}')
+        return None
+
+sys.meta_path.insert(0, RejectApplicationDependencies())
 from nro.engine import installation_layers
 from nro.engine.site_setup import migrate_site_configuration
 
