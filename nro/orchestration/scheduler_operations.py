@@ -149,20 +149,35 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
         return {"rows": [], "visible_ids": [], "ingestion": ingestion, "dependencies": []}
     from nro.orchestration.manifests import assess_registry, preview_registry
 
+    with registry.connection() as db:
+        visible = {
+            int(row[0])
+            for row in db.execute(
+                "SELECT work_item_id FROM branch_work_items WHERE registry_id=?", (owner,)
+            )
+        }
+        if name == "main":
+            visible.update(
+                int(row[0])
+                for row in db.execute(
+                    """SELECT i.id FROM work_items i
+                    LEFT JOIN work_item_execution e ON e.work_item_id=i.id
+                    WHERE e.work_item_id IS NULL AND i.artifact_state!='missing'"""
+                )
+            )
     if mode == "verify":
         registry.reconcile_attempt_timeouts()
-        assess_registry(registry, compiled=False, recover_public=True)
+        assess_registry(
+            registry,
+            work_item_ids=visible,
+            compiled=False,
+            recover_public=True,
+        )
     elif mode not in {"cached", "preview"}:
         raise ValueError("Unknown status mode")
     states = preview_registry(registry, compiled=True) if mode == "preview" else None
     rows = registry.work_item_status_snapshot(read_only=True, artifact_states=states)
     with registry.connection() as db:
-        visible = {
-            row[0]
-            for row in db.execute(
-                "SELECT work_item_id FROM branch_work_items WHERE registry_id=?", (owner,)
-            )
-        }
         scientific = {
             row["work_item_id"]: (row["logical_key"], row["revision"])
             for row in db.execute(
@@ -173,15 +188,6 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
                 (owner,),
             )
         }
-        if name == "main":
-            visible.update(
-                row[0]
-                for row in db.execute(
-                    """SELECT i.id FROM work_items i
-                    LEFT JOIN work_item_execution e ON e.work_item_id=i.id
-                    WHERE e.work_item_id IS NULL AND i.artifact_state!='missing'"""
-                )
-            )
         workflows = {}
         # A repair deliberately removes request history.  Current workflow
         # bindings still describe which workflows can reproduce each retained

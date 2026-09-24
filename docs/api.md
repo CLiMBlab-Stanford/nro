@@ -65,7 +65,7 @@ supplies worker resources. `WorkItemSpec` combines them for registration.
 `Planner` uses module descriptors and subject planning contexts to build these
 records. `Registry` implements transactions, demand, attempts, leases, and
 scheduler submissions inside the controller. User commands use direct scheduler
-requests backed by a durable recovery journal. `WorkerSchedulerClient` gives
+requests backed by durable registry rows. `WorkerSchedulerClient` gives
 workers claims and lifecycle operations without a database handle. `Worker` supervises an
 `ExecutionLauncher`. Scientific modules must not open the registry.
 

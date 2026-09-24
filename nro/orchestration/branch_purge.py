@@ -167,44 +167,45 @@ def purge(
         from contextlib import nullcontext
 
         with nullcontext() if dry_run else registry.artifact_mutation(ids):
-            with registry.connection(write=not dry_run) as db:
+            with registry.connection() as db:
                 validate(db, phase="Revalidating purge selection")
-                groups = []
-                for kind, counter in (("public", "derivative_paths"), ("private", "work_paths")):
-                    targets: dict[Path, Path] = {}
-                    for item in plan:
-                        context = ExecutionContext.from_dict(owned[item["id"]]["execution_context"])
-                        project = owned[item["id"]]["project"]
-                        roots = (
-                            (
-                                context.paths.output_project(project) / "derivatives",
-                                registry.paths.control,
-                            )
-                            if kind == "public"
-                            else (context.paths.private_project(project) / "derivatives",)
+            groups = []
+            for kind, counter in (("public", "derivative_paths"), ("private", "work_paths")):
+                targets: dict[Path, Path] = {}
+                for item in plan:
+                    context = ExecutionContext.from_dict(owned[item["id"]]["execution_context"])
+                    project = owned[item["id"]]["project"]
+                    roots = (
+                        (
+                            context.paths.output_project(project) / "derivatives",
+                            registry.paths.control,
                         )
-                        for raw in item[kind]:
-                            path = Path(raw)
-                            targets[path] = next(
-                                root for root in roots if _is_removal_within(path, root)
-                            )
-                    groups.append((counter, targets))
-                total_paths = sum(len(targets) for _counter, targets in groups)
-                completed_paths = 0
-                report("Removing artifact paths", 0, total_paths)
-                for counter, targets in groups:
-                    for path in sorted(targets, key=lambda value: len(value.parts)):
-                        counts[counter] += int(
-                            _remove_path(
-                                path,
-                                dry_run=dry_run,
-                                prune_root=targets[path],
-                            )
+                        if kind == "public"
+                        else (context.paths.private_project(project) / "derivatives",)
+                    )
+                    for raw in item[kind]:
+                        path = Path(raw)
+                        targets[path] = next(
+                            root for root in roots if _is_removal_within(path, root)
                         )
-                        completed_paths += 1
-                        if completed_paths % 25 == 0 or completed_paths == total_paths:
-                            report("Removing artifact paths", completed_paths, total_paths)
-                if not dry_run:
+                groups.append((counter, targets))
+            total_paths = sum(len(targets) for _counter, targets in groups)
+            completed_paths = 0
+            report("Removing artifact paths", 0, total_paths)
+            for counter, targets in groups:
+                for path in sorted(targets, key=lambda value: len(value.parts)):
+                    counts[counter] += int(
+                        _remove_path(
+                            path,
+                            dry_run=dry_run,
+                            prune_root=targets[path],
+                        )
+                    )
+                    completed_paths += 1
+                    if completed_paths % 25 == 0 or completed_paths == total_paths:
+                        report("Removing artifact paths", completed_paths, total_paths)
+            if not dry_run:
+                with registry.connection(write=True) as db:
                     db.executemany(
                         "UPDATE work_items SET artifact_state='missing',artifact_reason='Purged by user',updated_at=? WHERE id=?",
                         [(utcnow(), work_item_id) for work_item_id in ids],

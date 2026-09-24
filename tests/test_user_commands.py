@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 import subprocess
@@ -51,14 +52,15 @@ def test_run_cpu_override() -> None:
 
 
 def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
-    from nro.orchestration import scheduler_bus, scheduler_client
+    from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
-    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    active = {"token": "token", "port": 1}
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler_rpc, "request", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
+    )
     with pytest.raises(RuntimeError, match="did not respond within 0.01 seconds"):
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0.01)
 
@@ -69,18 +71,25 @@ def test_scheduler_exchange_does_not_time_out_while_slurm_controller_is_pending(
     from nro.orchestration import scheduler_bus, scheduler_client
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    responses = iter((None, None, {"result": {"ok": True}}))
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: next(responses))
+    active = {
+        "protocol": 1,
+        "token": "token",
+        "generation": 2,
+        "host": "node.example",
+        "port": 41000,
+    }
+    states = iter((None, None, active))
     monkeypatch.setattr(
         scheduler_bus,
         "read_launch",
         lambda *_args: {"token": "launch", "job_id": "12345"},
     )
-    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
-    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: next(states, active))
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_rpc.request",
+        lambda *_args, **_kwargs: {"result": {"ok": True}},
+    )
     monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0) == {"ok": True}
@@ -92,30 +101,25 @@ def test_scheduler_exchange_times_out_if_local_controller_does_not_activate(
     from nro.orchestration import scheduler_bus, scheduler_client
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
     monkeypatch.setattr(
         scheduler_bus,
         "read_launch",
         lambda *_args: {"token": "launch", "job_id": "local-123"},
     )
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
 
     with pytest.raises(RuntimeError, match="did not respond within 0 seconds"):
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0)
 
 
 def test_scheduler_exchange_reports_malformed_response(monkeypatch, tmp_path) -> None:
-    from nro.orchestration import scheduler_bus, scheduler_client
+    from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: {"unexpected": True})
-    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"token": "x", "port": 1})
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(scheduler_rpc, "request", lambda *_args, **_kwargs: {"unexpected": True})
     with pytest.raises(RuntimeError, match="malformed response"):
         scheduler_client.exchange(endpoint, {"operation": "status"})
 
@@ -124,25 +128,21 @@ def test_scheduler_exchange_reports_startup_failure(monkeypatch, tmp_path) -> No
     from nro.orchestration import scheduler_bus, scheduler_client
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: {"token": "launch"})
     monkeypatch.setattr(
         scheduler_bus,
         "read_startup_error",
         lambda *_args: {"error": "database is locked"},
     )
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
     with pytest.raises(RuntimeError, match="could not start: database is locked"):
         scheduler_client.exchange(endpoint, {"operation": "status"})
 
 
 def test_scheduler_exchange_preserves_keyboard_interrupt(monkeypatch, tmp_path) -> None:
-    from nro.orchestration import scheduler_bus, scheduler_client
+    from nro.orchestration import scheduler_client
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
     monkeypatch.setattr(
         scheduler_client,
         "_ensure_coordinator",
@@ -175,7 +175,8 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
     process = SimpleNamespace(
         pid=123,
         returncode=0,
-        communicate=lambda timeout=None: ("", ""),
+        stdin=io.StringIO(),
+        communicate=lambda timeout=None: ('{"result":{"ok":true}}', ""),
     )
     monkeypatch.setattr(
         scheduler_client.subprocess,
@@ -190,7 +191,8 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
         ),
     )
 
-    assert scheduler_client._run_once(endpoint)
+    record = scheduler_bus.create_message({"operation": "status"})
+    assert scheduler_client._run_once(endpoint, record) == {"result": {"ok": True}}
     assert calls["job"] == "local-123"
     assert "--once" in calls["command"]
     assert calls["kwargs"]["env"]["NRO_PROCESS_ROLE"] == "scheduler"
@@ -240,7 +242,8 @@ def test_regular_one_shot_coordinator_clears_maintenance_identity(monkeypatch, t
     process = SimpleNamespace(
         pid=123,
         returncode=0,
-        communicate=lambda timeout=None: ("", ""),
+        stdin=io.StringIO(),
+        communicate=lambda timeout=None: ('{"result":null}', ""),
     )
     monkeypatch.setattr(
         scheduler_client.subprocess,
@@ -248,7 +251,8 @@ def test_regular_one_shot_coordinator_clears_maintenance_identity(monkeypatch, t
         lambda command, **kwargs: calls.update(command=command, kwargs=kwargs) or process,
     )
 
-    assert scheduler_client._run_once(endpoint)
+    record = scheduler_bus.create_message({"operation": "status"})
+    assert scheduler_client._run_once(endpoint, record) == {"result": None}
     assert "NRO_SCHEDULER_MAINTENANCE" not in calls["kwargs"]["env"]
 
 
@@ -256,7 +260,7 @@ def test_direct_exchange_uses_live_endpoint_without_launch(monkeypatch, tmp_path
     from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
-    record = {"id": "abc", "payload": {"operation": "status"}}
+    record = scheduler_bus.create_message({"operation": "status"})
     active = {
         "protocol": 1,
         "token": "token",
@@ -264,12 +268,10 @@ def test_direct_exchange_uses_live_endpoint_without_launch(monkeypatch, tmp_path
         "host": "node.example",
         "port": 41000,
     }
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: record)
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: None)
+    monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler_rpc, "request", lambda got, sent, **_kwargs: {"result": sent})
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}) == record
@@ -288,24 +290,23 @@ def test_direct_exchange_recovers_committed_response_after_connection_loss(
         "host": "node.example",
         "port": 41000,
     }
-    responses = iter((None, {"result": {"committed": True}}))
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: next(responses))
+    record = scheduler_bus.create_message({"operation": "status"})
+    responses = iter(({"pending": record["id"]}, {"result": {"committed": True}}))
+    monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         scheduler_rpc,
         "request",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("lost")),
+        lambda *_args, **_kwargs: next(responses),
     )
     monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}) == {"committed": True}
 
 
-def test_durable_purge_waits_for_live_service_to_process_journal(monkeypatch, tmp_path) -> None:
+def test_durable_purge_uses_direct_retryable_request(monkeypatch, tmp_path) -> None:
     from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
 
     endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
@@ -316,21 +317,17 @@ def test_durable_purge_waits_for_live_service_to_process_journal(monkeypatch, tm
         "host": "node.example",
         "port": 41000,
     }
-    responses = iter((None, {"result": {"removed": 12}}))
-    monkeypatch.setattr(scheduler_bus, "publish_message", lambda *_args, **_kwargs: "abc")
-    monkeypatch.setattr(scheduler_bus, "consume_message", lambda *_args: {"id": "abc"})
-    monkeypatch.setattr(scheduler_bus, "read_response", lambda *_args: next(responses))
-    monkeypatch.setattr(scheduler_bus, "message_path", lambda *_args: tmp_path / "absent")
+    record = scheduler_bus.create_message({"operation": "purge"})
+    responses = iter(({"pending": record["id"]}, {"result": {"removed": 12}}))
+    monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
-    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         scheduler_rpc,
         "request",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("a durable purge bypassed the scheduler journal")
-        ),
+        lambda *_args, **_kwargs: next(responses),
     )
 
     result = scheduler_client.exchange(endpoint, {"operation": "purge"})

@@ -54,7 +54,7 @@ class WorkerSchedulerClient:
                 "sequence": self.sequence,
                 **fields,
             },
-            timeout=300.0,
+            timeout=10.0 if not durable else 300.0,
             require_service=True,
             durable=durable,
         )

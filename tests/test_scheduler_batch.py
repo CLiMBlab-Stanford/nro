@@ -154,6 +154,12 @@ def test_status_uses_mixed_contract_assessment_for_every_checkout(monkeypatch, t
     scheduler_operations.status(registry, checkout=feature, mode="verify")
 
     assert assessed == [
-        (registry, {"compiled": False, "recover_public": True}),
-        (registry, {"compiled": False, "recover_public": True}),
+        (
+            registry,
+            {"work_item_ids": set(), "compiled": False, "recover_public": True},
+        ),
+        (
+            registry,
+            {"work_item_ids": set(), "compiled": False, "recover_public": True},
+        ),
     ]

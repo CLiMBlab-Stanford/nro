@@ -37,34 +37,13 @@ def prepare(control: Path) -> ControlPaths:
     """Create the shared exchange directories without opening the registry."""
     paths = ControlPaths(control)
     paths.require_current_layout()
-    for path in (
-        paths.service,
-        paths.service_inbox,
-        paths.service_responses,
-        paths.service_progress,
-    ):
+    for path in (paths.service, paths.service_progress):
         ensure_shared_directory(path)
         try:
             path.chmod(0o2775)
         except PermissionError:
             pass
     return paths
-
-
-def _shard(identifier: str) -> str:
-    return identifier.replace("-", "")[:2].lower()
-
-
-def message_path(control: Path, message_id: str) -> Path:
-    """Return the immutable inbox path for one validated message ID."""
-    message_id = _identifier(message_id, "message ID")
-    return ControlPaths(control).service_inbox / _shard(message_id) / f"{message_id}.json"
-
-
-def response_path(control: Path, message_id: str) -> Path:
-    """Return the response path for one validated message ID."""
-    message_id = _identifier(message_id, "message ID")
-    return ControlPaths(control).service_responses / f"{message_id}.json"
 
 
 def progress_path(control: Path, message_id: str) -> Path:
@@ -85,31 +64,6 @@ def create_message(payload: dict[str, Any], *, kind: str = "command") -> dict[st
         "host": socket.gethostname(),
         "payload": payload,
     }
-
-
-def publish_message(control: Path, payload: dict[str, Any], *, kind: str = "command") -> str:
-    """Publish one immutable recovery record and return its identity."""
-    paths = prepare(control)
-    record = create_message(payload, kind=kind)
-    target = message_path(paths.root, record["id"])
-    ensure_shared_directory(target.parent)
-    atomic_write_json(target, record, sort_keys=True, mode=0o664, durable=True)
-    return str(record["id"])
-
-
-def publish_response(control: Path, message_id: str, value: dict[str, Any]) -> None:
-    """Atomically publish the terminal response for a consumed message."""
-    path = response_path(control, message_id)
-    atomic_write_json(path, value, sort_keys=True, mode=0o664, durable=True)
-
-
-def read_response(control: Path, message_id: str) -> dict[str, Any] | None:
-    """Read a complete response, or return None while it is absent."""
-    path = response_path(control, message_id)
-    try:
-        return read_json(path)
-    except FileNotFoundError:
-        return None
 
 
 def publish_progress(
@@ -163,29 +117,6 @@ def clear_progress(control: Path, message_id: str) -> None:
     progress_path(control, message_id).unlink(missing_ok=True)
 
 
-def pending_messages(
-    control: Path, *, limit: int = 100, minimum_age: float = 1.0
-) -> tuple[Path, ...]:
-    """Return a bounded batch old enough to require filesystem recovery."""
-    root = ControlPaths(control).service_inbox
-    if not root.is_dir():
-        return ()
-    cutoff = time.time() - minimum_age
-    candidates = []
-    for path in root.glob("*/*.json"):
-        try:
-            if path.stat().st_mtime <= cutoff:
-                candidates.append(path)
-        except OSError:
-            continue
-    return tuple(sorted(candidates, key=lambda path: path.name)[:limit])
-
-
-def consume_message(path: Path) -> dict[str, Any]:
-    """Read and validate one immutable inbox record."""
-    return validate_message(read_json(path), expected_id=path.stem)
-
-
 def validate_message(record: Any, *, expected_id: str | None = None) -> dict[str, Any]:
     """Validate one durable or directly received scheduler record."""
     if (
@@ -199,15 +130,6 @@ def validate_message(record: Any, *, expected_id: str | None = None) -> dict[str
         raise ValueError(f"Invalid scheduler message: {expected_id or '<direct>'}")
     _identifier(record["id"], "message ID")
     return record
-
-
-def acknowledge_message(path: Path) -> None:
-    """Remove a message only after its registry effect and response are durable."""
-    path.unlink(missing_ok=True)
-    try:
-        path.parent.rmdir()
-    except OSError:
-        pass
 
 
 def read_active(control: Path) -> dict[str, Any] | None:
@@ -571,11 +493,10 @@ def clear_shutdown(control: Path) -> None:
 
 
 def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) -> None:
-    """Remove old responses, progress records, and controller files."""
+    """Remove old progress records and controller files."""
     paths = ControlPaths(control)
     cutoff = time.time() - age_seconds
     for path in (
-        *paths.service_responses.glob("*.json"),
         *paths.service_progress.glob("*.json"),
         *paths.service.glob("controller-*.sbatch"),
         *paths.service.glob("controller-local-*.log"),
