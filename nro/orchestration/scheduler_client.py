@@ -115,6 +115,23 @@ def _progress_notice(record: dict | None, fallback: str) -> str:
     return f"{phase}: {completed:,}/{total:,}..." if total else f"{phase}..."
 
 
+def _operation_notice(payload: dict) -> str:
+    """Describe scheduler work without exposing internal RPC operation names."""
+    operation = str(payload.get("operation") or "")
+    if operation == "admit_many":
+        return "Registering requested work..."
+    if operation == "supply_needed":
+        return "Checking worker capacity..."
+    if operation == "supply":
+        return "Requesting worker capacity..."
+    if operation == "status":
+        return "Updating scheduler status..."
+    if operation == "purge":
+        count = len(payload.get("plan", ()))
+        return f"Purging {count:,} work items..." if count else "Purging selected work..."
+    return "Interacting with the scheduler..."
+
+
 def _start_service(endpoint: SchedulerEndpoint) -> str | None:
     """Submit one controller when this caller wins the atomic launch claim."""
     from nro.configuration.site import settings
@@ -236,10 +253,7 @@ def _run_once(endpoint: SchedulerEndpoint, record: dict, *, durable: bool = True
         )
         process.stdin.close()
         process.stdin = None
-        operation = str(record["payload"].get("operation") or "request")
-        count = len(record["payload"].get("plan", ())) if operation == "purge" else 0
-        suffix = f" for {count:,} work items" if count else ""
-        notice_text = f"Applying {operation}{suffix}..."
+        notice_text = _operation_notice(record["payload"])
         started = time.monotonic()
         frame = 0
         notice = False

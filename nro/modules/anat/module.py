@@ -89,6 +89,7 @@ from .steps import (
     _create_inverse_affine_step,
     _create_label_mask_step,
     _create_metric_conversion_step,
+    _create_metric_structure_step,
     _create_midthickness_step,
     _create_mni_qc_image_step,
     _create_mni_registration_step,
@@ -1407,13 +1408,24 @@ def build_module(
                 if opts.lesion
                 else metric_output
             )
+            converted_metric_output = surface_work_dir / "metric_conversion" / metric_output.name
+            metric_structure = f"Cortex{'Left' if hemi_label == 'L' else 'Right'}"
             runner.add_step(
                 _create_metric_conversion_step(
                     metric=metric_source,
                     surface=white_source,
-                    output=generated_metric_output,
+                    output=converted_metric_output,
                     description=metric_description,
                     env=env,
+                    force=opts.overwrite,
+                )
+            )
+            runner.add_step(
+                _create_metric_structure_step(
+                    source=converted_metric_output,
+                    output=generated_metric_output,
+                    structure=metric_structure,
+                    description=metric_description,
                     force=opts.overwrite,
                 )
             )
@@ -1423,7 +1435,7 @@ def build_module(
                     {
                         "Hemisphere": hemi_label,
                         "Space": "fsnative",
-                        "AnatomicalStructurePrimary": "Cortex",
+                        "AnatomicalStructurePrimary": metric_structure,
                         "MetricType": metric_description,
                         "Sources": [str(metric_source), str(white_source)],
                     },

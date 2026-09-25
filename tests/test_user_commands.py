@@ -219,6 +219,26 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
     assert calls["kwargs"]["env"]["NRO_SCHEDULER_MAINTENANCE"] == "1"
 
 
+@pytest.mark.parametrize(
+    ("payload", "notice"),
+    [
+        ({"operation": "admit_many"}, "Registering requested work..."),
+        ({"operation": "supply_needed"}, "Checking worker capacity..."),
+        ({"operation": "supply"}, "Requesting worker capacity..."),
+        ({"operation": "status"}, "Updating scheduler status..."),
+        (
+            {"operation": "purge", "plan": [{"id": 1}, {"id": 2}]},
+            "Purging 2 work items...",
+        ),
+        ({"operation": "internal_name"}, "Interacting with the scheduler..."),
+    ],
+)
+def test_scheduler_operation_notices_are_user_facing(payload, notice) -> None:
+    from nro.orchestration.scheduler_client import _operation_notice
+
+    assert _operation_notice(payload) == notice
+
+
 def test_maintenance_command_marks_its_scheduler_endpoint(monkeypatch, tmp_path) -> None:
     from nro.orchestration import scheduler_client, scheduler_implementation
 

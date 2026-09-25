@@ -161,7 +161,7 @@ def manifest_anatomical_images(manifest: Path) -> tuple[Path, ...]:
 
 
 def manifest_lesion_qc_paths(manifest: Path) -> tuple[Path, ...]:
-    """Return lesion volumes and intact scaffold surfaces used for visual QC."""
+    """Return lesion volumes used for visual QC."""
 
     document = read_manifest(manifest)
     outputs = document.get("outputs")
@@ -170,7 +170,6 @@ def manifest_lesion_qc_paths(manifest: Path) -> tuple[Path, ...]:
     values = (
         outputs.get("lesion_mask"),
         outputs.get("inpainted_t1w"),
-        outputs.get("intact_surfaces"),
     )
     return tuple(path for path in manifest_paths(values, manifest) if is_viewable(path))
 

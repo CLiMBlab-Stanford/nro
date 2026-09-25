@@ -25,7 +25,7 @@ from nro.modules.anat.lesions import (
     validate_lesion_mask,
     validate_lesion_probability,
 )
-from nro.modules.anat.steps import _write_json_step
+from nro.modules.anat.steps import _create_metric_structure_step, _write_json_step
 
 
 def _nifti(path, data):
@@ -284,6 +284,9 @@ def test_surface_cut_removes_lesion_faces_and_compacts_vertices(tmp_path) -> Non
     mapping = tmp_path / "mapping.tsv"
     summary = tmp_path / "validity.json"
     _metric(source_metric, [10, 11, 12, 13, 14])
+    source_image = nib.load(str(source_metric))
+    source_image.meta["AnatomicalStructurePrimary"] = "CortexLeft"
+    nib.save(source_image, str(source_metric))
     step = create_cut_surfaces_step(
         scaffold_surface=surface,
         lesion_metric=lesion,
@@ -301,9 +304,30 @@ def test_surface_cut_removes_lesion_faces_and_compacts_vertices(tmp_path) -> Non
     cut_metric = nib.load(str(output_metric)).darrays[0].data
     assert cut_points.shape == (4, 3)
     assert cut_metric.tolist() == [10, 11, 12, 14]
+    assert nib.load(str(output_metric)).meta["AnatomicalStructurePrimary"] == "CortexLeft"
     assert mapping.read_text().splitlines()[-1] == "3\t4"
     assert step.validate is not None and step.validate()[0]
     assert '"ExcludedVertexCount": 1' in summary.read_text()
+
+
+def test_metric_structure_assignment_preserves_values(tmp_path) -> None:
+    source = tmp_path / "sulc.shape.gii"
+    output = tmp_path / "structured-sulc.shape.gii"
+    _metric(source, [1, 2, 3])
+    step = _create_metric_structure_step(
+        source=source,
+        output=output,
+        structure="CortexLeft",
+        description="sulcal depth",
+        force=False,
+    )
+
+    step.action()
+
+    image = nib.load(str(output))
+    assert image.meta["AnatomicalStructurePrimary"] == "CortexLeft"
+    assert image.darrays[0].data.tolist() == [1, 2, 3]
+    assert step.validate is not None and step.validate()[0]
 
 
 def test_inpainted_metadata_binds_synthetic_image_to_mask(tmp_path) -> None:

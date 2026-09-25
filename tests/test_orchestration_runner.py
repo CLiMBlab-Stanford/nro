@@ -1022,6 +1022,33 @@ def test_streaming_child_heartbeat_names_step_without_repeating_command(
     assert capsys.readouterr().out == "FreeSurfer output\n"
 
 
+def test_child_command_can_discard_verbose_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = Runner(
+        module_name="Quiet child module",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.quiet-child"),
+        next_step=count(1).__next__,
+    )
+    output = tmp_path / "complete.txt"
+
+    def execute() -> None:
+        runner.run_child(
+            ["bash", "-c", "printf verbose-output"],
+            discard_stdout=True,
+        )
+        output.write_text("complete")
+
+    runner.add_step(Step.python(name="Quiet child", outputs=(output,), action=execute))
+    with runner.run_context():
+        runner.execute()
+
+    assert output.read_text() == "complete"
+    assert capsys.readouterr().out == ""
+
+
 def test_module_dag_contract_rejects_topology_change_for_same_signature(
     tmp_path: Path,
 ) -> None:
