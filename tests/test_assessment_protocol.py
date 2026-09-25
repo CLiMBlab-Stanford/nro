@@ -320,9 +320,9 @@ def test_assessment_can_advance_contract_schema(graph):
     apply_assessment(registry, snapshot, AssessmentReport.from_dict(value))
 
     row = next(row for row in registry.work_item_rows() if row["id"] == ids["root"])
-    assert json.loads(row["artifact_contract_json"])["contract_schema"] == contract[
-        "contract_schema"
-    ]
+    assert (
+        json.loads(row["artifact_contract_json"])["contract_schema"] == contract["contract_schema"]
+    )
 
 
 def test_scheduler_defers_contended_assessment(graph, monkeypatch):
