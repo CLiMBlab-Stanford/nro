@@ -217,7 +217,7 @@ def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> No
     assert manifest_surface_families(manifest) == surfaces
 
 
-def test_lesion_manifest_selects_diagnostic_volumes_and_intact_surfaces(tmp_path: Path) -> None:
+def test_lesion_manifest_excludes_incompatible_intact_surfaces(tmp_path: Path) -> None:
     lesion = tmp_path / "sub-01_space-T1w_desc-lesion_mask.nii.gz"
     inpainted = tmp_path / "sub-01_space-T1w_desc-inpainted_T1w.nii.gz"
     intact = tmp_path / "sub-01_space-fsnative_hemi-L_desc-inpainted_white.surf.gii"
@@ -233,7 +233,7 @@ def test_lesion_manifest_selects_diagnostic_volumes_and_intact_surfaces(tmp_path
         encoding="utf-8",
     )
 
-    assert manifest_lesion_qc_paths(manifest) == (lesion, inpainted, intact)
+    assert manifest_lesion_qc_paths(manifest) == (lesion, inpainted)
 
     data, _surfaces, diagnostics = _collect(
         [
@@ -251,11 +251,10 @@ def test_lesion_manifest_selects_diagnostic_volumes_and_intact_surfaces(tmp_path
         ]
     )
     assert not data
-    assert tuple(source.path for source in diagnostics) == (lesion, inpainted, intact)
+    assert tuple(source.path for source in diagnostics) == (lesion, inpainted)
     assert tuple(source.role for source in diagnostics) == (
         "lesion_mask",
         "inpainted_anatomical",
-        "intact_surface_scaffold",
     )
 
 

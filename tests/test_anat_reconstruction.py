@@ -8,7 +8,11 @@ from nro.modules.anat.reconstruction import (
     SurfaceReconstructionResources,
     create_surface_reconstruction_plan,
 )
-from nro.modules.anat.steps import _create_recon_all_step
+from nro.modules.anat.steps import (
+    _create_recon_all_step,
+    _freesurfer_progress,
+    _FreeSurferProgressMonitor,
+)
 
 
 def _resources(tmp_path: Path) -> SurfaceReconstructionResources:
@@ -101,3 +105,28 @@ def test_fastsurfer_adapter_preserves_steps_and_ignores_unused_roles(tmp_path: P
     assert plan.steps == previous
     assert all(inputs.t2w not in step.inputs for step in plan.steps)
     assert all(inputs.brain_mask not in step.inputs for step in plan.steps)
+
+
+def test_freesurfer_progress_classifies_phase_and_hemisphere() -> None:
+    assert _freesurfer_progress("#@# Fix Topology lh Thu Sep 25 12:34:56 PDT 2026") == (
+        3,
+        "Fix Topology lh, left hemisphere",
+    )
+    assert _freesurfer_progress("#@# Surf Reg rh") == (
+        4,
+        "Surf Reg rh, right hemisphere",
+    )
+    assert _freesurfer_progress("#@# AParc-to-ASeg") == (6, "AParc-to-ASeg")
+    assert _freesurfer_progress("#@# ASeg Stats") == (7, "ASeg Stats")
+
+
+def test_freesurfer_progress_monitor_reads_native_status_log(tmp_path: Path, caplog) -> None:
+    status = tmp_path / "scripts" / "recon-all-status.log"
+    status.parent.mkdir(parents=True)
+    status.write_text("#@# Tessellate rh\n")
+
+    monitor = _FreeSurferProgressMonitor(tmp_path)
+    with caplog.at_level("INFO", logger="anat"):
+        monitor._consume()
+
+    assert "FreeSurfer 3/7: Tessellate rh, right hemisphere" in caplog.messages

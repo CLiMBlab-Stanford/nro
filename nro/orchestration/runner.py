@@ -1438,6 +1438,7 @@ class Runner:
         cwd: Optional[Path] = None,
         capture_stdout: bool = False,
         stream_output: bool = False,
+        discard_stdout: bool = False,
         timeout_seconds: Optional[float] = None,
         direct: bool = False,
     ) -> Optional[str]:
@@ -1446,12 +1447,16 @@ class Runner:
         Directory-producing tools often require several commands but still
         represent one atomic DAG node. These commands are logged beneath that
         Step and may not create independent, output-less pseudo-nodes.
+
+        Select at most one stdout mode. Captured output is returned, streamed
+        output is forwarded live, and discarded output is omitted from the
+        work-item log.
         """
         state = _RUNNER_EXECUTION.get()
         if state is None or len(state.active_steps) < 2:
             raise RuntimeError("Child commands require an active artifact step")
-        if capture_stdout and stream_output:
-            raise ValueError("A child command cannot both return and stream stdout")
+        if sum((capture_stdout, stream_output, discard_stdout)) > 1:
+            raise ValueError("A child command must use at most one stdout mode")
         active_step_name = state.active_steps[-1][1]
         if self._container is None or direct:
             full_cmd = list(cmd)
@@ -1515,15 +1520,27 @@ class Runner:
                 if return_code:
                     raise subprocess.CalledProcessError(return_code, full_cmd)
             else:
-                proc = subprocess.run(
-                    full_cmd,
-                    env=host_env,
-                    cwd=str(cwd) if cwd else None,
-                    text=True,
-                    capture_output=True,
-                    check=True,
-                    timeout=timeout_seconds,
-                )
+                if discard_stdout:
+                    proc = subprocess.run(
+                        full_cmd,
+                        env=host_env,
+                        cwd=str(cwd) if cwd else None,
+                        text=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        check=True,
+                        timeout=timeout_seconds,
+                    )
+                else:
+                    proc = subprocess.run(
+                        full_cmd,
+                        env=host_env,
+                        cwd=str(cwd) if cwd else None,
+                        text=True,
+                        capture_output=True,
+                        check=True,
+                        timeout=timeout_seconds,
+                    )
         except subprocess.CalledProcessError as error:
             for line in strip_ansi(error.stdout or "").splitlines():
                 if line.strip():

@@ -139,9 +139,7 @@ def _collect(
                     if path not in seen_lesion_qc:
                         seen_lesion_qc.add(path)
                         role = (
-                            "intact_surface_scaffold"
-                            if path.name.endswith(".surf.gii")
-                            else "lesion_mask"
+                            "lesion_mask"
                             if "_desc-lesion_mask." in path.name
                             else "inpainted_anatomical"
                         )

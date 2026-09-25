@@ -1,7 +1,11 @@
 """Build anatomical preprocessing steps and their validation helpers."""
 
+import logging
 import os
+import re
 import shutil
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -29,6 +33,189 @@ from .constants import (
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
 from .policy import FREESURFER_BUILD, FREESURFER_VERSION
+
+_FREESURFER_STATUS_TIMESTAMP = re.compile(
+    r"\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+"
+    r"\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\d{4}$"
+)
+
+
+def _freesurfer_progress(marker: str) -> tuple[int, str]:
+    marker = _FREESURFER_STATUS_TIMESTAMP.sub("", marker.removeprefix("#@# ").strip())
+    lowered = marker.lower()
+    hemisphere = ""
+    if re.search(r"(?:^|\s)lh(?:\s|$)", lowered):
+        hemisphere = ", left hemisphere"
+    elif re.search(r"(?:^|\s)rh(?:\s|$)", lowered):
+        hemisphere = ", right hemisphere"
+
+    if any(
+        token in lowered
+        for token in (
+            "em registration",
+            "ca normalize",
+            "ca reg",
+            "subcort seg",
+            "cc seg",
+            "merge aseg",
+            "intensity normalization2",
+            "mask bfs",
+            "wm segmentation",
+            "fill",
+        )
+    ):
+        phase = 2
+    elif any(
+        token in lowered
+        for token in ("tessellate", "smooth1", "inflation1", "qsphere", "fix topology")
+    ):
+        phase = 3
+    elif any(
+        token in lowered
+        for token in (
+            "cortical parc 2",
+            "cortical parc 3",
+            "cortical parcellation 2",
+            "cortical parcellation 3",
+            "relabel hypointensities",
+            "apas-to-aseg",
+            "aparc-to-aseg",
+            "wmparc",
+        )
+    ):
+        phase = 6
+    elif any(
+        token in lowered
+        for token in (
+            "smooth2",
+            "inflation2",
+            "curv .h and .k",
+            "sphere",
+            "surf reg",
+            "jacobian",
+            "avgcurv",
+            "cortical parc",
+        )
+    ):
+        phase = 4
+    elif any(
+        token in lowered
+        for token in (
+            "refine pial",
+            "white curv",
+            "pial curv",
+            "thickness",
+            "area and vertex vol",
+            "cortical ribbon",
+        )
+    ):
+        phase = 5
+    elif any(
+        token in lowered
+        for token in (
+            "motioncor",
+            "talairach",
+            "nu intensity",
+            "normalization",
+            "skull strip",
+            "t2/flair input",
+        )
+    ):
+        phase = 1
+    elif any(
+        token in lowered
+        for token in (
+            "parcellation stats",
+            "aseg stats",
+            "ba_exvivo",
+            "recon-all done",
+        )
+    ):
+        phase = 7
+    else:
+        phase = 1
+    return phase, f"{marker}{hemisphere}"
+
+
+def _format_progress_elapsed(seconds: float) -> str:
+    minutes = max(0, int(seconds)) // 60
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m"
+
+
+class _FreeSurferProgressMonitor:
+    def __init__(
+        self,
+        subject_dir: Path,
+        *,
+        poll_seconds: float = 2.0,
+        heartbeat_seconds: float = 300.0,
+    ) -> None:
+        self._status = subject_dir / "scripts" / "recon-all-status.log"
+        self._detail = subject_dir / "scripts" / "recon-all.log"
+        self._poll_seconds = poll_seconds
+        self._heartbeat_seconds = heartbeat_seconds
+        self._logger = logging.getLogger("anat")
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._seen = 0
+        self._current: tuple[int, str] | None = None
+        self._started = time.monotonic()
+        self._last_report = self._started
+
+    def __enter__(self) -> "_FreeSurferProgressMonitor":
+        self._logger.info("FreeSurfer detailed log: %s", self._detail)
+        self._thread = threading.Thread(
+            target=self._watch,
+            name="nro-freesurfer-progress",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(1.0, self._poll_seconds * 2))
+        self._consume()
+
+    def report(self, phase: int, detail: str) -> None:
+        if self._current is not None:
+            phase = max(phase, self._current[0])
+        self._current = (phase, detail)
+        self._last_report = time.monotonic()
+        self._logger.info("FreeSurfer %d/7: %s", phase, detail)
+
+    def _consume(self) -> None:
+        try:
+            lines = self._status.read_text(errors="replace").splitlines()
+        except OSError:
+            return
+        if len(lines) < self._seen:
+            self._seen = 0
+        new_lines = lines[self._seen :]
+        self._seen = len(lines)
+        for line in new_lines:
+            if line.startswith("#@# "):
+                self.report(*_freesurfer_progress(line))
+
+    def _watch(self) -> None:
+        while not self._stop.wait(self._poll_seconds):
+            self._consume()
+            now = time.monotonic()
+            if self._current is None or now - self._last_report < self._heartbeat_seconds:
+                continue
+            phase, detail = self._current
+            self._logger.info(
+                "FreeSurfer %d/7: %s; still running after %s",
+                phase,
+                detail,
+                _format_progress_elapsed(now - self._started),
+            )
+            self._last_report = now
 
 
 def _robust_template_command(
@@ -790,52 +977,54 @@ def _create_recon_all_step(
             "-autorecon1",
             "-noskullstrip",
         ]
-        run_child(container_command(first), direct=True, env=env, stream_output=True)
-        mask_arg = f"NRO:{brain_mask}"
-        conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
-        brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
-        conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
-        run_child(
-            container_command(
-                [
-                    "mri_vol2vol",
-                    "--mov",
-                    mask_arg,
-                    "--targ",
-                    conformed_t1,
-                    "--regheader",
-                    "--interp",
-                    "nearest",
-                    "--o",
-                    conformed_mask,
-                    "--no-save-reg",
-                ]
-            ),
-            direct=True,
-            env=env,
-            stream_output=True,
-        )
-        run_child(
-            container_command(["mri_mask", conformed_t1, conformed_mask, brainmask_auto]),
-            direct=True,
-            env=env,
-            stream_output=True,
-        )
-        shutil.copy2(
-            subject_dir / "mri" / "brainmask.auto.mgz",
-            subject_dir / "mri" / "brainmask.mgz",
-        )
-        second = [
-            "recon-all",
-            "-sd",
-            "/subjects",
-            "-subjid",
-            fs_subject,
-        ]
-        if t2w is not None and t1w is not None:
-            second += ["-T2", f"NRO:{t2w}", "-T2pial"]
-        second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
-        run_child(container_command(second), direct=True, env=env, stream_output=True)
+        with _FreeSurferProgressMonitor(subject_dir) as progress:
+            run_child(container_command(first), direct=True, env=env, discard_stdout=True)
+            progress.report(2, "applying external brain mask")
+            mask_arg = f"NRO:{brain_mask}"
+            conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
+            brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
+            conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
+            run_child(
+                container_command(
+                    [
+                        "mri_vol2vol",
+                        "--mov",
+                        mask_arg,
+                        "--targ",
+                        conformed_t1,
+                        "--regheader",
+                        "--interp",
+                        "nearest",
+                        "--o",
+                        conformed_mask,
+                        "--no-save-reg",
+                    ]
+                ),
+                direct=True,
+                env=env,
+                discard_stdout=True,
+            )
+            run_child(
+                container_command(["mri_mask", conformed_t1, conformed_mask, brainmask_auto]),
+                direct=True,
+                env=env,
+                discard_stdout=True,
+            )
+            shutil.copy2(
+                subject_dir / "mri" / "brainmask.auto.mgz",
+                subject_dir / "mri" / "brainmask.mgz",
+            )
+            second = [
+                "recon-all",
+                "-sd",
+                "/subjects",
+                "-subjid",
+                fs_subject,
+            ]
+            if t2w is not None and t1w is not None:
+                second += ["-T2", f"NRO:{t2w}", "-T2pial"]
+            second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
+            run_child(container_command(second), direct=True, env=env, discard_stdout=True)
         if not _recon_valid(subject_dir):
             raise SystemExit(f"recon-all completed without a valid output set under: {subject_dir}")
 
@@ -1007,6 +1196,64 @@ def _create_metric_conversion_step(
         outputs=(output,),
         inputs=(metric, surface),
         force=force,
+    )
+
+
+def _create_metric_structure_step(
+    *,
+    source: Path,
+    output: Path,
+    structure: str,
+    description: str,
+    force: bool,
+) -> Step:
+    """Assign a cortical hemisphere to a converted GIFTI metric."""
+
+    def action() -> None:
+        import nibabel as nib  # type: ignore
+
+        image = nib.load(str(source))
+        if not isinstance(image, nib.GiftiImage):
+            raise ValueError(f"Expected a GIFTI metric: {source}")
+        image.meta["AnatomicalStructurePrimary"] = structure
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(f".partial-{output.name}")
+        temporary.unlink(missing_ok=True)
+        nib.save(image, str(temporary))
+        os.replace(temporary, output)
+
+    def validate() -> tuple[bool, str]:
+        try:
+            import nibabel as nib  # type: ignore
+            import numpy as np
+
+            source_image = nib.load(str(source))
+            output_image = nib.load(str(output))
+            if not isinstance(source_image, nib.GiftiImage) or not isinstance(
+                output_image, nib.GiftiImage
+            ):
+                raise ValueError("source or output is not GIFTI")
+            if output_image.meta.get("AnatomicalStructurePrimary") != structure:
+                raise ValueError(f"output is not assigned to {structure}")
+            if len(source_image.darrays) != len(output_image.darrays) or any(
+                not np.array_equal(source_array.data, output_array.data)
+                for source_array, output_array in zip(
+                    source_image.darrays, output_image.darrays, strict=True
+                )
+            ):
+                raise ValueError("metric data changed while assigning its structure")
+        except (OSError, ValueError, TypeError, nib.filebasedimages.ImageFileError) as error:
+            return False, f"Structured {description} metric is absent or invalid: {error}"
+        return True, f"{description.title()} metric is assigned to {structure}."
+
+    return Step.python(
+        name=f"Assign {description.title()} Metric Structure",
+        inputs=(source,),
+        outputs=(output,),
+        action=action,
+        validate=validate,
+        force=force,
+        parameters={"anatomical_structure_primary": structure},
     )
 
 

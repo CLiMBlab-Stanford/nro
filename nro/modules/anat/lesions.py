@@ -716,11 +716,17 @@ def create_cut_surfaces_step(
                 points, faces, _ = _surface_arrays(path)
                 if points.shape[0] != retained.size or not np.array_equal(faces, triangles):
                     raise ValueError(f"Cut surface has inconsistent compact topology: {path}")
-            for path in metrics.values():
+            for source, path in metrics.items():
+                source_image = nib.load(str(source))
                 image = nib.load(str(path))
-                if not isinstance(image, nib.GiftiImage) or any(
-                    np.asarray(array.data).shape[0] != retained.size for array in image.darrays
+                if not isinstance(source_image, nib.GiftiImage) or not isinstance(
+                    image, nib.GiftiImage
                 ):
+                    raise ValueError(f"Cut metric source or output is not GIFTI: {path}")
+                structure = source_image.meta.get("AnatomicalStructurePrimary")
+                if not structure or image.meta.get("AnatomicalStructurePrimary") != structure:
+                    raise ValueError(f"Cut metric lost its anatomical structure: {path}")
+                if any(np.asarray(array.data).shape[0] != retained.size for array in image.darrays):
                     raise ValueError(f"Cut metric has inconsistent vertex count: {path}")
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             return False, f"Cut-surface publication is absent or invalid: {error}"
