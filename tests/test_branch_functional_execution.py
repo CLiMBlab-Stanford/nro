@@ -236,6 +236,7 @@ def test_lesion_anatomy_masks_template_surface_outputs(functional_case):
         {
             "inpainted_t1w": str(inpainted),
             "inpainted_t1w_metadata": str(image),
+            "intact_surfaces": {"lh.white": str(image)},
             "lesion_mask": str(image),
             "lesion_metadata": str(image),
             "lesion_probability": str(image),
