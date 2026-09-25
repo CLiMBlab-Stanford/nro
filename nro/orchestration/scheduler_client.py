@@ -407,9 +407,13 @@ def exchange(
             if notice:
                 sys.stderr.write(_CLEAR)
                 sys.stderr.flush()
-            raise SchedulerError(
-                f"Central scheduler did not respond within {timeout:g} seconds; "
+            disposition = (
                 f"request {message_id} remains recorded"
+                if durable
+                else f"non-durable request {message_id} did not complete"
+            )
+            raise SchedulerError(
+                f"Central scheduler did not respond within {timeout:g} seconds; {disposition}"
             )
         if now - last_recovery_check >= 5.0:
             service_available = _ensure_coordinator(

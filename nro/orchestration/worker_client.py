@@ -170,8 +170,8 @@ class WorkerSchedulerClient:
         return self._call("cancel_failed_descendants", work_item_id=work_item_id)
 
     def runner_graph_signature(self, work_item_id: int) -> str:
-        """Return the current transitive graph signature for an work item."""
-        return str(self._call("runner_graph_signature", work_item_id=work_item_id, durable=False))
+        """Return the current transitive graph signature for a work item."""
+        return str(self._call("runner_graph_signature", work_item_id=work_item_id))
 
     def attempt_summary(self, attempt_id: int) -> str:
         """Return a concise summary of an attempt's saved state."""

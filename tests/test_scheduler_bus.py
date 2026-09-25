@@ -172,6 +172,26 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][1]["timeout"] == 10.0
 
 
+def test_worker_graph_signature_uses_durable_rpc(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client.endpoint = SimpleNamespace()
+    client.worker_id = "worker"
+    client.token = "token"
+    client.sequence = 0
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.worker_client.exchange",
+        lambda _endpoint, message, **options: calls.append((message, options)) or "signature",
+    )
+
+    assert client.runner_graph_signature(17) == "signature"
+    assert calls[0][0]["action"] == "runner_graph_signature"
+    assert calls[0][0]["work_item_id"] == 17
+    assert calls[0][1]["durable"] is True
+    assert calls[0][1]["require_service"] is True
+    assert calls[0][1]["timeout"] == 300.0
+
+
 def test_worker_resource_step_claim_uses_bound_worker_identity(monkeypatch) -> None:
     client = object.__new__(WorkerSchedulerClient)
     client.worker_id = "gpu-worker"
