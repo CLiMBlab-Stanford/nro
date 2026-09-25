@@ -310,7 +310,7 @@ def apply_assessment(
                 return {
                     key: value
                     for key, value in contract.items()
-                    if key not in {"configuration", "processing"}
+                    if key not in {"configuration", "contract_schema", "processing"}
                 }
 
             if fixed(original) != fixed(update["contract"]):
