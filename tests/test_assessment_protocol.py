@@ -309,6 +309,22 @@ def test_assessment_cannot_redirect_outputs(graph):
         apply_assessment(registry, snapshot, AssessmentReport.from_dict(value))
 
 
+def test_assessment_can_advance_contract_schema(graph):
+    registry, _, ids = graph
+    snapshot = capture_assessment(registry, work_item_ids=[ids["root"]])
+    value = manifests.evaluate_assessment(snapshot).as_dict()
+    contract = json.loads(snapshot.work_items[0]["artifact_contract_json"])
+    contract["contract_schema"] += 1
+    value["updates"][0]["contract"] = contract
+
+    apply_assessment(registry, snapshot, AssessmentReport.from_dict(value))
+
+    row = next(row for row in registry.work_item_rows() if row["id"] == ids["root"])
+    assert json.loads(row["artifact_contract_json"])["contract_schema"] == contract[
+        "contract_schema"
+    ]
+
+
 def test_scheduler_defers_contended_assessment(graph, monkeypatch):
     from nro.orchestration import scheduler_maintenance
 
