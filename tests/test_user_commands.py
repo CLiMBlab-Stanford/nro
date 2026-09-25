@@ -66,6 +66,25 @@ def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0.01)
 
 
+def test_scheduler_exchange_describes_non_durable_timeout(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"token": "token", "port": 1})
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler_rpc, "request", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
+    )
+
+    with pytest.raises(RuntimeError, match="non-durable request .* did not complete"):
+        scheduler_client.exchange(
+            endpoint,
+            {"operation": "status"},
+            timeout=0,
+            durable=False,
+        )
+
+
 def test_scheduler_exchange_does_not_time_out_while_slurm_controller_is_pending(
     monkeypatch, tmp_path
 ) -> None:
