@@ -38,12 +38,12 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 6
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 7
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=6), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=7), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
@@ -102,7 +102,7 @@ def test_freesurfer_contract_survives_introduction_of_engine_selector() -> None:
         "processing": processing,
     }
     new_contract = {
-        "contract_schema": 6,
+        "contract_schema": 7,
         "module": "anat",
         "configuration": new_fingerprint,
         "processing": processing,
@@ -234,6 +234,32 @@ def test_decoupled_lesion_reconstruction_invalidates_only_lesion_anatomy() -> No
     assert migrated_ordinary_v5 == migrated_ordinary_v6
     assert migrated_lesion_v5 != migrated_lesion_v6
     assert migrated_lesion_v5["processing"]["lesion_reconstruction"]["pipeline"] == (INDETERMINATE)
+
+
+def test_whole_brain_reconstruction_mask_invalidates_only_lesion_anatomy() -> None:
+    ordinary_v6 = _anat_contract(version=6, lesion=False)
+    ordinary_v7 = _anat_contract(version=7, lesion=False)
+    lesion_v6 = _anat_contract(version=6, lesion=True)
+    lesion_v6["processing"]["lesion_reconstruction"] = {
+        "pipeline": "inpainting_surface_reconstruction_excision"
+    }
+    lesion_v7 = _anat_contract(version=7, lesion=True)
+    lesion_v7["processing"]["lesion_reconstruction"] = {
+        "pipeline": "inpainting_surface_reconstruction_excision",
+        "reconstruction_brain_mask": "whole_brain_reference",
+    }
+
+    migrated_ordinary_v6, _ = migrate_contract(ordinary_v6)
+    migrated_ordinary_v7, _ = migrate_contract(ordinary_v7)
+    migrated_lesion_v6, _ = migrate_contract(lesion_v6)
+    migrated_lesion_v7, _ = migrate_contract(lesion_v7)
+
+    assert migrated_ordinary_v6 == migrated_ordinary_v7
+    assert migrated_lesion_v6 != migrated_lesion_v7
+    assert (
+        migrated_lesion_v6["processing"]["lesion_reconstruction"]["reconstruction_brain_mask"]
+        == "neurolit_lesion_mask"
+    )
 
 
 def test_add_field_distinguishes_current_default_from_historical_value() -> None:

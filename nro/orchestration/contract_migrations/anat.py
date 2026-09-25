@@ -112,5 +112,16 @@ CHAIN = ContractMigrationChain(
                 ),
             ),
         ),
+        ContractMigration(
+            destination=7,
+            summary="Use the whole-brain mask for lesion-aware surface reconstruction",
+            contract=(
+                AddField(
+                    "processing.lesion_reconstruction.reconstruction_brain_mask",
+                    default="whole_brain_reference",
+                    historical="neurolit_lesion_mask",
+                ),
+            ),
+        ),
     ),
 )

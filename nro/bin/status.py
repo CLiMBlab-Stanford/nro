@@ -58,6 +58,18 @@ def _terminal_colors_enabled() -> bool:
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
+def _format_elapsed(seconds: float | int | None) -> str:
+    """Format cumulative execution seconds in a fixed-width clock form."""
+    if seconds is None:
+        return "-"
+    total = max(0, int(float(seconds)))
+    days, remainder = divmod(total, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    clock = f"{hours:02}:{minutes:02}:{seconds:02}"
+    return f"{days}-{clock}" if days else clock
+
+
 def _work_item_identifier(item: dict) -> str:
     entities = item.get("entities", "")
     if isinstance(entities, dict):
@@ -82,7 +94,7 @@ def _render_report(
         _paint(
             f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} "
             f"{'LINEAGE':{lineage_width}} "
-            f"{'STATUS':12} {'MEM':8} ENTITIES",
+            f"{'STATUS':12} {'ELAPSED':12} {'MEM':8} ENTITIES",
             _BOLD + _CYAN,
             color=color,
         )
@@ -98,9 +110,11 @@ def _render_report(
             color=color,
         )
         lineage = str(row.get("lineage") or "-")
+        elapsed = _format_elapsed(row.get("elapsed_seconds"))
         lines.append(
             f"{row['project'][:14]:14} {row['participant'][:14]:14} "
             f"{row['module'][:20]:20} {lineage:{lineage_width}} {status_column} "
+            f"{elapsed:12} "
             f"{str(row['memory_gb']) + 'G':8} "
             f"{_paint(entities, _DIM, color=color)}"
         )
@@ -383,6 +397,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 if row.get("workflow_ids")
                 else [],
                 "status": row["status"],
+                "elapsed_seconds": row.get("elapsed_seconds"),
                 "reason": (
                     "No current workflow selects this module lineage"
                     if row["status"] == "Unavailable"

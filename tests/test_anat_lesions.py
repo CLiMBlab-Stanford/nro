@@ -226,6 +226,7 @@ def test_neurolit_inpainting_uses_pinned_read_only_model_data(tmp_path, monkeypa
     assert plan.step.validate is not None and plan.step.validate()[0]
     assert all(output.stat().st_mtime_ns >= t1w.stat().st_mtime_ns for output in plan.step.outputs)
     assert plan.image.name == "inpainted.lit.nii.gz"
+    assert plan.conformed_lesion_mask.name == "mask.lit.nii.gz"
     assert lesion_reconstruction_contract()["pipeline"] == (
         "inpainting_surface_reconstruction_excision"
     )
@@ -338,4 +339,5 @@ def test_lesion_output_contract_extends_only_lesion_artifacts() -> None:
     assert "outputs.lesion_mask" not in ordinary["publication_manifest_fields"]
     assert lesion["publication_manifest_fields"]["outputs.lesion_mask"] == "string"
     assert lesion["publication_manifest_fields"]["outputs.lesion_qc"] == "string"
+    assert lesion["publication_manifest_fields"]["outputs.intact_surfaces"] == "mapping"
     assert lesion["publication_manifest_fields"]["outputs.surface_validity"] == "mapping"
