@@ -306,6 +306,8 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     assert inpainting_step.scientific_signature
     reconstruction = next(step for step in graph.steps if step.name == "FreeSurfer Recon-All")
     assert any(path.name == "inpainted.lit.nii.gz" for path in reconstruction.inputs)
+    assert any(path.name.endswith("desc-brain_mask.nii.gz") for path in reconstruction.inputs)
+    assert not any(path.name == "mask.lit.nii.gz" for path in reconstruction.inputs)
     assert any(
         "selectedBiasCorrected" in path.name for step in graph.steps for path in step.outputs
     )
@@ -315,6 +317,7 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     assert any("surfaceVertexMapping" in str(path) for path in manifest.inputs)
     assert any("surfaceValidity" in str(path) for path in manifest.inputs)
     assert any("lesionReconstruction_summary" in str(path) for path in manifest.inputs)
+    assert any("desc-inpainted_pial.surf.gii" in str(path) for path in manifest.inputs)
 
     fastsurfer_graph = anat.build_module(
         anat.Inputs(

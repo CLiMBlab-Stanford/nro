@@ -160,6 +160,21 @@ def manifest_anatomical_images(manifest: Path) -> tuple[Path, ...]:
     )
 
 
+def manifest_lesion_qc_paths(manifest: Path) -> tuple[Path, ...]:
+    """Return lesion volumes and intact scaffold surfaces used for visual QC."""
+
+    document = read_manifest(manifest)
+    outputs = document.get("outputs")
+    if not isinstance(outputs, dict):
+        return ()
+    values = (
+        outputs.get("lesion_mask"),
+        outputs.get("inpainted_t1w"),
+        outputs.get("intact_surfaces"),
+    )
+    return tuple(path for path in manifest_paths(values, manifest) if is_viewable(path))
+
+
 def template_surface_family(paths: tuple[Path, ...], space: str) -> tuple[Path, ...]:
     """Resolve template display geometry from cortical imaging outputs."""
 

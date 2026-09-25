@@ -44,6 +44,7 @@ def lesion_reconstruction_contract() -> dict[str, object]:
         "neurolit_version": NEUROLIT_VERSION,
         "neurolit_record": NEUROLIT_RECORD,
         "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
+        "reconstruction_brain_mask": "whole_brain_reference",
         "boundary_margin_mm": BOUNDARY_MARGIN_MM,
         "face_exclusion": "any_lesion_vertex",
     }

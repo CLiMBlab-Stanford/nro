@@ -201,6 +201,23 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     assert resumed is not None
     assert resumed.work_item_id == parent.work_item_id
     assert resumed.completed_resource_steps == ("neurolit-inpainting",)
+    with registry.connection(write=True) as database:
+        attempts = database.execute(
+            "SELECT id FROM attempts WHERE work_item_id=? ORDER BY id",
+            (parent.work_item_id,),
+        ).fetchall()
+        intervals = (
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:01:00+00:00"),
+            ("2026-01-01T00:02:00+00:00", "2026-01-01T00:04:00+00:00"),
+            ("2026-01-01T00:05:00+00:00", "2026-01-01T00:05:30+00:00"),
+        )
+        for attempt, (started, completed) in zip(attempts, intervals, strict=True):
+            database.execute(
+                "UPDATE attempts SET started_at=?,completed_at=? WHERE id=?",
+                (started, completed, int(attempt["id"])),
+            )
+
+    assert registry.work_item_rows()[0]["elapsed_seconds"] == pytest.approx(210, abs=0.01)
 
 
 def test_user_cancelled_resource_step_reports_stopped(tmp_path: Path) -> None:

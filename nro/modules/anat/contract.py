@@ -58,6 +58,7 @@ LESION_MANIFEST_FIELDS = {
     "lesion.boundary_margin_mm": "number",
     "outputs.inpainted_t1w": "string",
     "outputs.inpainted_t1w_metadata": "string",
+    "outputs.intact_surfaces": "mapping",
     "outputs.lesion_mask": "string",
     "outputs.lesion_metadata": "string",
     "outputs.lesion_probability": "string",

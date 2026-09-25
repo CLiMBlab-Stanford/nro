@@ -19,7 +19,7 @@ from nro.bin.run import (
 )
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
-from nro.bin.status import _render_report
+from nro.bin.status import _format_elapsed, _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
@@ -566,7 +566,7 @@ def test_status_report_pages_only_interactive_output(monkeypatch, capsys) -> Non
     report = _render_report([])
     assert report == (
         f"{'PROJECT':14} {'PARTICIPANT':14} {'MODULE':20} {'LINEAGE':20} "
-        f"{'STATUS':12} {'MEM':8} ENTITIES\n"
+        f"{'STATUS':12} {'ELAPSED':12} {'MEM':8} ENTITIES\n"
     )
     page_text(report, use_pager=False)
     assert capsys.readouterr().out == report
@@ -649,6 +649,7 @@ def test_status_report_colors_statuses_without_changing_column_width() -> None:
                 "route": [{"module": "anat", "config": "main"}],
                 "workflows": ["main"],
                 "status": "Success",
+                "elapsed_seconds": 90061.9,
                 "memory_gb": 32,
                 "entities": {},
             },
@@ -669,9 +670,16 @@ def test_status_report_colors_statuses_without_changing_column_width() -> None:
     assert "\x1b[1m\x1b[96mPROJECT" in report
     assert "\x1b[92mSuccess     \x1b[0m" in report
     assert "\x1b[91m\x1b[1mError       \x1b[0m" in report
+    assert "1-01:01:01" in report
     assert "\x1b[2mtask=rest\x1b[0m" in report
     assert "Route: anat=main" in report
     assert "Workflows: main" in report
+
+
+def test_status_elapsed_clock_handles_missing_and_subday_values() -> None:
+    assert _format_elapsed(None) == "-"
+    assert _format_elapsed(0.9) == "00:00:00"
+    assert _format_elapsed(3661.9) == "01:01:01"
 
 
 def test_status_work_item_details_are_opt_in() -> None:

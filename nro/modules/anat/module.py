@@ -53,7 +53,6 @@ from .constants import (
     _FREESURFER_GRAY_MATTER_SEGMENTATIONS,
     _FREESURFER_SUBCORTICAL_SEGMENTATIONS,
 )
-from .fastsurfer import create_fastsurfer_steps
 from .lesion_policy import (
     BOUNDARY_MARGIN_MM,
     MASKER_MODEL,
@@ -76,6 +75,11 @@ from .policy import (
     bias_correction_contract,
     surface_reconstruction_contract,
 )
+from .reconstruction import (
+    SurfaceReconstructionInputs,
+    SurfaceReconstructionResources,
+    create_surface_reconstruction_plan,
+)
 from .steps import (
     _aseg_label_ids,
     _brain_extract_anat_copy,
@@ -94,7 +98,6 @@ from .steps import (
     _create_pose_qc_step,
     _create_pose_registration_step,
     _create_pose_resampling_step,
-    _create_recon_all_step,
     _create_ribbon_mask_step,
     _create_surface_affine_step,
     _create_t1_to_fsnative_affine_step,
@@ -928,7 +931,10 @@ def build_module(
         runner.add_step(inpainting.step)
         reconstruction_t1 = inpainting.image
         reconstruction_t2 = None
-        reconstruction_mask = inpainting.brain_mask
+        # NeuroLIT's mask.lit image is the conformed lesion mask.  FreeSurfer
+        # still needs the full anatomical brain mask when reconstructing the
+        # synthetic intact image.
+        reconstruction_mask = reference_mask
         inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-inpainted_T1w.nii.gz"
         runner.add_step(
             Step.command_step(
@@ -961,42 +967,30 @@ def build_module(
                 force=opts.overwrite,
             )
         )
-    if opts.surface_reconstruction_engine == "freesurfer":
-        assert opts.freesurfer_image is not None
-        runner.add_step(
-            _create_recon_all_step(
-                run_child=runner.run_child,
-                env=env,
-                t1w=reconstruction_t1,
-                t2w=reconstruction_t2,
-                brain_mask=reconstruction_mask,
-                subjects_dir=opts.freesurfer_subjects_dir,
-                fs_subject=opts.fs_subject,
-                runtime=opts.container_runtime,
-                image=opts.freesurfer_image,
-                license_file=Path(env["FS_LICENSE"]),
-                force=opts.overwrite,
-            )
-        )
-    else:
-        assert reconstruction_t1 is not None
-        assert opts.fastsurfer_image is not None
-        threads = max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2")))
-        runner.add_steps(
-            create_fastsurfer_steps(
-                run_child=runner.run_child,
-                runtime=opts.container_runtime,
-                image=opts.fastsurfer_image,
-                t1w=reconstruction_t1,
-                staging_subjects_dir=opts.work_dir / "fastsurfer-segmentation",
-                subjects_dir=opts.freesurfer_subjects_dir,
-                subject=opts.fs_subject,
-                license_file=Path(env["FS_LICENSE"]),
-                segmentation_threads=threads,
-                surface_threads=threads,
-                force=opts.overwrite,
-            )
-        )
+    reconstruction = create_surface_reconstruction_plan(
+        engine=opts.surface_reconstruction_engine,
+        inputs=SurfaceReconstructionInputs(
+            t1w=reconstruction_t1,
+            t2w=reconstruction_t2,
+            brain_mask=reconstruction_mask,
+        ),
+        resources=SurfaceReconstructionResources(
+            runtime=opts.container_runtime,
+            freesurfer_image=opts.freesurfer_image,
+            fastsurfer_image=opts.fastsurfer_image,
+            license_file=Path(env["FS_LICENSE"]),
+            subjects_dir=opts.freesurfer_subjects_dir,
+            staging_subjects_dir=opts.work_dir / "fastsurfer-segmentation",
+            subject=opts.fs_subject,
+            cpu_threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
+        ),
+        run_child=runner.run_child,
+        env=env,
+        force=opts.overwrite,
+    )
+    runner.add_steps(reconstruction.steps)
+    if reconstruction.products.subject_dir != subject_dir:
+        raise RuntimeError("Surface reconstruction returned an unexpected subject directory")
     if opts.lesion:
         assert lesion_mask is not None
         lesion_reconstruction_summary = (
@@ -1293,6 +1287,7 @@ def build_module(
         )
     )
     exported_surfaces: dict[str, str] = {}
+    intact_surfaces: dict[str, str] = {}
     lesion_scaffold_surfaces: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
     lesion_scaffold_metrics: dict[str, dict[Path, Path]] = {"lh": {}, "rh": {}}
     lesion_scaffold_anatomy: dict[str, dict[str, Path]] = {"lh": {}, "rh": {}}
@@ -1366,6 +1361,35 @@ def build_module(
                     },
                 )
             )
+            if opts.lesion and source_name in {"white", "pial", "inflated"}:
+                intact_output = opts.out_dir / output_name.replace(
+                    f"_{bids_suffix}.surf.gii",
+                    f"_desc-inpainted_{bids_suffix}.surf.gii",
+                )
+                runner.add_step(
+                    create_copy_file_step(
+                        src=generated_output,
+                        dst=intact_output,
+                        force=opts.overwrite,
+                        step_name=f"Publish Intact Hemisphere {hemi_label} {bids_suffix} Surface",
+                    )
+                )
+                runner.add_step(
+                    _write_json_step(
+                        intact_output.with_suffix(".json"),
+                        {
+                            "Hemisphere": hemi_label,
+                            "Space": "fsnative",
+                            "AnatomicalStructurePrimary": "Cortex",
+                            "SurfaceType": bids_suffix,
+                            "Sources": [str(source)],
+                            "SpatialReference": "T1w",
+                            "SyntheticTissue": True,
+                            "Description": "Intact scaffold reconstructed from the lesion-inpainted T1w image.",
+                        },
+                    )
+                )
+                intact_surfaces[f"{hemi}.{source_name}"] = str(intact_output)
             exported_surfaces[f"{hemi}.{source_name}"] = str(output)
             hemi_paths[source_name] = generated_output
             if opts.lesion:
@@ -1441,6 +1465,38 @@ def build_module(
                 },
             )
         )
+        if opts.lesion:
+            intact_midthickness = opts.out_dir / midthickness.name.replace(
+                "_midthickness.surf.gii",
+                "_desc-inpainted_midthickness.surf.gii",
+            )
+            runner.add_step(
+                create_copy_file_step(
+                    src=generated_midthickness,
+                    dst=intact_midthickness,
+                    force=opts.overwrite,
+                    step_name=f"Publish Intact Hemisphere {hemi_label} Midthickness Surface",
+                )
+            )
+            runner.add_step(
+                _write_json_step(
+                    intact_midthickness.with_suffix(".json"),
+                    {
+                        "Hemisphere": hemi_label,
+                        "Space": "fsnative",
+                        "AnatomicalStructurePrimary": "Cortex",
+                        "SurfaceType": "midthickness",
+                        "Sources": [
+                            intact_surfaces[f"{hemi}.white"],
+                            intact_surfaces[f"{hemi}.pial"],
+                        ],
+                        "SpatialReference": "T1w",
+                        "SyntheticTissue": True,
+                        "Description": "Intact scaffold reconstructed from the lesion-inpainted T1w image.",
+                    },
+                )
+            )
+            intact_surfaces[f"{hemi}.midthickness"] = str(intact_midthickness)
         exported_surfaces[f"{hemi}.midthickness"] = str(midthickness)
         if opts.lesion:
             lesion_scaffold_surfaces[hemi][generated_midthickness] = midthickness
@@ -1863,6 +1919,7 @@ def build_module(
         manifest_outputs.update(
             inpainted_t1w=str(inpainted_t1),
             inpainted_t1w_metadata=str(inpainted_t1.with_suffix("").with_suffix(".json")),
+            intact_surfaces=intact_surfaces,
             lesion_mask=str(lesion_mask),
             lesion_metadata=str(lesion_metadata),
             lesion_probability=str(lesion_probability),

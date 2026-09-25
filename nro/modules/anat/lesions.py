@@ -333,7 +333,7 @@ class LesionInpaintingPlan:
 
     step: Step
     image: Path
-    brain_mask: Path
+    conformed_lesion_mask: Path
     original_mask: Path
 
 
@@ -452,7 +452,7 @@ def create_neurolit_inpainting_plan(
             parameters=inpainting_scientific,
         ),
         image=inpainted,
-        brain_mask=inpaint_mask,
+        conformed_lesion_mask=inpaint_mask,
         original_mask=original_mask,
     )
 

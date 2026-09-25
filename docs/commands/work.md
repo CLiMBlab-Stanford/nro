@@ -124,6 +124,11 @@ submitting a controller to Slurm. Use `--json` for structured output or
 `--no-pager` to bypass `less`.
 The pager uses colors and pinned headers when supported.
 
+The `ELAPSED` column reports execution time accumulated by the work item's
+current scientific revision. It includes CPU and GPU attempts, retries, and
+resource handoffs, but excludes time spent queued or waiting on dependencies.
+JSON output provides the same value as `elapsed_seconds`.
+
 After central activation, `--update` first recompiles registered selections
 using the invoking checkout's scientific code, without creating demand. Central
 code then verifies the resulting contracts and filesystem evidence. Default

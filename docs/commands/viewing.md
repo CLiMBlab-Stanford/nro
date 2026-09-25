@@ -43,6 +43,10 @@ the command refuses to replace an unmanaged directory.
 Surface scenes provide white, pial, midthickness, and inflated geometry.
 Midthickness is the default view. The cerebral montage places the left lateral,
 left medial, right medial, and right lateral views in one row.
+For lesion-aware anatomy, `nro scene -m anat` also loads the lesion mask, the
+synthetic inpainted T1w image, and a surface family labeled as the intact
+synthetic scaffold. The cut surfaces remain the scene's primary display
+geometry.
 Dynamic-connectivity scenes expose Workbench's on-demand correlation layer over
 concatenated retained frames. Network CIFTIs contain named maps so users can step
 through networks. Volume scenes use volume data without carrying surface files.

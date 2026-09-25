@@ -62,6 +62,7 @@ def _manifest(tmp_path, *, lesion: bool):
         outputs.update(
             inpainted_t1w=str(inpainted),
             inpainted_t1w_metadata=str(_file(tmp_path, "inpainted.json")),
+            intact_surfaces={"lh.white": str(_file(tmp_path, "lh.inpainted.white.surf.gii"))},
             lesion_mask=str(lesion_mask),
             lesion_metadata=str(_file(tmp_path, "lesion.json")),
             lesion_probability=str(_file(tmp_path, "probability.nii.gz")),

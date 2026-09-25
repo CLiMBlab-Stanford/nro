@@ -8,13 +8,14 @@ from xml.etree import ElementTree
 import pytest
 import yaml
 
-from nro.bin.scene import _viewer_command, build_parser, scene_id
+from nro.bin.scene import _collect, _viewer_command, build_parser, scene_id
 from nro.engine import viewer_broker
 from nro.engine.cli import core_selection
 from nro.engine.scenes import (
     SceneSource,
     base_scene,
     build_scene_bundle,
+    manifest_lesion_qc_paths,
     manifest_surface_families,
 )
 from nro.engine.slurm import run_x11
@@ -214,6 +215,48 @@ def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> No
     )
 
     assert manifest_surface_families(manifest) == surfaces
+
+
+def test_lesion_manifest_selects_diagnostic_volumes_and_intact_surfaces(tmp_path: Path) -> None:
+    lesion = tmp_path / "sub-01_space-T1w_desc-lesion_mask.nii.gz"
+    inpainted = tmp_path / "sub-01_space-T1w_desc-inpainted_T1w.nii.gz"
+    intact = tmp_path / "sub-01_space-fsnative_hemi-L_desc-inpainted_white.surf.gii"
+    for path in (lesion, inpainted, intact):
+        path.write_bytes(b"data")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        '{"outputs":{'
+        f'"lesion_mask":"{lesion}",'
+        f'"inpainted_t1w":"{inpainted}",'
+        f'"intact_surfaces":{{"lh.white":"{intact}"}}'
+        "}}",
+        encoding="utf-8",
+    )
+
+    assert manifest_lesion_qc_paths(manifest) == (lesion, inpainted, intact)
+
+    data, _surfaces, diagnostics = _collect(
+        [
+            {
+                "status": "Success",
+                "module": "anat",
+                "project": "demo",
+                "participant": "01",
+                "directory_label": "main",
+                "output_prefix": "anat-main",
+                "output_root": str(tmp_path),
+                "entities_json": "{}",
+                "expected_outputs_json": f'["{manifest}"]',
+            }
+        ]
+    )
+    assert not data
+    assert tuple(source.path for source in diagnostics) == (lesion, inpainted, intact)
+    assert tuple(source.role for source in diagnostics) == (
+        "lesion_mask",
+        "inpainted_anatomical",
+        "intact_surface_scaffold",
+    )
 
 
 def test_published_scene_copies_inputs_and_records_checksums(tmp_path: Path, monkeypatch) -> None:

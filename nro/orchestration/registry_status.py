@@ -62,6 +62,21 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
         ORDER BY t.participant, t.module, t.work_item_key
         """
     ).fetchall()
+    elapsed_by_work_item = {
+        int(row["work_item_id"]): float(row["elapsed_seconds"])
+        for row in database.execute(
+            """
+            SELECT a.work_item_id,
+                   SUM(MAX(0.0, (julianday(COALESCE(a.completed_at, CURRENT_TIMESTAMP))
+                                 - julianday(a.started_at)) * 86400.0)) AS elapsed_seconds
+            FROM attempts a
+            JOIN work_items t ON t.id=a.work_item_id
+            WHERE a.started_at IS NOT NULL
+              AND a.revision_fingerprint=t.revision_fingerprint
+            GROUP BY a.work_item_id
+            """
+        )
+    }
     lineages = {
         int(row["id"]): {
             "module": str(row["configuration_class"]),
@@ -97,6 +112,7 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
     result = []
     for row in rows:
         item = dict(row)
+        item["elapsed_seconds"] = elapsed_by_work_item.get(int(item["id"]))
         item["configuration_route_json"] = json.dumps(
             route(int(item["module_lineage_id"])),
             separators=(",", ":"),

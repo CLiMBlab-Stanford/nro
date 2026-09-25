@@ -17,6 +17,7 @@ from nro.engine.scenes import (
     build_scene_bundle,
     has_surface_data,
     manifest_anatomical_images,
+    manifest_lesion_qc_paths,
     manifest_surface_families,
     public_manifest_paths,
     template_surface_family,
@@ -114,19 +115,38 @@ def _source(row: dict, path: Path, *, role: str = "derivative") -> SceneSource:
 
 def _collect(
     rows: list[dict],
-) -> tuple[list[tuple[SceneSource, dict[str, str]]], tuple[SceneSource, ...]]:
+) -> tuple[
+    list[tuple[SceneSource, dict[str, str]]],
+    tuple[SceneSource, ...],
+    tuple[SceneSource, ...],
+]:
     data: list[tuple[SceneSource, dict[str, str]]] = []
     surfaces: list[SceneSource] = []
+    lesion_qc: list[SceneSource] = []
     seen_data: set[Path] = set()
     seen_surfaces: set[Path] = set()
+    seen_lesion_qc: set[Path] = set()
     for row in rows:
         row_entities = _mapping(row.get("entities_json"))
         for manifest in _manifest_candidates(row):
             try:
                 paths = public_manifest_paths(str(row["module"]), manifest)
+                diagnostic_paths = set(manifest_lesion_qc_paths(manifest))
             except ValueError:
                 continue
             for path in paths:
+                if path in diagnostic_paths:
+                    if path not in seen_lesion_qc:
+                        seen_lesion_qc.add(path)
+                        role = (
+                            "intact_surface_scaffold"
+                            if path.name.endswith(".surf.gii")
+                            else "lesion_mask"
+                            if "_desc-lesion_mask." in path.name
+                            else "inpainted_anatomical"
+                        )
+                        lesion_qc.append(_source(row, path, role=role))
+                    continue
                 if path in seen_data or path.name.endswith(".surf.gii"):
                     continue
                 seen_data.add(path)
@@ -141,7 +161,7 @@ def _collect(
                 if path not in seen_surfaces:
                     seen_surfaces.add(path)
                     surfaces.append(_source(row, path, role="display_surface"))
-    return data, tuple(surfaces)
+    return data, tuple(surfaces), tuple(lesion_qc)
 
 
 def _smoothing(value: str | None) -> int | None:
@@ -260,8 +280,8 @@ def generate_scenes(
         raise SystemExit("No central nro registry found")
     matched = [row for row in rows if _row_matches(row, selection)]
     support_rows = [row for row in rows if _row_matches(row, selection, match_module=False)]
-    data, _unused_surfaces = _collect(matched)
-    support_data, surface_sources = _collect(support_rows)
+    data, _unused_surfaces, lesion_qc_sources = _collect(matched)
+    support_data, surface_sources, _unused_lesion_qc = _collect(support_rows)
     if not data:
         raise SystemExit("No completed derivatives match the requested selectors")
     wb_command = resolve_workbench_command(wb_command)
@@ -290,13 +310,21 @@ def generate_scenes(
                 continue
             for space, smoothing in _targets(local, selection):
                 for group in _normalized_groups(local, selection):
-                    selected = tuple(
+                    selected_data = tuple(
                         source
                         for source, entities in local
                         if _compatible(entities, space, smoothing, group)
                     )
-                    if not selected:
+                    if not selected_data:
                         continue
+                    diagnostic = tuple(
+                        source
+                        for source in lesion_qc_sources
+                        if source.project == project and source.participant == participant
+                    )
+                    selected = tuple(
+                        {source.path: source for source in (*selected_data, *diagnostic)}.values()
+                    )
                     geometry = ()
                     available_surfaces = any(
                         source.project == project

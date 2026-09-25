@@ -95,8 +95,10 @@ Mechanical checks reject an empty, nonfinite,
 misregistered, or implausibly large mask and report overlap with the nonzero
 anatomical support for review. NeuroLIT inpaints the mask. The configured
 `surface_reconstruction_engine` then reconstructs an intact scaffold from that
-image using the ordinary FreeSurfer or FastSurfer runner. nro records the
-selected backend in the lesion-impact summary and then
+image using the ordinary FreeSurfer or FastSurfer runner. FreeSurfer applies the
+whole-brain SynthStrip mask to the inpainted image; NeuroLIT's conformed lesion
+mask remains a lesion definition and is never used for skull stripping. nro
+records the selected backend in the lesion-impact summary and then
 projects the mask through the white-to-pial ribbon, removes every triangle that
 touches the lesion, removes unused vertices, and applies the same compact
 vertex mapping to every published surface, sphere, and metric. The complete
@@ -126,8 +128,10 @@ separate T1w-to-MNI transforms.
 
 Lesion-aware artifacts additionally contain the T1w-grid mask and
 probability image, an explicitly labeled synthetic inpainted T1w alternative,
-a three-plane mask-overlay image, and one public-to-scaffold vertex table per
-hemisphere. Each hemisphere also has a validity summary with its scaffold and
+labeled GIFTI copies of the intact synthetic scaffold, a three-plane mask-overlay
+image, and one public-to-scaffold vertex table per hemisphere. Anatomical scenes
+load these diagnostic files while retaining the cut surfaces as their display
+geometry. Each hemisphere also has a validity summary with its scaffold and
 public vertex and face counts. The mask metadata records connected-component
 sizes, lesion volume, laterality, model hashes, and overlap with nonzero
 anatomical support. An nro-generated reconstruction summary records the
