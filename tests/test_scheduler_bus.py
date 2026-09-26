@@ -191,7 +191,46 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][0]["action"] == "heartbeat"
     assert calls[0][1]["durable"] is False
     assert calls[0][1]["require_service"] is True
-    assert calls[0][1]["timeout"] == 10.0
+    assert calls[0][1]["timeout"] == 60.0
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments", "expected"),
+    (
+        ("heartbeat_worker", ("worker",), None),
+        ("worker_shutdown_requested", ("worker",), False),
+        ("attempt_cancel_requested", (17,), False),
+        ("attempt_summary", (17,), "attempt state unavailable while the scheduler is busy"),
+        ("required_memory_above", (32,), None),
+    ),
+)
+def test_worker_polls_survive_scheduler_transport_delays(
+    monkeypatch, capsys, method, arguments, expected
+) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client._last_poll_warning = 0.0
+
+    def delayed(*_args, **_kwargs):
+        raise scheduler_client.SchedulerError("Central scheduler did not respond within 60 seconds")
+
+    monkeypatch.setattr(client, "_call", delayed)
+    keywords = {"state": "running"} if method == "heartbeat_worker" else {}
+
+    assert getattr(client, method)(*arguments, **keywords) == expected
+    assert "scheduler poll" in capsys.readouterr().err
+
+
+def test_worker_poll_preserves_remote_errors(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client._last_poll_warning = 0.0
+
+    def rejected(*_args, **_kwargs):
+        raise scheduler_client.SchedulerError("Worker token is obsolete", error_type="ValueError")
+
+    monkeypatch.setattr(client, "_call", rejected)
+
+    with pytest.raises(scheduler_client.SchedulerError, match="token is obsolete"):
+        client.worker_shutdown_requested("worker")
 
 
 def test_worker_graph_signature_uses_durable_rpc(monkeypatch) -> None:

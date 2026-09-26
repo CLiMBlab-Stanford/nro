@@ -1098,7 +1098,7 @@ class Worker:
             f"started (Slurm job {os.environ.get('SLURM_JOB_ID', 'none')}; "
             f"class={self.resource_class}; memory={self.memory_gb} GB)"
         )
-        idle_since = time.monotonic()
+        idle_since: float | None = None
         idle_announced = False
         try:
             while not self.stop_requested:
@@ -1139,7 +1139,7 @@ class Worker:
                             else IngestionIndex(self.registry).claim(self.worker_id, self.memory_gb)
                         )
                     if ingestion is not None:
-                        idle_since = time.monotonic()
+                        idle_since = None
                         idle_announced = False
                         self._execute_ingestion(ingestion)
                         continue
@@ -1153,12 +1153,14 @@ class Worker:
                     if not idle_announced:
                         self._log("idle; waiting for a ready work item")
                         idle_announced = True
+                    if idle_since is None:
+                        idle_since = time.monotonic()
                     if time.monotonic() - idle_since >= self.idle_timeout:
                         self._log(f"idle timeout reached after {self.idle_timeout:g}s; exiting")
                         break
                     time.sleep(self.poll_interval)
                     continue
-                idle_since = time.monotonic()
+                idle_since = None
                 idle_announced = False
                 attempt_id = work_item.attempt_id
                 assignment = (
