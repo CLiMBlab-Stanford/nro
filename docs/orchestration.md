@@ -83,6 +83,22 @@ separate subprocess. A module constructs its complete runner graph before
 freshness is checked. The shared runner then executes or skips each declared
 step and writes the completion record.
 
+Participant plans are cached by their scientific inputs. The cache key covers
+the compiled workflow and module lineages, relevant task models and markup,
+protected site definitions, execution source, and the participant's source-BIDS
+inventory and metadata. Repeating an equivalent request can therefore recover
+the already compiled dependency graph instead of rebuilding every module plan.
+Adding, removing, or changing relevant source metadata invalidates the entry.
+For imaging files, planning fingerprints the header and inventory; workers and
+authoritative assessment still verify artifact inputs by content. The planning
+cache is an optimization and never establishes artifact freshness.
+
+Admission reassesses only fresh artifacts whose scientific contracts could
+satisfy the submitted graph, together with their dependency closure. Missing,
+stale, and unrelated historical records cannot be reused and are not traversed.
+An exhaustive filesystem reconciliation remains an explicit
+`nro status --update` operation.
+
 Every step uses the same freshness and publication rules. A GPU handoff does
 not strengthen or weaken upstream validation: claims capture the current
 upstream generations, and completion is rejected if the work-item contract,

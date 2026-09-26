@@ -70,6 +70,30 @@ def test_scheduler_request_migration_preserves_version_22_registry(tmp_path: Pat
         ).fetchone() == ("scheduler_requests",)
 
 
+def test_scientific_planning_cache_migration_preserves_version_6_records(
+    tmp_path: Path,
+) -> None:
+    from nro.orchestration.branch_registry import SCHEMA_DEFINITION
+
+    path = tmp_path / "scientific.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(f"PRAGMA application_id={SCHEMA_DEFINITION.application_id}")
+        database.executescript(SCHEMA_DEFINITION.sql(version=6))
+        database.execute("PRAGMA user_version=6")
+        database.execute("INSERT INTO work_items VALUES ('item',1,'{}','digest',NULL)")
+
+    backup = migrate_database(path, SCHEMA_DEFINITION)
+
+    assert backup is not None
+    with sqlite3.connect(path) as database:
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert database.execute("SELECT work_item_key FROM work_items").fetchone() == ("item",)
+        tables = {
+            row[0] for row in database.execute("SELECT name FROM sqlite_schema WHERE type='table'")
+        }
+        assert {"planning_cache", "planning_files"} <= tables
+
+
 def test_migration_preserves_rows_and_matches_a_fresh_generated_schema(tmp_path: Path) -> None:
     path = tmp_path / "registry.sqlite3"
     _database(path)

@@ -146,9 +146,30 @@ def admit_many(
         )
     for source in sources.values():
         source.verify_manifest()
+    requested_contracts: dict[str, set[str]] = {}
+    for entry in entries:
+        contracts = entry["payload"].get("contracts")
+        if not isinstance(contracts, dict):
+            requested_contracts = {}
+            break
+        requested_contracts.setdefault(entry["project"], set()).update(
+            fingerprint(contract) for contract in contracts.values()
+        )
     from nro.orchestration.manifests import assess_registry
 
-    assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=False)
+    if requested_contracts:
+        with registry.connection() as db:
+            candidate_ids = {
+                int(candidate.evidence["work_item_id"])
+                for project, fingerprints in requested_contracts.items()
+                for candidate in candidates_locked(db, project, contract_fingerprints=fingerprints)
+            }
+        if candidate_ids:
+            assess_registry(registry, work_item_ids=candidate_ids, compiled=False)
+    else:
+        # Protocol-one requests normally supply detached scientific contracts.
+        # Retain the broad fallback for an older or diagnostic caller.
+        assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=False)
     from nro.orchestration.registry import Registry
 
     branches = BranchStore(registry.paths.control)
@@ -159,7 +180,12 @@ def admit_many(
         topology = branches.read().topology
         with registry.connection(write=True) as db:
             candidates = {
-                project: candidates_locked(db, project) for project in dict.fromkeys(projects)
+                project: candidates_locked(
+                    db,
+                    project,
+                    contract_fingerprints=requested_contracts.get(project),
+                )
+                for project in dict.fromkeys(projects)
             }
             for index, entry in enumerate(entries):
                 project = entry["project"]

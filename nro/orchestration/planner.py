@@ -21,6 +21,11 @@ from nro.engine.image_paths import image_source_paths
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.catalog import module_descriptor, modules_through, normalize_module
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_cache import (
+    participant_source_manifest,
+    plan_cache_key,
+    plan_scope_key,
+)
 from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
     SubjectPlanningContext,
@@ -152,12 +157,19 @@ class Planner:
 
     def __init__(self, registry: WorkflowRegistry, *, bids_root: str | Path) -> None:
         """Bind scientific workflow records and raw BIDS without opening a scheduler."""
-        from nro.configuration.site import definitions_roots, settings
+        from nro.configuration.site import (
+            definitions_roots,
+            protected_site_fingerprint,
+            settings,
+        )
+        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
         self.registry = registry
         self.bids_root = Path(bids_root).expanduser().resolve()
         self._site_values = settings()[0]
         self._definitions_roots = definitions_roots()
+        self._source_digest = source_fingerprint(execution_source_root())
+        self._site_fingerprint = protected_site_fingerprint()
         self._module_plan_cache: dict[tuple[object, ...], tuple[WorkItemSpec, ...]] = {}
 
     @staticmethod
@@ -187,9 +199,7 @@ class Planner:
     ) -> PlanningResult:
         """Construct requests from an explicit user selection."""
         from nro.configuration.site import definitions_root, settings
-        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
-        source_digest = source_fingerprint(execution_source_root())
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         request_plans: list[RequestPlan] = []
         present: set[str] = set()
@@ -275,7 +285,7 @@ class Planner:
             },
             present_participants=frozenset(present),
             unavailable=tuple(unavailable),
-            source_digest=source_digest,
+            source_digest=self._source_digest,
             site_settings=site_settings,
         )
 
@@ -292,9 +302,7 @@ class Planner:
     ) -> PlanningResult:
         """Recompile exact registered identities without broad selector expansion."""
         from nro.configuration.site import definitions_root, settings
-        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
-        source_digest = source_fingerprint(execution_source_root())
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         requests: list[RequestPlan] = []
         work_items: dict[str, WorkItemSpec] = {}
@@ -425,7 +433,7 @@ class Planner:
             matched_participants={key: tuple(value) for key, value in matched.items()},
             present_participants=frozenset(present),
             unavailable=tuple(unavailable),
-            source_digest=source_digest,
+            source_digest=self._source_digest,
             site_settings=site_settings,
         )
 
@@ -562,6 +570,37 @@ class Planner:
                 for smoothing in requested_smoothing
             )
 
+        cache_scope = plan_scope_key(
+            project=project,
+            participant=participant,
+            target=target,
+            workflow_id=registered.workflow_id,
+            selected_runs=tuple(str(run.path) for run in runs),
+            target_pairs=target_pairs,
+            task_models=tuple(sorted(task_models or ())),
+            memory_gb=memory_gb,
+            max_memory_gb=max_memory_gb,
+        )
+        persistent_plan_key = plan_cache_key(
+            scope_key=cache_scope,
+            scientific_inputs={
+                "source": self._source_digest,
+                "site": self._site_fingerprint,
+                "workflow": registered.fingerprint,
+                "lineages": dict(sorted(registered.lineage_fingerprints.items())),
+                "bids": participant_source_manifest(self.registry, project_root, subject_dir),
+                "runs": [str(run.path) for run in runs],
+                "task_models": task_models,
+                "markup": source_markup.as_dict() if source_markup else None,
+            },
+        )
+        read_cached = getattr(self.registry, "cached_plan", None)
+        if (
+            read_cached is not None
+            and (cached_plan := read_cached(persistent_plan_key)) is not None
+        ):
+            return cached_plan
+
         context = SubjectPlanningContext(
             project=project,
             participant=participant,
@@ -612,9 +651,13 @@ class Planner:
                 cached = descriptor.plan(context, planned, descriptor)
                 self._module_plan_cache[cache_key] = cached
             planned[descriptor.name] = cached
-        return tuple(
+        result = tuple(
             work_item for descriptor in descriptors for work_item in planned[descriptor.name]
         )
+        write_cached = getattr(self.registry, "cache_plan", None)
+        if write_cached is not None:
+            write_cached(cache_scope, persistent_plan_key, result)
+        return result
 
 
 def build_subject_work_items(

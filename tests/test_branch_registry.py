@@ -61,12 +61,71 @@ def test_branches_have_independent_science_and_no_pool_tables(tmp_path):
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {
         "identity",
+        "planning_cache",
+        "planning_files",
         "work_items",
         "workflow_revisions",
         "module_lineages",
         "module_lineage_dependencies",
         "workflow_bindings",
     }
+
+
+def test_branch_registry_round_trips_reconstructible_planning_caches(tmp_path):
+    store = BranchStore(tmp_path / "control")
+    store.initialize()
+    scientific = store.registry("dev")
+    workflow = ConfigStore().resolve("main")
+    registered = scientific.register_workflow(workflow)
+    output = tmp_path / "output.txt"
+    spec = WorkItemSpec.create(
+        key="cached",
+        module="anat",
+        project="demo",
+        participant="01",
+        entities={},
+        scope="subject",
+        module_lineage_id=registered.lineages["anat"],
+        config_fingerprint="config",
+        directory_label=registered.directories["anat"],
+        runtime_config=scientific.runtime_config_path(registered, "anat"),
+        command=("python", "-m", "nro.modules.anat"),
+        dependencies=(),
+        input_paths=(),
+        output_root=tmp_path,
+        output_prefix="output",
+        expected_outputs=(output,),
+        output_format="test",
+        resource_class="small",
+    )
+
+    scientific.cache_plan("scope", "first", (spec,))
+    scientific.cache_plan("scope", "second", (spec,))
+    scientific.record_planning_files({"/source.json": (12, 34, "content", "digest")})
+
+    assert scientific.cached_plan("first") is None
+    assert scientific.cached_plan("second") == (spec,)
+    assert scientific.planning_file_records(("/source.json",)) == {
+        "/source.json": (12, 34, "content", "digest")
+    }
+    assert scientific.work_item_revisions(("cached",)) == {"cached": None}
+    recorded = scientific.record_work_item_graph((spec,), expected_revisions={"cached": None})
+    assert scientific.work_item_revisions(("cached", "missing")) == {
+        "cached": recorded[0].revision,
+        "missing": None,
+    }
+
+    with scientific.connection(write=True) as database:
+        database.execute(
+            "INSERT INTO planning_cache(cache_key,scope_key,payload,updated_at) "
+            "VALUES ('broken','broken',X'00','now')"
+        )
+    assert scientific.cached_plan("broken") is None
+    with scientific.connection() as database:
+        assert (
+            database.execute("SELECT 1 FROM planning_cache WHERE cache_key='broken'").fetchone()
+            is None
+        )
 
 
 def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp_path):
@@ -211,6 +270,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         output_format="test",
         resource_class="small",
     )
+    scientific.record_work_item_graph((spec,), expected_revisions={spec.key: None})
     with scientific.connection() as db:
         lineage = dict(
             db.execute(
@@ -318,6 +378,8 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     assert [item["key"] for item in recovered] == [spec.key]
 
     with sqlite3.connect(scientific.database) as db:
+        db.execute("DROP TABLE planning_cache")
+        db.execute("DROP TABLE planning_files")
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
     from nro.orchestration.scheduler_repair import repair_scientific_schemas
 
@@ -327,9 +389,10 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
             "branch": "dev",
             "stored_schema": SCHEMA_VERSION - 1,
             "schema": SCHEMA_VERSION,
-            "backup": str(scientific.root / "registry-before-repair.sqlite3"),
-            "work_items": 1,
+            "backup": str(scientific.root / f"registry-before-schema-{SCHEMA_VERSION}.sqlite3"),
+            "work_items": None,
             "unavailable": [],
+            "action": "migrated",
         }
     ]
     assert [item.key for item in scientific.work_items()] == [spec.key]

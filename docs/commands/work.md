@@ -48,6 +48,19 @@ capture does not freeze Python environments or container images. See the
 [development limits](../development.md#branch-isolation-work) before maintaining
 dependencies or using a separate checkout with the shared pool.
 
+The first request for a participant and scientific selection compiles the full
+dependency closure and saves a content-addressed planning entry. Later
+equivalent requests reuse it. Changes to source-BIDS inventory or metadata,
+imaging headers, compiled definitions, task models, markup, protected site
+settings, or execution source select a new entry automatically. File timestamps
+may cause conservative replanning, but they do not make derivatives stale;
+freshness remains based on artifact contracts and content evidence.
+
+Registration validates reusable artifacts relevant to the submitted graph; it
+does not reassess every historical work item in the project. Use
+`nro status --update` when the intended operation is an exhaustive registry and
+filesystem reconciliation.
+
 | Additional option | Behavior/default |
 | --- | --- |
 | `--concurrency N` | Shared limit, default 50. |

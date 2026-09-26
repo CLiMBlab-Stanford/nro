@@ -14,26 +14,50 @@ from nro.orchestration.execution_context import ExecutionContext
 
 
 def candidates_locked(
-    db, project: str, *, fresh_only: bool = True
+    db,
+    project: str,
+    *,
+    fresh_only: bool = True,
+    contract_fingerprints: set[str] | None = None,
 ) -> tuple[ArtifactCandidate, ...]:
     """Read compiled producer contracts; no source or scientific module is loaded."""
+    state_filter = " AND i.artifact_state='fresh' AND i.current_generation>=0" if fresh_only else ""
     rows = [
         dict(row)
         for row in db.execute(
             """SELECT i.*, c.directory_label,c.config_fingerprint,
         e.branch,e.logical_key,e.scientific_contract_json FROM work_items i
         JOIN module_lineages c ON c.id=i.module_lineage_id
-        LEFT JOIN work_item_execution e ON e.work_item_id=i.id WHERE i.project=?""",
+        LEFT JOIN work_item_execution e ON e.work_item_id=i.id WHERE i.project=?"""
+            + state_filter,
             (project,),
         )
     ]
+    if fresh_only and any(not row["scientific_contract_json"] for row in rows):
+        # Old rows without a detached scientific contract need their complete
+        # project graph for reconstruction. Current admissions store the contract.
+        rows = [
+            dict(row)
+            for row in db.execute(
+                """SELECT i.*, c.directory_label,c.config_fingerprint,
+            e.branch,e.logical_key,e.scientific_contract_json FROM work_items i
+            JOIN module_lineages c ON c.id=i.module_lineage_id
+            LEFT JOIN work_item_execution e ON e.work_item_id=i.id WHERE i.project=?""",
+                (project,),
+            )
+        ]
     by_id = {row["id"]: row for row in rows}
     parents = {}
-    for edge in db.execute("SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"):
+    for edge in db.execute(
+        """SELECT d.work_item_id,u.work_item_key AS upstream_key
+           FROM work_item_dependencies d
+           JOIN work_items i ON i.id=d.work_item_id
+           JOIN work_items u ON u.id=d.upstream_work_item_id
+           WHERE i.project=?""",
+        (project,),
+    ):
         if edge["work_item_id"] in by_id:
-            parents.setdefault(edge["work_item_id"], []).append(
-                by_id[edge["upstream_work_item_id"]]["work_item_key"]
-            )
+            parents.setdefault(edge["work_item_id"], []).append(edge["upstream_key"])
     contracts = {}
     if any(not row["scientific_contract_json"] for row in rows):
         specs = []
@@ -72,6 +96,9 @@ def candidates_locked(
             if row["scientific_contract_json"]
             else contracts[row["work_item_key"]]
         )
+        contract_fingerprint = fingerprint(contract)
+        if contract_fingerprints is not None and contract_fingerprint not in contract_fingerprints:
+            continue
         candidates.append(
             ArtifactCandidate(
                 row["branch"] or "main",
@@ -80,7 +107,7 @@ def candidates_locked(
                 row["current_generation"],
                 Path(row["output_root"]),
                 {"work_item_id": row["id"]},
-                fingerprint(contract),
+                contract_fingerprint,
             )
         )
     return tuple(candidates)

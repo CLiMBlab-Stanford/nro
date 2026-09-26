@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from nro.configuration.store import fingerprint
 from nro.orchestration import manifests, scheduler_operations, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.contracts import WorkItemSpec
@@ -26,7 +27,7 @@ def test_status_projection_omits_execution_payloads() -> None:
     assert "artifact_contract_json" in row
 
 
-def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path):
+def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch, tmp_path):
     db = object()
     registry = SimpleNamespace(
         paths=SimpleNamespace(bids_root=tmp_path / "BIDS", control=tmp_path / "control"),
@@ -34,12 +35,20 @@ def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path)
     )
     source = {"root": str(tmp_path / "source"), "digest": "a" * 64}
     entries = [
-        {"project": project, "payload": {"project": project, "source": source}}
+        {
+            "project": project,
+            "payload": {
+                "project": project,
+                "source": source,
+                "contracts": {project: {"project": project}},
+            },
+        }
         for project in ("one", "one", "two")
     ]
     verified = []
     assessed = []
     admitted = []
+    candidate_queries = []
 
     monkeypatch.setattr(
         SourceSnapshot, "verify_manifest", lambda self: verified.append(self.digest)
@@ -62,11 +71,12 @@ def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path)
             _lock=lambda: nullcontext(), read=lambda: SimpleNamespace(topology=topology)
         ),
     )
-    monkeypatch.setattr(
-        scheduler_service,
-        "candidates_locked",
-        lambda _db, project: (f"candidate:{project}",),
-    )
+
+    def candidates(_db, project, **kwargs):
+        candidate_queries.append((project, kwargs))
+        return (SimpleNamespace(evidence={"work_item_id": 1 if project == "one" else 2}),)
+
+    monkeypatch.setattr(scheduler_service, "candidates_locked", candidates)
     monkeypatch.setattr(scheduler_service, "protected_site_fingerprint", lambda _path: "site")
 
     def fake_admit(selected, payload, **kwargs):
@@ -84,14 +94,20 @@ def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path)
 
     assert result == ["one", "one", "two"]
     assert verified == ["a" * 64]
-    assert assessed == [(registry, {"projects": ("one", "two"), "compiled": False})]
+    assert assessed == [(registry, {"work_item_ids": {1, 2}, "compiled": False})]
+    assert candidate_queries == [
+        ("one", {"contract_fingerprints": {fingerprint({"project": "one"})}}),
+        ("two", {"contract_fingerprints": {fingerprint({"project": "two"})}}),
+        ("one", {"contract_fingerprints": {fingerprint({"project": "one"})}}),
+        ("two", {"contract_fingerprints": {fingerprint({"project": "two"})}}),
+    ]
     assert all(call[2]["assess"] is False for call in admitted)
     assert all(call[2]["source_verified"] is True for call in admitted)
     assert all(call[2]["expected_site"] == "site" for call in admitted)
     assert [call[2]["locked"] for call in admitted] == [
-        (topology, db, ("candidate:one",)),
-        (topology, db, ("candidate:one",)),
-        (topology, db, ("candidate:two",)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}),)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}),)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 2}),)),
     ]
 
 
@@ -118,7 +134,7 @@ def test_batch_rolls_back_every_admission_when_a_later_entry_fails(monkeypatch, 
             _lock=lambda: nullcontext(), read=lambda: SimpleNamespace(topology=topology)
         ),
     )
-    monkeypatch.setattr(scheduler_service, "candidates_locked", lambda _db, _project: ())
+    monkeypatch.setattr(scheduler_service, "candidates_locked", lambda _db, _project, **_kwargs: ())
     monkeypatch.setattr(scheduler_service, "protected_site_fingerprint", lambda _path: "site")
     calls = 0
 

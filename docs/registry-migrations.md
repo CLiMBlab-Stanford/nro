@@ -6,6 +6,10 @@ first supported baselines. Scheduler schema 21 stores completion evidence direct
 in SQLite; it has no private completion-manifest tree. Older private registries are
 reconstructed from durable ownership records and public artifacts.
 
+Scientific schema 7 adds reconstructible compiled-plan and source-fingerprint
+caches. Upgrading from schema 6 preserves scientific records and initializes
+empty caches; no derivative contract or freshness meaning changes.
+
 Runtime registry access does not replay the chain. Installation applies a required
 migration once, validates the replacement, and atomically activates it. It retains a
 copy of the preceding database. Scientific artifacts are not registry rows and are

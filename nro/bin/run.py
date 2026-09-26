@@ -579,9 +579,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     }
 
     planner = Planner(registry, bids_root=bids_root)
-    scientific_revisions = (
-        {row.key: row.revision for row in registry.work_items()} if branch_execution else {}
-    )
+    scientific_revisions = registry.work_item_revisions() if branch_execution else {}
     if args.resume:
         plan = planner.plan_registered_targets(
             _resume_targets(
