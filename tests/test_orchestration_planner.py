@@ -837,7 +837,6 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
             }
         ],
         "output_metadata": functional_output_contract(),
-        "source_markup": source_markup,
     }
     assert by_module["func"][0].entities == {"task": "rest", "dir": "LR", "run": "1"}
     assert by_module["clean"][0].entities == {
@@ -849,7 +848,6 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     }
     assert by_module["clean"][0].work_item_contract["processing"] == {
         "output_metadata": clean_output_contract(),
-        "source_markup": source_markup,
     }
     assert by_module["clean"][0].dependencies == (
         by_module["func"][0].key,
@@ -866,7 +864,6 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     )
     assert by_module["microparcellation"][0].work_item_contract["processing"] == {
         "output_metadata": microparcellation_output_contract(),
-        "source_markup": source_markup,
     }
     micro_outputs = by_module["microparcellation"][0].expected_outputs
     assert micro_outputs[0].name.endswith("_desc-microparcellation_manifest.yaml")
@@ -878,7 +875,6 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     )
     assert by_module["networks"][0].work_item_contract["processing"] == {
         "output_metadata": networks_output_contract(),
-        "source_markup": source_markup,
     }
     assert registered.directories["anat"].startswith("main-")
     assert registered.directories["func"].startswith("main-")

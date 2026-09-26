@@ -18,8 +18,22 @@ from .core import (
     RenameField,
 )
 
+
+def _source_selection_chain(module: str) -> ContractMigrationChain:
+    return ContractMigrationChain(
+        module=module,
+        migrations=(
+            ContractMigration(
+                destination=2,
+                summary="Derive source selection from declared inputs instead of markup syntax",
+                contract=(RemoveField("processing.source_markup", reconstructible=True),),
+            ),
+        ),
+    )
+
+
 CHAINS = {
-    module: ANAT_CHAIN if module == "anat" else ContractMigrationChain(module=module)
+    module: ANAT_CHAIN if module == "anat" else _source_selection_chain(module)
     for module in MODULE_NAMES
 }
 

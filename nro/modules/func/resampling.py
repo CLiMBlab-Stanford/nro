@@ -194,8 +194,9 @@ def validate_resampled_bold(
     source_path: Path,
     reference_path: Path,
     output_path: Path,
+    repetition_time: float | None = None,
 ) -> tuple[bool, str]:
-    """Check the volume count and exact requested geometry of a resampled BOLD."""
+    """Check the volume count, geometry, and sampling interval of a resampled BOLD."""
     try:
         source = nib.load(str(source_path))
         reference = nib.load(str(reference_path))
@@ -209,4 +210,14 @@ def validate_resampled_bold(
         return False, f"Resampled BOLD shape is {output.shape}; expected {expected_shape}"
     if not np.array_equal(output.affine, reference.affine):
         return False, "Resampled BOLD affine does not exactly match its reference."
-    return True, "Resampled BOLD has the requested geometry and volume count."
+    expected_tr = (
+        float(source.header.get_zooms()[3]) if repetition_time is None else float(repetition_time)
+    )
+    output_tr = float(output.header.get_zooms()[3])
+    if not np.isfinite(expected_tr) or expected_tr <= 0:
+        return False, f"Resampling source has invalid repetition time {expected_tr!r}."
+    if not np.isfinite(output_tr) or not np.isclose(output_tr, expected_tr, rtol=1e-6, atol=1e-7):
+        return False, (
+            f"Resampled BOLD repetition time is {output_tr!r}; expected {expected_tr!r}."
+        )
+    return True, "Resampled BOLD has the requested geometry, volume count, and repetition time."

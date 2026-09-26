@@ -176,6 +176,7 @@ def test_confounds_loads_epi_once(
         brain_mask_in_epi=mask_path,
         out_tsv=out_tsv,
         out_json=out_json,
+        repetition_time=1.2,
         n_acompcor=2,
         acompcor_max_voxels=200,
     )
@@ -183,6 +184,9 @@ def test_confounds_loads_epi_once(
     assert epi_image.dataobj.array_calls == 1
     assert out_tsv.stat().st_size > 0
     assert out_json.stat().st_size > 0
+    assert (
+        yaml.safe_load(out_json.read_text(encoding="utf-8"))["parameters"]["repetition_time"] == 1.2
+    )
 
     confounds = pd.read_csv(out_tsv, sep="\t")
     from nro.configuration.store import ConfigStore

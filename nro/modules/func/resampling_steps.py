@@ -210,6 +210,7 @@ def _create_afni_bold_resampling_step(
     motion_affines: Path,
     gradient_warp: Path | None = None,
     out_4d: Path,
+    repetition_time: float,
     env: dict[str, str],
     force: bool,
 ) -> Step:
@@ -245,10 +246,15 @@ def _create_afni_bold_resampling_step(
                 ["fslcpgeom", str(ref_3d), str(staged), "-d"],
                 env=env,
             )
+            run_child(
+                ["3drefit", "-TR", f"{float(repetition_time):.8g}", str(staged)],
+                env=env,
+            )
             valid, validation_reason = validate_resampled_bold(
                 source_path=in_4d,
                 reference_path=ref_3d,
                 output_path=staged,
+                repetition_time=repetition_time,
             )
             if not valid:
                 raise RuntimeError(validation_reason)
@@ -259,10 +265,12 @@ def _create_afni_bold_resampling_step(
         inputs=(in_4d, ref_3d, afni_warp, motion_affines, gradient_warp),
         force=force,
         action=resample,
+        parameters={"repetition_time": float(repetition_time)},
         validate=lambda: validate_resampled_bold(
             source_path=in_4d,
             reference_path=ref_3d,
             output_path=out_4d,
+            repetition_time=repetition_time,
         ),
     )
 

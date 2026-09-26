@@ -5,6 +5,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from nro.modules.func.resampling import (
     flirt_to_afni_pull,
@@ -15,7 +16,10 @@ from nro.modules.func.resampling import (
     world_warp_to_afni,
     write_afni_motion_affines,
 )
-from nro.modules.func.resampling_steps import _afni_bold_warp_chain
+from nro.modules.func.resampling_steps import (
+    _afni_bold_warp_chain,
+    _create_afni_bold_resampling_step,
+)
 
 
 def _oblique_affine() -> np.ndarray:
@@ -106,12 +110,14 @@ def test_zero_world_warp_remains_zero_for_an_oblique_grid() -> None:
 
 def test_resampled_bold_validation_requires_reference_geometry(tmp_path: Path) -> None:
     source = nib.Nifti1Image(np.zeros((4, 5, 6, 3), dtype=np.float32), np.eye(4))
+    source.header.set_zooms((1.0, 1.0, 1.0, 1.2))
     reference_affine = np.diag([2.0, 2.0, 2.0, 1.0])
     reference = nib.Nifti1Image(np.zeros((7, 8, 9), dtype=np.float32), reference_affine)
     output = nib.Nifti1Image(
         np.zeros((7, 8, 9, 3), dtype=np.float32),
         reference_affine,
     )
+    output.header.set_zooms((2.0, 2.0, 2.0, 1.2))
     source_path = tmp_path / "source.nii.gz"
     reference_path = tmp_path / "reference.nii.gz"
     output_path = tmp_path / "output.nii.gz"
@@ -135,6 +141,80 @@ def test_resampled_bold_validation_requires_reference_geometry(tmp_path: Path) -
     )
     assert not valid
     assert "affine" in reason
+
+
+def test_resampled_bold_validation_requires_repetition_time(tmp_path: Path) -> None:
+    source = nib.Nifti1Image(np.zeros((4, 5, 6, 3), dtype=np.float32), np.eye(4))
+    source.header.set_zooms((1.0, 1.0, 1.0, 1.2))
+    reference = nib.Nifti1Image(np.zeros((7, 8, 9), dtype=np.float32), np.eye(4))
+    output = nib.Nifti1Image(np.zeros((7, 8, 9, 3), dtype=np.float32), np.eye(4))
+    output.header.set_zooms((1.0, 1.0, 1.0, 0.0))
+    source_path = tmp_path / "source.nii.gz"
+    reference_path = tmp_path / "reference.nii.gz"
+    output_path = tmp_path / "output.nii.gz"
+    nib.save(source, source_path)
+    nib.save(reference, reference_path)
+    nib.save(output, output_path)
+
+    valid, reason = validate_resampled_bold(
+        source_path=source_path,
+        reference_path=reference_path,
+        output_path=output_path,
+        repetition_time=1.2,
+    )
+
+    assert not valid
+    assert "repetition time" in reason
+
+
+def test_afni_resampling_restores_repetition_time(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.nii.gz"
+    reference_path = tmp_path / "reference.nii.gz"
+    output_path = tmp_path / "output.nii"
+    source = nib.Nifti1Image(np.zeros((4, 5, 6, 3), dtype=np.float32), np.eye(4))
+    source.header.set_zooms((1.0, 1.0, 1.0, 1.2))
+    reference = nib.Nifti1Image(np.zeros((7, 8, 9), dtype=np.float32), np.eye(4))
+    nib.save(source, source_path)
+    nib.save(reference, reference_path)
+    commands: list[list[str]] = []
+
+    def run_child(command, *, env):
+        del env
+        command = list(command)
+        commands.append(command)
+        if command[0] == "3dNwarpApply":
+            staged = Path(command[command.index("-prefix") + 1])
+            output = nib.Nifti1Image(
+                np.zeros((*reference.shape, source.shape[3]), dtype=np.float32),
+                reference.affine,
+            )
+            output.header.set_zooms((1.0, 1.0, 1.0, 0.0))
+            nib.save(output, staged)
+        elif command[0] == "3drefit":
+            staged = Path(command[-1])
+            output = nib.load(staged)
+            header = output.header.copy()
+            header.set_zooms((*header.get_zooms()[:3], float(command[2])))
+            data = np.asarray(output.dataobj).copy()
+            nib.save(nib.Nifti1Image(data, output.affine, header), staged)
+
+    step = _create_afni_bold_resampling_step(
+        run_child=run_child,
+        in_4d=source_path,
+        motion_ref_3d=reference_path,
+        ref_3d=reference_path,
+        afni_warp=tmp_path / "warp.nii.gz",
+        motion_affines=tmp_path / "motion.aff12.1D",
+        out_4d=output_path,
+        repetition_time=1.2,
+        env={},
+        force=False,
+    )
+
+    step.action()
+
+    assert [command[0] for command in commands] == ["3dNwarpApply", "fslcpgeom", "3drefit"]
+    assert nib.load(output_path).header.get_zooms()[3] == pytest.approx(1.2)
 
 
 def test_gradient_warp_follows_spatial_and_motion_pull_transforms() -> None:

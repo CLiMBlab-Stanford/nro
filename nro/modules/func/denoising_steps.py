@@ -50,6 +50,7 @@ def _create_confounds_step(
     subjects_dir: Path,
     fs_subject: str,
     brain_mask_in_epi: Path,
+    repetition_time: float,
     out_tsv: Path,
     out_json: Path,
     force: bool,
@@ -65,6 +66,7 @@ def _create_confounds_step(
             subjects_dir=subjects_dir,
             fs_subject=fs_subject,
             brain_mask_in_epi=brain_mask_in_epi,
+            repetition_time=repetition_time,
             out_tsv=out_tsv,
             out_json=out_json,
         )
@@ -73,6 +75,7 @@ def _create_confounds_step(
         name="Confounds",
         outputs=(out_tsv, out_json),
         inputs=(epi_4d, epi_mean_3d, par, brain_mask_in_epi),
+        parameters={"repetition_time": float(repetition_time)},
         force=force,
         action=calculate,
     )
