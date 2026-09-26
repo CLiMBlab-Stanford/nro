@@ -44,6 +44,12 @@ Action = Callable[[], None]
 _SOURCE_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
+def _declared_path(path: Path) -> Path:
+    """Normalize a declared artifact path without following its final symlink."""
+    path = Path(path).expanduser().absolute()
+    return path.parent.resolve(strict=False) / path.name
+
+
 def _contract_path(path: Path) -> str:
     """Return a stable identity for paths inside captured source trees.
 
@@ -55,7 +61,7 @@ def _contract_path(path: Path) -> str:
     value = str(path)
     if value.startswith("$NRO_EXECUTION_SOURCE/"):
         return value
-    resolved = Path(path).resolve(strict=False)
+    resolved = _declared_path(path)
     source_value = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
     if not source_value:
         return str(resolved)
@@ -392,9 +398,7 @@ class RunnerGraph:
     def _node_id(outputs: Sequence[Path]) -> str:
         label = outputs[0].name if outputs else "operation"
         slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "operation"
-        identity = "\0".join(str(Path(path).resolve(strict=False)) for path in outputs).encode(
-            "utf-8"
-        )
+        identity = "\0".join(str(_declared_path(path)) for path in outputs).encode("utf-8")
         digest = hashlib.sha256(identity).hexdigest()[:12]
         return f"{slug}-{digest}"
 
@@ -429,7 +433,7 @@ class RunnerGraph:
         producers: dict[Path, str] = {}
         for step in self._steps:
             for output in step.outputs:
-                path = output.resolve(strict=False)
+                path = _declared_path(output)
                 previous = producers.get(path)
                 if previous is not None:
                     raise ValueError(
@@ -447,7 +451,7 @@ class RunnerGraph:
             dependencies[step.id].update(
                 producer
                 for path in step.inputs
-                if (producer := producers.get(path.resolve(strict=False))) is not None
+                if (producer := producers.get(_declared_path(path))) is not None
                 and producer != step.id
             )
 
@@ -549,7 +553,7 @@ class RunnerGraph:
         Reject ambiguous output matches and execution before a freshness decision.
         """
         displayed = tuple(Path(value) for value in outputs if str(value).strip())
-        displayed_paths = {path.resolve(strict=False) for path in displayed}
+        displayed_paths = {_declared_path(path) for path in displayed}
         for operation in reversed(self.operations):
             if operation.step == int(step):
                 operation.execution = status
@@ -570,7 +574,7 @@ class RunnerGraph:
         matches = [
             definition
             for definition in self._steps
-            if {path.resolve(strict=False) for path in definition.outputs} == displayed_paths
+            if {_declared_path(path) for path in definition.outputs} == displayed_paths
         ]
         if len(matches) != 1:
             if displayed:
@@ -624,9 +628,9 @@ class RunnerGraph:
     def canonical_outputs(self, outputs: Iterable[Path | str]) -> tuple[Path, ...]:
         """Return declared output ordering when the supplied paths identify a step."""
         displayed = tuple(Path(value) for value in outputs if str(value).strip())
-        displayed_paths = {path.resolve(strict=False) for path in displayed}
+        displayed_paths = {_declared_path(path) for path in displayed}
         for step in self._steps:
-            if {path.resolve(strict=False) for path in step.outputs} == displayed_paths:
+            if {_declared_path(path) for path in step.outputs} == displayed_paths:
                 return step.outputs
         return displayed
 
