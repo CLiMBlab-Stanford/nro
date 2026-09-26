@@ -7,12 +7,13 @@ import os
 import shutil
 import sqlite3
 import uuid
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Iterator, Mapping
+from typing import Iterator, Mapping, Sequence
 
 import yaml
 
@@ -245,6 +246,120 @@ class BranchRegistry(WorkflowRegistry):
             return tuple(
                 self._decode(row)
                 for row in db.execute("SELECT * FROM work_items ORDER BY work_item_key")
+            )
+
+    def work_item_revisions(self, keys: Sequence[str] | None = None) -> dict[str, int | None]:
+        """Read contract revisions without decoding their scientific payloads."""
+        if keys is None:
+            with self._connection() as db:
+                return {
+                    str(row["work_item_key"]): int(row["revision"])
+                    for row in db.execute("SELECT work_item_key,revision FROM work_items")
+                }
+        selected = tuple(dict.fromkeys(str(key) for key in keys))
+        revisions: dict[str, int | None] = dict.fromkeys(selected)
+        with self._connection() as db:
+            for offset in range(0, len(selected), 500):
+                batch = selected[offset : offset + 500]
+                if not batch:
+                    continue
+                placeholders = ",".join("?" for _ in batch)
+                rows = db.execute(
+                    f"SELECT work_item_key,revision FROM work_items "
+                    f"WHERE work_item_key IN ({placeholders})",
+                    batch,
+                )
+                revisions.update((str(row[0]), int(row[1])) for row in rows)
+        return revisions
+
+    def cached_plan(self, cache_key: str) -> tuple[WorkItemSpec, ...] | None:
+        """Load one compiled participant plan from reconstructible private state."""
+        from nro.orchestration.compiled_request import decode_spec
+
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT payload FROM planning_cache WHERE cache_key=?", (cache_key,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(zlib.decompress(row[0]).decode("utf-8"))
+            if not isinstance(payload, list):
+                raise ValueError("Cached participant plan is not a specification list")
+            return tuple(decode_spec(item) for item in payload)
+        except (KeyError, TypeError, UnicodeError, ValueError, zlib.error):
+            with self._connection(write=True) as db:
+                db.execute("DELETE FROM planning_cache WHERE cache_key=?", (cache_key,))
+            return None
+
+    def cache_plan(
+        self,
+        scope_key: str,
+        cache_key: str,
+        work_items: tuple[WorkItemSpec, ...],
+    ) -> None:
+        """Store one plan and discard superseded entries for the same request scope."""
+        from nro.orchestration.compiled_request import encode_spec
+        from nro.orchestration.registry import utcnow
+
+        payload = zlib.compress(
+            json.dumps(
+                [encode_spec(item) for item in work_items],
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        with self._connection(write=True) as db:
+            db.execute(
+                "DELETE FROM planning_cache WHERE scope_key=? AND cache_key!=?",
+                (scope_key, cache_key),
+            )
+            db.execute(
+                """INSERT INTO planning_cache(cache_key,scope_key,payload,updated_at)
+                   VALUES (?,?,?,?) ON CONFLICT(cache_key) DO UPDATE SET
+                   scope_key=excluded.scope_key,payload=excluded.payload,
+                   updated_at=excluded.updated_at""",
+                (cache_key, scope_key, payload, utcnow()),
+            )
+
+    def planning_file_records(self, paths: Sequence[str]) -> dict[str, tuple[int, int, str, str]]:
+        """Return cached signatures for the requested source files."""
+        selected = tuple(dict.fromkeys(paths))
+        if not selected:
+            return {}
+        records: dict[str, tuple[int, int, str, str]] = {}
+        with self._connection() as db:
+            for offset in range(0, len(selected), 500):
+                batch = selected[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                for row in db.execute(
+                    f"SELECT path,size,mtime_ns,kind,digest FROM planning_files "
+                    f"WHERE path IN ({placeholders})",
+                    batch,
+                ):
+                    records[str(row["path"])] = (
+                        int(row["size"]),
+                        int(row["mtime_ns"]),
+                        str(row["kind"]),
+                        str(row["digest"]),
+                    )
+        return records
+
+    def record_planning_files(self, records: Mapping[str, tuple[int, int, str, str]]) -> None:
+        """Publish newly computed source signatures for later planning passes."""
+        if not records:
+            return
+        with self._connection(write=True) as db:
+            db.executemany(
+                """INSERT INTO planning_files(path,size,mtime_ns,kind,digest)
+                   VALUES (?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
+                   size=excluded.size,mtime_ns=excluded.mtime_ns,
+                   kind=excluded.kind,digest=excluded.digest""",
+                (
+                    (path, size, mtime_ns, kind, digest)
+                    for path, (size, mtime_ns, kind, digest) in records.items()
+                ),
             )
 
     def record_work_item(

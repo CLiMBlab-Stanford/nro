@@ -322,13 +322,15 @@ def test_shared_scheduler_repair_preserves_branch_runtime_and_keeps_backup(
     with sqlite3.connect(registry.paths.database) as db:
         db.execute("PRAGMA user_version=999")
     with sqlite3.connect(scientific.database) as db:
+        db.execute("DROP TABLE planning_cache")
+        db.execute("DROP TABLE planning_files")
         db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
     monkeypatch.setattr(scheduler_repair, "CHECKOUT", root)
     result = scheduler_repair.repair(registry, checkout=root, confirm=lambda activity: True)
     assert runtime.read_text() == "retained runtime"
     assert scientific.database.is_file()
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
-    assert scientific.work_items() == ()
+    assert [item.key for item in scientific.work_items()] == ["example"]
     from pathlib import Path
 
     backup = Path(result["backup"])

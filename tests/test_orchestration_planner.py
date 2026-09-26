@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import yaml
 
 import nro.modules.func.planning as func_planning
+import nro.orchestration.catalog as orchestration_catalog
 from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.markup import SubjectMarkup
@@ -23,6 +25,7 @@ from nro.modules.clean.contract import clean_output_contract
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.microparcellation.contract import microparcellation_output_contract
 from nro.modules.networks.contract import networks_output_contract
+from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planner import Planner, RegisteredTarget, build_subject_work_items
@@ -72,6 +75,67 @@ def _plan_modules(registry, tmp_path, modules, workflow_ids=("main",)):
         memory_gb=32,
         max_memory_gb=256,
     )
+
+
+def test_participant_plan_cache_skips_unchanged_module_compilation(tmp_path, monkeypatch):
+    bids = tmp_path / "bids"
+    subject = bids / "demo/sub-01"
+    _write(subject / "anat/sub-01_T1w.nii.gz")
+    _write(subject / "anat/sub-01_T1w.json", '{"AcquisitionTime": "12:00:00"}')
+    store = BranchStore(tmp_path / "control")
+    store.initialize()
+    scientific = store.registry("dev")
+    workflow = ConfigStore().resolve("main")
+    registered = scientific.register_workflow(workflow)
+
+    first = Planner(scientific, bids_root=bids).plan_subject(
+        project="demo",
+        participant="01",
+        module="anat",
+        workflow=workflow,
+        registered=registered,
+    )
+    descriptor = module_descriptor("anat")
+    calls = []
+
+    def counted_plan(*args, **kwargs):
+        calls.append(True)
+        return descriptor.plan(*args, **kwargs)
+
+    monkeypatch.setitem(
+        orchestration_catalog.MODULE_CATALOG,
+        "anat",
+        replace(descriptor, plan=counted_plan),
+    )
+    monkeypatch.setattr(
+        orchestration_catalog,
+        "BUILTIN_MODULES",
+        tuple(
+            orchestration_catalog.MODULE_CATALOG.get(item.name, item)
+            for item in orchestration_catalog.BUILTIN_MODULES
+        ),
+    )
+
+    second = Planner(scientific, bids_root=bids).plan_subject(
+        project="demo",
+        participant="01",
+        module="anat",
+        workflow=workflow,
+        registered=registered,
+    )
+
+    assert second == first
+    assert calls == []
+
+    _write(subject / "anat/sub-01_T1w.json", '{"AcquisitionTime": "13:00:00"}')
+    Planner(scientific, bids_root=bids).plan_subject(
+        project="demo",
+        participant="01",
+        module="anat",
+        workflow=workflow,
+        registered=registered,
+    )
+    assert calls == [True]
 
 
 def test_lesion_anatomy_keeps_its_parent_work_item_on_cpu(tmp_path: Path) -> None:

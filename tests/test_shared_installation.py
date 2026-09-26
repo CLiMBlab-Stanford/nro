@@ -89,6 +89,8 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
     scientific = branches.registry("main")
     scientific.record_work_item("example", {"module": "anat"}, expected_revision=None)
     with sqlite3.connect(scientific.database) as db:
+        db.execute("DROP TABLE planning_cache")
+        db.execute("DROP TABLE planning_files")
         db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
 
     _mock_service(
@@ -118,13 +120,16 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
             "branch": "main",
             "stored_schema": SCIENTIFIC_SCHEMA_VERSION - 1,
             "schema": SCIENTIFIC_SCHEMA_VERSION,
-            "backup": str(scientific.root / "registry-before-repair.sqlite3"),
-            "work_items": 0,
+            "backup": str(
+                scientific.root / f"registry-before-schema-{SCIENTIFIC_SCHEMA_VERSION}.sqlite3"
+            ),
+            "work_items": None,
             "unavailable": [],
+            "action": "migrated",
         }
     ]
     assert scientific.stored_schema_version() == SCIENTIFIC_SCHEMA_VERSION
-    assert scientific.work_items() == ()
+    assert [item.key for item in scientific.work_items()] == ["example"]
 
 
 def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(
