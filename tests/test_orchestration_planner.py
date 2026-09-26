@@ -367,6 +367,47 @@ def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_
     } == {("T1w", "2")}
 
 
+def test_registered_run_targets_share_one_subject_plan(branch_registry, tmp_path, monkeypatch):
+    complete = _plan_modules(branch_registry, tmp_path, ("func",))
+    target_keys = tuple(
+        key
+        for key, work_item in complete.work_items.items()
+        if work_item.module == "func" and work_item.participant == "01"
+    )
+    assert len(target_keys) == 2
+    workflow = ConfigStore().resolve("main")
+    planner = Planner(branch_registry, bids_root=tmp_path / "bids")
+    original = planner.plan_subject
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(planner, "plan_subject", counted)
+    exact = planner.plan_registered_targets(
+        tuple(
+            RegisteredTarget(
+                project="demo",
+                participant="01",
+                module="func",
+                workflow_id="main",
+                work_item_key=key,
+                entities=complete.work_items[key].entities,
+            )
+            for key in target_keys
+        ),
+        workflows={"main": workflow},
+        registered_workflows={"main": branch_registry.register_workflow(workflow)},
+        memory_gb=32,
+        max_memory_gb=256,
+    )
+
+    assert calls == 1
+    assert {key for request in exact.requests for key in request.terminal_keys} == set(target_keys)
+
+
 def test_registered_targets_preserve_workflow_associations(branch_registry, tmp_path):
     workflows = {name: ConfigStore().resolve(name) for name in ("main", "oslom")}
     registered = {
@@ -750,6 +791,48 @@ def test_existing_work_item_adopts_changed_dependency_topology(tmp_path: Path) -
             (row["id"],),
         ).fetchall()
     assert [item["work_item_key"] for item in dependencies] == [upstream.key]
+
+
+def test_equivalent_work_item_admission_does_not_rewrite_row(tmp_path: Path) -> None:
+    source = tmp_path / "source.nii.gz"
+    _write(source)
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    output = tmp_path / "derivatives" / "manifest.json"
+    work_item = WorkItemSpec.create(
+        key="anat:" + "9" * 64,
+        module="anat",
+        project="demo",
+        participant="01",
+        entities={},
+        scope="subject",
+        module_lineage_id=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        directory_label=registered.directory_for("anat"),
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        command=("python", "-m", "nro.modules.anat"),
+        dependencies=(),
+        input_paths=(source,),
+        output_root=output.parent,
+        output_prefix="sub-01",
+        resource_class="large",
+        expected_outputs=(output,),
+    )
+    registry.register_work_items((work_item,))
+    with registry.connection(write=True) as database:
+        original = database.execute(
+            "SELECT updated_at FROM work_items WHERE work_item_key=?", (work_item.key,)
+        ).fetchone()[0]
+        registry._upsert_work_item_graph_locked(
+            database,
+            ((work_item, work_item.as_record()),),
+            now="2099-01-01T00:00:00+00:00",
+        )
+        current = database.execute(
+            "SELECT updated_at FROM work_items WHERE work_item_key=?", (work_item.key,)
+        ).fetchone()[0]
+    assert current == original
 
 
 def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatch) -> None:

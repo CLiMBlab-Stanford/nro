@@ -327,6 +327,9 @@ def _admit_resolved(
             ),
         )
     request_id = request_id or uuid.uuid4().hex
+    request_state = (
+        ("active" if plan.work else "satisfied") if payload.get("demand", True) else "registered"
+    )
     db.execute(
         """INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET workflow_revision_id=excluded.workflow_revision_id,
@@ -341,9 +344,7 @@ def _admit_resolved(
             json.dumps(selectors),
             concurrency,
             partition,
-            ("active" if plan.work else "satisfied")
-            if payload.get("demand", True)
-            else "registered",
+            request_state,
             now,
             now,
         ),
@@ -374,13 +375,18 @@ def _admit_resolved(
         db.execute(
             """INSERT INTO branch_work_items VALUES (?,?,?,?)
             ON CONFLICT(registry_id,logical_key) DO UPDATE SET work_item_id=excluded.work_item_id,
-            scientific_contract_json=excluded.scientific_contract_json""",
+            scientific_contract_json=excluded.scientific_contract_json
+            WHERE branch_work_items.work_item_id!=excluded.work_item_id
+               OR branch_work_items.scientific_contract_json!=excluded.scientific_contract_json""",
             (owner, item.spec.key, ids[keys[item.spec.key]], json.dumps(item.contract)),
         )
+    from nro.orchestration.request_plans import terminal_plan
+
+    encoded_plan = json.dumps(payload) if request_state == "active" else terminal_plan(payload)
     db.execute(
         """INSERT INTO request_plans VALUES (?,?) ON CONFLICT(request_id)
         DO UPDATE SET payload_json=excluded.payload_json""",
-        (request_id, json.dumps(payload)),
+        (request_id, encoded_plan),
     )
     for item in plan.work:
         db.execute(

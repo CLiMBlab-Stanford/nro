@@ -11,6 +11,21 @@ from nro.orchestration.registry import Registry
 from nro.orchestration.source_snapshots import SourceSnapshot
 
 
+def test_status_projection_omits_execution_payloads() -> None:
+    row = {
+        "id": 1,
+        "status": "Success",
+        "artifact_contract_json": "large contract",
+        "command_json": "large command",
+        "expected_outputs_json": "large outputs",
+        "input_paths_json": "large inputs",
+        "runtime_config_path": "/runtime/config.yml",
+    }
+
+    assert scheduler_operations.compact_status_rows([row]) == [{"id": 1, "status": "Success"}]
+    assert "artifact_contract_json" in row
+
+
 def test_batch_verifies_source_and_assesses_projects_once(monkeypatch, tmp_path):
     db = object()
     registry = SimpleNamespace(

@@ -260,28 +260,35 @@ def _admit(
             or topology.records[name].registry_id != payload["registry_id"]
         ):
             raise ValueError("Request ownership does not match the submitting checkout")
+        existing_revisions = {
+            str(row["logical_key"]): (int(row["revision"]), str(row["fingerprint"]))
+            for row in db.execute(
+                """SELECT logical_key,revision,fingerprint FROM compiled_revisions
+                   WHERE registry_id=?""",
+                (payload["registry_id"],),
+            )
+        }
+        changed_revisions = []
         for key, contract in contracts.items():
             revision = payload["revisions"][key]
             if type(revision) is not int or revision < 1:
                 raise ValueError("Scientific revisions must be positive integers")
             digest = fingerprint(contract)
-            row = db.execute(
-                "SELECT revision,fingerprint FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
-                (payload["registry_id"], key),
-            ).fetchone()
-            if row and (
-                revision < row["revision"]
-                or (revision == row["revision"] and digest != row["fingerprint"])
+            current = existing_revisions.get(key)
+            if current and (
+                revision < current[0] or (revision == current[0] and digest != current[1])
             ):
                 raise ValueError(
                     "A newer scientific request was admitted; refresh this checkout before retrying"
                 )
-            db.execute(
-                """INSERT INTO compiled_revisions VALUES (?,?,?,?)
-                ON CONFLICT(registry_id,logical_key) DO UPDATE SET revision=excluded.revision,
-                fingerprint=excluded.fingerprint""",
-                (payload["registry_id"], key, revision, digest),
-            )
+            if current != (revision, digest):
+                changed_revisions.append((payload["registry_id"], key, revision, digest))
+        db.executemany(
+            """INSERT INTO compiled_revisions VALUES (?,?,?,?)
+            ON CONFLICT(registry_id,logical_key) DO UPDATE SET revision=excluded.revision,
+            fingerprint=excluded.fingerprint""",
+            changed_revisions,
+        )
         plan = resolve_payload(topology, payload, candidates)
         return _admit_resolved(registry, db, plan, payload, request_id=request_id)
 

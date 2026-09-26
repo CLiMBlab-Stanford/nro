@@ -299,6 +299,24 @@ class BranchPaths:
             raise ValueError("Output is outside the branch-owned derivative root")
         return resolved
 
+    def require_output_entry(self, path: Path, project: str, *, private: bool = False) -> Path:
+        """Authorize an output entry without following its final symlink.
+
+        Parent components must still resolve inside the owned derivative tree.
+        Callers must remove an existing final symlink before writing through the
+        returned path.
+        """
+        root = (
+            self.private_project(project) if private else self.output_project(project)
+        ) / "derivatives"
+        path = Path(path).expanduser().absolute()
+        if ".." in path.parts or root.resolve() != root:
+            raise ValueError("Output is outside the branch-owned derivative root")
+        location = path.parent.resolve(strict=False) / path.name
+        if not location.is_relative_to(root):
+            raise ValueError("Output is outside the branch-owned derivative root")
+        return location
+
     def require_removal(self, path: Path, project: str, *, private: bool = False) -> Path:
         """Authorize removal without following a final symlink outside the derivative root."""
         root = (

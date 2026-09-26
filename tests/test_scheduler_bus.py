@@ -63,6 +63,28 @@ def test_interrupted_durable_request_is_recovered(tmp_path):
         )
 
 
+def test_prepare_prunes_only_expired_completed_requests(tmp_path):
+    from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    coordinator = RequestCoordinator(registry, lambda _received: {"result": "done"})
+    old = scheduler_bus.create_message({"operation": "old"})
+    recent = scheduler_bus.create_message({"operation": "recent"})
+    coordinator.run(old)
+    coordinator.run(recent)
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE scheduler_requests SET updated_at='2020-01-01T00:00:00+00:00' WHERE id=?",
+            (old["id"],),
+        )
+
+    assert prepare(registry) == ()
+    with registry.connection() as db:
+        identifiers = {row[0] for row in db.execute("SELECT id FROM scheduler_requests")}
+    assert identifiers == {recent["id"]}
+
+
 def test_concurrent_durable_retries_share_one_execution(tmp_path):
     from nro.orchestration.scheduler_requests import RequestCoordinator
 

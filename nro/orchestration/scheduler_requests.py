@@ -20,13 +20,16 @@ def _encoded(record: dict) -> tuple[str, str]:
 def prepare(registry) -> tuple[dict, ...]:
     """Recover interrupted requests and return records awaiting execution."""
     with registry.connection(write=True) as db:
+        from nro.orchestration.request_plans import compact_terminal_plans
+
+        compact_terminal_plans(db)
         db.execute(
             "UPDATE scheduler_requests SET state='pending',updated_at=? WHERE state='running'",
             (utcnow(),),
         )
         db.execute(
             "DELETE FROM scheduler_requests "
-            "WHERE state='completed' AND datetime(updated_at) < datetime('now','-7 days')"
+            "WHERE state='completed' AND datetime(updated_at) < datetime('now','-1 hour')"
         )
         rows = db.execute(
             "SELECT record_json FROM scheduler_requests WHERE state='pending' ORDER BY created_at,id"
@@ -89,6 +92,11 @@ def _execute(registry, record: dict, operation: Callable[[dict], dict]) -> dict:
             "UPDATE scheduler_requests SET state='completed',response_json=?,updated_at=? WHERE id=?",
             (encoded, utcnow(), record["id"]),
         )
+        if record["kind"] == "command":
+            db.execute(
+                "DELETE FROM scheduler_requests "
+                "WHERE state='completed' AND datetime(updated_at) < datetime('now','-1 hour')"
+            )
     from nro.orchestration.scheduler_bus import clear_progress
 
     clear_progress(registry.paths.control, str(record["id"]))

@@ -21,6 +21,20 @@ if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec
 
 
+def _rows_for_values(
+    database: sqlite3.Connection,
+    statement: str,
+    values: Sequence[object],
+    *,
+    chunk_size: int = 500,
+):
+    """Yield rows from a one-placeholder-list query without exceeding SQLite limits."""
+    for offset in range(0, len(values), chunk_size):
+        chunk = values[offset : offset + chunk_size]
+        placeholders = ",".join("?" for _value in chunk)
+        yield from database.execute(statement.format(placeholders=placeholders), chunk)
+
+
 def work_item_relative_directory(work_item: Mapping[str, object]) -> Path:
     """Return the private log directory for one work-item record."""
     project = str(work_item["project"])
@@ -47,14 +61,46 @@ def upsert_work_item_graph(
 ) -> dict[str, int]:
     """Merge work-item contracts and edges without opening a connection or creating demand."""
     validate_output_ownership(tuple(spec for spec, _record in work_item_records))
+    lineage_ids = tuple({spec.module_lineage_id for spec, _record in work_item_records})
+    lineages = {
+        int(row["id"]): str(row["directory_label"])
+        for row in _rows_for_values(
+            database,
+            "SELECT id,directory_label FROM module_lineages WHERE id IN ({placeholders})",
+            lineage_ids,
+        )
+    }
+    work_item_keys = tuple(spec.key for spec, _record in work_item_records)
+    existing_by_key = {
+        str(row["work_item_key"]): row
+        for row in _rows_for_values(
+            database,
+            """SELECT id, work_item_key, module, module_lineage_id, scope, resource_class,
+                      revision_fingerprint, artifact_contract_json, artifact_fingerprint,
+                      memory_gb, max_memory_gb, command_json, runtime_config_path,
+                      input_paths_json, output_root, output_prefix, expected_outputs_json
+               FROM work_items WHERE work_item_key IN ({placeholders})""",
+            work_item_keys,
+        )
+    }
+    existing_ids = tuple(int(row["id"]) for row in existing_by_key.values())
+    completions = {
+        int(row["work_item_id"]): row
+        for row in _rows_for_values(
+            database,
+            """SELECT work_item_id,config_id,config_fingerprint,resolved_yaml FROM completions
+               WHERE work_item_id IN ({placeholders})""",
+            existing_ids,
+        )
+    }
     claims_by_root: dict[str, list[dict]] = {}
     output_roots = sorted(
         {str(spec.output_root.expanduser().resolve()) for spec, _record in work_item_records}
     )
     if output_roots:
-        placeholders = ",".join("?" for _root in output_roots)
-        for row in database.execute(
-            f"""SELECT work_item_key, output_root, output_prefix, expected_outputs_json
+        for row in _rows_for_values(
+            database,
+            """SELECT work_item_key, output_root, output_prefix, expected_outputs_json
                 FROM work_items WHERE output_root IN ({placeholders})""",
             output_roots,
         ):
@@ -79,27 +125,17 @@ def upsert_work_item_graph(
                     "Work-item output claim conflicts with registered work: "
                     f"{spec.key} and {claimed['work_item_key']}"
                 )
-        lineage = database.execute(
-            "SELECT directory_label FROM module_lineages WHERE id=?",
-            (spec.module_lineage_id,),
-        ).fetchone()
-        if lineage is None:
+        directory_label = lineages.get(spec.module_lineage_id)
+        if directory_label is None:
             raise ValueError(
                 f"Work item {spec.key} references unknown module lineage {spec.module_lineage_id}"
             )
-        if str(lineage["directory_label"]) != spec.directory_label:
+        if directory_label != spec.directory_label:
             raise ValueError(
                 f"Work item {spec.key} does not match its registered module lineage: "
-                f"expected directory {lineage['directory_label']}, received {spec.directory_label}"
+                f"expected directory {directory_label}, received {spec.directory_label}"
             )
-        existing = database.execute(
-            """SELECT id, module, module_lineage_id, scope, resource_class, revision_fingerprint,
-                      artifact_contract_json, artifact_fingerprint,
-                      command_json, runtime_config_path, input_paths_json,
-                      output_root, output_prefix, expected_outputs_json
-               FROM work_items WHERE work_item_key=?""",
-            (spec.key,),
-        ).fetchone()
+        existing = existing_by_key.get(spec.key)
         if existing:
             if (
                 str(existing["module"]) != spec.module
@@ -114,11 +150,7 @@ def upsert_work_item_graph(
                 if owner_branch in {None, "main"}:
                     from nro.orchestration.catalog import canonical_contract
 
-                    completion = database.execute(
-                        """SELECT config_id,config_fingerprint,resolved_yaml
-                           FROM completions WHERE work_item_id=?""",
-                        (work_item_id,),
-                    ).fetchone()
+                    completion = completions.get(work_item_id)
                     configuration = (
                         {
                             "id": completion["config_id"],
@@ -133,39 +165,59 @@ def upsert_work_item_graph(
             except (ValueError, TypeError, KeyError):
                 artifact_changed = True
             replace_dependencies[work_item_id] = artifact_changed
-            database.execute(
-                """
-                UPDATE work_items SET scope=?, resource_class=?,
-                    revision_fingerprint=?, artifact_contract_json=?,
-                    artifact_fingerprint=?, command_json=?, runtime_config_path=?,
-                    memory_gb=MAX(memory_gb, ?), max_memory_gb=MAX(max_memory_gb, ?),
-                    input_paths_json=?, output_root=?, output_prefix=?,
-                    expected_outputs_json=?,
-                    artifact_state=CASE WHEN ? THEN 'stale' ELSE artifact_state END,
-                    artifact_reason=CASE WHEN ? THEN 'Work-item contract changed' ELSE artifact_reason END,
-                    updated_at=?
-                WHERE id=?
-                """,
-                (
-                    record["scope"],
-                    record["resource_class"],
-                    record["revision_fingerprint"],
-                    record["artifact_contract_json"],
-                    record["artifact_fingerprint"],
-                    record["command_json"],
-                    record["runtime_config_path"],
-                    record["memory_gb"],
-                    record["max_memory_gb"],
-                    record["input_paths_json"],
-                    record["output_root"],
-                    record["output_prefix"],
-                    record["expected_outputs_json"],
-                    artifact_changed,
-                    artifact_changed,
-                    now,
-                    work_item_id,
-                ),
+            persisted = (
+                "scope",
+                "resource_class",
+                "revision_fingerprint",
+                "artifact_contract_json",
+                "artifact_fingerprint",
+                "command_json",
+                "runtime_config_path",
+                "input_paths_json",
+                "output_root",
+                "output_prefix",
+                "expected_outputs_json",
             )
+            unchanged = (
+                not artifact_changed
+                and all(existing[key] == record[key] for key in persisted)
+                and int(existing["memory_gb"]) >= int(record["memory_gb"])
+                and int(existing["max_memory_gb"]) >= int(record["max_memory_gb"])
+            )
+            if not unchanged:
+                database.execute(
+                    """
+                    UPDATE work_items SET scope=?, resource_class=?,
+                        revision_fingerprint=?, artifact_contract_json=?,
+                        artifact_fingerprint=?, command_json=?, runtime_config_path=?,
+                        memory_gb=MAX(memory_gb, ?), max_memory_gb=MAX(max_memory_gb, ?),
+                        input_paths_json=?, output_root=?, output_prefix=?,
+                        expected_outputs_json=?,
+                        artifact_state=CASE WHEN ? THEN 'stale' ELSE artifact_state END,
+                        artifact_reason=CASE WHEN ? THEN 'Work-item contract changed' ELSE artifact_reason END,
+                        updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        record["scope"],
+                        record["resource_class"],
+                        record["revision_fingerprint"],
+                        record["artifact_contract_json"],
+                        record["artifact_fingerprint"],
+                        record["command_json"],
+                        record["runtime_config_path"],
+                        record["memory_gb"],
+                        record["max_memory_gb"],
+                        record["input_paths_json"],
+                        record["output_root"],
+                        record["output_prefix"],
+                        record["expected_outputs_json"],
+                        artifact_changed,
+                        artifact_changed,
+                        now,
+                        work_item_id,
+                    ),
+                )
             if artifact_changed:
                 dependency_state.invalidate(
                     database,
