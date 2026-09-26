@@ -115,6 +115,81 @@ def test_scheduler_separates_polling_from_maintenance_execution() -> None:
     assert scheduler_service._executor_for(purge, executors) is executors["maintenance"]
 
 
+def _capacity_event(worker_id: str, sequence: int, *, profile: dict | None = None) -> dict:
+    return {
+        "action": "request_capacity",
+        "kind": "expand",
+        "worker_id": worker_id,
+        "sequence": sequence,
+        "profile": profile,
+    }
+
+
+def test_equivalent_capacity_requests_coalesce_durably(tmp_path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+
+    scheduler_service._queue_pool_expansion(registry, _capacity_event("first", 4))
+    scheduler_service._queue_pool_expansion(registry, _capacity_event("second", 9))
+
+    pending = scheduler_service._pending_pool_expansions(registry)
+    assert len(pending) == 1
+    assert pending[0][2] == {"profile": None}
+    assert '"revision":"second:9"' in pending[0][1]
+    assert scheduler_service._registry_busy(registry)
+
+
+def test_capacity_requests_remain_distinct_by_profile(tmp_path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+
+    scheduler_service._queue_pool_expansion(
+        registry, _capacity_event("cpu", 1, profile={"partition": "cpu"})
+    )
+    scheduler_service._queue_pool_expansion(
+        registry, _capacity_event("gpu", 1, profile={"partition": "gpu"})
+    )
+
+    assert {
+        row[2]["profile"]["partition"]
+        for row in scheduler_service._pending_pool_expansions(registry)
+    } == {"cpu", "gpu"}
+
+
+def test_capacity_drain_preserves_concurrent_newer_request(tmp_path, monkeypatch) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    scheduler_service._queue_pool_expansion(registry, _capacity_event("first", 1))
+    calls = []
+
+    def supply(_registry, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            scheduler_service._queue_pool_expansion(registry, _capacity_event("second", 2))
+        return []
+
+    monkeypatch.setattr(scheduler_service, "_supply_requested_pool", supply)
+
+    assert scheduler_service._drain_pool_expansions(registry) == 2
+    assert calls == [{"profile": None}, {"profile": None}]
+    assert scheduler_service._pending_pool_expansions(registry) == []
+    assert not scheduler_service._registry_busy(registry)
+
+
+def test_failed_capacity_drain_leaves_request_for_retry(tmp_path, monkeypatch) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    scheduler_service._queue_pool_expansion(registry, _capacity_event("worker", 1))
+
+    def fail(_registry, _payload):
+        raise RuntimeError("transient failure")
+
+    monkeypatch.setattr(scheduler_service, "_supply_requested_pool", fail)
+
+    assert scheduler_service._drain_pool_expansions(registry) == 0
+    assert len(scheduler_service._pending_pool_expansions(registry)) == 1
+
+
 def test_scheduler_progress_is_atomic_and_transient(tmp_path):
     control = tmp_path / ".nro"
     scheduler_bus.prepare(control)
