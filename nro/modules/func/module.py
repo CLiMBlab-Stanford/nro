@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -315,8 +316,10 @@ def build_module(
         repetition_time = float(raw_repetition_time) if raw_repetition_time is not None else None
     except (TypeError, ValueError):
         repetition_time = None
-    if repetition_time is not None and repetition_time <= 0:
+    if repetition_time is not None and (not math.isfinite(repetition_time) or repetition_time <= 0):
         repetition_time = None
+    if repetition_time is None:
+        raise SystemExit("BOLD metadata require a finite positive RepetitionTime.")
     binds = collect_bind_directories(
         [
             inputs.sbref,
@@ -409,6 +412,7 @@ def build_module(
         "wb_command",
         "N4BiasFieldCorrection",
         "3dNwarpApply",
+        "3drefit",
         "fslcpgeom",
     ]
     if ica_enabled:
@@ -445,6 +449,7 @@ def build_module(
     mc_dir = opts.work_dir / "mc"
     surf_dir = opts.work_dir / "surf"
     qc_dir = opts.work_dir / "qc"
+    source_inputs = inputs
     preparation = plan_input_preparation(
         opts=opts,
         inputs=inputs,
@@ -876,6 +881,16 @@ def build_module(
             ped_b = str(meta_b.get("PhaseEncodingDirection", "")).strip()
             readout_a = float(bids_readout_time(meta_a))
             readout_b = float(bids_readout_time(meta_b))
+            source_by_prepared = {
+                prepared: source
+                for prepared, source in (
+                    (inputs.se1, source_inputs.se1),
+                    (inputs.se2, source_inputs.se2),
+                )
+                if prepared is not None and source is not None
+            }
+            source_se_a = source_by_prepared[se_a]
+            source_se_b = source_by_prepared[se_b]
             topup_native = _create_topup_dfout_step(
                 run_child=runner.run_child,
                 se_a=se_a,
@@ -888,9 +903,9 @@ def build_module(
                 topup_config=opts.topup_config,
                 env=env,
                 force=opts.overwrite,
-                spatial_shape=nifti_spatial_shape(se_a),
-                volumes_a=nifti_volume_count(se_a),
-                volumes_b=nifti_volume_count(se_b),
+                spatial_shape=nifti_spatial_shape(source_se_a),
+                volumes_a=nifti_volume_count(source_se_a),
+                volumes_b=nifti_volume_count(source_se_b),
             )
             runner.add_step(topup_native.step)
             if reg_ref_ped == ped_a:
@@ -2084,6 +2099,7 @@ def build_module(
                 motion_affines=afni_motion_affines,
                 gradient_warp=gradient_afni_warp,
                 out_4d=raw_4d,
+                repetition_time=repetition_time,
                 env=env,
                 force=opts.overwrite,
             )
@@ -2475,6 +2491,7 @@ def build_module(
             subjects_dir=subjects_dir,
             fs_subject=fs_subject,
             brain_mask_in_epi=confounds_mask,
+            repetition_time=repetition_time,
             out_tsv=confounds_tsv,
             out_json=confounds_json,
             force=opts.overwrite,

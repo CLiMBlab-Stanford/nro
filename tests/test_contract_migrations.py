@@ -211,6 +211,38 @@ def test_lesion_true_remains_scientifically_distinct() -> None:
     assert lesioned["processing"]["source_markup"]["lesion"] is True
 
 
+@pytest.mark.parametrize(
+    "module",
+    ("func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"),
+)
+def test_source_markup_syntax_does_not_define_artifact_identity(module: str) -> None:
+    historical = {
+        "module": module,
+        "processing": {
+            "source_markup": {
+                "id": "main",
+                "exclude": ["/bids/demo/sub-1/func/aborted_bold.nii.gz"],
+            }
+        },
+    }
+    current = {
+        "contract_schema": 2,
+        "module": module,
+        "processing": {
+            "source_markup": {
+                "id": "main",
+                "exclude": ["/bids/demo/sub-1/func/another_bold.nii.gz"],
+            }
+        },
+    }
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+
+    assert migrated_historical == migrated_current
+    assert "source_markup" not in migrated_current["processing"]
+
+
 def test_legacy_lesion_backend_fields_retire_after_pipeline_refactor() -> None:
     historical = _anat_contract(version=3, lesion=True)
     historical["processing"]["lesion_reconstruction"] = {"surface_backend": "FastSurfer-LIT"}

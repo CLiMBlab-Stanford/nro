@@ -372,6 +372,7 @@ def get_confounds(
     out_json: Path,
     aseg_in_epi: Optional[Path] = None,
     brain_mask_in_epi: Optional[Path] = None,
+    repetition_time: Optional[float] = None,
     n_acompcor: Optional[int] = None,
     acompcor_max_voxels: Optional[int] = None,
     cosine_high_pass_hz: Optional[float] = None,
@@ -434,7 +435,10 @@ def get_confounds(
     if len(epi_mean_img.shape) != 3:
         raise SystemExit(f"--epi-mean must be 3D, got shape {epi_mean_img.shape}")
     t = int(epi_img.shape[3])
-    repetition_time = float(epi_img.header.get_zooms()[3])
+    if repetition_time is None:
+        repetition_time = float(epi_img.header.get_zooms()[3])
+    else:
+        repetition_time = float(repetition_time)
 
     par = np.loadtxt(str(mcflirt_par), dtype=np.float64)
     if par.ndim == 1:
@@ -653,6 +657,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--out-tsv", required=True, type=Path, help="Output confounds TSV")
     ap.add_argument("--out-json", required=True, type=Path, help="Output confounds JSON sidecar")
     ap.add_argument(
+        "--repetition-time",
+        type=float,
+        help="BOLD repetition time in seconds; defaults to the NIfTI header value",
+    )
+    ap.add_argument(
         "--project",
         default=SETTINGS.common.project,
         help="BIDS project name under the configured top-level data directory.",
@@ -736,6 +745,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         brain_mask_in_epi=resolve_project_path(args.brain_mask_in_epi, project=project),
         out_tsv=resolve_project_path(args.out_tsv, project=project),
         out_json=resolve_project_path(args.out_json, project=project),
+        repetition_time=args.repetition_time,
         n_acompcor=int(args.n_acompcor),
         acompcor_max_voxels=int(args.acompcor_max_voxels),
         cosine_high_pass_hz=float(args.cosine_high_pass_hz),
