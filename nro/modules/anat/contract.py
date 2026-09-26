@@ -87,7 +87,10 @@ def anatomical_output_contract(*, lesion: bool = False) -> dict[str, object]:
     fields = dict(ANATOMICAL_MANIFEST_FIELDS)
     if lesion:
         fields.update(LESION_MANIFEST_FIELDS)
-    return {"publication_manifest_fields": fields}
+    return {
+        "publication_manifest_fields": fields,
+        "surface_metric_structure": "hemisphere_specific",
+    }
 
 
 def validate_anatomical_manifest(document: Mapping[str, object]) -> None:

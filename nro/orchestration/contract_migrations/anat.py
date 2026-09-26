@@ -123,5 +123,16 @@ CHAIN = ContractMigrationChain(
                 ),
             ),
         ),
+        ContractMigration(
+            destination=8,
+            summary="Assign hemisphere-specific anatomical structures to surface metrics",
+            contract=(
+                AddField(
+                    "processing.output_metadata.surface_metric_structure",
+                    default="hemisphere_specific",
+                    historical="unspecified",
+                ),
+            ),
+        ),
     ),
 )

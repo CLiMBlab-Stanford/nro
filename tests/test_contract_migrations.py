@@ -38,16 +38,41 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 7
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 8
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=7), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=8), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
+
+
+def test_metric_structure_migration_invalidates_anatomy_without_metadata() -> None:
+    historical = _anat_contract(version=7, lesion=False)
+    historical["processing"]["output_metadata"] = {
+        "publication_manifest_fields": {},
+    }
+    current = _anat_contract(version=8, lesion=False)
+    current["processing"]["output_metadata"] = {
+        "publication_manifest_fields": {},
+        "surface_metric_structure": "hemisphere_specific",
+    }
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+
+    assert migrated_historical != migrated_current
+    assert (
+        migrated_historical["processing"]["output_metadata"]["surface_metric_structure"]
+        == "unspecified"
+    )
+    assert (
+        migrated_current["processing"]["output_metadata"]["surface_metric_structure"]
+        == "hemisphere_specific"
+    )
 
 
 def test_anatomy_configuration_migration_preserves_ordinary_scientific_identity() -> None:
