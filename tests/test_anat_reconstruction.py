@@ -9,6 +9,7 @@ from nro.modules.anat.reconstruction import (
     create_surface_reconstruction_plan,
 )
 from nro.modules.anat.steps import (
+    _create_metric_conversion_step,
     _create_recon_all_step,
     _freesurfer_progress,
     _FreeSurferProgressMonitor,
@@ -130,3 +131,30 @@ def test_freesurfer_progress_monitor_reads_native_status_log(tmp_path: Path, cap
         monitor._consume()
 
     assert "FreeSurfer 3/7: Tessellate rh, right hemisphere" in caplog.messages
+
+
+def test_metric_conversion_normalizes_freesurfer_prefixed_output(tmp_path: Path) -> None:
+    output = (
+        tmp_path
+        / "surface_export"
+        / "metric_conversion"
+        / "sub-test_space-fsnative_hemi-L_thickness.shape.gii"
+    )
+    step = _create_metric_conversion_step(
+        metric=tmp_path / "lh.thickness",
+        surface=tmp_path / "lh.white",
+        output=output,
+        description="cortical thickness",
+        env={},
+        force=False,
+    )
+
+    assert step.prepare is not None
+    assert step.finalize is not None
+    step.prepare()
+    converted = Path(step.command[-1])
+    assert converted.name == "lh.sub-test_space-fsnative_hemi-L_thickness.shape.gii"
+    converted.write_text("metric")
+    step.finalize()
+    assert output.read_text() == "metric"
+    assert not converted.exists()

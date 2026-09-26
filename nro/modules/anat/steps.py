@@ -1189,13 +1189,25 @@ def _create_metric_conversion_step(
     env: dict[str, str],
     force: bool,
 ) -> Step:
+    hemisphere = surface.name.split(".", 1)[0]
+    converted = output.with_name(f"{hemisphere}.{output.name}")
+
+    def prepare() -> None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        converted.unlink(missing_ok=True)
+
+    def finalize() -> None:
+        os.replace(converted, output)
+
     return Step.command_step(
-        ["mris_convert", "-c", str(metric), str(surface), str(output)],
+        ["mris_convert", "-c", str(metric), str(surface), str(converted)],
         name=f"Convert FreeSurfer {description.title()} Metric",
         env=env,
         outputs=(output,),
         inputs=(metric, surface),
         force=force,
+        prepare=prepare,
+        finalize=finalize,
     )
 
 
