@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -21,6 +22,9 @@ DEFAULT_RPC_TIMEOUT_SECONDS = 180.0
 UPDATED_STATUS_TIMEOUT_SECONDS = 600.0
 CONTROL_RPC_TIMEOUT_SECONDS = 60.0
 MAINTENANCE_RPC_TIMEOUT_SECONDS = 900.0
+PENDING_REQUEST_INITIAL_POLL_SECONDS = 0.5
+PENDING_REQUEST_MAX_POLL_SECONDS = 2.0
+PENDING_REQUEST_POLL_JITTER = 0.2
 _WAIT_FRAMES = ("·", "•", "●", "•")
 _WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
 _RESET = "\x1b[0m"
@@ -352,6 +356,7 @@ def exchange(
     frame = 0
     notice = False
     attempted_endpoint: tuple[str, int] | None = None
+    pending_poll_seconds = PENDING_REQUEST_INITIAL_POLL_SECONDS
     while True:
         launch = read_launch(endpoint.control)
         if launch is not None:
@@ -370,6 +375,7 @@ def exchange(
             if token != active_token:
                 active_token = token
                 active_started = now
+                pending_poll_seconds = PENDING_REQUEST_INITIAL_POLL_SECONDS
             endpoint_identity = (
                 str(active["token"]),
                 int(active["port"]),
@@ -395,7 +401,17 @@ def exchange(
                         continue
                     if response.get("pending") == message_id:
                         attempted_endpoint = None
-                        time.sleep(0.1)
+                        time.sleep(
+                            pending_poll_seconds
+                            * random.uniform(
+                                1.0 - PENDING_REQUEST_POLL_JITTER,
+                                1.0 + PENDING_REQUEST_POLL_JITTER,
+                            )
+                        )
+                        pending_poll_seconds = min(
+                            PENDING_REQUEST_MAX_POLL_SECONDS,
+                            pending_poll_seconds * 2.0,
+                        )
                         continue
                     if notice:
                         sys.stderr.write(_CLEAR)

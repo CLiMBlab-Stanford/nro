@@ -42,8 +42,6 @@ from nro.orchestration.scheduler_implementation import validate_worker_script
 
 COMPATIBLE = WORKER_COMPATIBILITY
 HEARTBEAT_INTERVAL = 30.0
-OUTPUT_VISIBILITY_TIMEOUT = 180.0
-OUTPUT_VISIBILITY_POLL_INTERVAL = 1.0
 
 
 def _append_event(registry: Registry, work_item: ExecutionEnvelope, event: dict) -> None:
@@ -357,30 +355,6 @@ class Worker:
     def _log(self, message: str) -> None:
         """Write a concise lifecycle record to the Slurm worker stream."""
         print(f"{utcnow()} nro worker {self.worker_id}: {message}", flush=True)
-
-    def _wait_for_output_visibility(self, outputs: tuple[Path, ...], log_path: Path) -> None:
-        """Wait until the scheduler host observes files published on another node."""
-        probe = getattr(self.registry, "outputs_visible", None)
-        if probe is None or probe(outputs):
-            return
-        started = time.monotonic()
-        with log_path.open("a", encoding="utf-8") as log:
-            log.write("Waiting for published outputs to become visible to the scheduler\n")
-        last_heartbeat = 0.0
-        while time.monotonic() - started < OUTPUT_VISIBILITY_TIMEOUT:
-            now = time.monotonic()
-            if now - last_heartbeat >= HEARTBEAT_INTERVAL:
-                self.registry.heartbeat_worker(self.worker_id, state="running")
-                last_heartbeat = now
-            time.sleep(OUTPUT_VISIBILITY_POLL_INTERVAL)
-            if probe(outputs):
-                with log_path.open("a", encoding="utf-8") as log:
-                    log.write("Published outputs are visible to the scheduler\n")
-                return
-        raise RegistryLockTimeout(
-            "published outputs remained invisible to the scheduler for "
-            f"{OUTPUT_VISIBILITY_TIMEOUT:g} seconds"
-        )
 
     def _attempt_summary(self, attempt_id: int) -> str:
         if hasattr(self.registry, "attempt_summary"):
@@ -895,7 +869,6 @@ class Worker:
                 started_at=completion_started,
             )
             outputs = _outputs(work_item)
-            self._wait_for_output_visibility(outputs, log_path)
             manifest = (
                 self.registry.record_completion(
                     work_item_id=work_item.work_item_id,

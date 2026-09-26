@@ -1013,44 +1013,6 @@ def test_completion_record_and_generation_commit_atomically(tmp_path: Path) -> N
         )
 
 
-def test_worker_waits_for_scheduler_output_visibility(tmp_path: Path, monkeypatch) -> None:
-    import nro.orchestration.worker as worker_module
-
-    bids = tmp_path / "bids"
-    registry = Registry.for_project("demo", bids_root=bids)
-    workflow = ConfigStore().resolve("main")
-    registered = registry.register_workflow(workflow)
-    output = tmp_path / "outputs" / "network.txt"
-    work_item = _spec(
-        key="networks:" + "d" * 64,
-        module="networks",
-        lineage=registered.lineages["networks"],
-        config_fingerprint=workflow.configuration("networks").fingerprint,
-        runtime_config=registry.runtime_config_path(registered, "networks"),
-        output=output,
-    )
-    registry.create_request(
-        registered=registered,
-        target_module="networks",
-        selectors={},
-        work_items=(work_item,),
-        terminal_work_item_keys=(work_item.key,),
-        concurrency=1,
-        partition=None,
-    )
-    visibility = iter((False, True))
-    monkeypatch.setattr(
-        registry, "outputs_visible", lambda _outputs: next(visibility), raising=False
-    )
-    monkeypatch.setattr(worker_module, "OUTPUT_VISIBILITY_POLL_INTERVAL", 0.0)
-
-    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
-
-    row = registry.work_item_rows()[0]
-    assert row["artifact_state"] == "fresh"
-    assert "Waiting for published outputs" in Path(row["log_path"]).read_text()
-
-
 def test_completion_inventory_retries_a_transiently_missing_output(
     tmp_path: Path, monkeypatch
 ) -> None:

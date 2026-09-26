@@ -129,9 +129,11 @@ example:
 nro run -P example -p 01 -m microparcellation
 ```
 
-Add `--local` to each request when Slurm is unavailable. Omitted selectors
-usually mean all matches, so avoid bare `nro run` and `nro purge` commands until
-you understand their scope.
+Add `--local` to each request when Slurm is unavailable. Omitted selectors mean
+all matches. A new `nro run` request is the workflow exception: an omitted
+workflow selects `main`. With `nro run --resume`, it matches every workflow with
+resumable work. Avoid bare `nro run` and `nro purge` commands until you
+understand their scope.
 
 Continue with the [command reference](commands/index.md),
 [module guides](modules/index.md), and [configuration guide](configuration.md).

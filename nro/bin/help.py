@@ -38,6 +38,9 @@ TASK_GUIDES = {
 
           nro run --resume -P PROJECT -p PARTICIPANT
 
+        New requests default to workflow `main` when `--workflow` is omitted.
+        Resume treats an omitted workflow as all matching resumable workflows.
+
         Stop selected demand:
 
           nro stop -P PROJECT -p PARTICIPANT -m MODULE

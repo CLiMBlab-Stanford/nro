@@ -74,10 +74,13 @@ labels may be given with or without the `sub-` prefix. By default, status reads
 the saved registry state without checking files. Use `nro status --update` for
 a full validation that updates the registry before reporting.
 
-Omitted selectors usually mean **all matching data**. During onboarding, always
-provide a project and participant. In particular, a bare `nro run` can request
-work across the lab, and a bare `nro purge` can delete every derivative under
-`nro` control after confirmation.
+Omitted selectors mean **all matching values**. A new `nro run` request is the
+workflow exception: it uses workflow `main` when `--workflow` is omitted so it
+does not request every defined workflow. During onboarding, always provide a
+project and participant. A bare `nro run` can still request `main` work across
+the lab, and a bare `nro purge` can delete every derivative under `nro` control
+after confirmation. With `nro run --resume`, omitted selectors again mean all
+matches, including all workflows with resumable work.
 
 ## Request processing
 

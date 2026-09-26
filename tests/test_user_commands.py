@@ -331,7 +331,15 @@ def test_direct_exchange_recovers_committed_response_after_connection_loss(
         "port": 41000,
     }
     record = scheduler_bus.create_message({"operation": "status"})
-    responses = iter(({"pending": record["id"]}, {"result": {"committed": True}}))
+    responses = iter(
+        (
+            {"pending": record["id"]},
+            {"pending": record["id"]},
+            {"pending": record["id"]},
+            {"pending": record["id"]},
+            {"result": {"committed": True}},
+        )
+    )
     monkeypatch.setattr(scheduler_bus, "create_message", lambda *_args, **_kwargs: record)
     monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: None)
     monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: active)
@@ -341,9 +349,12 @@ def test_direct_exchange_recovers_committed_response_after_connection_loss(
         "request",
         lambda *_args, **_kwargs: next(responses),
     )
-    monkeypatch.setattr(scheduler_client.time, "sleep", lambda _seconds: None)
+    sleeps = []
+    monkeypatch.setattr(scheduler_client.time, "sleep", sleeps.append)
+    monkeypatch.setattr(scheduler_client.random, "uniform", lambda _low, _high: 1.0)
 
     assert scheduler_client.exchange(endpoint, {"operation": "status"}) == {"committed": True}
+    assert sleeps == [0.5, 1.0, 2.0, 2.0]
 
 
 def test_durable_purge_uses_direct_retryable_request(monkeypatch, tmp_path) -> None:

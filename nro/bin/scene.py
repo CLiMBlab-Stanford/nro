@@ -323,7 +323,7 @@ def generate_scenes(
                     selected = tuple(
                         {source.path: source for source in (*selected_data, *diagnostic)}.values()
                     )
-                    geometry = ()
+                    geometry: tuple[SceneSource, ...] = ()
                     available_surfaces = any(
                         source.project == project
                         and source.participant == participant
@@ -354,13 +354,16 @@ def generate_scenes(
                             if source.project == project
                             and source.participant == participant
                             and source.output_root == source_root
+                            and (
+                                source.space == space
+                                or (space == "fsnative" and source.space is None)
+                            )
                         )
                         try:
                             surface_inventory(source.path for source in candidate)
                         except ValueError:
                             continue
-                        geometry = candidate
-                        break
+                        geometry = (*geometry, *candidate)
                     if surface_target and not geometry:
                         try:
                             generated = template_surface_family(

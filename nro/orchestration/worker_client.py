@@ -54,7 +54,7 @@ class WorkerSchedulerClient:
                 "sequence": self.sequence,
                 **fields,
             },
-            timeout=10.0 if not durable else 300.0,
+            timeout=10.0 if not durable else None,
             require_service=True,
             durable=durable,
         )
@@ -192,21 +192,6 @@ class WorkerSchedulerClient:
             if error.error_type == "AttemptInvalidated":
                 raise AttemptInvalidated(str(error)) from error
             raise
-
-    def outputs_visible(self, outputs: Sequence[Path]) -> bool:
-        """Return whether the scheduler host can see every published output."""
-        return bool(
-            exchange(
-                self.endpoint,
-                {
-                    "operation": "output_visibility",
-                    "paths": [str(path) for path in outputs],
-                },
-                timeout=60.0,
-                require_service=True,
-                durable=False,
-            )
-        )
 
     def required_memory_above(
         self, memory_gb: int, *, resource_classes: Sequence[str] = ()
