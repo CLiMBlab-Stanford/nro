@@ -6,6 +6,7 @@ import getpass
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
@@ -14,6 +15,9 @@ from nro.orchestration.contracts import ExecutionEnvelope
 from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.scheduler_client import SchedulerEndpoint, SchedulerError, exchange
 from nro.orchestration.source_snapshots import SourceSnapshot
+
+WORKER_POLL_TIMEOUT_SECONDS = 60.0
+WORKER_POLL_WARNING_INTERVAL_SECONDS = 60.0
 
 
 class WorkerSchedulerClient:
@@ -33,6 +37,7 @@ class WorkerSchedulerClient:
         self.worker_id = worker_id
         self.token = os.urandom(16).hex()
         self.sequence = 0
+        self._last_poll_warning = 0.0
         self.endpoint = SchedulerEndpoint(
             Path(control).resolve(),
             Path(bids_root).resolve(),
@@ -54,10 +59,27 @@ class WorkerSchedulerClient:
                 "sequence": self.sequence,
                 **fields,
             },
-            timeout=10.0 if not durable else None,
+            timeout=WORKER_POLL_TIMEOUT_SECONDS if not durable else None,
             require_service=True,
             durable=durable,
         )
+
+    def _poll(self, action: str, fallback: Any, **fields: Any) -> Any:
+        """Return a conservative fallback when a scheduler poll is delayed."""
+        try:
+            return self._call(action, durable=False, **fields)
+        except SchedulerError as error:
+            if error.error_type is not None:
+                raise
+            now = time.monotonic()
+            if now - self._last_poll_warning >= WORKER_POLL_WARNING_INTERVAL_SECONDS:
+                print(
+                    f"WARNING: scheduler poll {action!r} was delayed; the worker will retry",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._last_poll_warning = now
+            return fallback
 
     def register_worker(self, worker_id: str, **fields: Any) -> None:
         """Register this worker and establish its fencing token."""
@@ -71,11 +93,11 @@ class WorkerSchedulerClient:
 
     def heartbeat_worker(self, worker_id: str, *, state: str, **_fields: Any) -> None:
         """Refresh this worker's registry lease through the scheduler."""
-        self._call("heartbeat", state=state, durable=False)
+        self._poll("heartbeat", None, state=state)
 
     def worker_shutdown_requested(self, worker_id: str) -> bool:
         """Return whether the scheduler requests this worker to shut down."""
-        return bool(self._call("shutdown_requested", durable=False))
+        return bool(self._poll("shutdown_requested", False))
 
     def mark_submission_running(self, slurm_job_id: str) -> None:
         """Associate this running worker with its Slurm submission."""
@@ -150,7 +172,7 @@ class WorkerSchedulerClient:
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
         """Return whether the scheduler has cancelled an attempt."""
-        return bool(self._call("attempt_cancel_requested", attempt_id=attempt_id, durable=False))
+        return bool(self._poll("attempt_cancel_requested", False, attempt_id=attempt_id))
 
     def record_attempt_process(self, attempt_id: int, process_group_id: int) -> None:
         """Record the process group supervised for an attempt."""
@@ -175,7 +197,13 @@ class WorkerSchedulerClient:
 
     def attempt_summary(self, attempt_id: int) -> str:
         """Return a concise summary of an attempt's saved state."""
-        return str(self._call("attempt_summary", attempt_id=attempt_id, durable=False))
+        return str(
+            self._poll(
+                "attempt_summary",
+                "attempt state unavailable while the scheduler is busy",
+                attempt_id=attempt_id,
+            )
+        )
 
     def record_completion(
         self, *, work_item_id: int, attempt_id: int, outputs: Sequence[Path]
@@ -197,11 +225,11 @@ class WorkerSchedulerClient:
         self, memory_gb: int, *, resource_classes: Sequence[str] = ()
     ) -> int | None:
         """Return the smallest ready memory tier above this worker's capacity."""
-        value = self._call(
+        value = self._poll(
             "required_memory",
+            None,
             memory_gb=memory_gb,
             resource_classes=list(resource_classes),
-            durable=False,
         )
         return None if value is None else int(value)
 

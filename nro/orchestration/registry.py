@@ -2815,41 +2815,54 @@ class Registry(WorkflowRegistry):
                 global_limit,
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
-            live_workers = int(
-                db.execute(
-                    """SELECT COUNT(*) FROM workers
-                       WHERE state IN ('idle', 'running') AND lease_expires_at>?
-                         AND resource_class=? AND memory_gb>=?""",
-                    (time.time(), resource_class, memory_gb),
-                ).fetchone()[0]
-            )
-            pending = int(
-                db.execute(
-                    """SELECT COUNT(*) FROM scheduler_submissions
-                       WHERE state IN ('prepared', 'submitted')
-                         AND predecessor_worker_id IS NULL
-                         AND resource_class=? AND memory_gb>=?""",
-                    (resource_class, memory_gb),
-                ).fetchone()[0]
-            )
-            pool_workers = int(
-                db.execute(
-                    """SELECT COUNT(*) FROM workers
-                       WHERE state IN ('idle', 'running') AND lease_expires_at>?
-                         AND resource_class=?""",
-                    (time.time(), resource_class),
-                ).fetchone()[0]
-            )
-            pool_pending = int(
-                db.execute(
-                    """SELECT COUNT(*) FROM scheduler_submissions
-                       WHERE state IN ('prepared', 'submitted')
-                         AND predecessor_worker_id IS NULL AND resource_class=?""",
-                    (resource_class,),
-                ).fetchone()[0]
-            )
-            available = max(0, global_limit - pool_workers - pool_pending)
-            count = min(max(0, desired - live_workers - pending), available)
+
+            def allocated_workers(minimum_memory: int = 0) -> int:
+                return int(
+                    db.execute(
+                        """
+                        SELECT COUNT(*) FROM (
+                            SELECT 'submission:' || ss.id AS allocation
+                            FROM scheduler_submissions ss
+                            WHERE ss.resource_class=? AND ss.memory_gb>=?
+                              AND (
+                                  ss.state IN ('running','cancel_requested')
+                                  OR (
+                                      ss.state IN ('prepared','submitted')
+                                      AND ss.predecessor_worker_id IS NULL
+                                  )
+                              )
+                            UNION ALL
+                            SELECT 'worker:' || w.id AS allocation
+                            FROM workers w
+                            WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
+                              AND w.resource_class=? AND w.memory_gb>=?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM scheduler_submissions ss
+                                  WHERE ss.slurm_job_id=w.slurm_job_id
+                                    AND (
+                                        ss.state IN ('running','cancel_requested')
+                                        OR (
+                                            ss.state IN ('prepared','submitted')
+                                            AND ss.predecessor_worker_id IS NULL
+                                        )
+                                    )
+                              )
+                        )
+                        """,
+                        (
+                            resource_class,
+                            minimum_memory,
+                            time.time(),
+                            resource_class,
+                            minimum_memory,
+                        ),
+                    ).fetchone()[0]
+                )
+
+            capable_allocations = allocated_workers(memory_gb)
+            pool_allocations = allocated_workers()
+            available = max(0, global_limit - pool_allocations)
+            count = min(max(0, desired - capable_allocations), available)
             if ingestion_ready:
                 # Cloud credentials belong to the submitting user. Idle
                 # workers belonging to someone else cannot fulfill this demand.
@@ -2866,11 +2879,12 @@ class Registry(WorkflowRegistry):
                             max(desired, ingestion_limit)
                             - active_work_items
                             - ingestion_active
-                            - pending,
+                            - capable_allocations,
                         ),
                     )
                     - own_idle,
                 )
+                count = min(count, available)
             reservations: list[tuple[int, str]] = []
             if not reserve:
                 return [(0, "")] if count else []

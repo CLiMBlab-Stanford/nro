@@ -2015,6 +2015,86 @@ def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     assert len(expanded) == 49
 
 
+def test_running_submission_holds_concurrency_before_worker_registration(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    work_items = tuple(
+        _spec(
+            key=f"anat:{index}" + "8" * 63,
+            module="anat",
+            lineage=registered.lineages["anat"],
+            config_fingerprint=workflow.configuration("anat").fingerprint,
+            runtime_config=runtime,
+            output=tmp_path / f"anat-{index}.txt",
+        )
+        for index in range(2)
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=work_items,
+        terminal_work_item_keys=tuple(item.key for item in work_items),
+        concurrency=1,
+        partition=None,
+    )
+    submission_id, _ = registry.reserve_worker_submissions(
+        request_id=request, resource_class="large", memory_gb=32
+    )[0]
+    registry.update_submission(submission_id, state="running", slurm_job_id="101")
+
+    assert (
+        registry.reserve_worker_submissions(
+            request_id=request, resource_class="large", memory_gb=32
+        )
+        == []
+    )
+
+
+def test_running_submission_holds_concurrency_after_worker_lease_expires(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    runtime = registry.runtime_config_path(registered, "anat")
+    work_items = tuple(
+        _spec(
+            key=f"anat:{index}" + "9" * 63,
+            module="anat",
+            lineage=registered.lineages["anat"],
+            config_fingerprint=workflow.configuration("anat").fingerprint,
+            runtime_config=runtime,
+            output=tmp_path / f"anat-{index}.txt",
+        )
+        for index in range(2)
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=work_items,
+        terminal_work_item_keys=tuple(item.key for item in work_items),
+        concurrency=1,
+        partition=None,
+    )
+    submission_id, _ = registry.reserve_worker_submissions(
+        request_id=request, resource_class="large", memory_gb=32
+    )[0]
+    registry.update_submission(submission_id, state="running", slurm_job_id="101")
+    registry.register_worker(
+        "worker-101", resource_class="large", slurm_job_id="101", lease_seconds=0.01
+    )
+    time.sleep(0.02)
+
+    assert (
+        registry.reserve_worker_submissions(
+            request_id=request, resource_class="large", memory_gb=32
+        )
+        == []
+    )
+
+
 def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
