@@ -737,6 +737,30 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
         assert db.execute("SELECT COUNT(*) FROM request_plans").fetchone()[0] == 2
 
 
+def test_terminal_request_plan_discards_reconciliation_recipe(setup):
+    from nro.orchestration.request_plans import compact_terminal_plans
+
+    registry, _branches, _site, prepare = setup
+    *_prepared, request_id = prepare("one")
+    with registry.connection(write=True) as db:
+        payload = json.loads(
+            db.execute(
+                "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
+            ).fetchone()[0]
+        )
+        assert payload["specifications"]
+        terminals = payload["terminals"]
+        db.execute("UPDATE requests SET state='satisfied' WHERE id=?", (request_id,))
+        assert compact_terminal_plans(db) == 1
+        compact = json.loads(
+            db.execute(
+                "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
+            ).fetchone()[0]
+        )
+        assert compact == {"terminals": terminals}
+        assert compact_terminal_plans(db) == 0
+
+
 def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
     from nro.orchestration.scheduler_service import status, stop
 

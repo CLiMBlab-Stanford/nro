@@ -143,6 +143,26 @@ def test_main_paths_authorize_unlinking_an_external_symlink_target(tmp_path):
     link.symlink_to(target, target_is_directory=True)
 
     assert paths.require_removal(link, "demo") == link
+
+
+def test_main_paths_authorize_owned_output_symlink_entry(tmp_path):
+    paths = BranchPaths("main", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "NRO_DEV")
+    target = tmp_path / "raw" / "source.nii.gz"
+    target.parent.mkdir(parents=True)
+    target.write_text("raw")
+    link = paths.private_project("demo") / "derivatives" / "nro" / "func" / "alias.nii.gz"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    assert paths.require_output_entry(link, "demo", private=True) == link
+    with pytest.raises(ValueError, match="outside"):
+        paths.require_output(link, "demo", private=True)
+
+    escaped = paths.private_project("demo") / "derivatives" / "escape"
+    escaped.parent.mkdir(parents=True, exist_ok=True)
+    escaped.symlink_to(tmp_path / "outside", target_is_directory=True)
+    with pytest.raises(ValueError, match="outside"):
+        paths.require_output_entry(escaped / "result.nii.gz", "demo", private=True)
     with pytest.raises(ValueError, match="outside"):
         paths.require_removal(target, "demo")
 

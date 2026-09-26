@@ -318,7 +318,14 @@ class Planner:
             registered = registered_workflows[target.workflow_id]
             entities = dict(target.entities)
             selectors = {key: (value,) for key, value in entities.items() if key in ENTITY_ORDER}
-            if target.module in {"anat", "dynconn", "microparcellation", "networks"}:
+            if target.module in {
+                "anat",
+                "func",
+                "clean",
+                "dynconn",
+                "microparcellation",
+                "networks",
+            }:
                 selectors = None
             elif target.module == "firstlevels":
                 selectors = {"task": (entities["task"],)}

@@ -57,6 +57,15 @@ class ExecutionContext:
                 pass
         raise ValueError(f"Output is outside the branch-owned derivative roots: {path}")
 
+    def require_output_entry(self, path: Path) -> Path:
+        """Validate an owned output entry without following its final symlink."""
+        for private in (False, True):
+            try:
+                return self.paths.require_output_entry(path, self.project, private=private)
+            except ValueError:
+                pass
+        raise ValueError(f"Output is outside the branch-owned derivative roots: {path}")
+
     def require_removal(self, path: Path) -> Path:
         """Authorize deleting an output entry without following its final symlink."""
         for private in (False, True):

@@ -867,6 +867,49 @@ def test_python_artifact_validator_can_reopen_existing_output(tmp_path: Path) ->
     assert output.read_text() == "valid"
 
 
+def test_dirty_step_replaces_output_symlink_without_writing_target(tmp_path: Path) -> None:
+    from nro.orchestration.branches import BranchPaths
+    from nro.orchestration.execution_context import ExecutionContext
+
+    paths = BranchPaths("main", tmp_path / "BIDS", tmp_path / "WORK", tmp_path / "DEV")
+    target = tmp_path / "raw" / "source.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("raw")
+    output = paths.private_project("demo") / "derivatives/nro/func/alias.txt"
+    output.parent.mkdir(parents=True)
+    output.symlink_to(target)
+    observed = []
+
+    def replace_alias() -> None:
+        observed.append(output.exists() or output.is_symlink())
+        output.write_text("derived")
+
+    runner = Runner(
+        module_name="Alias Replacement Module",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.alias-replacement"),
+        next_step=count(1).__next__,
+        execution_context=ExecutionContext(paths, "demo", "func:test", ()),
+    )
+    runner.add_step(
+        Step.python(
+            name="Replace Alias",
+            outputs=(output,),
+            action=replace_alias,
+            force=True,
+        )
+    )
+
+    with runner.run_context():
+        runner.execute()
+
+    assert observed == [False]
+    assert not output.is_symlink()
+    assert output.read_text() == "derived"
+    assert target.read_text() == "raw"
+
+
 def test_step_ledger_records_exact_planned_artifact_path(tmp_path: Path, monkeypatch) -> None:
     ledger = tmp_path / "current-steps.json"
     output = tmp_path / "private" / "checkpoint.txt"

@@ -2331,6 +2331,9 @@ class Registry(WorkflowRegistry):
                     """,
                     (utcnow(),),
                 )
+                from nro.orchestration.request_plans import compact_terminal_plans
+
+                compact_terminal_plans(db)
 
     @staticmethod
     def _record_oom_locked(
@@ -2603,6 +2606,9 @@ class Registry(WorkflowRegistry):
                     )""",
                 (utcnow(), utcnow()),
             )
+            from nro.orchestration.request_plans import compact_terminal_plans
+
+            compact_terminal_plans(db)
             return {
                 "work_items": demand_count,
                 "requests": len(cancelled_requests),
@@ -2623,6 +2629,9 @@ class Registry(WorkflowRegistry):
                 """,
                 (utcnow(),),
             )
+            from nro.orchestration.request_plans import compact_terminal_plans
+
+            compact_terminal_plans(db)
             # A request may contain many independent branches (for example,
             # one functional run per acquisition).  A failed branch is
             # represented by its work item and attempt and blocks only its descendants;

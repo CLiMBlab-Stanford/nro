@@ -11,6 +11,24 @@ from nro.orchestration.resources import (
     memory_tiers,
 )
 
+_STATUS_OMITTED_FIELDS = frozenset(
+    {
+        "artifact_contract_json",
+        "command_json",
+        "expected_outputs_json",
+        "input_paths_json",
+        "runtime_config_path",
+    }
+)
+
+
+def compact_status_rows(rows: list[dict]) -> list[dict]:
+    """Remove execution payloads that status consumers never inspect."""
+    return [
+        {key: value for key, value in row.items() if key not in _STATUS_OMITTED_FIELDS}
+        for row in rows
+    ]
+
 
 def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -> dict:
     """Supply central workers only for requests owned by the authorized checkout."""
@@ -258,7 +276,7 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
     for row in rows:
         if int(row["id"]) in visible:
             reported.update(int(value) for value in row.get("root_failure_ids", ()))
-    rows = [row for row in rows if int(row["id"]) in reported]
+    rows = compact_status_rows([row for row in rows if int(row["id"]) in reported])
     dependencies = [
         (work_item_id, upstream_id)
         for work_item_id, upstream_id in registry.work_item_dependencies(read_only=True)

@@ -149,7 +149,9 @@ class Runner:
 
     def _validate_step_destinations(self, step: Step) -> None:
         if self._execution_context is not None:
-            for path in (*step.outputs, step.directory, step.breadcrumb, step.cwd):
+            for path in step.outputs:
+                self._execution_context.require_output_entry(path)
+            for path in (step.directory, step.breadcrumb, step.cwd):
                 if path is not None:
                     self._execution_context.require_output(path)
 
@@ -366,6 +368,9 @@ class Runner:
 
     def _execute_declared_step(self, step: Step, *, reason: str) -> None:
         self._validate_step_destinations(step)
+        for output in step.outputs:
+            if output.is_symlink():
+                output.unlink()
         if step.kind is StepKind.PYTHON:
             if step.action is None:
                 raise RuntimeError(f"Python step {step.id!r} has no action.")

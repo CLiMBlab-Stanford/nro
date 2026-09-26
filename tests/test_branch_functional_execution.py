@@ -212,6 +212,25 @@ def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
     assert "Run ICA-AROMA Classification and Denoising" not in names
 
 
+def test_functional_graph_accepts_existing_marss_passthrough_alias(functional_case):
+    inputs, options, context, _manifest, _image = functional_case
+    options = replace(options, ica_classifier="none")
+    initial = func.build_module(inputs, options, execution_context=context)
+    marss_output = next(
+        output
+        for step in initial._graph.freeze().steps
+        for output in step.outputs
+        if output.name.endswith("_desc-marss_bold.nii.gz")
+    )
+    marss_output.parent.mkdir(parents=True, exist_ok=True)
+    marss_output.symlink_to(inputs.epi.resolve())
+
+    resumed = func.build_module(inputs, options, execution_context=context)
+
+    assert resumed._graph.freeze().steps
+    assert marss_output.is_symlink()
+
+
 def test_lesion_anatomy_masks_template_surface_outputs(functional_case):
     inputs, options, context, manifest, image = functional_case
     document = json.loads(manifest.read_text())
