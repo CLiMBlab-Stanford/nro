@@ -620,13 +620,6 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         )
         _STOP = True
         result = {"stopping": True}
-    elif message["operation"] == "output_visibility":
-        paths = message.get("paths")
-        if not isinstance(paths, list) or not paths:
-            raise ValueError("Output visibility checks require one or more paths")
-        if len(paths) > 100_000 or any(not isinstance(path, str) for path in paths):
-            raise ValueError("Output visibility check is invalid")
-        result = all(Path(path).expanduser().resolve().is_file() for path in paths)
     elif message["operation"] == "worker":
         result = worker_operation(registry, message)
     elif message["operation"] == "admit":
@@ -872,16 +865,12 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
 
 def _quiet_message(record: dict) -> bool:
     payload = record["payload"]
-    return payload.get("operation") == "output_visibility" or (
-        payload.get("operation") == "worker"
-        and payload.get("action")
-        in {
-            "heartbeat",
-            "shutdown_requested",
-            "attempt_cancel_requested",
-            "required_memory",
-        }
-    )
+    return payload.get("operation") == "worker" and payload.get("action") in {
+        "heartbeat",
+        "shutdown_requested",
+        "attempt_cancel_requested",
+        "required_memory",
+    }
 
 
 _MAINTENANCE_OPERATIONS = {
@@ -904,7 +893,7 @@ def _executor_for(
 ) -> ThreadPoolExecutor:
     """Route worker traffic away from long user maintenance operations."""
     operation = record["payload"].get("operation")
-    if operation in {"worker", "output_visibility"}:
+    if operation == "worker":
         return executors["worker" if durable else "poll"]
     if operation in _MAINTENANCE_OPERATIONS:
         return executors["maintenance"]

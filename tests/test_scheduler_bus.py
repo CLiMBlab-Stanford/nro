@@ -189,7 +189,7 @@ def test_worker_graph_signature_uses_durable_rpc(monkeypatch) -> None:
     assert calls[0][0]["work_item_id"] == 17
     assert calls[0][1]["durable"] is True
     assert calls[0][1]["require_service"] is True
-    assert calls[0][1]["timeout"] == 300.0
+    assert calls[0][1]["timeout"] is None
 
 
 def test_worker_resource_step_claim_uses_bound_worker_identity(monkeypatch) -> None:
@@ -206,24 +206,6 @@ def test_worker_resource_step_claim_uses_bound_worker_identity(monkeypatch) -> N
     assert calls == [("claim_resource_step", {"resource_class": "gpu", "memory_gb": 32})]
     with pytest.raises(ValueError, match="identity differs"):
         client.claim_resource_step("other-worker", resource_class="gpu", memory_gb=32)
-
-
-def test_worker_output_visibility_uses_direct_only_rpc(monkeypatch) -> None:
-    client = object.__new__(WorkerSchedulerClient)
-    client.endpoint = SimpleNamespace()
-    calls = []
-    monkeypatch.setattr(
-        "nro.orchestration.worker_client.exchange",
-        lambda _endpoint, message, **options: calls.append((message, options)) or True,
-    )
-
-    assert client.outputs_visible((Path("/tmp/output"),))
-    assert calls == [
-        (
-            {"operation": "output_visibility", "paths": ["/tmp/output"]},
-            {"timeout": 60.0, "require_service": True, "durable": False},
-        )
-    ]
 
 
 def test_worker_preserves_completion_invalidation_across_scheduler_rpc(monkeypatch) -> None:
@@ -248,24 +230,6 @@ def test_scheduler_response_preserves_service_error_type() -> None:
         )
 
     assert raised.value.error_type == "AttemptInvalidated"
-
-
-def test_scheduler_checks_output_visibility_without_registry(tmp_path) -> None:
-    output = tmp_path / "output"
-    output.write_text("complete")
-
-    assert scheduler_service.dispatch(
-        None,
-        {"operation": "output_visibility", "paths": [str(output)]},
-        values={},
-        message_id="probe",
-    )
-    assert not scheduler_service.dispatch(
-        None,
-        {"operation": "output_visibility", "paths": [str(tmp_path / "missing")]},
-        values={},
-        message_id="probe",
-    )
 
 
 def test_controller_startup_error_is_scoped_to_launch_token(tmp_path):

@@ -54,9 +54,12 @@ By default, `nro status` quickly reports the registry's saved state. Run
 `nro status --update` when you need it to check files and update that state.
 
 Replace the example values with the project and participant you need. The
-planner adds upstream modules and reuses fresh results. Omitted selectors
-usually mean all matches. A bare `nro run` can request work across the lab, and
-a bare `nro purge` can delete every controlled derivative after confirmation.
+planner adds upstream modules and reuses fresh results. Omitted selectors mean
+all matches. A new `nro run` request is the workflow exception: it selects
+workflow `main` when `--workflow` is omitted. A bare request can still cover the
+whole lab, and a bare `nro purge` can delete every controlled derivative after
+confirmation. With `nro run --resume`, an omitted workflow again means all
+matching workflows.
 
 Current defaults are workflow `main`, space `fsnative`, and 2 mm FWHM
 smoothing. Multiple spaces and smoothing values request their cross-product:

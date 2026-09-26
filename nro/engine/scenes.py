@@ -427,13 +427,27 @@ def build_scene_bundle(
                 source: (path.relative_to(staging) if publish else path)
                 for source, (path, _digest) in mapped.items()
             }
-            display_surfaces = tuple(rendered[source] for source in surfaces)
+            surface_groups: dict[tuple[str, str, str, Path | None], list[SceneSource]] = {}
+            for source in surfaces:
+                key = (
+                    source.module,
+                    source.directory_label,
+                    source.output_prefix,
+                    source.output_root,
+                )
+                surface_groups.setdefault(key, []).append(source)
+            complete_groups = []
+            for group in surface_groups.values():
+                surface_inventory(source.path for source in group)
+                complete_groups.append(tuple(group))
+            primary_surfaces = complete_groups[0] if complete_groups else ()
+            additional_surfaces = tuple(source for group in complete_groups[1:] for source in group)
             base = staging / ".base.scene"
             atomic_write_text(
                 base,
                 base_scene(
                     scene_id=scene_id,
-                    surfaces=display_surfaces,
+                    surfaces=tuple(rendered[source] for source in primary_surfaces),
                     data=tuple(rendered[source] for source in sources),
                 ),
             )
@@ -446,6 +460,11 @@ def build_scene_bundle(
                 "1",
                 "-error",
             ]
+            # Load every additional topology before its metric files. A scene
+            # may combine module lineages whose native meshes have different
+            # vertex counts.
+            for source in additional_surfaces:
+                command.extend(("-data-file-add", str(rendered[source])))
             for source in sources:
                 command.extend(("-data-file-add", str(rendered[source])))
             result = subprocess.run(

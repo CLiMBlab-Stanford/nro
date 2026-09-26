@@ -43,7 +43,9 @@ are execution policy. They do not change scientific contracts or freshness.
 
 The common selector interface narrows projects, participants, modules,
 workflows, runs, spaces, smoothing levels, tasks, and models. Omitted selectors
-usually mean all applicable values. For example:
+mean all applicable values. A new `nro run` request is the workflow exception:
+an omitted workflow selects `main` so that a bare request does not run every
+defined workflow. For example:
 
 ```bash
 nro run -p t20 -P nptl -m networks -w main -s fsnative -S 2
@@ -64,9 +66,11 @@ unused combinations in advance. Exact run selectors use
 while different entities are combined with AND.
 
 Commands that operate on registered state do not repeat this expansion.
-`run --resume` and `status --update` preserve each work item's recorded workflow
-and entity values. Registry repair works backward from derivatives that exist.
-These operations never combine selector values collected from different rows.
+`run --resume` treats every omitted selector, including workflow, as all
+matching registered work. It and `status --update` preserve each work item's
+recorded workflow and entity values. Registry repair works backward from
+derivatives that exist. These operations never combine selector values
+collected from different rows.
 
 See [work commands](commands/work.md) for every selector, execution resource,
 status mode, cancellation rule, and repair boundary.

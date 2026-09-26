@@ -65,6 +65,12 @@ dependencies or using a separate checkout with the shared pool.
 | `--json` | Structured planning result. |
 | `--repair` | Rebuild this branch's scientific registry after central activation; see below. |
 
+Selectors normally narrow a command and match every value when omitted. A new
+request made by `nro run` is the exception: when `--workflow` is omitted, it
+selects workflow `main` so that a bare request does not expand across every
+defined workflow. The other planning defaults, including space and smoothing,
+apply only to new requests.
+
 Inheritance is enabled by default. `--no-inherit` affects only the new request;
 it does not delete ancestor outputs or change the registered branch tree. The
 option is unavailable before branch execution is activated.
@@ -75,7 +81,8 @@ reconstruct. A bare invocation selects registered work with status `Queued`,
 `Blocked` work that still has demand. Those three states do not create demand
 on their own.
 The shared selectors narrow the selection; omitted selectors mean all existing
-resumable work rather than the usual workflow endpoints and default target.
+resumable work rather than the new-request workflow and target defaults. Use
+`--workflow main` when resumption should be limited to that workflow.
 
 Resume replans only the selected work item identities against the current BIDS
 data and definitions, then captures the current execution source. It does not

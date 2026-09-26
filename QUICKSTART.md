@@ -178,9 +178,12 @@ nro run -P example -p 01 -m microparcellation
 
 Add `--local` again when the site does not use Slurm.
 
-Omitted selectors usually mean all matching data. Avoid bare `nro run` and
-`nro purge` commands until you understand their scope. Purge deletes controlled
-derivatives and logs after confirmation.
+Omitted selectors mean all matching values. A new `nro run` request is the
+workflow exception: it uses workflow `main` when `--workflow` is omitted. A bare
+request can still cover every matching participant and project. With
+`nro run --resume`, omitted selectors include every workflow with resumable
+work. Avoid bare `nro run` and `nro purge` commands until you understand their
+scope. Purge deletes controlled derivatives and logs after confirmation.
 
 ## Next steps
 

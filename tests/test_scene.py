@@ -293,3 +293,43 @@ def test_published_scene_copies_inputs_and_records_checksums(tmp_path: Path, mon
     assert manifest["sources"][0]["sha256"]
     copied = destination / manifest["sources"][0]["scene_path"]
     assert copied.read_bytes() == b"map"
+
+
+def test_scene_loads_each_surface_topology_before_metrics(tmp_path: Path, monkeypatch) -> None:
+    commands = []
+    surface_sources = []
+    metrics = []
+    for lineage, vertices in (("main", 10), ("fast", 12)):
+        root = tmp_path / lineage
+        root.mkdir()
+        for hemi in ("L", "R"):
+            for kind in ("pial", "midthickness", "white", "inflated"):
+                path = root / f"sub-01_hemi-{hemi}_{kind}.surf.gii"
+                path.write_text(f"{vertices}\n", encoding="utf-8")
+                surface_sources.append(
+                    SceneSource("anat", "display_surface", path, lineage, lineage, root)
+                )
+        metric = root / "sub-01_hemi-L_thickness.shape.gii"
+        metric.write_text(f"{vertices}\n", encoding="utf-8")
+        metrics.append(SceneSource("anat", "derivative", metric, lineage, lineage, root))
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        shutil.copyfile(command[2], command[3])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("nro.engine.scenes.subprocess.run", run)
+    build_scene_bundle(
+        tmp_path / "scene",
+        scene_id="scene",
+        sources=tuple(metrics),
+        surfaces=tuple(surface_sources),
+        wb_command="wb_command",
+    )
+
+    command = commands[0]
+    first_metric = command.index(str(metrics[0].path))
+    second_topology = [
+        source.path for source in surface_sources if source.directory_label == "fast"
+    ]
+    assert all(command.index(str(path)) < first_metric for path in second_topology)

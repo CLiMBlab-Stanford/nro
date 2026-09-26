@@ -312,7 +312,10 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume matching queued, stopped, failed, or still-demanded incomplete work",
+        help=(
+            "Resume matching queued, stopped, failed, or still-demanded incomplete work; "
+            "omitted selectors match all resumable work instead of using new-request defaults"
+        ),
     )
     parser.add_argument("--json", action="store_true")
     return parser
