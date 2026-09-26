@@ -43,6 +43,7 @@ from nro.orchestration.source_snapshots import SourceSnapshot
 
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
+_CAPACITY_REQUEST_PREFIX = "capacity_request:"
 
 
 class _ActivitySignal:
@@ -410,6 +411,85 @@ def _submit_reserved(
         raise
 
 
+def _queue_pool_expansion(registry, message: dict) -> None:
+    """Coalesce equivalent pool-expansion requests in durable scheduler state."""
+    payload = {"profile": message.get("profile")}
+    key = _CAPACITY_REQUEST_PREFIX + fingerprint(payload)
+    value = json.dumps(
+        {
+            "payload": payload,
+            "revision": f"{message['worker_id']}:{message['sequence']}",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
+def _pending_pool_expansions(registry) -> list[tuple[str, str, dict]]:
+    """Return the latest durable revision of each requested pool expansion."""
+    with registry.connection() as db:
+        rows = db.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE ? ORDER BY key",
+            (_CAPACITY_REQUEST_PREFIX + "%",),
+        ).fetchall()
+    return [
+        (str(row["key"]), str(row["value"]), json.loads(row["value"])["payload"]) for row in rows
+    ]
+
+
+def _supply_requested_pool(registry, payload: dict) -> list[str]:
+    """Supply all worker classes that currently need another allocation."""
+    submitted = []
+    for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
+        lower_memory = 0
+        for memory_gb, script in _worker_script_tiers(
+            registry,
+            resource_class=resource_class,
+            minimum_memory_gb=1,
+            profile=payload.get("profile"),
+        ):
+            reservations = registry.reserve_worker_submissions(
+                request_id=None,
+                resource_class=resource_class,
+                memory_gb=memory_gb,
+                minimum_memory_gb=lower_memory,
+            )
+            lower_memory = memory_gb
+            if not reservations:
+                continue
+            submitted.extend(
+                _submit_reserved(registry, submission_id, script)
+                for submission_id, _token in reservations
+            )
+            break
+    return submitted
+
+
+def _drain_pool_expansions(registry) -> int:
+    """Fulfill coalesced expansion intents without losing concurrent revisions."""
+    handled = 0
+    while rows := _pending_pool_expansions(registry):
+        for key, value, payload in rows:
+            try:
+                _supply_requested_pool(registry, payload)
+            except BaseException as error:
+                print(
+                    f"WARNING: worker pool expansion failed: {type(error).__name__}: {error}",
+                    flush=True,
+                )
+                return handled
+            with registry.connection(write=True) as db:
+                db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, value))
+            handled += 1
+    return handled
+
+
 def worker_operation(registry, message: dict) -> object:
     """Apply one ordered worker event and return its acknowledgement or assignment."""
     action = message["action"]
@@ -578,30 +658,8 @@ def _apply_worker_operation(registry, message: dict) -> object:
             )
             return _submit_reserved(registry, reservation[0], script)
         if kind == "expand":
-            submitted = []
-            for candidate_class in SCHEDULABLE_RESOURCE_CLASSES:
-                lower_memory = 0
-                for candidate_memory, script in _worker_script_tiers(
-                    registry,
-                    resource_class=candidate_class,
-                    minimum_memory_gb=1,
-                    profile=message.get("profile"),
-                ):
-                    reservations = registry.reserve_worker_submissions(
-                        request_id=None,
-                        resource_class=candidate_class,
-                        memory_gb=candidate_memory,
-                        minimum_memory_gb=lower_memory,
-                    )
-                    lower_memory = candidate_memory
-                    if not reservations:
-                        continue
-                    submitted.extend(
-                        _submit_reserved(registry, submission_id, script)
-                        for submission_id, _token in reservations
-                    )
-                    break
-            return submitted
+            _queue_pool_expansion(registry, message)
+            return None
         raise ValueError("Unknown capacity request")
     if action == "close":
         registry.close_worker(worker_id, state=message["state"])
@@ -1039,6 +1097,7 @@ def _registry_busy(registry) -> bool:
             "SELECT 1 FROM attempts WHERE state IN ('queued','running','cancel_requested') LIMIT 1",
             "SELECT 1 FROM workers WHERE state IN ('idle','running','draining','shutdown_requested') LIMIT 1",
             "SELECT 1 FROM scheduler_submissions WHERE state IN ('prepared','submitted','running','cancel_requested') LIMIT 1",
+            "SELECT 1 FROM metadata WHERE key LIKE 'capacity_request:%' LIMIT 1",
         )
         return any(db.execute(query).fetchone() for query in queries)
 
@@ -1115,6 +1174,7 @@ def serve(
     executors = {
         "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
         "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
+        "capacity": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-capacity"),
         "command": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-command"),
         "maintenance": ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="scheduler-maintenance"
@@ -1122,6 +1182,7 @@ def serve(
     }
     readers = ThreadPoolExecutor(max_workers=16, thread_name_prefix="scheduler-rpc")
     changed_event = _ActivitySignal()
+    capacity_event = _ActivitySignal()
     request_activity = _ActivitySignal()
     listener_stop = threading.Event()
     coordinator = RequestCoordinator(
@@ -1136,6 +1197,23 @@ def serve(
             pass
         if not _quiet_message(record):
             changed_event.set()
+        payload = record["payload"]
+        if (
+            payload.get("operation") == "worker"
+            and payload.get("action") == "request_capacity"
+            and payload.get("kind") == "expand"
+        ):
+            capacity_event.set()
+
+    def note_capacity_completion(future) -> None:
+        try:
+            future.result()
+        except BaseException as error:
+            print(
+                f"WARNING: capacity reconciliation failed: {type(error).__name__}: {error}",
+                flush=True,
+            )
+        changed_event.set()
 
     for record in prepare(registry):
         future = coordinator.submit(record, _executor_for(record, executors))
@@ -1156,6 +1234,8 @@ def serve(
     )
     listener_thread.start()
     idle_since = None
+    capacity_future = None
+    capacity_pending = False
     last_cleanup = 0.0
     last_maintenance = 0.0
     try:
@@ -1167,6 +1247,7 @@ def serve(
             )
         last_maintenance = time.monotonic()
         publish_status_snapshot(registry, generation=generation, active=True)
+        capacity_event.set()
         while not _STOP:
             now = time.monotonic()
             changed = False
@@ -1182,6 +1263,13 @@ def serve(
                     )
                 last_maintenance = time.monotonic()
                 changed = True
+                capacity_event.set()
+            if capacity_event.consume():
+                capacity_pending = True
+            if capacity_pending and (capacity_future is None or capacity_future.done()):
+                capacity_pending = False
+                capacity_future = executors["capacity"].submit(_drain_pool_expansions, registry)
+                capacity_future.add_done_callback(note_capacity_completion)
             handled_direct = request_activity.consume()
             if changed_event.consume():
                 changed = True
