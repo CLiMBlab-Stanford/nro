@@ -1623,15 +1623,6 @@ class Registry(WorkflowRegistry):
             ).fetchone()
             if maintenance is not None:
                 return None
-            assessment_lease = db.execute(
-                "SELECT value FROM metadata WHERE key='artifact_assessment_lease_until'"
-            ).fetchone()
-            if assessment_lease is not None:
-                try:
-                    if float(assessment_lease["value"]) > time.time():
-                        return None
-                except (TypeError, ValueError):
-                    pass
             dependency_state.synchronize(db, now=now)
             concurrency = int(
                 db.execute(

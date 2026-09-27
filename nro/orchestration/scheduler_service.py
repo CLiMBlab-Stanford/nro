@@ -24,6 +24,7 @@ from nro.orchestration.branch_reconciliation import candidates_locked, resolve_p
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
+from nro.orchestration.registry import RegistryLockTimeout
 from nro.orchestration.resources import SCHEDULABLE_RESOURCE_CLASSES
 from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
 from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
@@ -949,6 +950,8 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
                 message_id=record["id"],
             )
         }
+    except RegistryLockTimeout:
+        raise
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, sqlite3.Error) as error:
         response = {"error": str(error), "error_type": type(error).__name__}
     return response
@@ -991,6 +994,20 @@ def _executor_for(
     return executors["command"]
 
 
+def _submit_durable(record: dict, coordinator, executor, changed: _ActivitySignal) -> dict:
+    """Submit one durable request, preserving its identity through lock contention."""
+    try:
+        future = coordinator.submit(record, executor)
+    except RegistryLockTimeout:
+        return {"pending": record["id"]}
+    if not _quiet_message(record):
+        future.add_done_callback(lambda _future: changed.set())
+    try:
+        return future.result(timeout=0.05)
+    except (FutureTimeout, RegistryLockTimeout):
+        return {"pending": record["id"]}
+
+
 def _handle_connection(
     connection: socket.socket,
     registry,
@@ -1011,13 +1028,7 @@ def _handle_connection(
             record, durable = validate_request(envelope, token=token)
             executor = _executor_for(record, executors, durable=durable)
             if durable:
-                future = coordinator.submit(record, executor)
-                if not _quiet_message(record):
-                    future.add_done_callback(lambda _future: changed.set())
-                try:
-                    response = future.result(timeout=0.05)
-                except FutureTimeout:
-                    response = {"pending": record["id"]}
+                response = _submit_durable(record, coordinator, executor, changed)
             else:
                 response = executor.submit(
                     _message_response, registry, record, values=values

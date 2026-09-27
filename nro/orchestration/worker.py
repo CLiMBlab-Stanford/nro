@@ -1192,7 +1192,6 @@ class Worker:
         finally:
             final_state = "terminated" if self.stop_requested else "exited"
             self.registry.close_worker(self.worker_id, state=final_state)
-            self.registry.mark_submission_complete(os.environ.get("SLURM_JOB_ID"))
             if not self.stop_requested:
                 try:
                     self._expand_ready_pool()

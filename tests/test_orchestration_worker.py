@@ -27,6 +27,7 @@ from nro.orchestration.registry import (
     RegistryLock,
     RegistryLockTimeout,
     discover_registry_projects,
+    utcnow,
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.scheduler_client import SchedulerError
@@ -2093,6 +2094,29 @@ def test_running_submission_holds_concurrency_after_worker_lease_expires(tmp_pat
         )
         == []
     )
+
+
+def test_worker_exit_does_not_release_live_slurm_allocation(tmp_path: Path, monkeypatch) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registry.initialize()
+    with registry.connection(write=True) as db:
+        db.execute(
+            """INSERT INTO scheduler_submissions(
+                   intent_token,resource_class,memory_gb,state,slurm_job_id,created_at
+               ) VALUES ('test','gpu',32,'running','101',?)""",
+            (utcnow(),),
+        )
+    monkeypatch.setenv("SLURM_JOB_ID", "101")
+
+    assert Worker(registry, resource_class="gpu", idle_timeout=0, poll_interval=0.01).run() == 0
+
+    with registry.connection() as db:
+        assert (
+            db.execute(
+                "SELECT state FROM scheduler_submissions WHERE slurm_job_id='101'"
+            ).fetchone()[0]
+            == "running"
+        )
 
 
 def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> None:
