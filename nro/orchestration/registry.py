@@ -2097,6 +2097,28 @@ class Registry(WorkflowRegistry):
                 )
             )
 
+    def active_execution_work_item_ids(self) -> tuple[int, ...]:
+        """Return work items whose current execution needs periodic assessment."""
+        with self.connection() as db:
+            return tuple(
+                int(row["work_item_id"])
+                for row in db.execute(
+                    """
+                    SELECT DISTINCT work_item_id
+                    FROM (
+                        SELECT work_item_id
+                        FROM attempts
+                        WHERE state IN ('queued','running','cancel_requested')
+                        UNION
+                        SELECT work_item_id
+                        FROM resource_step_tasks
+                        WHERE state IN ('pending','running')
+                    )
+                    ORDER BY work_item_id
+                    """
+                )
+            )
+
     def cancel_purged_demand(self, work_item_ids: Iterable[int]) -> int:
         """Withdraw requests that require artifacts selected for deletion."""
         from nro.orchestration.registry_work_items import cancel_purged_demand

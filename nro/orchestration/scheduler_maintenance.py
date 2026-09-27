@@ -24,10 +24,10 @@ def refresh_scheduler_state(registry: Registry) -> int:
     cancelled: list[dict] = []
     if registry.reserve_artifact_assessment():
         try:
-            demanded = registry.demanded_work_item_ids()
-            if demanded:
+            active = registry.active_execution_work_item_ids()
+            if active:
                 try:
-                    assess_registry(registry, work_item_ids=demanded, compiled=False)
+                    assess_registry(registry, work_item_ids=active, compiled=False)
                 except AssessmentConflict:
                     pass
             reconcile_branch_requests(registry)

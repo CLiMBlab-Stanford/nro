@@ -96,8 +96,10 @@ cache is an optimization and never establishes artifact freshness.
 Admission reassesses only fresh artifacts whose scientific contracts could
 satisfy the submitted graph, together with their dependency closure. Missing,
 stale, and unrelated historical records cannot be reused and are not traversed.
-An exhaustive filesystem reconciliation remains an explicit
-`nro status --update` operation.
+Periodic scheduler maintenance applies the same check only to active attempts,
+pending resource-specific steps, and their upstream closure. Queued demand does
+not hold worker claims behind a scan of unrelated history. An exhaustive
+filesystem reconciliation remains an explicit `nro status --update` operation.
 
 Every step uses the same freshness and publication rules. A GPU handoff does
 not strengthen or weaken upstream validation: claims capture the current

@@ -429,7 +429,7 @@ def write_controller_script(
         f"#SBATCH --partition={partition}",
         "#SBATCH --time=24:00:00",
         "#SBATCH --mem=1G",
-        "#SBATCH --cpus-per-task=1",
+        "#SBATCH --cpus-per-task=4",
         f"#SBATCH --output={paths.service}/controller-%j.log",
     ]
     if account:

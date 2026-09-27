@@ -329,6 +329,8 @@ def test_scheduler_defers_contended_assessment(graph, monkeypatch):
     from nro.orchestration import scheduler_maintenance
 
     registry, _, _ = graph
+    registry.register_worker("active", resource_class="large")
+    assert registry.claim_ready_work_item("active", ("large",)) is not None
 
     def conflict(*args, **kwargs):
         raise AssessmentConflict("test contention")
@@ -344,10 +346,13 @@ def test_scheduler_defers_contended_assessment(graph, monkeypatch):
         )
 
 
-def test_scheduler_maintenance_uses_mixed_contract_assessment(graph, monkeypatch):
+def test_scheduler_maintenance_assesses_only_active_execution(graph, monkeypatch):
     from nro.orchestration import scheduler_maintenance
 
-    registry, _, _ = graph
+    registry, _, ids = graph
+    registry.register_worker("active", resource_class="large")
+    claim = registry.claim_ready_work_item("active", ("large",))
+    assert claim is not None
     calls = []
     monkeypatch.setattr(
         manifests,
@@ -359,7 +364,25 @@ def test_scheduler_maintenance_uses_mixed_contract_assessment(graph, monkeypatch
 
     assert len(calls) == 1
     assert calls[0][0] is registry
+    assert calls[0][1]["work_item_ids"] == (claim.work_item_id,)
     assert calls[0][1]["compiled"] is False
+    assert set(registry.demanded_work_item_ids()) == set(ids.values())
+
+
+def test_pending_resource_step_remains_in_active_assessment_scope(graph):
+    registry, _, _ = graph
+    registry.register_worker("active", resource_class="large")
+    claim = registry.claim_ready_work_item("active", ("large",))
+    assert claim is not None
+    assert registry.active_execution_work_item_ids() == (claim.work_item_id,)
+
+    registry.defer_resource_step(
+        claim.attempt_id,
+        step_id="gpu-step",
+        resource_class="gpu",
+    )
+
+    assert registry.active_execution_work_item_ids() == (claim.work_item_id,)
 
 
 def test_worker_validates_registered_contract_without_scientific_catalog(graph, monkeypatch):

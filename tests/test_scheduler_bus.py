@@ -26,6 +26,25 @@ def test_simultaneous_callers_elect_one_controller(tmp_path):
     assert scheduler_bus.read_launch(control)["token"] == winners[0].token
 
 
+def test_controller_requests_resources_for_threaded_service(tmp_path):
+    source = SimpleNamespace(command=lambda command, *, site: list(command))
+
+    script = scheduler_bus.write_controller_script(
+        tmp_path,
+        bids_root=tmp_path / "BIDS",
+        token="launch",
+        source=source,
+        site=tmp_path / "site.toml",
+        python=Path("/usr/bin/python3"),
+        partition="scheduler",
+        account="nlp",
+    )
+
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --cpus-per-task=4\n" in text
+    assert "#SBATCH --mem=1G\n" in text
+
+
 def test_durable_request_response_is_replayed_from_registry(tmp_path):
     from nro.orchestration.scheduler_requests import RequestCoordinator
 
