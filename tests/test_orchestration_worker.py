@@ -2111,9 +2111,12 @@ def test_worker_exit_does_not_release_live_slurm_allocation(tmp_path: Path, monk
     assert Worker(registry, resource_class="gpu", idle_timeout=0, poll_interval=0.01).run() == 0
 
     with registry.connection() as db:
-        assert db.execute(
-            "SELECT state FROM scheduler_submissions WHERE slurm_job_id='101'"
-        ).fetchone()[0] == "running"
+        assert (
+            db.execute(
+                "SELECT state FROM scheduler_submissions WHERE slurm_job_id='101'"
+            ).fetchone()[0]
+            == "running"
+        )
 
 
 def test_cancellation_preserves_another_users_shared_demand(tmp_path: Path) -> None:

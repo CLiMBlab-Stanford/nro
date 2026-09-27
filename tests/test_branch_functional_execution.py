@@ -259,7 +259,9 @@ def test_functional_graph_reads_raw_fieldmap_geometry_before_gradient_steps(
     )
 
     graph = job._graph.freeze()
-    topup = next(step for step in graph.steps if step.name == "TOPUP Distortion Estimation Directory")
+    topup = next(
+        step for step in graph.steps if step.name == "TOPUP Distortion Estimation Directory"
+    )
     assert all("gradient_unwarping" in str(path) for path in topup.inputs)
 
 

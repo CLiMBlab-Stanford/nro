@@ -936,9 +936,7 @@ def build_module(
                     force=opts.overwrite,
                     label="Extract Matching Distorted SE Reference",
                     source_volume_count=(
-                        topup_native.a_nvols
-                        if matching_group == "A"
-                        else topup_native.b_nvols
+                        topup_native.a_nvols if matching_group == "A" else topup_native.b_nvols
                     ),
                 )
             )
