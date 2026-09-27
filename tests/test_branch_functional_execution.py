@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 import yaml
 
+from nro.configuration.hardware import GradientUnwarpingResolution
 from nro.configuration.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
@@ -210,6 +211,56 @@ def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
     assert "Run CICADA Component Classification" in names
     assert "Regress Shared CICADA Components in T1w" in names
     assert "Run ICA-AROMA Classification and Denoising" not in names
+
+
+def test_functional_graph_reads_raw_fieldmap_geometry_before_gradient_steps(
+    functional_case, monkeypatch
+):
+    inputs, options, context, _manifest, _image = functional_case
+    fmap = inputs.epi.parent.parent / "fmap"
+    fmap.mkdir()
+    images, sidecars = [], []
+    for index, direction in enumerate(("j", "j-")):
+        path = fmap / f"fieldmap-{index}.nii"
+        nib.save(nib.Nifti1Image(np.ones((3, 3, 3), dtype=np.float32), np.eye(4)), path)
+        sidecar = path.with_suffix(".json")
+        sidecar.write_text(
+            json.dumps({"PhaseEncodingDirection": direction, "TotalReadoutTime": 0.05})
+        )
+        images.append(path)
+        sidecars.append(sidecar)
+    coefficient = options.work_dir.parent / "gradient.grad"
+    coefficient.parent.mkdir(parents=True, exist_ok=True)
+    coefficient.write_text("coefficient")
+    options.gradient_unwarp_image.write_bytes(b"image")
+    resolution = GradientUnwarpingResolution(
+        mode="auto",
+        applied=True,
+        reason="matched",
+        profile="test",
+        action="unwarp",
+        matched_metadata={},
+        coefficients=coefficient,
+        coefficient_sha256="test",
+        override_existing_correction=False,
+    )
+    monkeypatch.setattr(func, "resolve_gradient_unwarping", lambda *_args, **_kwargs: resolution)
+
+    job = func.build_module(
+        replace(
+            inputs,
+            se1=images[0],
+            se2=images[1],
+            se1_json=sidecars[0],
+            se2_json=sidecars[1],
+        ),
+        replace(options, ica_classifier="none"),
+        execution_context=context,
+    )
+
+    graph = job._graph.freeze()
+    topup = next(step for step in graph.steps if step.name == "TOPUP Distortion Estimation Directory")
+    assert all("gradient_unwarping" in str(path) for path in topup.inputs)
 
 
 def test_functional_graph_accepts_existing_marss_passthrough_alias(functional_case):

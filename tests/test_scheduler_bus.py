@@ -62,6 +62,29 @@ def test_durable_request_response_is_replayed_from_registry(tmp_path):
     assert calls == [record["id"]]
 
 
+def test_durable_request_retries_scheduler_lock_contention(tmp_path):
+    from nro.orchestration.registry import RegistryLockTimeout
+    from nro.orchestration.scheduler_requests import RequestCoordinator
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "example"})
+    calls = 0
+
+    def operation(_received):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RegistryLockTimeout("busy")
+        return {"result": "done"}
+
+    coordinator = RequestCoordinator(registry, operation)
+    with pytest.raises(RegistryLockTimeout, match="busy"):
+        coordinator.run(record)
+    assert coordinator.run(record) == {"result": "done"}
+    assert calls == 2
+
+
 def test_interrupted_durable_request_is_recovered(tmp_path):
     from nro.orchestration.scheduler_requests import prepare, register
 
@@ -132,6 +155,23 @@ def test_scheduler_separates_polling_from_maintenance_execution() -> None:
     assert scheduler_service._executor_for(worker, executors, durable=False) is executors["poll"]
     assert scheduler_service._executor_for(worker, executors) is executors["worker"]
     assert scheduler_service._executor_for(purge, executors) is executors["maintenance"]
+
+
+def test_scheduler_keeps_durable_identity_pending_when_registration_lock_is_busy() -> None:
+    from nro.orchestration.registry import RegistryLockTimeout
+
+    class BusyCoordinator:
+        def submit(self, _record, _executor):
+            raise RegistryLockTimeout("busy")
+
+    record = scheduler_bus.create_message({"operation": "example"})
+
+    assert scheduler_service._submit_durable(
+        record,
+        BusyCoordinator(),
+        object(),
+        scheduler_service._ActivitySignal(),
+    ) == {"pending": record["id"]}
 
 
 def _capacity_event(worker_id: str, sequence: int, *, profile: dict | None = None) -> dict:

@@ -220,6 +220,35 @@ def test_auto_mode_diagnoses_but_does_not_correct_multiband_two(tmp_path):
     assert result["Decision"] == "multiband_factor_below_recommended_minimum"
 
 
+def test_passthrough_converts_uncompressed_source_to_declared_gzip_output(tmp_path):
+    rng = np.random.default_rng(17)
+    bold = tmp_path / "source.nii"
+    motion = tmp_path / "motion.par"
+    save_bold(bold, rng.normal(size=(3, 3, 6, 20)))
+    np.savetxt(motion, np.zeros((20, 6)))
+
+    step, outputs = create_marss_step(
+        run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"),
+        source_bold=bold,
+        metadata=metadata(slices=6, factor=2),
+        metadata_sources=(),
+        motion_parameters=motion,
+        work_dir=tmp_path / "work",
+        artifact_dir=tmp_path / "public",
+        run_stem="sub-01_task-rest",
+        mode="auto",
+        min_multiband_factor=6,
+        chunk_volumes=8,
+        force=False,
+    )
+    assert step.action is not None
+    step.action()
+
+    assert not outputs.bold.is_symlink()
+    assert nib.load(outputs.bold).shape == (3, 3, 6, 20)
+    assert step.validate is not None and step.validate()[0]
+
+
 def test_auto_mode_passes_through_when_diagnostic_metadata_are_unavailable(tmp_path):
     rng = np.random.default_rng(8)
     bold = tmp_path / "source.nii.gz"

@@ -8,7 +8,7 @@ from concurrent.futures import Executor, Future
 from typing import Callable
 
 from nro.configuration.store import fingerprint
-from nro.orchestration.registry import utcnow
+from nro.orchestration.registry import RegistryLockTimeout, utcnow
 from nro.orchestration.scheduler_bus import validate_message
 
 
@@ -84,6 +84,10 @@ def _execute(registry, record: dict, operation: Callable[[dict], dict]) -> dict:
         )
     try:
         response = operation(record)
+    except RegistryLockTimeout:
+        # The durable record remains running and may be reclaimed by the same
+        # request identity after the competing transaction releases the lock.
+        raise
     except BaseException as error:
         response = {"error": str(error), "error_type": type(error).__name__}
     encoded = json.dumps(response, separators=(",", ":"), sort_keys=True)

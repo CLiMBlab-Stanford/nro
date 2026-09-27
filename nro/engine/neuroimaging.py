@@ -209,13 +209,18 @@ def create_nifti_volume_extraction_step(
     env: dict[str, str],
     force: bool,
     label: str | None = None,
+    source_volume_count: int | None = None,
 ) -> Step:
     """Create a step extracting one selected NIfTI volume."""
     index = int(index_zero_based)
     display_label = label or "NIfTI volume extraction"
     if index < 0:
         raise SystemExit(f"{display_label} volume index must be nonnegative (got {index})")
-    volume_count = nifti_volume_count(img)
+    volume_count = (
+        nifti_volume_count(img) if source_volume_count is None else int(source_volume_count)
+    )
+    if volume_count < 1:
+        raise SystemExit(f"{display_label} source must contain at least one volume: {img}")
     if volume_count <= 1:
         if index != 0:
             raise SystemExit(f"{display_label} requested volume {index} from a 3D image: {img}")

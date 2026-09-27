@@ -346,6 +346,18 @@ def test_scheduler_defers_contended_assessment(graph, monkeypatch):
         )
 
 
+def test_workers_may_claim_independent_work_during_artifact_assessment(graph):
+    registry, _, ids = graph
+    assert registry.reserve_artifact_assessment()
+    registry.register_worker("active", resource_class="large")
+
+    claim = registry.claim_ready_work_item("active", ("large",))
+
+    assert claim is not None
+    assert claim.work_item_id in {ids["root"], ids["unrelated"]}
+    registry.finish_artifact_assessment()
+
+
 def test_scheduler_maintenance_assesses_only_active_execution(graph, monkeypatch):
     from nro.orchestration import scheduler_maintenance
 

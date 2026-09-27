@@ -17,7 +17,8 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from nro.engine.images import nifti_is_valid
+from nro.engine.image_paths import is_gzip_nifti
+from nro.engine.images import copy_or_convert_nifti, nifti_is_valid
 from nro.engine.io import atomic_output_path, write_json
 from nro.modules.func.contract import MARSS_DIAGNOSTIC_METHOD
 from nro.orchestration.runner_graph import Step
@@ -354,6 +355,14 @@ def _atomic_symlink(source: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _publish_passthrough_nifti(source: Path, destination: Path) -> None:
+    """Publish a lossless alias unless the requested compression differs."""
+    if is_gzip_nifti(source) == is_gzip_nifti(destination):
+        _atomic_symlink(source, destination)
+    else:
+        copy_or_convert_nifti(source, destination)
+
+
 def _save_zero_artifact(
     source: Path, loadings: Path, timecourses: Path, mean_absolute: Path
 ) -> None:
@@ -546,7 +555,7 @@ def create_marss_step(
         except ValueError as error:
             slice_count = int(image.shape[2])
             correlation = np.full((slice_count, slice_count), np.nan, dtype=np.float64)
-            _atomic_symlink(source_bold, outputs.bold)
+            _publish_passthrough_nifti(source_bold, outputs.bold)
             _save_zero_artifact(
                 source_bold,
                 outputs.loadings,
@@ -662,7 +671,7 @@ def create_marss_step(
                     outputs.timecourses, motion_parameters
                 )
         else:
-            _atomic_symlink(source_bold, outputs.bold)
+            _publish_passthrough_nifti(source_bold, outputs.bold)
             _save_zero_artifact(
                 source_bold,
                 outputs.loadings,

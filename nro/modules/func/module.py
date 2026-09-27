@@ -200,7 +200,6 @@ def build_module(
     The caller authorizes an optional execution context. Anatomical paths come
     from the selected producer's manifest; all new outputs belong to this attempt.
     """
-    source_inputs = inputs
     if execution_context is not None:
         if execution_context.project != opts.project:
             raise ValueError("Functional project differs from its execution context")
@@ -442,6 +441,15 @@ def build_module(
     run_prefix = f"{run_base}_space-T1w"
     source_volume_count = nifti_volume_count(inputs.epi)
     source_spatial_shape = nifti_spatial_shape(inputs.epi)
+    source_fieldmap_geometry = (
+        {
+            kind: (nifti_spatial_shape(path), nifti_volume_count(path))
+            for kind, path in (("se1", inputs.se1), ("se2", inputs.se2))
+            if path is not None
+        }
+        if inputs.se1 is not None and inputs.se2 is not None
+        else {}
+    )
     func_dir = opts.out_dir
     fmap_dir = func_dir.parent / "fmap"
     sdc_dir = opts.work_dir / "sdc"
@@ -881,16 +889,13 @@ def build_module(
             ped_b = str(meta_b.get("PhaseEncodingDirection", "")).strip()
             readout_a = float(bids_readout_time(meta_a))
             readout_b = float(bids_readout_time(meta_b))
-            source_by_prepared = {
-                prepared: source
-                for prepared, source in (
-                    (inputs.se1, source_inputs.se1),
-                    (inputs.se2, source_inputs.se2),
-                )
-                if prepared is not None and source is not None
+            geometry_by_prepared = {
+                prepared: source_fieldmap_geometry[kind]
+                for kind, prepared in (("se1", inputs.se1), ("se2", inputs.se2))
+                if prepared is not None
             }
-            source_se_a = source_by_prepared[se_a]
-            source_se_b = source_by_prepared[se_b]
+            shape_a, volumes_a = geometry_by_prepared[se_a]
+            _shape_b, volumes_b = geometry_by_prepared[se_b]
             topup_native = _create_topup_dfout_step(
                 run_child=runner.run_child,
                 se_a=se_a,
@@ -903,9 +908,9 @@ def build_module(
                 topup_config=opts.topup_config,
                 env=env,
                 force=opts.overwrite,
-                spatial_shape=nifti_spatial_shape(source_se_a),
-                volumes_a=nifti_volume_count(source_se_a),
-                volumes_b=nifti_volume_count(source_se_b),
+                spatial_shape=shape_a,
+                volumes_a=volumes_a,
+                volumes_b=volumes_b,
             )
             runner.add_step(topup_native.step)
             if reg_ref_ped == ped_a:
@@ -930,6 +935,11 @@ def build_module(
                     env=env,
                     force=opts.overwrite,
                     label="Extract Matching Distorted SE Reference",
+                    source_volume_count=(
+                        topup_native.a_nvols
+                        if matching_group == "A"
+                        else topup_native.b_nvols
+                    ),
                 )
             )
             se2sbref_mat = opts.work_dir / "pose" / f"se2{reg_ref_tag}_6dof.mat"
