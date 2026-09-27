@@ -70,6 +70,35 @@ def test_scheduler_request_migration_preserves_version_22_registry(tmp_path: Pat
         ).fetchone() == ("scheduler_requests",)
 
 
+def test_scheduler_current_state_indexes_migrate_version_23_registry(tmp_path: Path) -> None:
+    from nro.orchestration.registry_schema import SCHEMA
+
+    path = tmp_path / "registry.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(f"PRAGMA application_id={SCHEMA.application_id}")
+        database.executescript(SCHEMA.sql(version=23))
+        database.execute("PRAGMA user_version=23")
+        database.execute("INSERT INTO metadata VALUES ('schema_version','23')")
+
+    migrate_database(path, SCHEMA)
+
+    with sqlite3.connect(path) as database:
+        indexes = {
+            row[0] for row in database.execute("SELECT name FROM sqlite_schema WHERE type='index'")
+        }
+    assert {
+        "attempt_work_item_history",
+        "request_work_item_demand",
+        "resource_step_work_item_history",
+        "dependency_upstream_consumers",
+        "branch_work_item_identity",
+        "artifact_work_item",
+        "worker_state",
+        "worker_updated_at",
+        "scheduler_submission_state",
+    } <= indexes
+
+
 def test_scientific_planning_cache_migration_preserves_version_6_records(
     tmp_path: Path,
 ) -> None:
@@ -86,12 +115,38 @@ def test_scientific_planning_cache_migration_preserves_version_6_records(
 
     assert backup is not None
     with sqlite3.connect(path) as database:
-        assert database.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 8
         assert database.execute("SELECT work_item_key FROM work_items").fetchone() == ("item",)
         tables = {
             row[0] for row in database.execute("SELECT name FROM sqlite_schema WHERE type='table'")
         }
         assert {"planning_cache", "planning_files"} <= tables
+        columns = {row[1] for row in database.execute("PRAGMA table_info(planning_files)")}
+        assert "ctime_ns" in columns
+
+
+def test_scientific_file_signature_migration_preserves_version_7_cache(
+    tmp_path: Path,
+) -> None:
+    from nro.orchestration.branch_registry import SCHEMA_DEFINITION
+
+    path = tmp_path / "scientific.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(f"PRAGMA application_id={SCHEMA_DEFINITION.application_id}")
+        database.executescript(SCHEMA_DEFINITION.sql(version=7))
+        database.execute("PRAGMA user_version=7")
+        database.execute(
+            "INSERT INTO planning_files(path,size,mtime_ns,kind,digest) VALUES (?,?,?,?,?)",
+            ("/source.json", 12, 34, "content", "digest"),
+        )
+
+    migrate_database(path, SCHEMA_DEFINITION)
+
+    with sqlite3.connect(path) as database:
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert database.execute(
+            "SELECT path,size,mtime_ns,ctime_ns,kind,digest FROM planning_files"
+        ).fetchone() == ("/source.json", 12, 34, 0, "content", "digest")
 
 
 def test_migration_preserves_rows_and_matches_a_fresh_generated_schema(tmp_path: Path) -> None:

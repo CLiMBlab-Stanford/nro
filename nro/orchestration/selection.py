@@ -36,13 +36,41 @@ def discover_bids_participants(project_root: Path) -> tuple[str, ...]:
     )
 
 
-def discover_bids_inventory(bids_root: Path) -> dict[str, tuple[str, ...]]:
-    """Discover source BIDS project and participant directories without planning."""
+def discover_bids_inventory(
+    bids_root: Path,
+    *,
+    projects: Iterable[str] = (),
+    participants: Iterable[str] = (),
+) -> dict[str, tuple[str, ...]]:
+    """Discover the requested source-BIDS directories without planning.
+
+    Explicit selectors avoid walking unrelated projects and participants on the
+    shared filesystem. An empty selector retains whole-site discovery.
+    """
     if not bids_root.is_dir():
         return {}
+    requested_projects = tuple(dict.fromkeys(projects))
+    requested_participants = tuple(
+        value.removeprefix("sub-") for value in dict.fromkeys(participants)
+    )
+    project_paths = (
+        tuple(bids_root / project for project in requested_projects)
+        if requested_projects
+        else tuple(sorted(path for path in bids_root.iterdir() if path.is_dir()))
+    )
     inventory: dict[str, tuple[str, ...]] = {}
-    for project in sorted(path for path in bids_root.iterdir() if path.is_dir()):
-        participants = discover_bids_participants(project)
-        if participants:
-            inventory[project.name] = participants
+    for project in project_paths:
+        if not project.is_dir():
+            continue
+        available = (
+            tuple(
+                participant
+                for participant in requested_participants
+                if (project / f"sub-{participant}").is_dir()
+            )
+            if requested_participants
+            else discover_bids_participants(project)
+        )
+        if available:
+            inventory[project.name] = available
     return inventory

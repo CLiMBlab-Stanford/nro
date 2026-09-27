@@ -101,12 +101,12 @@ def test_branch_registry_round_trips_reconstructible_planning_caches(tmp_path):
 
     scientific.cache_plan("scope", "first", (spec,))
     scientific.cache_plan("scope", "second", (spec,))
-    scientific.record_planning_files({"/source.json": (12, 34, "content", "digest")})
+    scientific.record_planning_files({"/source.json": (12, 34, 56, "content", "digest")})
 
     assert scientific.cached_plan("first") is None
     assert scientific.cached_plan("second") == (spec,)
     assert scientific.planning_file_records(("/source.json",)) == {
-        "/source.json": (12, 34, "content", "digest")
+        "/source.json": (12, 34, 56, "content", "digest")
     }
     assert scientific.work_item_revisions(("cached",)) == {"cached": None}
     recorded = scientific.record_work_item_graph((spec,), expected_revisions={"cached": None})
@@ -380,14 +380,14 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     with sqlite3.connect(scientific.database) as db:
         db.execute("DROP TABLE planning_cache")
         db.execute("DROP TABLE planning_files")
-        db.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+        db.execute("PRAGMA user_version=6")
     from nro.orchestration.scheduler_repair import repair_scientific_schemas
 
     report = repair_scientific_schemas(registry)
     assert report == [
         {
             "branch": "dev",
-            "stored_schema": SCHEMA_VERSION - 1,
+            "stored_schema": 6,
             "schema": SCHEMA_VERSION,
             "backup": str(scientific.root / f"registry-before-schema-{SCHEMA_VERSION}.sqlite3"),
             "work_items": None,

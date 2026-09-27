@@ -49,39 +49,40 @@ def _source_files(project_root: Path, subject_dir: Path) -> tuple[Path, ...]:
     return tuple(sorted(set(files)))
 
 
-def _signature(path: Path, kind: str) -> tuple[int, int, str, str]:
+def _signature(path: Path, kind: str) -> tuple[int, int, int, str, str]:
     for _attempt in range(3):
         before = path.stat()
         digest = _digest(path, kind)
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns):
-            return before.st_size, before.st_mtime_ns, kind, digest
+            return before.st_size, before.st_mtime_ns, before.st_ctime_ns, kind, digest
     raise RuntimeError(f"Source BIDS file changed while planning: {path}")
 
 
 def participant_source_manifest(registry, project_root: Path, subject_dir: Path) -> str:
     """Fingerprint source structure, metadata contents, and image headers.
 
-    Small metadata files are checksummed on each pass. Cached size and modification
-    time avoid reopening unchanged image headers. Workers still assess artifact inputs
-    by content.
+    Cached size and nanosecond modification time avoid reopening unchanged files.
+    New or changed metadata are checksummed in full; new or changed images use their
+    headers. Workers still assess the concrete artifact inputs independently.
     """
     files = _source_files(project_root, subject_dir)
     read_records = getattr(registry, "planning_file_records", None)
     write_records = getattr(registry, "record_planning_files", None)
     absolute_paths = tuple(str(path.absolute()) for path in files)
     cached = read_records(absolute_paths) if read_records is not None else {}
-    records: dict[str, tuple[int, int, str, str]] = {}
-    changed: dict[str, tuple[int, int, str, str]] = {}
+    records: dict[str, tuple[int, int, int, str, str]] = {}
+    changed: dict[str, tuple[int, int, int, str, str]] = {}
     for path, absolute in zip(files, absolute_paths, strict=True):
         kind = _kind(path)
         assert kind is not None
         stat = path.stat()
         existing = cached.get(absolute)
-        if (
-            kind == "nifti-header"
-            and existing is not None
-            and existing[:3] == (stat.st_size, stat.st_mtime_ns, kind)
+        if existing is not None and existing[:4] == (
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+            kind,
         ):
             record = existing
         else:
@@ -96,8 +97,9 @@ def participant_source_manifest(registry, project_root: Path, subject_dir: Path)
             "path": str(Path(path).relative_to(project_root)),
             "size": record[0],
             "mtime_ns": record[1],
-            "kind": record[2],
-            "digest": record[3],
+            "ctime_ns": record[2],
+            "kind": record[3],
+            "digest": record[4],
         }
         for path, record in sorted(records.items())
     ]

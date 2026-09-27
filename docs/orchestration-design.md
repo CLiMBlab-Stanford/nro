@@ -121,8 +121,9 @@ lock or rollback authorities.
 The controller publishes an atomic JSON read model after relevant changes.
 Cached observation reads that snapshot without starting the controller or
 opening SQLite. Bounded mutations use the live controller or a fenced local
-one-shot coordinator. Only work supply and workers may submit a controller to
-Slurm. Commands display a lightweight progress indicator while awaiting a
+one-shot coordinator. `run` may submit the scheduler and planning broker;
+workers may recover a scheduler required by active work. Commands display a
+lightweight progress indicator while awaiting a
 response. Controller queueing has no timeout; communication with a live
 controller does. The controller exits after attempts, workers, submissions, and
 pending requests remain idle for the configured grace period, which defaults to

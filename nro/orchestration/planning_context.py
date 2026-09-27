@@ -65,9 +65,13 @@ class SubjectPlanningContext:
         return self.registry.runtime_config_path(self.registered, configuration_class)
 
     def processing_contract(self, descriptor, **values) -> dict:
-        """Combine module policy with this subject's captured source markup."""
+        """Combine module policy with work-item-specific scientific values.
+
+        Source selection is represented by the contract's declared inputs.  A
+        whole markup document is neither a scientific input nor stable under
+        unrelated edits.  The anatomical planner adds only the effective
+        selections that are themselves part of its processing policy.
+        """
         processing = dict(descriptor.processing_contract())
-        if self.source_markup is not None:
-            processing["source_markup"] = self.source_markup.as_dict()
         processing.update(values)
         return processing

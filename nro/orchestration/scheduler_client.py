@@ -124,6 +124,8 @@ def _operation_notice(payload: dict) -> str:
     operation = str(payload.get("operation") or "")
     if operation == "admit_many":
         return "Registering requested work..."
+    if operation == "plan_run":
+        return "Planning requested work..."
     if operation == "supply_needed":
         return "Checking worker capacity..."
     if operation == "supply":

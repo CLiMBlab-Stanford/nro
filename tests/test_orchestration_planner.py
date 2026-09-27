@@ -945,6 +945,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     by_module = {}
     for work_item in work_items:
         by_module.setdefault(work_item.module, []).append(work_item)
+        assert work_item.contract.as_dict(work_item.identity) == work_item.work_item_contract
 
     assert len(by_module["anat"]) == 1
     assert len(by_module["func"]) == 1
@@ -985,6 +986,10 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         ],
         "output_metadata": functional_output_contract(),
     }
+    assert "source_markup" not in by_module["func"][0].contract.processing
+    assert "source_markup" not in by_module["clean"][0].contract.processing
+    assert "source_markup" not in by_module["microparcellation"][0].contract.processing
+    assert "source_markup" not in by_module["networks"][0].contract.processing
     assert by_module["func"][0].entities == {"task": "rest", "dir": "LR", "run": "1"}
     assert by_module["clean"][0].entities == {
         "task": "rest",

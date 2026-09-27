@@ -40,6 +40,17 @@ def _receipt_rows(registry, work_item_ids: set[int]) -> dict[int, dict]:
     return {int(row["id"]): dict(row) for row in rows}
 
 
+def _selected_rows(db, table: str, key: str, work_item_ids: set[int]):
+    """Read selected work-item rows without scanning a complete registry table."""
+    if not work_item_ids:
+        return []
+    placeholders = ",".join("?" for _ in work_item_ids)
+    return db.execute(
+        f"SELECT * FROM {table} WHERE {key} IN ({placeholders})",
+        tuple(sorted(work_item_ids)),
+    ).fetchall()
+
+
 def _receipt_location(registry, row: dict) -> tuple[Path, tuple[Path, str, str]]:
     """Resolve one receipt and the lineage root that owns it."""
     from nro.orchestration.ownership import work_item_record_path
@@ -107,10 +118,16 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
     paths = BranchPaths(name, *(Path(site_values[key]) for key in ("bids", "work", "development")))
     if not registry.existing_database_path().is_file():
         return {"rows": [], "branch": name}
+    report_ids = {int(row["id"]) for row in report["rows"]}
     with registry.connection() as db:
         metadata = {
             row["work_item_id"]: dict(row)
-            for row in db.execute("SELECT * FROM work_item_execution")
+            for row in _selected_rows(
+                db,
+                "work_item_execution",
+                "work_item_id",
+                report_ids,
+            )
         }
     rows = []
     for row in report["rows"]:
@@ -167,15 +184,15 @@ def purge(
 
     def validate(db, *, phase: str):
         report(phase, 0, len(plan))
-        rows = {
-            row["id"]: dict(row)
-            for row in db.execute("SELECT * FROM work_items")
-            if row["id"] in ids
-        }
+        rows = {row["id"]: dict(row) for row in _selected_rows(db, "work_items", "id", ids)}
         executions = {
             row["work_item_id"]: row["context_json"]
-            for row in db.execute("SELECT work_item_id,context_json FROM work_item_execution")
-            if row["work_item_id"] in ids
+            for row in _selected_rows(
+                db,
+                "work_item_execution",
+                "work_item_id",
+                ids,
+            )
         }
         if rows.keys() != ids:
             raise ValueError("Purge targets changed; generate and confirm a new report")

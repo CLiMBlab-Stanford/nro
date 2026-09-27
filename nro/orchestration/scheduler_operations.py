@@ -136,7 +136,14 @@ def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: 
     return {"needed": needed}
 
 
-def status(registry, *, checkout: Path, mode: str) -> dict:
+def status(
+    registry,
+    *,
+    checkout: Path,
+    mode: str,
+    current_rows: list[dict] | None = None,
+    current_dependencies: list[tuple[int, int]] | None = None,
+) -> dict:
     """Report this branch's registered selections, retaining upstream error details."""
     branches = BranchStore(registry.paths.control)
     topology = branches.read().topology
@@ -196,7 +203,11 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
     elif mode not in {"cached", "preview"}:
         raise ValueError("Unknown status mode")
     states = preview_registry(registry, compiled=True) if mode == "preview" else None
-    rows = registry.work_item_status_snapshot(read_only=True, artifact_states=states)
+    rows = (
+        registry.work_item_status_snapshot(read_only=True, artifact_states=states)
+        if current_rows is None
+        else [dict(row) for row in current_rows]
+    )
     with registry.connection() as db:
         scientific = {
             row["work_item_id"]: (row["logical_key"], row["revision"])
@@ -277,9 +288,14 @@ def status(registry, *, checkout: Path, mode: str) -> dict:
         if int(row["id"]) in visible:
             reported.update(int(value) for value in row.get("root_failure_ids", ()))
     rows = compact_status_rows([row for row in rows if int(row["id"]) in reported])
+    all_dependencies = (
+        registry.work_item_dependencies(read_only=True)
+        if current_dependencies is None
+        else current_dependencies
+    )
     dependencies = [
         (work_item_id, upstream_id)
-        for work_item_id, upstream_id in registry.work_item_dependencies(read_only=True)
+        for work_item_id, upstream_id in all_dependencies
         if work_item_id in reported and upstream_id in reported
     ]
     return {

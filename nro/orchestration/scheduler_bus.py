@@ -429,7 +429,7 @@ def write_controller_script(
         "#SBATCH --job-name=nro-scheduler",
         f"#SBATCH --partition={partition}",
         "#SBATCH --time=24:00:00",
-        "#SBATCH --mem=1G",
+        "#SBATCH --mem=4G",
         f"#SBATCH --cpus-per-task={SCHEDULER_CPUS}",
         f"#SBATCH --output={paths.service}/controller-%j.log",
     ]

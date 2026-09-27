@@ -91,7 +91,7 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
     with sqlite3.connect(scientific.database) as db:
         db.execute("DROP TABLE planning_cache")
         db.execute("DROP TABLE planning_files")
-        db.execute(f"PRAGMA user_version={SCIENTIFIC_SCHEMA_VERSION - 1}")
+        db.execute("PRAGMA user_version=6")
 
     _mock_service(
         monkeypatch,
@@ -118,7 +118,7 @@ def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_pa
     assert result["scientific"] == [
         {
             "branch": "main",
-            "stored_schema": SCIENTIFIC_SCHEMA_VERSION - 1,
+            "stored_schema": 6,
             "schema": SCIENTIFIC_SCHEMA_VERSION,
             "backup": str(
                 scientific.root / f"registry-before-schema-{SCIENTIFIC_SCHEMA_VERSION}.sqlite3"

@@ -175,8 +175,16 @@ class Planner:
     @staticmethod
     def participants(project_root: Path, requested: Sequence[str]) -> tuple[str, ...]:
         """Return matching source-BIDS participants for one project."""
+        if requested:
+            return tuple(
+                sorted(
+                    participant.removeprefix("sub-")
+                    for participant in dict.fromkeys(requested)
+                    if (project_root / f"sub-{participant.removeprefix('sub-')}").is_dir()
+                )
+            )
         available = set(discover_bids_participants(project_root))
-        return tuple(sorted(available.intersection(requested) if requested else available))
+        return tuple(sorted(available))
 
     @with_site_read_cache
     @with_bids_metadata_cache

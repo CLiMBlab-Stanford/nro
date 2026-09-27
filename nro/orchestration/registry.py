@@ -1,8 +1,9 @@
-"""NFS-conscious, externally serialized SQLite registry.
+"""NFS-conscious SQLite registry with one fenced scheduler owner.
 
-Every SQLite connection is opened while owning the same atomic directory lock.
-The database intentionally uses rollback journaling rather than WAL so clients
-on different compute nodes never depend on a shared-memory WAL index.
+Offline callers serialize each connection with an atomic directory lock. A live
+scheduler holds that fence and one SQLite connection for its complete service
+epoch, then serializes transactions with an in-process reentrant lock. Rollback
+journaling avoids a shared-memory WAL index on the cross-host filesystem.
 """
 
 from __future__ import annotations
@@ -58,6 +59,19 @@ _WAIT_FRAMES = ("·", "•", "●", "•")
 _WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
 _CLEAR_LINE = "\r\x1b[2K"
 _RESET = "\x1b[0m"
+
+
+@dataclass
+class _ProcessRegistrySession:
+    """Share one fenced connection among registry handles in this process."""
+
+    connection: sqlite3.Connection
+    fence: "RegistryLock"
+    mutex: threading.RLock
+
+
+_PROCESS_REGISTRY_SESSIONS: dict[Path, _ProcessRegistrySession] = {}
+_PROCESS_REGISTRY_SESSIONS_LOCK = threading.Lock()
 
 
 def utcnow() -> str:
@@ -730,12 +744,21 @@ class Registry(WorkflowRegistry):
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _connect_locked(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.paths.database, timeout=60.0)
+    def _connect_locked(self, *, shared_across_threads: bool = False) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self.paths.database,
+            timeout=60.0,
+            check_same_thread=not shared_across_threads,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA journal_mode=DELETE")
         connection.execute("PRAGMA synchronous=FULL")
+        if shared_across_threads:
+            # Negative cache_size values are kibibytes. The scheduler requests
+            # enough memory to retain this cache plus Python state and queries.
+            connection.execute("PRAGMA cache_size=-524288")
+            connection.execute("PRAGMA temp_store=MEMORY")
         app_id = int(connection.execute("PRAGMA application_id").fetchone()[0])
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if app_id != APPLICATION_ID:
@@ -752,6 +775,48 @@ class Registry(WorkflowRegistry):
             )
         return connection
 
+    def _process_session(self) -> _ProcessRegistrySession | None:
+        """Return this process's live scheduler session for the shared database."""
+        key = self.paths.database.resolve()
+        with _PROCESS_REGISTRY_SESSIONS_LOCK:
+            return _PROCESS_REGISTRY_SESSIONS.get(key)
+
+    @contextlib.contextmanager
+    def scheduler_session(self) -> Iterator[sqlite3.Connection]:
+        """Hold the cross-host fence and one connection for a coordinator epoch.
+
+        Every registry handle for the same database in this process joins the
+        session. Transactions remain durable in SQLite; only connection setup,
+        page caching, and mutual exclusion move into process memory.
+        """
+        if os.environ.get("NRO_PROCESS_ROLE") not in {"scheduler", None}:
+            raise RuntimeError("Only a scheduler coordinator may own a registry session")
+        key = self.paths.database.resolve()
+        with _PROCESS_REGISTRY_SESSIONS_LOCK:
+            if key in _PROCESS_REGISTRY_SESSIONS:
+                raise RuntimeError(f"Registry session already active: {key}")
+        self._prepare_directories()
+        fence = self._lock()
+        fence.acquire()
+        connection = None
+        try:
+            self._initialize_locked()
+            connection = self._connect_locked(shared_across_threads=True)
+            session = _ProcessRegistrySession(connection, fence, threading.RLock())
+            with _PROCESS_REGISTRY_SESSIONS_LOCK:
+                if key in _PROCESS_REGISTRY_SESSIONS:
+                    raise RuntimeError(f"Registry session appeared concurrently: {key}")
+                _PROCESS_REGISTRY_SESSIONS[key] = session
+            try:
+                yield connection
+            finally:
+                with _PROCESS_REGISTRY_SESSIONS_LOCK:
+                    _PROCESS_REGISTRY_SESSIONS.pop(key, None)
+        finally:
+            if connection is not None:
+                connection.close()
+            fence.release()
+
     @contextlib.contextmanager
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
         """Open a locked database context, optionally for a write transaction.
@@ -763,6 +828,32 @@ class Registry(WorkflowRegistry):
             raise RuntimeError(
                 "Workers and scientific subprocesses cannot open the scheduler registry"
             )
+        session = self._process_session()
+        if session is not None:
+            with session.mutex:
+                savepoint = None
+                try:
+                    if write:
+                        if session.connection.in_transaction:
+                            savepoint = f"nested_{uuid.uuid4().hex}"
+                            session.connection.execute(f"SAVEPOINT {savepoint}")
+                        else:
+                            session.connection.execute("BEGIN IMMEDIATE")
+                    yield session.connection
+                    if write:
+                        if savepoint is None:
+                            session.connection.commit()
+                        else:
+                            session.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except BaseException:
+                    if write:
+                        if savepoint is None:
+                            session.connection.rollback()
+                        else:
+                            session.connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                            session.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+                    raise
+            return
         self._prepare_directories()
         with self._lock():
             self._initialize_locked()
@@ -827,8 +918,10 @@ class Registry(WorkflowRegistry):
         same cross-host lock as mutations, while ``query_only`` prevents their
         connections from changing registry state.
         """
+        session = self._process_session()
         with self.connection() as connection:
-            connection.execute("PRAGMA query_only=ON")
+            if session is None:
+                connection.execute("PRAGMA query_only=ON")
             yield connection
 
     def initialize(self) -> None:
