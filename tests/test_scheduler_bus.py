@@ -41,7 +41,7 @@ def test_controller_requests_resources_for_threaded_service(tmp_path):
     )
 
     text = script.read_text(encoding="utf-8")
-    assert "#SBATCH --cpus-per-task=4\n" in text
+    assert f"#SBATCH --cpus-per-task={scheduler_bus.SCHEDULER_CPUS}\n" in text
     assert "#SBATCH --mem=1G\n" in text
 
 

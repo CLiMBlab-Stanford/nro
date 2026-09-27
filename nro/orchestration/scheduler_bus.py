@@ -24,6 +24,7 @@ HEARTBEAT_SECONDS = 5.0
 LEASE_SECONDS = 30.0
 STARTING_GRACE_SECONDS = 30.0
 DEFAULT_IDLE_GRACE_SECONDS = 12 * 60 * 60.0
+SCHEDULER_CPUS = 4
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}")
 
 
@@ -429,7 +430,7 @@ def write_controller_script(
         f"#SBATCH --partition={partition}",
         "#SBATCH --time=24:00:00",
         "#SBATCH --mem=1G",
-        "#SBATCH --cpus-per-task=4",
+        f"#SBATCH --cpus-per-task={SCHEDULER_CPUS}",
         f"#SBATCH --output={paths.service}/controller-%j.log",
     ]
     if account:
