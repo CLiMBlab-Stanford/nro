@@ -266,7 +266,20 @@ def _admit_resolved(
     ids = registry._upsert_work_item_graph_locked(
         db,
         tuple(
-            (spec, spec.as_record(compiled_contract=spec.contract.as_dict(spec.identity)))
+            (
+                spec,
+                spec.as_record(
+                    # Main executes the scheduler's own approved scientific
+                    # catalog, so publish its canonical contract before demand
+                    # becomes claimable. Development contracts remain opaque
+                    # to the central scheduler and are assessed by their owner.
+                    compiled_contract=(
+                        spec.work_item_contract
+                        if name == "main"
+                        else spec.contract.as_dict(spec.identity)
+                    )
+                ),
+            )
             for spec in specs
         ),
         now=now,

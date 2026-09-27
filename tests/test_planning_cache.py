@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from nro.orchestration import planning_cache
@@ -29,14 +30,11 @@ def test_participant_manifest_reuses_unchanged_file_checksums(tmp_path, monkeypa
 
     first = planning_cache.participant_source_manifest(cache, project, subject)
     assert len(cache.records) == 3
-    original_digest = planning_cache._digest
     monkeypatch.setattr(
         planning_cache,
         "_digest",
-        lambda path, kind: (
-            (_ for _ in ()).throw(AssertionError("reread unchanged image header"))
-            if kind == "nifti-header"
-            else original_digest(path, kind)
+        lambda _path, _kind: (_ for _ in ()).throw(
+            AssertionError("reread an unchanged source file")
         ),
     )
 
@@ -53,6 +51,8 @@ def test_participant_manifest_changes_with_metadata_and_inventory(tmp_path) -> N
 
     first = planning_cache.participant_source_manifest(cache, project, subject)
     _write(sidecar, '{"EchoTime": 0.02}')
+    stat = sidecar.stat()
+    os.utime(sidecar, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
     second = planning_cache.participant_source_manifest(cache, project, subject)
     _write(subject / "func/sub-01_task-rest_run-02_bold.nii.gz", "other")
     third = planning_cache.participant_source_manifest(cache, project, subject)

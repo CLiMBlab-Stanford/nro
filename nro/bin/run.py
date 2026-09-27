@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -327,7 +328,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
-    args = build_parser(prog=prog).parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser(prog=prog).parse_args(raw_argv)
     from nro.configuration import site
 
     record = site.installation_record()
@@ -508,7 +510,72 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     branch_execution = (
         record.get("mode") == "branch" or implementation_path(Path(values["registry"])).is_file()
     )
-    inventory = None if args.resume and branch_execution else discover_bids_inventory(bids_root)
+    if branch_execution and not args.local and os.environ.get("NRO_REMOTE_PLANNER") != "1":
+        from nro.orchestration.execution_cache import cache_lock
+        from nro.orchestration.execution_pins import capture_execution
+        from nro.orchestration.planner_client import ensure as ensure_planner
+        from nro.orchestration.scheduler_bus import read_active
+        from nro.orchestration.scheduler_client import command, exchange
+
+        control = Path(values["registry"])
+        endpoint = command(control, bids_root)
+        with cache_lock(control):
+            source, execution_site = capture_execution(
+                control,
+                bids_root,
+                site_values=dict(values),
+            )
+        # Submit both services without serial queue latency when neither exists.
+        # A live scheduler owns planner lifecycle for subsequent invocations.
+        if read_active(control) is None:
+            ensure_planner(endpoint)
+        result = exchange(
+            endpoint,
+            {
+                "operation": "plan_run",
+                "checkout": str(site.CHECKOUT),
+                "request": {
+                    "source": {"root": str(source.root), "digest": source.digest},
+                    "site": str(execution_site),
+                    "python": sys.executable,
+                    "checkout": str(site.CHECKOUT),
+                    "argv": raw_argv,
+                },
+            },
+            timeout=None,
+            require_service=True,
+            start_epoch=True,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            action = "Resumed" if args.resume else "Created"
+            print(
+                f"{action} {len(result['requests'])} branch request(s); submitted "
+                f"{len(result['submitted_workers'])} worker(s)."
+            )
+            unavailable = result.get("unavailable", ())
+            if unavailable:
+                print(
+                    f"Skipped {len(unavailable)} unavailable participant/module selection(s):",
+                    file=sys.stderr,
+                )
+                for item in unavailable:
+                    print(
+                        f"  {item['project']}/sub-{item['participant']} "
+                        f"{item['module']}: {item['reason']}",
+                        file=sys.stderr,
+                    )
+        return
+    inventory = (
+        None
+        if args.resume and branch_execution
+        else discover_bids_inventory(
+            bids_root,
+            projects=selection.projects,
+            participants=selection.participants,
+        )
+    )
     actual_projects = list(inventory or {})
     if inventory is None:
         projects = list(selection.projects)
@@ -660,6 +727,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 partition=args.partition,
                 expected_revisions=scientific_revisions,
                 inherit=not args.no_inherit,
+                start_scheduler=not args.no_submit,
             )
         except RequestAdmissionInterrupted as interrupted:
             _cancel_interrupted_requests(

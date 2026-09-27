@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -50,6 +51,69 @@ def test_run_defaults() -> None:
 
 def test_run_cpu_override() -> None:
     assert build_parser().parse_args(["--cpus", "8"]).cpus == 8
+
+
+def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys) -> None:
+    from nro.configuration import site
+    from nro.orchestration import execution_pins, planner_client, scheduler_client
+
+    source = SimpleNamespace(root=tmp_path / "source", digest="digest")
+    execution_site = tmp_path / "execution-site.toml"
+    endpoint = object()
+    calls = []
+    monkeypatch.setattr(
+        site,
+        "installation_record",
+        lambda: {
+            "mode": "branch",
+            "ready": True,
+            "site": os.environ["NRO_SITE_CONFIG"],
+        },
+    )
+    monkeypatch.setattr(
+        execution_pins,
+        "capture_execution",
+        lambda *_args, **_kwargs: (source, execution_site),
+    )
+    monkeypatch.setattr(
+        scheduler_client,
+        "command",
+        lambda control, bids_root: calls.append(("command", control, bids_root)) or endpoint,
+    )
+    monkeypatch.setattr(
+        planner_client,
+        "ensure",
+        lambda value: calls.append(("ensure", value)),
+    )
+
+    def exchange(value, payload, **options):
+        calls.append(("exchange", value, payload, options))
+        return {"requests": ["request-1"], "submitted_workers": [], "unavailable": []}
+
+    monkeypatch.setattr(scheduler_client, "exchange", exchange)
+    monkeypatch.setattr(
+        "nro.bin.run.discover_bids_inventory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("terminal process performed BIDS discovery")
+        ),
+    )
+
+    run_main(["-P", "demo", "-m", "anat", "--no-submit", "--json"])
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["requests"] == ["request-1"]
+    assert calls[1] == ("ensure", endpoint)
+    assert calls[2][0:2] == ("exchange", endpoint)
+    assert calls[2][2]["operation"] == "plan_run"
+    assert calls[2][2]["request"]["argv"] == [
+        "-P",
+        "demo",
+        "-m",
+        "anat",
+        "--no-submit",
+        "--json",
+    ]
+    assert calls[2][3] == {"timeout": None, "require_service": True, "start_epoch": True}
 
 
 def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:

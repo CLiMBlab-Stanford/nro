@@ -11,54 +11,75 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
     """Read work-item facts and attach each item's configuration route."""
     rows = database.execute(
         """
-        SELECT t.*, ci.config_id, ci.directory_label, ci.lineage_fingerprint,
-               ci.configuration_class,
+        WITH latest_attempt AS (
+            SELECT * FROM (
+                SELECT attempt.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY attempt.work_item_id ORDER BY attempt.id DESC
+                       ) AS history_rank
+                FROM attempts attempt
+            ) WHERE history_rank=1
+        ),
+        attempt_summary AS (
+            SELECT work_item_id,
+                   SUM(CASE WHEN oom_detected=1 THEN 1 ELSE 0 END) AS oom_count
+            FROM attempts GROUP BY work_item_id
+        ),
+        current_resource_step AS (
+            SELECT * FROM (
+                SELECT task.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY task.work_item_id ORDER BY task.id DESC
+                       ) AS history_rank
+                FROM resource_step_tasks task
+                JOIN work_items current ON current.id=task.work_item_id
+                WHERE task.generation=current.current_generation
+                  AND task.revision_fingerprint=current.revision_fingerprint
+            ) WHERE history_rank=1
+        ),
+        request_summary AS (
+            SELECT link.work_item_id,
+                   MAX(CASE WHEN link.demand_state='active' AND request.state='active'
+                            THEN 1 ELSE 0 END) AS demanded,
+                   MAX(CASE WHEN link.demand_state='active' AND request.state='active'
+                                  AND request.updated_at > COALESCE(
+                                      CASE WHEN attempt.state='cancelled'
+                                           THEN attempt.started_at
+                                           ELSE attempt.completed_at END,
+                                      '')
+                            THEN 1 ELSE 0 END) AS retry_requested,
+                   GROUP_CONCAT(DISTINCT workflow.workflow_id) AS workflow_ids
+            FROM request_work_items link
+            JOIN requests request ON request.id=link.request_id
+            JOIN workflow_revisions workflow ON workflow.id=request.workflow_revision_id
+            LEFT JOIN latest_attempt attempt ON attempt.work_item_id=link.work_item_id
+            GROUP BY link.work_item_id
+        )
+        SELECT t.*, lineage.config_id, lineage.directory_label,
+               lineage.lineage_fingerprint, lineage.configuration_class,
                EXISTS(
-                 SELECT 1 FROM workflow_bindings binding
-                 WHERE binding.module_lineage_id=t.module_lineage_id
+                   SELECT 1 FROM workflow_bindings binding
+                   WHERE binding.module_lineage_id=t.module_lineage_id
                ) AS recomputable,
-               EXISTS(SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active') AS demanded,
-               (SELECT a.state FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_state,
-               (SELECT a.error_type FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_type,
-               (SELECT a.error_message FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS error_message,
-               (SELECT a.log_path FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS log_path,
-               (SELECT COUNT(*) FROM attempts a WHERE a.work_item_id=t.id AND a.oom_detected=1) AS oom_count,
-               (SELECT a.memory_gb FROM attempts a WHERE a.work_item_id=t.id ORDER BY a.id DESC LIMIT 1) AS attempt_memory_gb,
-               (SELECT task.state FROM resource_step_tasks task
-                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
-                   AND task.revision_fingerprint=t.revision_fingerprint
-                 ORDER BY task.id DESC LIMIT 1) AS resource_step_state,
-               (SELECT task.resource_class FROM resource_step_tasks task
-                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
-                   AND task.revision_fingerprint=t.revision_fingerprint
-                 ORDER BY task.id DESC LIMIT 1) AS waiting_resource_class,
-               (SELECT task.error_type FROM resource_step_tasks task
-                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
-                   AND task.revision_fingerprint=t.revision_fingerprint
-                 ORDER BY task.id DESC LIMIT 1) AS resource_step_error_type,
-               (SELECT task.error_message FROM resource_step_tasks task
-                 WHERE task.work_item_id=t.id AND task.generation=t.current_generation
-                   AND task.revision_fingerprint=t.revision_fingerprint
-                 ORDER BY task.id DESC LIMIT 1) AS resource_step_error_message,
-               EXISTS(
-                 SELECT 1 FROM request_work_items retry_rt JOIN requests retry ON retry.id=retry_rt.request_id
-                 WHERE retry_rt.work_item_id=t.id AND retry_rt.demand_state='active' AND retry.state='active'
-                   AND retry.updated_at > COALESCE(
-                     (SELECT CASE WHEN latest.state='cancelled'
-                              THEN latest.started_at ELSE latest.completed_at END
-                      FROM attempts latest WHERE latest.work_item_id=t.id
-                      ORDER BY latest.id DESC LIMIT 1),
-                     ''
-                   )
-               ) AS retry_requested,
-               (SELECT GROUP_CONCAT(DISTINCT wr.workflow_id)
-                 FROM request_work_items rt
-                 JOIN requests r ON r.id=rt.request_id
-                 JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
-                 WHERE rt.work_item_id=t.id) AS workflow_ids
+               COALESCE(requests.demanded, 0) AS demanded,
+               attempt.state AS attempt_state,
+               attempt.error_type,
+               attempt.error_message,
+               attempt.log_path,
+               COALESCE(attempts.oom_count, 0) AS oom_count,
+               attempt.memory_gb AS attempt_memory_gb,
+               resource.state AS resource_step_state,
+               resource.resource_class AS waiting_resource_class,
+               resource.error_type AS resource_step_error_type,
+               resource.error_message AS resource_step_error_message,
+               COALESCE(requests.retry_requested, 0) AS retry_requested,
+               requests.workflow_ids
         FROM work_items t
-        JOIN module_lineages ci ON ci.id=t.module_lineage_id
+        JOIN module_lineages lineage ON lineage.id=t.module_lineage_id
+        LEFT JOIN latest_attempt attempt ON attempt.work_item_id=t.id
+        LEFT JOIN attempt_summary attempts ON attempts.work_item_id=t.id
+        LEFT JOIN current_resource_step resource ON resource.work_item_id=t.id
+        LEFT JOIN request_summary requests ON requests.work_item_id=t.id
         ORDER BY t.participant, t.module, t.work_item_key
         """
     ).fetchall()

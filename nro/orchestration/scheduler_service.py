@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nro.configuration.site import protected_site_fingerprint
@@ -44,6 +45,7 @@ from nro.orchestration.source_snapshots import SourceSnapshot
 
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
+STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
 
 
@@ -703,6 +705,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
     """Apply one validated command through the service's registry authority."""
     global _STOP
     if message["operation"] == "server_shutdown":
+        from nro.orchestration.planner_client import shutdown as shutdown_planner
         from nro.orchestration.scheduler_bus import publish_shutdown
 
         publish_shutdown(
@@ -710,6 +713,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             token=os.environ["NRO_SCHEDULER_TOKEN"],
             generation=int(os.environ["NRO_SCHEDULER_GENERATION"]),
         )
+        shutdown_planner(registry.paths.control)
         _STOP = True
         result = {"stopping": True}
     elif message["operation"] == "worker":
@@ -733,6 +737,14 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 message_id=message_id,
             )
         }
+    elif message["operation"] == "plan_run":
+        from nro.orchestration.planner_client import ensure as ensure_planner
+        from nro.orchestration.planner_client import execute as execute_plan
+        from nro.orchestration.scheduler_client import command
+
+        endpoint = command(registry.paths.control, registry.paths.bids_root)
+        ensure_planner(endpoint)
+        result = execute_plan(registry.paths.control, message["request"])
     elif message["operation"] == "supply":
         result = supply(
             registry,
@@ -989,6 +1001,8 @@ def _executor_for(
     operation = record["payload"].get("operation")
     if operation == "worker":
         return executors["worker" if durable else "poll"]
+    if operation == "plan_run":
+        return executors["planner"]
     if operation in _MAINTENANCE_OPERATIONS:
         return executors["maintenance"]
     return executors["command"]
@@ -1081,10 +1095,18 @@ def _branch_reports(registry) -> dict[str, dict]:
     """Build one cached report for every active branch with an attached checkout."""
     reports = {}
     topology = BranchStore(registry.paths.control).read().topology
+    current_rows = registry.work_item_status_snapshot(read_only=True)
+    current_dependencies = registry.work_item_dependencies(read_only=True)
     for name, record in topology.records.items():
         if record.retired or not record.checkouts:
             continue
-        reports[name] = status(registry, checkout=record.checkouts[0], mode="cached")
+        reports[name] = status(
+            registry,
+            checkout=record.checkouts[0],
+            mode="cached",
+            current_rows=current_rows,
+            current_dependencies=current_dependencies,
+        )
     return reports
 
 
@@ -1095,11 +1117,16 @@ def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
     from nro.orchestration.registry import utcnow
     from nro.orchestration.scheduler_bus import PROTOCOL
 
+    recent_worker_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     with registry.connection() as db:
         workers = [
             dict(row)
             for row in db.execute(
-                "SELECT id,state,resource_class,memory_gb,slurm_job_id,updated_at FROM workers"
+                """SELECT id,state,resource_class,memory_gb,slurm_job_id,updated_at
+                   FROM workers
+                   WHERE state IN ('idle','running','draining','shutdown_requested')
+                      OR updated_at >= ?""",
+                (recent_worker_cutoff,),
             )
         ]
         submissions = [
@@ -1169,7 +1196,11 @@ def serve(
     listener = open_listener()
     host = socket.getfqdn()
     port = int(listener.getsockname()[1])
+    registry_session = registry.scheduler_session()
+    registry_session_open = False
     try:
+        registry_session.__enter__()
+        registry_session_open = True
         registry.initialize()
         with registry.connection(write=True) as db:
             row = db.execute(
@@ -1183,6 +1214,9 @@ def serve(
             )
         active = activate(control, launch_token, generation, host=host, port=port)
     except BaseException as error:
+        if registry_session_open:
+            registry_session.__exit__(*sys.exc_info())
+            registry_session_open = False
         publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")
         raise
     os.environ["NRO_SCHEDULER_TOKEN"] = launch_token
@@ -1212,6 +1246,7 @@ def serve(
         "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
         "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
         "capacity": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-capacity"),
+        "planner": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-planner"),
         "command": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-command"),
         "maintenance": ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="scheduler-maintenance"
@@ -1273,6 +1308,7 @@ def serve(
     idle_since = None
     capacity_future = None
     capacity_pending = False
+    snapshot_pending = False
     last_cleanup = 0.0
     last_maintenance = 0.0
     try:
@@ -1284,6 +1320,7 @@ def serve(
             )
         last_maintenance = time.monotonic()
         publish_status_snapshot(registry, generation=generation, active=True)
+        last_snapshot = time.monotonic()
         capacity_event.set()
         while not _STOP:
             now = time.monotonic()
@@ -1311,6 +1348,8 @@ def serve(
             if changed_event.consume():
                 changed = True
             if changed:
+                snapshot_pending = True
+            if snapshot_pending and now - last_snapshot >= STATUS_PUBLISH_INTERVAL_SECONDS:
                 generation += 1
                 with registry.connection(write=True) as db:
                     db.execute(
@@ -1319,6 +1358,8 @@ def serve(
                     )
                 heartbeat_state["generation"] = generation
                 publish_status_snapshot(registry, generation=generation, active=True)
+                last_snapshot = time.monotonic()
+                snapshot_pending = False
             if handled_direct or _registry_busy(registry):
                 idle_since = None
             elif idle_since is None:
@@ -1326,6 +1367,13 @@ def serve(
             elif time.monotonic() - idle_since >= idle_grace:
                 break
             time.sleep(0.02 if handled_direct else 0.1)
+        if snapshot_pending:
+            generation += 1
+            with registry.connection(write=True) as db:
+                db.execute(
+                    "UPDATE metadata SET value=? WHERE key='scheduler_generation'",
+                    (str(generation),),
+                )
         publish_status_snapshot(registry, generation=generation, active=False)
         return 0
     finally:
@@ -1337,7 +1385,11 @@ def serve(
         readers.shutdown(wait=True, cancel_futures=False)
         for executor in executors.values():
             executor.shutdown(wait=True, cancel_futures=False)
-        deactivate(control, launch_token)
+        try:
+            deactivate(control, launch_token)
+        finally:
+            if registry_session_open:
+                registry_session.__exit__(*sys.exc_info())
 
 
 def run_once(*, launch_token: str, bids_root: Path) -> int:
@@ -1355,7 +1407,11 @@ def run_once(*, launch_token: str, bids_root: Path) -> int:
         raise RuntimeError("One-shot coordinator launch token is obsolete")
     require_worker_source(control)
     registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
+    registry_session = registry.scheduler_session()
+    registry_session_open = False
     try:
+        registry_session.__enter__()
+        registry_session_open = True
         registry.initialize()
         with registry.connection(write=True) as db:
             row = db.execute(
@@ -1397,7 +1453,11 @@ def run_once(*, launch_token: str, bids_root: Path) -> int:
         publish_startup_error(control, launch_token, f"{type(error).__name__}: {error}")
         raise
     finally:
-        release_launch(control, launch_token)
+        try:
+            if registry_session_open:
+                registry_session.__exit__(*sys.exc_info())
+        finally:
+            release_launch(control, launch_token)
 
 
 def build_parser() -> argparse.ArgumentParser:

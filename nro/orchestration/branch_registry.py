@@ -323,42 +323,45 @@ class BranchRegistry(WorkflowRegistry):
                 (cache_key, scope_key, payload, utcnow()),
             )
 
-    def planning_file_records(self, paths: Sequence[str]) -> dict[str, tuple[int, int, str, str]]:
+    def planning_file_records(
+        self, paths: Sequence[str]
+    ) -> dict[str, tuple[int, int, int, str, str]]:
         """Return cached signatures for the requested source files."""
         selected = tuple(dict.fromkeys(paths))
         if not selected:
             return {}
-        records: dict[str, tuple[int, int, str, str]] = {}
+        records: dict[str, tuple[int, int, int, str, str]] = {}
         with self._connection() as db:
             for offset in range(0, len(selected), 500):
                 batch = selected[offset : offset + 500]
                 placeholders = ",".join("?" for _ in batch)
                 for row in db.execute(
-                    f"SELECT path,size,mtime_ns,kind,digest FROM planning_files "
+                    f"SELECT path,size,mtime_ns,ctime_ns,kind,digest FROM planning_files "
                     f"WHERE path IN ({placeholders})",
                     batch,
                 ):
                     records[str(row["path"])] = (
                         int(row["size"]),
                         int(row["mtime_ns"]),
+                        int(row["ctime_ns"]),
                         str(row["kind"]),
                         str(row["digest"]),
                     )
         return records
 
-    def record_planning_files(self, records: Mapping[str, tuple[int, int, str, str]]) -> None:
+    def record_planning_files(self, records: Mapping[str, tuple[int, int, int, str, str]]) -> None:
         """Publish newly computed source signatures for later planning passes."""
         if not records:
             return
         with self._connection(write=True) as db:
             db.executemany(
-                """INSERT INTO planning_files(path,size,mtime_ns,kind,digest)
-                   VALUES (?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
+                """INSERT INTO planning_files(path,size,mtime_ns,ctime_ns,kind,digest)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
                    size=excluded.size,mtime_ns=excluded.mtime_ns,
-                   kind=excluded.kind,digest=excluded.digest""",
+                   ctime_ns=excluded.ctime_ns,kind=excluded.kind,digest=excluded.digest""",
                 (
-                    (path, size, mtime_ns, kind, digest)
-                    for path, (size, mtime_ns, kind, digest) in records.items()
+                    (path, size, mtime_ns, ctime_ns, kind, digest)
+                    for path, (size, mtime_ns, ctime_ns, kind, digest) in records.items()
                 ),
             )
 

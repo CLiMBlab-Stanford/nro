@@ -42,7 +42,63 @@ def test_controller_requests_resources_for_threaded_service(tmp_path):
 
     text = script.read_text(encoding="utf-8")
     assert f"#SBATCH --cpus-per-task={scheduler_bus.SCHEDULER_CPUS}\n" in text
-    assert "#SBATCH --mem=1G\n" in text
+    assert "#SBATCH --mem=4G\n" in text
+
+
+def test_scheduler_session_shares_one_connection_across_registry_handles(tmp_path):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    project = Registry.for_project(
+        "demo",
+        bids_root=tmp_path / "BIDS",
+        registry_path=registry.paths.control,
+    )
+
+    with registry.scheduler_session() as owned:
+        with registry.connection(write=True) as database:
+            assert database is owned
+            database.execute("INSERT INTO metadata(key,value) VALUES ('session-test','1')")
+        with project.read_connection() as database:
+            assert database is owned
+            assert (
+                database.execute("SELECT value FROM metadata WHERE key='session-test'").fetchone()[
+                    0
+                ]
+                == "1"
+            )
+
+    with registry.connection() as database:
+        assert database is not owned
+
+
+def test_scheduler_session_serializes_transactions_from_service_threads(tmp_path):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    projects = [
+        Registry.for_project(
+            f"project-{index}",
+            bids_root=tmp_path / "BIDS",
+            registry_path=registry.paths.control,
+        )
+        for index in range(16)
+    ]
+
+    def write_metadata(index):
+        with projects[index].connection(write=True) as database:
+            database.execute(
+                "INSERT INTO metadata(key,value) VALUES (?,?)",
+                (f"thread-{index}", str(index)),
+            )
+
+    with registry.scheduler_session():
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(write_metadata, range(len(projects))))
+        with registry.connection() as database:
+            rows = database.execute(
+                "SELECT key,value FROM metadata WHERE key LIKE 'thread-%'"
+            ).fetchall()
+
+    assert {row["key"]: row["value"] for row in rows} == {
+        f"thread-{index}": str(index) for index in range(len(projects))
+    }
 
 
 def test_durable_request_response_is_replayed_from_registry(tmp_path):

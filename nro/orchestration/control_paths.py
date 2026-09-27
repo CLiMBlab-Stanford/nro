@@ -58,6 +58,21 @@ class ControlPaths:
         return self.service / "status.json"
 
     @property
+    def planner(self) -> Path:
+        """Return the branch-agnostic planning broker's control directory."""
+        return self.shared / "planner"
+
+    @property
+    def planner_active(self) -> Path:
+        """Return the active planner endpoint record."""
+        return self.planner / "active.json"
+
+    @property
+    def planner_launch(self) -> Path:
+        """Return the atomic planner launch claim."""
+        return self.planner / "launch"
+
+    @property
     def catalog(self) -> Path:
         """Return the shared branch catalog."""
         return self.shared / "branches.json"
@@ -115,6 +130,7 @@ class ControlPaths:
             self.cache,
             self.implementations,
             self.execution_sites,
+            self.planner,
             self.ingestion,
             self.promotions,
             self.root / "branches",

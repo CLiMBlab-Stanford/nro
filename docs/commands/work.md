@@ -48,6 +48,15 @@ capture does not freeze Python environments or container images. See the
 [development limits](../development.md#branch-isolation-work) before maintaining
 dependencies or using a separate checkout with the shared pool.
 
+`run` submits or joins a scheduler and planning broker. The terminal waits for
+the FIFO planning request to finish but performs no module planning itself.
+When both services are absent, their Slurm jobs are submitted independently.
+The broker stays available for later requests and executes each branch's pinned
+planner in isolation. `--no-submit` still requires these services because it
+compiles and registers demand; it suppresses derivative workers only.
+`purge` does not require the planning broker. It uses the active scheduler when
+one exists and otherwise runs through a fenced one-shot coordinator.
+
 The first request for a participant and scientific selection compiles the full
 dependency closure and saves a content-addressed planning entry. Later
 equivalent requests reuse it. Changes to source-BIDS inventory or metadata,

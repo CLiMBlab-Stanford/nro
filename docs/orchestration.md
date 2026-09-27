@@ -12,6 +12,7 @@ records in this layout:
 CONTROL/
   shared/scheduler/registry.sqlite3
   shared/scheduler/service/{progress,status.json}
+  shared/planner/{active.json,launch}
   branches/<branch-id>/registry.sqlite3
 ```
 
@@ -24,6 +25,13 @@ A branch
 database records that branch's compiled scientific contracts, workflow
 lineages, and artifact observations. All projects and branches therefore share
 worker capacity without requiring the scheduler to import development code.
+
+`nro run` starts or joins both the scheduler and a small planning broker. When
+both are absent, the command submits their Slurm allocations independently so
+they may dequeue in parallel. The scheduler records planning requests in FIFO
+order. The broker processes one at a time using the requesting branch's pinned
+source in an isolated subprocess; it never opens the scheduler registry. Both
+services remain available for a 12-hour idle grace period.
 
 The worker pool has separate general and GPU resource classes. General workers
 claim complete work items. A runner may yield at a step marked for GPU
@@ -77,7 +85,7 @@ status mode, cancellation rule, and repair boundary.
 
 ## Planning and execution
 
-The planner registers complete work item specifications before submitting work.
+The planning broker registers complete work item specifications before submitting work.
 Workers request ready work items from the controller and run each one in a
 separate subprocess. A module constructs its complete runner graph before
 freshness is checked. The shared runner then executes or skips each declared
@@ -92,6 +100,8 @@ Adding, removing, or changing relevant source metadata invalidates the entry.
 For imaging files, planning fingerprints the header and inventory; workers and
 authoritative assessment still verify artifact inputs by content. The planning
 cache is an optimization and never establishes artifact freshness.
+Later planning requests observe cache entries and scientific revisions written
+by earlier requests, so they compile only changed or previously unseen scopes.
 
 Admission reassesses only fresh artifacts whose scientific contracts could
 satisfy the submitted graph, together with their dependency closure. Missing,
