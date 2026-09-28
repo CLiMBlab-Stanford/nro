@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from nro.configuration.store import fingerprint
+from nro.orchestration.artifact_resolution import scientific_contract_fingerprint
 from nro.orchestration.branch_planning import BranchPlan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.execution_cache import cache_publication
@@ -294,9 +295,9 @@ def _admit_resolved(
         if previous is not None:
             from nro.orchestration import dependency_state
 
-            science_changed = fingerprint(
+            science_changed = scientific_contract_fingerprint(
                 json.loads(previous["scientific_contract_json"])
-            ) != fingerprint(item.contract)
+            ) != scientific_contract_fingerprint(item.contract)
             if science_changed:
                 dependency_state.invalidate(
                     db,

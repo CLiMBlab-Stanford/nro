@@ -19,7 +19,10 @@ from pathlib import Path
 
 from nro.configuration.site import protected_site_fingerprint
 from nro.configuration.store import fingerprint
-from nro.orchestration.artifact_resolution import scientific_contracts
+from nro.orchestration.artifact_resolution import (
+    scientific_contract_fingerprint,
+    scientific_contracts,
+)
 from nro.orchestration.branch_admission import _admit_resolved
 from nro.orchestration.branch_reconciliation import candidates_locked, resolve_payload
 from nro.orchestration.branch_store import BranchStore
@@ -156,7 +159,7 @@ def admit_many(
             requested_contracts = {}
             break
         requested_contracts.setdefault(entry["project"], set()).update(
-            fingerprint(contract) for contract in contracts.values()
+            scientific_contract_fingerprint(contract) for contract in contracts.values()
         )
     from nro.orchestration.manifests import assess_registry
 
@@ -165,7 +168,12 @@ def admit_many(
             candidate_ids = {
                 int(candidate.evidence["work_item_id"])
                 for project, fingerprints in requested_contracts.items()
-                for candidate in candidates_locked(db, project, contract_fingerprints=fingerprints)
+                for candidate in candidates_locked(
+                    db,
+                    project,
+                    fresh_only=False,
+                    contract_fingerprints=fingerprints,
+                )
             }
         if candidate_ids:
             assess_registry(registry, work_item_ids=candidate_ids, compiled=False)
