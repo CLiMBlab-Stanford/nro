@@ -50,6 +50,19 @@ def test_pool_drain_requires_confirmation_before_mutation(tmp_path, monkeypatch)
     assert [operation for operation, _ in operations] == ["installation_activity"]
 
 
+def test_in_place_migration_releases_only_its_repair_barrier(tmp_path):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+
+    registry.finish_repair_stop()
+    with registry.connection(write=True) as db:
+        db.execute("INSERT INTO metadata VALUES ('maintenance_mode', 'repair')")
+    registry.finish_repair_stop()
+
+    with registry.connection() as db:
+        assert db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone() is None
+
+
 def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     operations = _mock_service(

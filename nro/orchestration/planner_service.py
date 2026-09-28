@@ -47,6 +47,8 @@ def _run(message: dict, stop: threading.Event | None = None) -> dict:
     environment = {
         **os.environ,
         "NRO_REMOTE_PLANNER": "1",
+        "NRO_PLANNER_SOURCE_ROOT": str(source.root),
+        "NRO_PLANNER_SITE": str(site),
         "NRO_CHECKOUT": str(checkout),
         "NRO_PROCESS_ROLE": "planner",
     }

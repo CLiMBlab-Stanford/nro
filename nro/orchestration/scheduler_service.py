@@ -744,7 +744,45 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
 
         endpoint = command(registry.paths.control, registry.paths.bids_root)
         ensure_planner(endpoint)
-        result = execute_plan(registry.paths.control, message["request"])
+        planned = execute_plan(registry.paths.control, message["request"])
+        required = {
+            "protocol",
+            "entries",
+            "options",
+            "projects",
+            "participants",
+            "work_items",
+            "unavailable",
+            "resumed",
+        }
+        if set(planned) != required or planned["protocol"] != 1:
+            raise ValueError("Planner returned an unsupported admission plan")
+        if not isinstance(planned["entries"], list) or not planned["entries"]:
+            raise ValueError("Planner returned no admission entries")
+        if not isinstance(planned["options"], dict):
+            raise ValueError("Planner returned invalid supply options")
+        checkout = Path(message["checkout"])
+        request_ids = admit_many(
+            registry,
+            planned["entries"],
+            checkout=checkout,
+            site_values=values,
+            message_id=message_id,
+        )
+        result = supply(
+            registry,
+            request_ids,
+            planned["options"],
+            checkout=checkout,
+        )
+        result.update(
+            requests=request_ids,
+            projects=planned["projects"],
+            participants=planned["participants"],
+            work_items=planned["work_items"],
+            unavailable=planned["unavailable"],
+            resumed=planned["resumed"],
+        )
     elif message["operation"] == "supply":
         result = supply(
             registry,
@@ -1287,6 +1325,29 @@ def serve(
             )
         changed_event.set()
 
+    def note_maintenance_completion(future) -> None:
+        try:
+            cancelled = future.result()
+        except RegistryLockTimeout:
+            print(
+                "Scheduler deferred maintenance while execution snapshots were being published",
+                flush=True,
+            )
+            return
+        except BaseException as error:
+            print(
+                f"WARNING: scheduler maintenance failed: {type(error).__name__}: {error}",
+                flush=True,
+            )
+            return
+        if cancelled:
+            print(
+                f"Scheduler cancelled {cancelled} attempt(s) with stale upstream artifacts",
+                flush=True,
+            )
+        changed_event.set()
+        capacity_event.set()
+
     for record in prepare(registry):
         future = coordinator.submit(record, _executor_for(record, executors))
         future.add_done_callback(lambda completed, item=record: note_completion(item, completed))
@@ -1307,17 +1368,14 @@ def serve(
     listener_thread.start()
     idle_since = None
     capacity_future = None
+    maintenance_future = None
     capacity_pending = False
     snapshot_pending = False
     last_cleanup = 0.0
     last_maintenance = 0.0
     try:
-        cancelled = refresh_scheduler_state(registry)
-        if cancelled:
-            print(
-                f"Scheduler cancelled {cancelled} attempt(s) with stale upstream artifacts",
-                flush=True,
-            )
+        maintenance_future = executors["maintenance"].submit(refresh_scheduler_state, registry)
+        maintenance_future.add_done_callback(note_maintenance_completion)
         last_maintenance = time.monotonic()
         publish_status_snapshot(registry, generation=generation, active=True)
         last_snapshot = time.monotonic()
@@ -1328,16 +1386,16 @@ def serve(
             if now - last_cleanup >= 3600.0:
                 collect_transport_garbage(control)
                 last_cleanup = now
-            if now - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS and _registry_busy(registry):
-                cancelled = refresh_scheduler_state(registry)
-                if cancelled:
-                    print(
-                        f"Scheduler cancelled {cancelled} attempt(s) with stale upstream artifacts",
-                        flush=True,
-                    )
+            if (
+                now - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS
+                and _registry_busy(registry)
+                and (maintenance_future is None or maintenance_future.done())
+            ):
+                maintenance_future = executors["maintenance"].submit(
+                    refresh_scheduler_state, registry
+                )
+                maintenance_future.add_done_callback(note_maintenance_completion)
                 last_maintenance = time.monotonic()
-                changed = True
-                capacity_event.set()
             if capacity_event.consume():
                 capacity_pending = True
             if capacity_pending and (capacity_future is None or capacity_future.done()):

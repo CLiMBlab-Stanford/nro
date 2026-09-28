@@ -698,9 +698,66 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     matched_participants = {
         project: list(participants) for project, participants in plan.matched_participants.items()
     }
+    if branch_execution and args.local and args.no_submit:
+        raise SystemExit("--local and --no-submit are mutually exclusive")
+    if branch_execution and os.environ.get("NRO_REMOTE_PLANNER") == "1":
+        from nro.orchestration.branch_requests import compile_request_entries
+        from nro.orchestration.source_snapshots import SourceSnapshot
+
+        source = SourceSnapshot(
+            Path(os.environ["NRO_PLANNER_SOURCE_ROOT"]),
+            plan.source_digest,
+        )
+        execution_site = Path(os.environ["NRO_PLANNER_SITE"])
+        entries = compile_request_entries(
+            registry,
+            plan,
+            selectors={
+                "runs": selection.runs,
+                "spaces": list(selection.spaces),
+                "smoothing": list(selection.smoothing),
+                "models": list(selection.models),
+                "model_sets": list(selection.model_sets or (() if selection.models else ("main",))),
+            },
+            concurrency=args.concurrency,
+            partition=args.partition,
+            expected_revisions=scientific_revisions,
+            inherit=not args.no_inherit,
+            source=source,
+            site=execution_site,
+        )
+        print(
+            json.dumps(
+                {
+                    "protocol": 1,
+                    "entries": entries,
+                    "options": {
+                        key: getattr(args, key)
+                        for key in (
+                            "local",
+                            "no_submit",
+                            "memory",
+                            "max_memory",
+                            "partition",
+                            "account",
+                            "time",
+                            "cpus",
+                            "worker_idle_timeout",
+                            "drain_minutes",
+                        )
+                    },
+                    "projects": list(planned_projects),
+                    "participants": matched_participants,
+                    "work_items": len(all_work_items),
+                    "unavailable": _unavailable_records(plan),
+                    "resumed": len(resumed_rows),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
     if branch_execution:
-        if args.local and args.no_submit:
-            raise SystemExit("--local and --no-submit are mutually exclusive")
         from nro.orchestration.branch_requests import (
             RequestAdmissionInterrupted,
             register_requests,

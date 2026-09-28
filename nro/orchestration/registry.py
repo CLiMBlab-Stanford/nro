@@ -943,6 +943,16 @@ class Registry(WorkflowRegistry):
                 return None
             return migrate_database(self.paths.database, SCHEMA_DEFINITION)
 
+    def finish_repair_stop(self) -> None:
+        """Release the repair barrier after an in-place scheduler migration."""
+        with self.connection(write=True) as db:
+            row = db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone()
+            if row is None:
+                return
+            if row[0] != "repair":
+                raise RuntimeError("Scheduler repair barrier changed during migration")
+            db.execute("DELETE FROM metadata WHERE key='maintenance_mode'")
+
     def reinitialize(
         self, *, preserve_branch_runtime: bool = False, retain_backup: bool = False
     ) -> Path | None:

@@ -117,7 +117,62 @@ def register_requests(
     from nro.orchestration.scheduler_client import command, exchange
 
     values = settings()[0]
-    site_fingerprint = protected_site_fingerprint()
+    control = Path(values["registry"])
+    with cache_lock(control):
+        source, site = capture_execution(
+            control,
+            Path(values["bids"]),
+            expected_source=plan.source_digest,
+            site_values=dict(plan.site_settings),
+        )
+        entries = compile_request_entries(
+            scientific,
+            plan,
+            selectors=selectors,
+            concurrency=concurrency,
+            partition=partition,
+            expected_revisions=expected_revisions,
+            demand=demand,
+            inherit=inherit,
+            source=source,
+            site=site,
+        )
+        groups = _request_groups(plan.requests)
+        central = command(control, Path(values["bids"]))
+        with _defer_first_interrupt() as was_interrupted:
+            result = exchange(
+                central,
+                dict(
+                    operation="admit_many",
+                    checkout=str(CHECKOUT),
+                    entries=entries,
+                ),
+                require_service=start_scheduler,
+                start_epoch=start_scheduler,
+            )
+        request_ids = result["request_ids"]
+        if was_interrupted():
+            raise RequestAdmissionInterrupted(
+                tuple(zip((group.project for group in groups), request_ids, strict=True))
+            )
+    return request_ids
+
+
+def compile_request_entries(
+    scientific,
+    plan,
+    *,
+    selectors: dict,
+    concurrency: int,
+    partition: str | None,
+    expected_revisions: dict[str, int],
+    source,
+    site: Path,
+    demand: bool = True,
+    inherit: bool = True,
+) -> list[dict]:
+    """Compile detached admission records without contacting the scheduler."""
+    values = settings()[0]
     control = Path(values["registry"])
     branches = BranchStore(control)
     topology = branches.read().topology
@@ -141,58 +196,34 @@ def register_requests(
         from nro.orchestration.releases import ReleaseStore
 
         release = ReleaseStore(branches).require_installed(CHECKOUT, installation_record())
-    with cache_lock(control):
-        source, site = capture_execution(
-            control,
-            paths.bids,
-            expected_source=plan.source_digest,
-            site_values=dict(plan.site_settings),
+    site_fingerprint = protected_site_fingerprint()
+    entries = []
+    for request in _request_groups(plan.requests):
+        payload = dict(
+            protocol=1,
+            branch=name,
+            registry_id=owner,
+            project=request.project,
+            context=ExecutionContext(
+                paths, request.project, request.terminal_keys[0], ()
+            ).as_dict(),
+            specifications=[encode_spec(spec) for spec in request.work_items.values()],
+            revisions={spec.key: revisions[spec.key] for spec in request.work_items.values()},
+            contracts={
+                spec.key: records[spec.key].contract for spec in request.work_items.values()
+            },
+            terminals=list(request.terminal_keys),
+            inherit=inherit,
+            workflow=export_workflow(scientific, request.registered),
+            source=dict(root=str(source.root), digest=source.digest),
+            site=str(site),
+            site_fingerprint=site_fingerprint,
+            python=sys.executable,
+            selectors=selectors,
+            concurrency=concurrency,
+            partition=partition,
+            release=release,
+            demand=demand,
         )
-        central = command(control, paths.bids)
-        groups = _request_groups(plan.requests)
-        entries = []
-        for request in groups:
-            payload = dict(
-                protocol=1,
-                branch=name,
-                registry_id=owner,
-                project=request.project,
-                context=ExecutionContext(
-                    paths, request.project, request.terminal_keys[0], ()
-                ).as_dict(),
-                specifications=[encode_spec(spec) for spec in request.work_items.values()],
-                revisions={spec.key: revisions[spec.key] for spec in request.work_items.values()},
-                contracts={
-                    spec.key: records[spec.key].contract for spec in request.work_items.values()
-                },
-                terminals=list(request.terminal_keys),
-                inherit=inherit,
-                workflow=export_workflow(scientific, request.registered),
-                source=dict(root=str(source.root), digest=source.digest),
-                site=str(site),
-                site_fingerprint=site_fingerprint,
-                python=sys.executable,
-                selectors=selectors,
-                concurrency=concurrency,
-                partition=partition,
-                release=release,
-                demand=demand,
-            )
-            entries.append(dict(project=request.project, payload=payload))
-        with _defer_first_interrupt() as was_interrupted:
-            result = exchange(
-                central,
-                dict(
-                    operation="admit_many",
-                    checkout=str(CHECKOUT),
-                    entries=entries,
-                ),
-                require_service=start_scheduler,
-                start_epoch=start_scheduler,
-            )
-        request_ids = result["request_ids"]
-        if was_interrupted():
-            raise RequestAdmissionInterrupted(
-                tuple(zip((group.project for group in groups), request_ids, strict=True))
-            )
-    return request_ids
+        entries.append(dict(project=request.project, payload=payload))
+    return entries

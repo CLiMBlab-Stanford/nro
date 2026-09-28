@@ -164,6 +164,10 @@ def _busy(
             "worker submissions",
         ),
         (
+            "SELECT 1 FROM scheduler_requests WHERE state IN ('pending','running') LIMIT 1",
+            "active scheduler requests",
+        ),
+        (
             "SELECT 1 FROM metadata WHERE "
             + (
                 "(key='maintenance_mode' AND value!=?) OR key LIKE 'branch_maintenance:%' LIMIT 1"
