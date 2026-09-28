@@ -142,6 +142,7 @@ def prepare_pool(
 
         if SCHEDULER_SCHEMA.supports(stored_schema):
             backup = registry.migrate_schema()
+            registry.finish_repair_stop()
             print(
                 f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",
                 flush=True,

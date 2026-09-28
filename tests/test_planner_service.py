@@ -167,6 +167,8 @@ def test_planner_child_uses_pinned_checkout_and_structured_output(tmp_path, monk
     assert command[-1] == "--json"
     assert command.count("--json") == 1
     assert options["env"]["NRO_REMOTE_PLANNER"] == "1"
+    assert options["env"]["NRO_PLANNER_SOURCE_ROOT"] == str(source)
+    assert options["env"]["NRO_PLANNER_SITE"] == str(site)
     assert options["env"]["NRO_CHECKOUT"] == str(checkout)
 
 
@@ -207,7 +209,31 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         planner_client,
         "execute",
         lambda control, request: (
-            calls.append(("execute", control, request)) or {"requests": ["request-1"]}
+            calls.append(("execute", control, request))
+            or {
+                "protocol": 1,
+                "entries": [{"project": "demo", "payload": {}}],
+                "options": {"no_submit": True},
+                "projects": ["demo"],
+                "participants": {"demo": ["01"]},
+                "work_items": 1,
+                "unavailable": [],
+                "resumed": 0,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_service,
+        "admit_many",
+        lambda registry, entries, **options: (
+            calls.append(("admit", entries, options)) or ["request-1"]
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler_service,
+        "supply",
+        lambda registry, request_ids, options, **keywords: (
+            calls.append(("supply", request_ids, options, keywords)) or {"submitted_workers": []}
         ),
     )
     registry = SimpleNamespace(
@@ -216,16 +242,43 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
 
     result = scheduler_service.dispatch(
         registry,
-        {"operation": "plan_run", "request": {"argv": ["-P", "demo"]}},
+        {
+            "operation": "plan_run",
+            "checkout": str(tmp_path / "checkout"),
+            "request": {"argv": ["-P", "demo"]},
+        },
         values={},
         message_id="message",
     )
 
-    assert result == {"requests": ["request-1"]}
+    assert result == {
+        "submitted_workers": [],
+        "requests": ["request-1"],
+        "projects": ["demo"],
+        "participants": {"demo": ["01"]},
+        "work_items": 1,
+        "unavailable": [],
+        "resumed": 0,
+    }
     assert calls == [
         ("command", registry.paths.control, registry.paths.bids_root),
         ("ensure", endpoint),
         ("execute", registry.paths.control, {"argv": ["-P", "demo"]}),
+        (
+            "admit",
+            [{"project": "demo", "payload": {}}],
+            {
+                "checkout": tmp_path / "checkout",
+                "site_values": {},
+                "message_id": "message",
+            },
+        ),
+        (
+            "supply",
+            ["request-1"],
+            {"no_submit": True},
+            {"checkout": tmp_path / "checkout"},
+        ),
     ]
 
 
