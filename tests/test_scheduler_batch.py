@@ -96,8 +96,20 @@ def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch
     assert verified == ["a" * 64]
     assert assessed == [(registry, {"work_item_ids": {1, 2}, "compiled": False})]
     assert candidate_queries == [
-        ("one", {"contract_fingerprints": {fingerprint({"project": "one"})}}),
-        ("two", {"contract_fingerprints": {fingerprint({"project": "two"})}}),
+        (
+            "one",
+            {
+                "fresh_only": False,
+                "contract_fingerprints": {fingerprint({"project": "one"})},
+            },
+        ),
+        (
+            "two",
+            {
+                "fresh_only": False,
+                "contract_fingerprints": {fingerprint({"project": "two"})},
+            },
+        ),
         ("one", {"contract_fingerprints": {fingerprint({"project": "one"})}}),
         ("two", {"contract_fingerprints": {fingerprint({"project": "two"})}}),
     ]

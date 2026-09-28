@@ -7,6 +7,7 @@ import pytest
 from nro.configuration.store import fingerprint
 from nro.orchestration.artifact_resolution import (
     ArtifactCandidate,
+    scientific_contract_fingerprint,
     scientific_contracts,
     select_artifact,
 )
@@ -97,6 +98,26 @@ def test_runtime_changes_do_not_affect_scientific_contracts(tmp_path):
         module_lineage_id=42,
     )
     assert scientific_contracts((parent, child)) == scientific_contracts((parent, changed))
+
+
+def test_declared_contract_migrations_preserve_scientific_equivalence():
+    current = {
+        "module": "func",
+        "project": "demo",
+        "participant": "01",
+        "processing": {"algorithm": "same"},
+    }
+    historical = {
+        **current,
+        "processing": {
+            **current["processing"],
+            "source_markup": {"id": "main", "lesion": False},
+        },
+    }
+    assert scientific_contract_fingerprint(historical) == scientific_contract_fingerprint(current)
+    assert scientific_contract_fingerprint(
+        {**current, "processing": {"algorithm": "changed"}}
+    ) != scientific_contract_fingerprint(current)
 
 
 def test_inheritance_requires_current_validation_and_excludes_siblings(tmp_path):

@@ -3,8 +3,11 @@
 import json
 from pathlib import Path
 
-from nro.configuration.store import fingerprint
-from nro.orchestration.artifact_resolution import ArtifactCandidate, scientific_contracts
+from nro.orchestration.artifact_resolution import (
+    ArtifactCandidate,
+    scientific_contract_fingerprint,
+    scientific_contracts,
+)
 from nro.orchestration.branch_planning import resolve_branch_plan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
@@ -96,7 +99,7 @@ def candidates_locked(
             if row["scientific_contract_json"]
             else contracts[row["work_item_key"]]
         )
-        contract_fingerprint = fingerprint(contract)
+        contract_fingerprint = scientific_contract_fingerprint(contract)
         if contract_fingerprints is not None and contract_fingerprint not in contract_fingerprints:
             continue
         candidates.append(
@@ -221,8 +224,8 @@ def reconcile_branch_requests(registry) -> int:
                 specifications = tuple(decode_spec(value) for value in payload["specifications"])
                 contracts = scientific_contracts(specifications)
                 superseded = any(
-                    fingerprint(json.loads(row["scientific_contract_json"]))
-                    != fingerprint(contracts[row["logical_key"]])
+                    scientific_contract_fingerprint(json.loads(row["scientific_contract_json"]))
+                    != scientific_contract_fingerprint(contracts[row["logical_key"]])
                     for row in db.execute(
                         "SELECT logical_key,scientific_contract_json FROM branch_work_items WHERE registry_id=?",
                         (payload["registry_id"],),

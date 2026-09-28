@@ -8,9 +8,9 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json
 from nro.orchestration.artifact_records import inventory
+from nro.orchestration.artifact_resolution import scientific_contract_fingerprint
 from nro.orchestration.branch_purge import token
 from nro.orchestration.branch_reconciliation import candidates_locked
 from nro.orchestration.branch_store import BranchStore
@@ -97,7 +97,8 @@ def preview(
                 candidate
                 for candidate in candidates
                 if candidate.branch == source
-                and fingerprint(candidate.contract) == fingerprint(contracts[work_item_id])
+                and scientific_contract_fingerprint(candidate.contract)
+                == scientific_contract_fingerprint(contracts[work_item_id])
             ]
             if len(matches) > 1:
                 raise ValueError("Ambiguous matching source artifacts")

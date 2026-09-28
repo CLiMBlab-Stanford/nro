@@ -11,6 +11,16 @@ from nro.orchestration.branches import BranchTopology
 from nro.orchestration.contracts import WorkItemSpec
 
 
+def scientific_contract_fingerprint(contract: Mapping) -> str:
+    """Hash a scientific contract after applying declared compatibility migrations."""
+    from nro.orchestration.catalog import MODULE_CATALOG, canonical_contract
+
+    value = dict(contract)
+    if value.get("module") in MODULE_CATALOG:
+        value = canonical_contract(value)
+    return fingerprint(value)
+
+
 def _logical_path(path: Path) -> Path:
     """Normalize a controlled output path without touching the filesystem."""
     return path.expanduser().absolute()
@@ -194,13 +204,16 @@ def select_artifact(
     are never eligible. Validation must check current output and input evidence;
     a saved success flag alone is not sufficient. None means compute locally.
     """
-    expected = fingerprint(dict(contract))
+    expected = scientific_contract_fingerprint(contract)
     for owner in topology.ancestors(branch, inherit=inherit):
         eligible = [
             candidate
             for candidate in candidates
             if candidate.branch == owner
-            and (candidate.contract_fingerprint or fingerprint(dict(candidate.contract)))
+            and (
+                candidate.contract_fingerprint
+                or scientific_contract_fingerprint(candidate.contract)
+            )
             == expected
             and validate(candidate)
         ]
