@@ -28,6 +28,10 @@ def _source_selection_chain(module: str) -> ContractMigrationChain:
                 summary="Derive source selection from declared inputs instead of markup syntax",
                 contract=(RemoveField("processing.source_markup", reconstructible=True),),
             ),
+            ContractMigration(
+                destination=3,
+                summary="Track inherited source metadata by declared scientific fields",
+            ),
         ),
     )
 

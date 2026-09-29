@@ -134,6 +134,7 @@ BUILTIN_MODULES = (
         dynamic_processing_keys=(
             "gradient_unwarping",
             "lesion_reconstruction",
+            "source_metadata",
             "surface_reconstruction",
         ),
     ),
@@ -144,7 +145,7 @@ BUILTIN_MODULES = (
         resource_class="large",
         plan=plan_func_work_items,
         processing_contract=_func_processing_contract,
-        dynamic_processing_keys=("gradient_unwarping", "final_resampling"),
+        dynamic_processing_keys=("gradient_unwarping", "final_resampling", "source_metadata"),
     ),
     ModuleDescriptor(
         name="clean",

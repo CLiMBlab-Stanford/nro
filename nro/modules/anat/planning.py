@@ -10,6 +10,7 @@ from nro.configuration.hardware import gradient_unwarping_records
 from nro.configuration.markup import SubjectMarkup
 from nro.engine.image_paths import image_source_paths
 from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
+from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.lesion_policy import lesion_reconstruction_contract
 from nro.modules.anat.policy import surface_reconstruction_contract
@@ -134,6 +135,11 @@ def plan_work_items(
         "gradient_unwarping": gradient_records,
         "output_metadata": anatomical_output_contract(lesion=context.source_markup.lesion),
         "source_markup": _effective_markup_contract(context.subject_dir, context.source_markup),
+        "source_metadata": semantic_metadata_snapshot(
+            anatomical_images,
+            module="anat",
+            markup=context.source_markup,
+        ),
     }
     if context.source_markup.lesion:
         processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()

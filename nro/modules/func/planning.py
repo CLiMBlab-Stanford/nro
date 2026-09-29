@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Mapping
 from nro.configuration.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.paths import functional_manifest_path, module_subject_dir
+from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.func.contract import final_resampling_contract
 from nro.modules.func.resolver import (
     ReferenceInventory,
@@ -41,7 +42,7 @@ def resolved_func_inputs(
 ) -> tuple[Path, ...]:
     """Mirror functional reference and fieldmap selection for exact inputs."""
     bold = load_rec(run.path, markup=markup)
-    result: list[Path] = [bold.img, *bold.metadata_sources]
+    result: list[Path] = [bold.img]
     explicit_references = bold.metadata.get("NROReferencePolicy") == "explicit"
     use_fmaps = explicit_references or not sdc_from_sbref_pair
     references = resolve_func_references(
@@ -55,11 +56,9 @@ def resolved_func_inputs(
     )
     if references.sbref is not None:
         result.append(references.sbref.img)
-        result.extend(references.sbref.metadata_sources)
     if references.pair is not None:
         for record in (references.pair.se1, references.pair.se2):
             result.append(record.img)
-            result.extend(record.metadata_sources)
     return tuple(dict.fromkeys(result))
 
 
@@ -160,6 +159,11 @@ def plan_work_items(
                     ),
                     "final_resampling": final_resampling_contract(
                         gradient_unwarping=bold_gradient_applied
+                    ),
+                    "source_metadata": semantic_metadata_snapshot(
+                        images,
+                        module="func",
+                        markup=context.source_markup,
                     ),
                 },
             )

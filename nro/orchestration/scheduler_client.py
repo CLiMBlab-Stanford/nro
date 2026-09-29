@@ -766,7 +766,7 @@ def maintenance(
         "installation_prepare",
         "installation_progress",
         "project_rename",
-        "provenance_migration",
+        "dataset_migration",
     }:
         raise ValueError("Unsupported maintenance operation")
     timeout = (
@@ -778,7 +778,7 @@ def maintenance(
             "promotion_publish",
             "publish",
             "project_rename",
-            "provenance_migration",
+            "dataset_migration",
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )

@@ -20,6 +20,7 @@ import numpy as np
 from nro.engine.image_paths import is_gzip_nifti
 from nro.engine.images import copy_or_convert_nifti, nifti_is_valid
 from nro.engine.io import atomic_output_path, write_json
+from nro.engine.source_metadata import semantic_metadata_values
 from nro.modules.func.contract import MARSS_DIAGNOSTIC_METHOD
 from nro.orchestration.runner_graph import Step
 
@@ -523,7 +524,6 @@ def create_marss_step(
     run_child: Callable[..., str | None],
     source_bold: Path,
     metadata: Mapping[str, Any],
-    metadata_sources: Sequence[Path],
     motion_parameters: Path,
     work_dir: Path,
     artifact_dir: Path,
@@ -786,7 +786,7 @@ def create_marss_step(
 
     step = Step.python(
         name="Diagnose and Correct Simultaneous-Slice Artifact",
-        inputs=(source_bold, motion_parameters, *metadata_sources),
+        inputs=(source_bold, motion_parameters),
         outputs=tuple(Path(value) for value in vars(outputs).values()),
         action=run_stage,
         validate=validate,
@@ -795,6 +795,7 @@ def create_marss_step(
             "mode": mode,
             "minimum_multiband_factor": min_multiband_factor,
             "diagnostic_method": MARSS_DIAGNOSTIC_METHOD,
+            "source_metadata": semantic_metadata_values(metadata, module="func"),
         },
     )
     return step, outputs

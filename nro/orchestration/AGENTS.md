@@ -37,7 +37,8 @@ Persisted scheduler or branch-scientific changes must use the restricted chain u
 parallel. Add migration fixtures, semantic invariant tests, and fresh-versus-migrated
 schema comparison, then run `nro dev schema check`.
 
-Public-provenance format changes use the converter in
+Dataset-representation changes use the converter in
 `nro.orchestration.provenance_migration`. Keep historical readers narrow and
-versioned. Conversion refreshes integrity evidence for rewritten metadata in place;
-it must not register new science, advance generations, or infer a different DAG.
+versioned. Conversion coordinates source BIDS, public derivatives, durable ownership
+records, and scheduler evidence. It must not register new science, advance
+generations, or infer a different DAG.

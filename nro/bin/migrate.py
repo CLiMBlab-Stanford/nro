@@ -15,12 +15,12 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         description="Preview or apply explicit nro metadata migrations.",
     )
     commands = parser.add_subparsers(dest="migration", required=True)
-    provenance = commands.add_parser(
-        "provenance",
-        help="replace host paths in nro public metadata with portable references",
+    dataset = commands.add_parser(
+        "dataset",
+        help="bring source BIDS and nro derivatives into current metadata form",
     )
-    provenance.add_argument("-P", "--project", nargs="+", dest="projects")
-    provenance.add_argument(
+    dataset.add_argument("-P", "--project", nargs="+", dest="projects")
+    dataset.add_argument(
         "--execute",
         action="store_true",
         help="apply the previewed conversion; the default is read-only",
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         Path(values["registry"]),
         bids,
         checkout=CHECKOUT,
-        operation="provenance_migration",
+        operation="dataset_migration",
         projects=projects,
         execute=args.execute,
         version=package_version(),
@@ -49,6 +49,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     action = "Migrated" if args.execute else "Would migrate"
     print(f"Scanned {report['scanned']} metadata file(s).")
     print(f"{action} {len(report['changed'])} file(s).")
+    print(f"{action} {report['contracts']} work-item contract(s).")
     for path in report["changed"]:
         print(path)
     if report["errors"]:

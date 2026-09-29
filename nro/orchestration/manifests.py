@@ -488,6 +488,7 @@ def _assess_direct_inputs(
 
     from nro.configuration.hardware import gradient_unwarping_records
     from nro.configuration.markup import MarkupStore
+    from nro.engine.source_metadata import semantic_metadata_snapshot
     from nro.modules.anat.planning import raw_anatomical_inputs
     from nro.modules.clean.planning import clean_direct_inputs
     from nro.modules.func.contract import final_resampling_contract
@@ -586,7 +587,14 @@ def _assess_direct_inputs(
             mode=str(module_config.get("gradient_unwarping", "off")),
             markup=source_markup,
         )
-        expected_dynamic = {"gradient_unwarping": records}
+        expected_dynamic = {
+            "gradient_unwarping": records,
+            "source_metadata": semantic_metadata_snapshot(
+                images,
+                module=str(row["module"]),
+                markup=source_markup,
+            ),
+        }
         if row["module"] == "func" and matched_run is not None:
             bold_path = matched_run.path.expanduser().absolute()
             bold_resolution = resolutions.get(bold_path)

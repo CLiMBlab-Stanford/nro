@@ -1009,10 +1009,10 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         )
         if not message["execute"]:
             result["executed"] = False
-    elif message["operation"] == "provenance_migration":
-        from nro.orchestration.provenance_migration import migrate_public_provenance
+    elif message["operation"] == "dataset_migration":
+        from nro.orchestration.provenance_migration import migrate_dataset
 
-        report = migrate_public_provenance(
+        report = migrate_dataset(
             registry,
             projects=message["projects"],
             execute=bool(message["execute"]),
@@ -1022,6 +1022,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         result = {
             "scanned": report.scanned,
             "changed": [str(path) for path in report.changed],
+            "contracts": report.contracts,
             "errors": list(report.errors),
         }
     else:
@@ -1071,7 +1072,7 @@ _MAINTENANCE_OPERATIONS = {
     "publish",
     "purge",
     "project_rename",
-    "provenance_migration",
+    "dataset_migration",
     "repair_finish",
     "repair_prepare",
     "status",
