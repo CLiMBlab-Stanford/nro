@@ -1042,6 +1042,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             result["executed"] = False
     elif message["operation"] == "dataset_migration":
         from nro.orchestration.provenance_migration import migrate_dataset
+        from nro.orchestration.scheduler_bus import publish_progress
 
         report = migrate_dataset(
             registry,
@@ -1049,6 +1050,13 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             execute=bool(message["execute"]),
             version=str(message["version"]),
             site_values=values,
+            progress=lambda phase: publish_progress(
+                registry.paths.control,
+                message_id,
+                phase=phase,
+                completed=0,
+                total=0,
+            ),
         )
         result = {
             "scanned": report.scanned,

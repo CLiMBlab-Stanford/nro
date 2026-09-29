@@ -15,8 +15,10 @@ from nro.orchestration.contract_migrations import current_contract_schema
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.provenance_migration import (
+    _candidates,
     _contract_dataset_view,
     _scientific_contract_dataset_view,
+    _source_candidates,
     migrate_dataset,
 )
 from nro.orchestration.registry import Registry
@@ -53,6 +55,48 @@ def test_dataset_migration_previews_then_rewrites_metadata(tmp_path: Path) -> No
 
     repeated = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
     assert repeated.changed == ()
+
+
+def test_migration_inventory_prunes_non_bids_and_external_product_trees(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "bids/demo"
+    raw = project / "sub-01/func/sub-01_task-rest_bold.json"
+    sourcedata = project / "sourcedata/sub-01/func/sub-01_task-rest_bold.json"
+    third_party = project / "derivatives/other/sub-01/manifest.json"
+    manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
+    external = project / "derivatives/nro/anat/main/code/freesurfer/metadata.json"
+    for path in (raw, sourcedata, third_party, manifest, external):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+
+    assert tuple(_source_candidates(project)) == (raw,)
+    assert tuple(_candidates(project)) == (manifest,)
+
+
+def test_dataset_migration_reports_inventory_phases(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    sidecar = project / "sub-01/func/sub-01_task-rest_bold.json"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("{}")
+    registry = Registry.for_project("", bids_root=bids)
+    phases = []
+
+    migrate_dataset(
+        registry,
+        projects=("demo",),
+        execute=False,
+        version="1.2.3",
+        progress=phases.append,
+    )
+
+    assert phases == [
+        "Scanning source metadata",
+        "Scanning source metadata (1 file)",
+        "Scanning derivative metadata",
+        "Checking work-item contracts",
+    ]
 
 
 def test_dataset_migration_rewrites_absolute_path_mapping_keys(tmp_path: Path) -> None:

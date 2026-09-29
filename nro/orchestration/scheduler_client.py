@@ -57,7 +57,6 @@ _OPERATION_NOTICES = {
     "installation_prepare": "Preparing installation maintenance...",
     "installation_progress": "Waiting for shared work to stop...",
     "project_rename": "Renaming dataset...",
-    "dataset_migration": "Migrating dataset...",
 }
 
 
@@ -152,6 +151,8 @@ def _progress_notice(record: dict | None, fallback: str) -> str:
 def _operation_notice(payload: dict) -> str:
     """Describe scheduler work without exposing internal RPC operation names."""
     operation = str(payload.get("operation") or "")
+    if operation == "dataset_migration":
+        return "Migrating dataset..." if payload.get("execute") else "Preparing migration..."
     if operation == "purge":
         count = len(payload.get("plan", ()))
         return f"Removing {count:,} work items..." if count else "Removing selected work..."
