@@ -366,12 +366,14 @@ def exchange(
             require_service=require_service,
             start_epoch=start_epoch,
         )
-        if not service_available and not require_service:
-            response = _run_once(endpoint, record, durable=durable)
-            if response is not None:
-                return _response_result(response)
     except Exception as error:
         raise SchedulerError(f"Could not start scheduler coordination: {error}") from error
+    if not service_available and not require_service:
+        # A one-shot coordinator executes the requested operation. Its errors
+        # are operation failures, not scheduler-startup failures.
+        response = _run_once(endpoint, record, durable=durable)
+        if response is not None:
+            return _response_result(response)
     started = time.monotonic()
     last_recovery_check = started
     active_token: str | None = None

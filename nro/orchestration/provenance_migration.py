@@ -15,7 +15,7 @@ import yaml
 
 from nro.configuration.store import fingerprint
 from nro.engine.bids import bids_suffix
-from nro.engine.io import atomic_write_json, atomic_write_text
+from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
 from nro.engine.references import (
     ReferenceRoots,
     configured_reference_roots,
@@ -391,7 +391,24 @@ def _restore_journal(registry, journal: Path, record: dict) -> None:
             backup = journal / entry["backup"]
             if not backup.is_file():
                 raise RuntimeError(f"Portable provenance backup is missing: {backup}")
-            shutil.copy2(backup, path)
+            if path.is_file() and path.stat().st_size == backup.stat().st_size:
+                if path.read_bytes() == backup.read_bytes():
+                    # Avoid replacing unchanged files. Besides reducing shared
+                    # filesystem traffic, this permits recovery to pass safely
+                    # through read-only excluded source directories that the
+                    # legacy inventory incorrectly included.
+                    continue
+            backup_stat = backup.stat()
+            with atomic_output_path(path) as temporary:
+                shutil.copyfile(backup, temporary)
+            os.chmod(path, int(entry.get("mode", backup_stat.st_mode & 0o777)))
+            os.utime(
+                path,
+                ns=(
+                    int(entry.get("atime_ns", backup_stat.st_atime_ns)),
+                    int(entry.get("mtime_ns", backup_stat.st_mtime_ns)),
+                ),
+            )
         else:
             path.unlink(missing_ok=True)
         restored.append(path)
@@ -413,10 +430,18 @@ def _recover_interrupted(registry) -> None:
     for journal in sorted(path for path in root.iterdir() if path.is_dir()):
         marker = journal / "journal.json"
         if not marker.is_file():
-            raise RuntimeError(f"Portable provenance journal is incomplete: {journal}")
+            # Releases before format 2 created backups before publishing a
+            # manifest. Such a directory cannot describe applied changes, so
+            # it is safe to discard rather than permanently blocking recovery.
+            shutil.rmtree(journal)
+            continue
         record = json.loads(marker.read_text(encoding="utf-8"))
         state = record.get("state")
-        if state == "committing":
+        if state == "preparing":
+            # No public file is written until every backup is durable and the
+            # journal advances to prepared.
+            pass
+        elif state == "committing":
             projects = tuple(str(value) for value in record.get("projects", ()))
             if _registry_contract_change_count(registry, projects) == 0:
                 _migrate_branch_contracts(registry, projects)
@@ -565,6 +590,8 @@ def _source_candidates(project_root: Path) -> Iterator[Path]:
         if not subject_root.is_dir():
             continue
         for path in _metadata_files(subject_root):
+            if "_excluded" in path.relative_to(subject_root).parts:
+                continue
             if _is_source_imaging_sidecar(path, project_root):
                 yield path
 
@@ -716,20 +743,24 @@ def migrate_dataset(
     root = _journal_root(registry)
     root.mkdir(parents=True, exist_ok=True, mode=0o2775)
     journal = root / uuid.uuid4().hex
-    backups = journal / "files"
-    backups.mkdir(parents=True, mode=0o2775)
     entries = []
     for index, path in enumerate(replacements):
         relative = f"files/{index:08d}"
         existed = path.is_file()
-        if existed:
-            shutil.copy2(path, journal / relative)
-        entries.append({"path": str(path.resolve()), "backup": relative, "existed": existed})
-        report("Backing up migration metadata", index + 1)
-    report("Backing up migration metadata", len(entries), force=True)
+        stat = path.stat() if existed else None
+        entry = {"path": str(path.resolve()), "backup": relative, "existed": existed}
+        if stat is not None:
+            entry.update(
+                mode=stat.st_mode & 0o777,
+                atime_ns=stat.st_atime_ns,
+                mtime_ns=stat.st_mtime_ns,
+            )
+        entries.append(entry)
+    backups = journal / "files"
+    backups.mkdir(parents=True, mode=0o2775)
     journal_record = {
-        "format": 1,
-        "state": "prepared",
+        "format": 2,
+        "state": "preparing",
         "projects": list(selected),
         "files": entries,
     }
@@ -741,6 +772,23 @@ def migrate_dataset(
         durable=True,
     )
     try:
+        for index, entry in enumerate(entries):
+            if entry["existed"]:
+                with atomic_output_path(journal / entry["backup"]) as temporary:
+                    # Rollback needs original bytes and selected portable stat
+                    # fields, not ACLs or extended attributes. copy2 attempts
+                    # to reproduce unsupported metadata on some shared file
+                    # systems and can fail with EPERM.
+                    shutil.copyfile(Path(entry["path"]), temporary)
+            report("Backing up migration metadata", index + 1)
+        report("Backing up migration metadata", len(entries), force=True)
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "prepared"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
         atomic_write_json(
             journal / "journal.json",
             {**journal_record, "state": "applying"},

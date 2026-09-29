@@ -237,6 +237,26 @@ def test_scheduler_exchange_preserves_keyboard_interrupt(monkeypatch, tmp_path) 
         scheduler_client.exchange(endpoint, {"operation": "purge"})
 
 
+def test_scheduler_exchange_does_not_mislabel_one_shot_operation_failure(
+    monkeypatch, tmp_path
+) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    scheduler_bus.prepare(tmp_path)
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        scheduler_client,
+        "_run_once",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            scheduler_client.SchedulerError("migration backup failed")
+        ),
+    )
+
+    with pytest.raises(scheduler_client.SchedulerError, match="^migration backup failed$"):
+        scheduler_client.exchange(endpoint, {"operation": "dataset_migration"})
+
+
 def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_path) -> None:
     from nro.orchestration import scheduler_bus, scheduler_client
 
