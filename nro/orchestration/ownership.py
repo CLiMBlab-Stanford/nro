@@ -106,9 +106,7 @@ def convert_legacy_ownership_record(
     """Convert one version-4 ownership document to portable version 5."""
     if record.get("record_version") == OWNERSHIP_VERSION:
         return deepcopy(dict(record))
-    if record.get("record_version") != LEGACY_OWNERSHIP_VERSION or record.get(
-        "owner"
-    ) != "nro":
+    if record.get("record_version") != LEGACY_OWNERSHIP_VERSION or record.get("owner") != "nro":
         raise ValueError("unsupported ownership record")
     converted = deepcopy(dict(record))
     converted["record_version"] = OWNERSHIP_VERSION
@@ -583,9 +581,7 @@ def _validate_lineage_record(
     roots: ReferenceRoots,
 ) -> dict:
     version = record.get("record_version")
-    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get(
-        "owner"
-    ) != "nro":
+    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get("owner") != "nro":
         raise ValueError("unsupported ownership record")
     if version == OWNERSHIP_VERSION:
         portable_record = record
@@ -676,9 +672,7 @@ def _validate_work_item_record(
     roots: ReferenceRoots,
 ) -> dict:
     version = record.get("record_version")
-    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get(
-        "owner"
-    ) != "nro":
+    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get("owner") != "nro":
         raise ValueError("unsupported work-item ownership record")
     if version == OWNERSHIP_VERSION:
         portable_record = record

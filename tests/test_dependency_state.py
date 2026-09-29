@@ -24,12 +24,7 @@ def graph(tmp_path):
         ("feature-leaf", ("dev-middle",)),
         ("unrelated", ()),
     ]:
-        output = (
-            tmp_path
-            / "BIDS/demo/derivatives/nro/anat/main/sub-01"
-            / name
-            / "result.txt"
-        )
+        output = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01" / name / "result.txt"
         output.parent.mkdir(parents=True)
         output.write_text("original result")
         specs.append(

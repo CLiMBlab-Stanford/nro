@@ -34,17 +34,13 @@ def test_public_provenance_migration_previews_then_rewrites_metadata(tmp_path: P
     }
     assert str(output) in manifest.read_text()
 
-    result = migrate_public_provenance(
-        registry, projects=("demo",), execute=True, version="1.2.3"
-    )
+    result = migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
     assert result.errors == ()
     assert json.loads(manifest.read_text())["outputs"]["t1w"] == (
         "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"
     )
     assert manifest.stat().st_mtime_ns == original_mtime
-    description = json.loads(
-        (project / "derivatives/nro/dataset_description.json").read_text()
-    )
+    description = json.loads((project / "derivatives/nro/dataset_description.json").read_text())
     assert description["DatasetLinks"] == {"raw": "../.."}
 
     repeated = migrate_public_provenance(
@@ -71,9 +67,7 @@ def test_public_provenance_migration_rolls_back_files_after_validation_failure(
     )
 
     with pytest.raises(ValueError, match="invalid ownership"):
-        migrate_public_provenance(
-            registry, projects=("demo",), execute=True, version="1.2.3"
-        )
+        migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert manifest.read_text() == original
     assert not (project / "derivatives/nro/dataset_description.json").exists()
@@ -150,9 +144,7 @@ def test_public_provenance_migration_recovers_an_interrupted_transaction(
         )
     )
 
-    result = migrate_public_provenance(
-        registry, projects=("demo",), execute=True, version="1.2.3"
-    )
+    result = migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert manifest in result.changed
     assert json.loads(manifest.read_text())["output"] == (

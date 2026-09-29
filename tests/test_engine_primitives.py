@@ -111,7 +111,7 @@ def _write_cleaned_run_contract(
                     "QualityControl": {
                         "ParticipationRatioEffectiveTemporalRank": effective_rank,
                         "DominantTemporalVarianceFraction": dominant_fraction,
-                    }
+                    },
                 },
             },
         )

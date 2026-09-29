@@ -121,17 +121,13 @@ def _matches_selection(row: dict, selection) -> bool:
         or not matches_module_lineage(
             str(row["module"]), str(row["directory_label"]), selection.lineages
         )
-        or not matches_selectors(
-            json.loads(row["entities_json"]), selection.work_item_entities
-        )
+        or not matches_selectors(json.loads(row["entities_json"]), selection.work_item_entities)
     )
 
 
 def _excluded_selection(rows: list[dict], dependencies, selection, *, bids_root: Path) -> set[int]:
     """Select excluded-source work and force its downstream closure into the purge."""
-    affected = _descendant_closure(
-        _excluded_work_item_ids(rows, bids_root=bids_root), dependencies
-    )
+    affected = _descendant_closure(_excluded_work_item_ids(rows, bids_root=bids_root), dependencies)
     roots = {
         int(row["id"])
         for row in rows
@@ -351,7 +347,9 @@ def _planned_paths(
 def _render_plan(
     public: list[Path], private: list[Path], *, logs_only: bool, excluded: bool = False
 ) -> str:
-    title = "Planned purge (excluded sources and downstream consumers)" if excluded else "Planned purge"
+    title = (
+        "Planned purge (excluded sources and downstream consumers)" if excluded else "Planned purge"
+    )
     lines = [title, ""]
     if logs_only:
         lines.append("No derivative paths will be removed; only eligible logs are selected.")
@@ -401,8 +399,7 @@ def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
         "--excluded",
         action="store_true",
         help=(
-            "Remove work using currently excluded BIDS inputs and all of its "
-            "downstream dependents"
+            "Remove work using currently excluded BIDS inputs and all of its downstream dependents"
         ),
     )
     parser.add_argument(

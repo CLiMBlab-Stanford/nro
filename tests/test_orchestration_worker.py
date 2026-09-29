@@ -151,13 +151,12 @@ def _spec(
 
 def _disable_ownership_writes(monkeypatch) -> None:
     """Keep synthetic shell-command work items focused on scheduler behavior."""
+
     def replacement(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(completion, "write_work_item_ownership", replacement)
-    monkeypatch.setattr(
-        "nro.orchestration.manifests.write_work_item_ownership", replacement
-    )
+    monkeypatch.setattr("nro.orchestration.manifests.write_work_item_ownership", replacement)
 
 
 def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Path) -> None:
@@ -1282,9 +1281,7 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(
     assert "direct input is newer" in states[row["id"]][1]
 
 
-def test_failed_work_item_requires_new_demand_before_retry(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_failed_work_item_requires_new_demand_before_retry(tmp_path: Path, monkeypatch) -> None:
     _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
@@ -1537,9 +1534,7 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
     assert snapshot[downstream.key]["root_failure_ids"] == (root_id,)
 
 
-def test_oom_escalates_memory_and_larger_worker_retries(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path, monkeypatch) -> None:
     _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
@@ -2610,7 +2605,8 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
 
 
 def test_freshness_detects_newly_matching_multirun_input_before_replanning(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"

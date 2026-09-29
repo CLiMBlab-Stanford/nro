@@ -78,9 +78,7 @@ def test_excluded_selection_follows_downstream_dependencies(monkeypatch, tmp_pat
         definitions / "markup" / "main_markup.yml",
         "demo:\n  '01':\n    exclude:\n      - ses-1/func/bad_bold.nii.gz\n",
     )
-    monkeypatch.setattr(
-        "nro.configuration.markup.definitions_roots", lambda: (definitions,)
-    )
+    monkeypatch.setattr("nro.configuration.markup.definitions_roots", lambda: (definitions,))
     common = {
         "project": "demo",
         "participant": "01",

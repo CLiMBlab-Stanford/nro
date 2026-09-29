@@ -311,7 +311,9 @@ def migrate_public_provenance(
         validation_errors = []
         for bids_root in bids_roots:
             represented = tuple(
-                project for project in selected if (bids_root / project / "derivatives/nro").is_dir()
+                project
+                for project in selected
+                if (bids_root / project / "derivatives/nro").is_dir()
             )
             if not represented:
                 continue

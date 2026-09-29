@@ -51,17 +51,12 @@ class ReferenceRoots:
         """Construct normalized roots without reading global configuration."""
         project = _absolute(project_root)
         derivative = (
-            nro_derivative_root(project)
-            if derivative_root is None
-            else _absolute(derivative_root)
+            nro_derivative_root(project) if derivative_root is None else _absolute(derivative_root)
         )
         return cls(
             project=project,
             derivative=derivative,
-            site={
-                str(name): _absolute(path)
-                for name, path in (site_roots or {}).items()
-            },
+            site={str(name): _absolute(path) for name, path in (site_roots or {}).items()},
         )
 
 
@@ -255,9 +250,7 @@ def encode_path_values(value: Any, roots: ReferenceRoots, *, public: bool = Fals
     if isinstance(value, list):
         return [encode_path_values(item, roots, public=public) for item in value]
     if isinstance(value, dict):
-        return {
-            key: encode_path_values(item, roots, public=public) for key, item in value.items()
-        }
+        return {key: encode_path_values(item, roots, public=public) for key, item in value.items()}
     if (
         isinstance(value, str)
         and Path(value).is_absolute()

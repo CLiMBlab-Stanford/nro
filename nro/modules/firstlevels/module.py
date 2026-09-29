@@ -586,9 +586,7 @@ def build_module(
         compiled_path = completion.with_name(prefix + "_statsmodel.json")
         atomic_write_text(
             source_path,
-            yaml.safe_dump(
-                portable_public_payload(source_path, task_definition), sort_keys=False
-            ),
+            yaml.safe_dump(portable_public_payload(source_path, task_definition), sort_keys=False),
         )
         write_public_json(config_path, config)
         write_public_json(compiled_path, model)

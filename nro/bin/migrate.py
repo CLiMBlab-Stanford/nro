@@ -53,6 +53,4 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         print(path)
     if report["errors"]:
         detail = "\n".join(f"- {error}" for error in report["errors"])
-        raise SystemExit(
-            f"Migration blocked by {len(report['errors'])} error(s):\n{detail}"
-        )
+        raise SystemExit(f"Migration blocked by {len(report['errors'])} error(s):\n{detail}")

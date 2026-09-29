@@ -137,11 +137,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = (
-        tmp_path
-        / "bids/demo/derivatives/nro/firstlevels/main/sub-01"
-        / "output.txt"
-    )
+    output = tmp_path / "bids/demo/derivatives/nro/firstlevels/main/sub-01" / "output.txt"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("synthetic completed derivative")
     entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}

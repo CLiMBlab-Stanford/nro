@@ -160,9 +160,7 @@ def test_legacy_ownership_conversion_removes_launcher_and_host_paths(tmp_path: P
     converted = convert_legacy_ownership_record(legacy, roots=roots)
 
     assert converted["record_version"] == 5
-    assert converted["artifact_contract"]["inputs"] == [
-        "bids:raw:sub-01/anat/sub-01_T1w.nii.gz"
-    ]
+    assert converted["artifact_contract"]["inputs"] == ["bids:raw:sub-01/anat/sub-01_T1w.nii.gz"]
     assert converted["artifact_contract"]["output"]["root"] == "bids::anat/main/sub-01"
     assert converted["execution"] == {
         "module_argv": ["nro.modules.anat", "--participant", "01"],

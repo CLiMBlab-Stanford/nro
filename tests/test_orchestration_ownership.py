@@ -177,9 +177,7 @@ def test_current_ownership_records_are_portable_and_survive_project_move(
 
     receipt = json.loads(receipt_path.read_text())
     assert receipt["record_version"] == 5
-    assert receipt["artifact_contract"]["inputs"] == [
-        "bids:raw:sub-01/anat/sub-01_T1w.nii.gz"
-    ]
+    assert receipt["artifact_contract"]["inputs"] == ["bids:raw:sub-01/anat/sub-01_T1w.nii.gz"]
     assert receipt["artifact_contract"]["output"]["root"].startswith("bids::")
     assert "command" not in receipt["execution"]
     assert receipt["execution"]["module_argv"][0] == "nro.modules.anat"

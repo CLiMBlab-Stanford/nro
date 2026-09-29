@@ -822,9 +822,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
         work_root=tmp_path / "work",
     )
     output = run_module(**kwargs)
-    before = {
-        p: Path(p).stat().st_mtime_ns for p in read_public_json(output)["public_outputs"]
-    }
+    before = {p: Path(p).stat().st_mtime_ns for p in read_public_json(output)["public_outputs"]}
     if edit == "membership":
         source["model_set"] = ["development"]
         source["description"] = "Edited without changing the analysis"
