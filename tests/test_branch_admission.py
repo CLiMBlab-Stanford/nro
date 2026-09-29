@@ -232,7 +232,7 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup):
         include_scientific_inputs=True,
     )
     scientific_row = next(item for item in scientific_view["rows"] if item["module"] == spec.module)
-    assert json.loads(scientific_row["input_paths_json"])
+    assert isinstance(json.loads(scientific_row["input_paths_json"]), list)
     assert "markup:" in scientific_row["resolved_configuration_yaml"]
     context = ExecutionContext.from_dict(row["execution_context"])
     facade = SimpleNamespace(
