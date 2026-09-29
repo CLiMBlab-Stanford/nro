@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import time
 from pathlib import Path
@@ -14,7 +13,7 @@ from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
-from nro.engine.io import atomic_write_json, flatten_paths
+from nro.engine.io import flatten_paths, read_public_json, write_public_json
 from nro.engine.paths import module_derivatives_root, module_work_root
 from nro.engine.targets import (
     DEFAULT_SMOOTHING_MM,
@@ -196,7 +195,7 @@ def main(
 
     def validate_index() -> tuple[bool, str]:
         try:
-            matches = json.loads(index.read_text(encoding="utf-8")) == payload
+            matches = read_public_json(index) == payload
         except (OSError, TypeError, ValueError):
             matches = False
         return matches, (
@@ -211,7 +210,7 @@ def main(
             inputs=published_outputs,
             outputs=(index,),
             force=bool(args.overwrite),
-            action=lambda: atomic_write_json(index, payload),
+            action=lambda: write_public_json(index, payload),
             validate=validate_index,
             completion_boundary=True,
         )

@@ -133,6 +133,12 @@ def admit_many(
     message_id: str = "direct",
 ) -> list[str]:
     """Admit one invocation's requests after one source check and registry assessment."""
+    with registry.connection() as db:
+        maintenance = db.execute(
+            "SELECT value FROM metadata WHERE key='maintenance_mode'"
+        ).fetchone()
+    if maintenance is not None:
+        raise ValueError(f"Shared registry is undergoing {maintenance[0]} maintenance")
     if not isinstance(entries, list) or not entries:
         raise ValueError("Admission batch must contain at least one request")
     projects = []
@@ -848,7 +854,12 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
     elif message["operation"] == "purge_snapshot":
         from nro.orchestration.branch_purge import snapshot
 
-        result = snapshot(registry, checkout=Path(message["checkout"]), site_values=values)
+        result = snapshot(
+            registry,
+            checkout=Path(message["checkout"]),
+            site_values=values,
+            include_scientific_inputs=bool(message.get("include_scientific_inputs", False)),
+        )
     elif message["operation"] == "purge":
         from nro.orchestration.branch_purge import purge
         from nro.orchestration.scheduler_bus import publish_progress
@@ -985,6 +996,34 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             revision=message["revision"],
             parent=message.get("parent"),
         )
+    elif message["operation"] == "project_rename":
+        from nro.orchestration.project_rename import execute, preview
+
+        operation = execute if message["execute"] else preview
+        result = operation(
+            registry,
+            checkout=Path(message["checkout"]),
+            values=values,
+            old=message["old"],
+            new=message["new"],
+        )
+        if not message["execute"]:
+            result["executed"] = False
+    elif message["operation"] == "provenance_migration":
+        from nro.orchestration.provenance_migration import migrate_public_provenance
+
+        report = migrate_public_provenance(
+            registry,
+            projects=message["projects"],
+            execute=bool(message["execute"]),
+            version=str(message["version"]),
+            site_values=values,
+        )
+        result = {
+            "scanned": report.scanned,
+            "changed": [str(path) for path in report.changed],
+            "errors": list(report.errors),
+        }
     else:
         raise ValueError("Unsupported scheduler operation")
     return result
@@ -1031,6 +1070,8 @@ _MAINTENANCE_OPERATIONS = {
     "promotion_publish",
     "publish",
     "purge",
+    "project_rename",
+    "provenance_migration",
     "repair_finish",
     "repair_prepare",
     "status",
@@ -1046,6 +1087,8 @@ def _executor_for(
     """Route worker traffic away from long user maintenance operations."""
     operation = record["payload"].get("operation")
     if operation == "worker":
+        if durable and record["payload"].get("action") == "record_completion":
+            return executors["completion"]
         return executors["worker" if durable else "poll"]
     if operation == "plan_run":
         return executors["planner"]
@@ -1158,10 +1201,8 @@ def _branch_reports(registry) -> dict[str, dict]:
 
 def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
     """Publish the complete cached read model without exposing SQLite to readers."""
-    from nro.engine.io import atomic_write_json
-    from nro.orchestration.control_paths import ControlPaths
     from nro.orchestration.registry import utcnow
-    from nro.orchestration.scheduler_bus import PROTOCOL
+    from nro.orchestration.scheduler_bus import PROTOCOL, publish_snapshot
 
     recent_worker_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     with registry.connection() as db:
@@ -1182,8 +1223,8 @@ def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
                 "WHERE state IN ('prepared','submitted','running','cancel_requested')"
             )
         ]
-    atomic_write_json(
-        ControlPaths(registry.paths.control).service_snapshot,
+    publish_snapshot(
+        registry.paths.control,
         {
             "protocol": PROTOCOL,
             "generation": generation,
@@ -1193,9 +1234,6 @@ def publish_status_snapshot(registry, *, generation: int, active: bool) -> None:
             "submissions": submissions,
             "branches": _branch_reports(registry),
         },
-        sort_keys=True,
-        mode=0o664,
-        durable=True,
     )
 
 
@@ -1291,6 +1329,7 @@ def serve(
     executors = {
         "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
         "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
+        "completion": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-completion"),
         "capacity": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-capacity"),
         "planner": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-planner"),
         "command": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-command"),

@@ -54,6 +54,7 @@ development
 development-spheres
 registry-migrations
 artifact-contract-migrations
+portable-provenance
 architecture-map
 autoapi/nro/index
 ```

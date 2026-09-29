@@ -1,6 +1,5 @@
 """Semantic publication requirements for first-level statistics."""
 
-import json
 from pathlib import Path
 
 from nro.configuration.schema import scientific_values
@@ -74,7 +73,9 @@ def firstlevels_output_contract() -> dict:
 def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[bool, str]:
     """Validate declared outputs, including compact covariance and node metadata."""
     try:
-        value = json.loads(Path(path).read_text())
+        from nro.engine.io import read_public_json
+
+        value = read_public_json(Path(path))
         expected = firstlevels_output_contract()
         if not metadata_contract_compatible(value.get("output_metadata_contract"), expected):
             return False, "Firstlevels publication contract differs"

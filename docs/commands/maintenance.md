@@ -69,6 +69,22 @@ without deleting. `-l`/`--logs` removes matching attempt logs and inactive-worke
 logs only. `--json` supplies a structured result; `--work-root` overrides the
 private-file root. Selected work items must have no active attempts.
 
+Use `--excluded` after adding source paths to markup:
+
+```bash
+nro purge --excluded --dry-run
+nro purge --excluded
+```
+
+This mode finds owned work items whose recorded raw inputs are excluded by their
+current markup and follows the registered DAG through every downstream consumer.
+It purges that complete affected closure and withdraws its demand, so a clean run
+or subject-level aggregate cannot preserve or protect a derivative contaminated
+by an excluded run. Other selectors narrow the affected roots; downstream
+consumers are still included even when they fall outside a module or entity
+selector. Work configured with `markup: null` is unaffected. `--excluded` cannot
+be combined with `--logs` or `--cache`, and it still refuses active attempts.
+
 Deleting an upstream artifact also invalidates its consumers and requests
 cancellation of their active attempts, even when those consumers were not selected
 for deletion. Their files are not purged. Purge withdraws existing demand for
@@ -152,6 +168,65 @@ create files that are not known in advance. As a result, `gc` removes orphaned
 lineages and unmatched files in shared directories but does not remove an
 unrecognized file placed inside an owned directory tree. Control records, logs,
 and executable caches are outside this command's scope.
+
+## `nro project rename`
+
+Rename a BIDS project after stopping its demand and active work:
+
+```bash
+nro project rename climblab_multisession climb
+nro project rename climblab_multisession climb --execute
+```
+
+The first command is a read-only preview. It reports every managed directory
+move and the affected work items, ownership receipts, Workbench scenes,
+BIDSification records, structured metadata, symbolic links, and definition
+files. `--execute` applies that exact kind of migration. The command is
+available only from the registered main checkout.
+
+The rename covers the shared BIDS and WORK projects, every registered branch's
+development BIDS and WORK projects, project log directories, scheduler and
+branch registries, ownership receipts, BIDSification records, Workbench scene
+links, absolute symbolic links into renamed roots, markup, and BIDSification
+project routing. Directory moves must be atomic on their filesystem. The command
+refuses symbolic-link roots, an existing destination, active demand, active
+attempts or resource steps, and active
+BIDSification for the source project.
+
+Raw BIDS symbolic links are materialized during execution. Regular files become
+hard links when their target is on the same filesystem; otherwise they become
+metadata-preserving copies. Directory links become metadata-preserving directory
+copies. Symbolic links inside derivatives remain links. Absolute derivative
+links into the renamed project are updated without following their targets.
+
+Numerical scientific outputs are not rewritten. Structured derivative and WORK
+metadata containing absolute project paths are translated, and the registry
+updates observations for those exact files. Project-sensitive work-item
+identities and current control contracts are translated so that existing
+artifacts retain their state under the new project name. Definition changes use
+the managed definitions transaction and update its integrity manifest.
+
+Execution creates a recovery journal under the shared private control store and
+backs up the scheduler registry, branch registries, and edited metadata. A
+failure before the registry commit reverses directory moves and restores edited
+state. Keep external readers and writers stopped until the command completes.
+
+## `nro migrate provenance`
+
+Convert existing nro-owned metadata from host paths to portable BIDS and site-resource
+references:
+
+```bash
+nro migrate provenance -P PROJECT
+nro migrate provenance -P PROJECT --execute
+```
+
+The default is a read-only preview. Execution covers main and registered branch
+derivatives, requires a quiet worker pool, updates the integrity records for rewritten
+metadata without advancing artifact generations, and uses a durable journal to roll
+back failed or interrupted conversion. See
+[portable derivative provenance](../portable-provenance.md) for the reference model
+and migration boundary.
 
 ## `nro publish`
 

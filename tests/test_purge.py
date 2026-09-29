@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from nro.bin.purge import _excluded_selection
 from nro.bin.purge import main as purge_main
 from nro.configuration.store import ConfigStore
 from nro.engine.cli import page_text
@@ -63,6 +65,101 @@ def _work_item_row(registry: Registry, module: str, run: str | None = None) -> d
         if row["module"] == module and (run is None or entities.get("run") == run):
             return row
     raise AssertionError(f"Missing work_item {module=} {run=}")
+
+
+def test_excluded_selection_follows_downstream_dependencies(monkeypatch, tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    definitions = tmp_path / "definitions"
+    excluded = bids / "demo" / "sub-01" / "ses-1" / "func" / "bad_bold.nii.gz"
+    included = bids / "demo" / "sub-01" / "ses-1" / "func" / "good_bold.nii.gz"
+    _write(excluded)
+    _write(included)
+    _write(
+        definitions / "markup" / "main_markup.yml",
+        "demo:\n  '01':\n    exclude:\n      - ses-1/func/bad_bold.nii.gz\n",
+    )
+    monkeypatch.setattr(
+        "nro.configuration.markup.definitions_roots", lambda: (definitions,)
+    )
+    common = {
+        "project": "demo",
+        "participant": "01",
+        "directory_label": "main-deadbeef",
+        "workflow_ids": "main",
+        "resolved_configuration_yaml": "markup: main\n",
+    }
+    rows = [
+        dict(
+            common,
+            id=1,
+            module="func",
+            entities_json=json.dumps({"run": "1"}),
+            input_paths_json=json.dumps([str(excluded)]),
+        ),
+        dict(
+            common,
+            id=2,
+            module="clean",
+            entities_json=json.dumps({"run": "1"}),
+            input_paths_json=json.dumps(["/derived/func.nii.gz"]),
+        ),
+        dict(
+            common,
+            id=3,
+            module="dynconn",
+            entities_json="{}",
+            input_paths_json=json.dumps(["/derived/clean.nii.gz"]),
+        ),
+        dict(
+            common,
+            id=4,
+            module="func",
+            entities_json=json.dumps({"run": "2"}),
+            input_paths_json=json.dumps([str(included)]),
+        ),
+    ]
+    selection = SimpleNamespace(
+        projects=(),
+        participants=(),
+        modules=("func",),
+        workflows=(),
+        lineages=(),
+        work_item_entities={},
+    )
+
+    assert _excluded_selection(
+        rows,
+        ((2, 1), (3, 2)),
+        selection,
+        bids_root=bids,
+    ) == {1, 2, 3}
+
+
+def test_excluded_selection_respects_disabled_markup(monkeypatch, tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    source = bids / "demo" / "sub-01" / "func" / "bad_bold.nii.gz"
+    _write(source)
+    row = {
+        "id": 1,
+        "project": "demo",
+        "participant": "01",
+        "module": "func",
+        "directory_label": "main-deadbeef",
+        "workflow_ids": "main",
+        "entities_json": "{}",
+        "input_paths_json": json.dumps([str(source)]),
+        "resolved_configuration_yaml": "markup: null\n",
+    }
+    selection = SimpleNamespace(
+        projects=(),
+        participants=(),
+        modules=(),
+        workflows=(),
+        lineages=(),
+        work_item_entities={},
+    )
+
+    assert _excluded_selection([row], (), selection, bids_root=bids) == set()
 
 
 def test_remove_path_prunes_empty_parents_but_preserves_boundary(tmp_path: Path) -> None:

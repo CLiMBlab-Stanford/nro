@@ -8,7 +8,8 @@ from typing import Any, Sequence
 from nro.orchestration.runner_graph import Step
 
 from .execution import require_existing_path
-from .io import read_json, write_json
+from .io import read_public_json, write_public_json
+from .references import resolve_public_payload
 
 
 def create_json_step(
@@ -23,7 +24,7 @@ def create_json_step(
 
     def validate() -> tuple[bool, str]:
         try:
-            current = read_json(path)
+            current = read_public_json(path)
         except (OSError, ValueError):
             return False, "Metadata is missing or invalid JSON."
         if current != payload:
@@ -34,7 +35,7 @@ def create_json_step(
         name=step_name,
         inputs=tuple(inputs),
         outputs=(path,),
-        action=lambda: write_json(path, payload),
+        action=lambda: write_public_json(path, payload),
         validate=validate,
         force=force,
     )
@@ -54,7 +55,7 @@ def require_manifest_output(
     raw = str(outputs.get(key, "")).strip()
     if not raw:
         raise SystemExit(f"{manifest_name} manifest is missing outputs.{key}: {manifest_path}")
-    path = Path(raw)
+    path = Path(resolve_public_payload(manifest_path, raw))
     require_existing_path(path, f"{manifest_name.lower()} output {key}")
     return path
 
@@ -79,6 +80,6 @@ def require_nested_manifest_output(
         raise SystemExit(
             f"{manifest_name} manifest is missing outputs.{section}.{key}: {manifest_path}"
         )
-    path = Path(raw)
+    path = Path(resolve_public_payload(manifest_path, raw))
     require_existing_path(path, f"{manifest_name.lower()} output {section}.{key}")
     return path

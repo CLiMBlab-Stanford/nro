@@ -118,14 +118,21 @@ projection using a connection supplied by that facade. They cannot open or commi
 connections themselves, so decomposing registry logic does not create competing
 lock or rollback authorities.
 
-The controller publishes an atomic JSON read model after relevant changes.
-Cached observation reads that snapshot without starting the controller or
-opening SQLite. Bounded mutations use the live controller or a fenced local
+The controller publishes a component JSON read model after relevant changes. A small
+atomic manifest selects a reusable static work-item graph and the current dynamic
+execution state. Cached observation joins those components without starting the
+controller or opening SQLite. Bounded mutations use the live controller or a fenced local
 one-shot coordinator. `run` may submit the scheduler and planning broker;
 workers may recover a scheduler required by active work. Commands display a
-lightweight progress indicator while awaiting a
-response. Controller queueing has no timeout; communication with a live
-controller does. The controller exits after attempts, workers, submissions, and
+lightweight progress indicator while awaiting a response. Controller queueing has no
+timeout; communication with a live controller does.
+
+The registry retains current state rather than an unbounded execution history. Scheduler
+maintenance keeps active demand, owned derivatives, unresolved diagnostics, and their
+dependency closures. It removes superseded attempts and terminal allocation records;
+publication-capable request handles retain terminal identities without retaining their
+complete execution graphs.
+The controller exits after attempts, workers, submissions, and
 pending requests remain idle for the configured grace period, which defaults to
 12 hours. Installation and repair
 use a deliberate shutdown barrier before entering their exceptional offline
@@ -183,6 +190,12 @@ same transaction as the new generation. There is no private completion file to
 race with the database or to outlive the registry identity it describes. Public
 module manifests remain scientific derivative outputs: they index variable output
 sets and provide portable metadata to downstream tools.
+
+Public paths use BIDS URIs or typed site-resource identities. Absolute paths are
+resolved only in execution contexts and private scheduler state. Ownership-record
+conversion is representation-only: it refreshes the changed files' integrity evidence
+without changing contracts, generations, or dependency edges. See
+[portable derivative provenance](portable-provenance.md).
 
 Requests likewise live only in the coordinator database. The scheduler does not
 write a second per-request JSON archive. Files in private control storage are

@@ -19,6 +19,7 @@ import yaml
 
 from nro.configuration.store import fingerprint
 from nro.engine.bids import discover_raw_runs, matches_filter
+from nro.engine.references import resolve_public_payload
 from nro.orchestration.artifact_records import (
     inventory,
     is_control_artifact,
@@ -348,6 +349,7 @@ def _public_derivative_completion(
         )
         if value is None:
             return None, f"Public {module} completion manifest is invalid: {artifact}"
+        value = resolve_public_payload(artifact, value)
         if value.get("complete") is False:
             return None, f"Public {module} completion manifest is incomplete: {artifact}"
         if "output_metadata_contract" in value:

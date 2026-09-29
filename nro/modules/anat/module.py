@@ -27,7 +27,13 @@ from nro.engine.execution import (
     neuroimaging_environment,
 )
 from nro.engine.gradient_unwarping import create_gradient_unwarping_step
-from nro.engine.io import read_json, require_nonempty_file, write_json
+from nro.engine.io import (
+    read_json,
+    read_public_json,
+    require_nonempty_file,
+    write_json,
+    write_public_json,
+)
 from nro.engine.manifests import create_json_step
 from nro.engine.neuroimaging import create_n4_bias_correction_step
 from nro.engine.paths import (
@@ -1954,7 +1960,7 @@ def build_module(
 
     def validate_publication() -> tuple[bool, str]:
         try:
-            current = read_json(manifest_path)
+            current = read_public_json(manifest_path)
             validate_anatomical_manifest(current)
         except (OSError, ValueError, TypeError):
             return False, "Anatomical publication manifest is missing or unreadable."
@@ -1971,7 +1977,7 @@ def build_module(
 
     def publish_manifest() -> None:
         validate_anatomical_manifest(manifest)
-        write_json(manifest_path, manifest)
+        write_public_json(manifest_path, manifest)
 
     runner.add_step(
         Step.python(

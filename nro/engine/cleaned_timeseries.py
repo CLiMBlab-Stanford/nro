@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .image_paths import sidecar_json_path
+from .io import read_public_json
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ def load_cleaned_run_metadata(files: tuple[Path, ...]) -> CleanedRunMetadata:
     for file in files:
         sidecar = sidecar_json_path(file)
         try:
-            document = json.loads(sidecar.read_text(encoding="utf-8"))
+            document = read_public_json(sidecar)
         except (OSError, TypeError, ValueError) as error:
             raise ValueError(
                 f"Cleaned functional sidecar is missing or unreadable: {sidecar}"

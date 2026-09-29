@@ -25,6 +25,7 @@ from nro.engine.io import (
     json_path_default,
     manifest_value,
 )
+from nro.engine.references import portable_public_payload, resolve_public_payload
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
@@ -1022,14 +1023,19 @@ def build_module(
         atomic_write_text(
             manifest_path,
             yaml.safe_dump(
-                json.loads(json.dumps(manifest, default=json_path_default)),
+                portable_public_payload(
+                    manifest_path,
+                    json.loads(json.dumps(manifest, default=json_path_default)),
+                ),
                 sort_keys=False,
             ),
         )
 
     def validate_publication() -> tuple[bool, str]:
         try:
-            manifest = yaml.safe_load(manifest_path.read_text()) or {}
+            manifest = resolve_public_payload(
+                manifest_path, yaml.safe_load(manifest_path.read_text()) or {}
+            )
             validate_network_manifest(manifest)
             label_metadata = json.loads(labels_json_path.read_text(encoding="utf-8"))
             validate_network_label_metadata(label_metadata)

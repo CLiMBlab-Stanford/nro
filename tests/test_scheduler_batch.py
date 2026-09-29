@@ -28,7 +28,12 @@ def test_status_projection_omits_execution_payloads() -> None:
 
 
 def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch, tmp_path):
-    db = object()
+    class Database:
+        @staticmethod
+        def execute(*_args, **_kwargs):
+            return SimpleNamespace(fetchone=lambda: None)
+
+    db = Database()
     registry = SimpleNamespace(
         paths=SimpleNamespace(bids_root=tmp_path / "BIDS", control=tmp_path / "control"),
         connection=lambda **_kwargs: nullcontext(db),

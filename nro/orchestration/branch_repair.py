@@ -214,7 +214,11 @@ def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
     if not output_bids.is_dir():
         return PublicOwnership([], [], [])
     projects = sorted(path.name for path in output_bids.iterdir() if path.is_dir())
-    lineages, records, errors = read_ownership_records(output_bids, projects)
+    lineages, records, errors = read_ownership_records(
+        output_bids,
+        projects,
+        source_bids_root=registry.paths.bids_root,
+    )
     lineages, records, incomplete = complete_ownership_records(lineages, records)
     errors.extend(incomplete)
     selected = _recoverable_ownership_records(records)

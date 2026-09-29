@@ -279,6 +279,7 @@ class Migration:
     operations: tuple[Operation, ...]
     summary: str
     compact: bool = False
+    incremental_vacuum: bool = False
 
     def apply(self, database: sqlite3.Connection) -> None:
         """Apply each operation and advance the database schema marker."""
@@ -523,6 +524,8 @@ def migrate_database(path: Path, schema: RegistrySchema) -> Path | None:
             # paying for a second complete database rewrite.
             with sqlite3.connect(temporary) as database:
                 database.execute("PRAGMA journal_mode=DELETE")
+                if any(migration.incremental_vacuum for migration in migrations):
+                    database.execute("PRAGMA auto_vacuum=INCREMENTAL")
                 database.execute("VACUUM")
         temporary.chmod(path.stat().st_mode & 0o777)
         with temporary.open("rb") as stream:

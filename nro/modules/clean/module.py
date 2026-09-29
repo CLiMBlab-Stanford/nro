@@ -28,7 +28,7 @@ from nro.engine.container import (
     build_container,
 )
 from nro.engine.image_paths import sidecar_json_path
-from nro.engine.io import read_json, write_json
+from nro.engine.io import read_json, read_public_json, write_json, write_public_json
 from nro.engine.paths import (
     anatomical_manifest_path,
     clean_manifest_path,
@@ -201,7 +201,7 @@ def build_module(
             "Functional preprocessing did not publish its fixed run manifest: "
             f"{functional_manifest}"
         )
-    functional_contract = read_json(functional_manifest)
+    functional_contract = read_public_json(functional_manifest)
     if functional_contract.get("run_stem") != args.run_stem:
         raise SystemExit(f"Functional manifest run identity mismatch: {functional_manifest}")
 
@@ -252,7 +252,7 @@ def build_module(
         raise SystemExit(f"No cleanable inputs were found for run: {args.run_stem}")
     primary_volumes = list(primary["vols"])
     primary_surfaces = list(primary["surfs"])
-    main_sidecar = read_json(_main_sidecar_path(primary_volumes, primary_surfaces))
+    main_sidecar = read_public_json(_main_sidecar_path(primary_volumes, primary_surfaces))
     tr = float(main_sidecar.get("RepetitionTime", 0) or 0)
     if tr <= 0:
         raise SystemExit("RepetitionTime was not found in the preprocessed sidecar.")
@@ -266,7 +266,7 @@ def build_module(
     )
     if execution_context is not None:
         anatomical_path = execution_context.input_path(anatomical_path)
-    anatomical = read_json(anatomical_path)
+    anatomical = read_public_json(anatomical_path)
     anat_outputs = anatomical.get("outputs") or {}
     anat_gray_matter = Path(str(anat_outputs.get("gray_matter_mask") or "").strip())
     if not anat_gray_matter.exists():
@@ -545,7 +545,7 @@ def build_module(
         gm_mask: Path | None,
         quality_path: Path,
     ) -> dict[str, object]:
-        sidecar = dict(read_json(sidecar_json_path(source)))
+        sidecar = dict(read_public_json(sidecar_json_path(source)))
         projection, projection_metadata = projection_state()
         sidecar["Description"] = (
             "Cleaned BOLD timeseries for connectivity analysis."
@@ -594,7 +594,7 @@ def build_module(
         volume: bool,
     ) -> tuple[bool, str]:
         try:
-            validate_clean_sidecar(read_json(path), volume=volume)
+            validate_clean_sidecar(read_public_json(path), volume=volume)
         except (OSError, TypeError, ValueError) as error:
             return False, str(error)
         return True, "Cleaned sidecar satisfies its artifact metadata contract."
@@ -714,7 +714,7 @@ def build_module(
                         ),
                         force=bool(args.overwrite),
                         action=lambda path=metadata_path, source=volume, cleaned=clean_input, desc=input_desc, mask_path=gm_mask, quality=quality_path: (
-                            write_json(
+                            write_public_json(
                                 path,
                                 cleaning_metadata(
                                     source=source,
@@ -739,7 +739,7 @@ def build_module(
             if not right.exists():
                 raise SystemExit(f"Missing right-hemisphere pair for {left.name}: {right}")
             for surface in (left, right):
-                source_sidecar = read_json(sidecar_json_path(surface))
+                source_sidecar = read_public_json(sidecar_json_path(surface))
                 clean_input = surface
                 if smoothing_mm > 0:
                     geometry = _resolve_surface_for_metric(
@@ -826,7 +826,7 @@ def build_module(
                             ),
                             force=bool(args.overwrite),
                             action=lambda path=metadata_path, source=surface, cleaned=clean_input, desc=input_desc, quality=quality_path: (
-                                write_json(
+                                write_public_json(
                                     path,
                                     cleaning_metadata(
                                         source=source,
@@ -861,7 +861,7 @@ def build_module(
         sidecar = read_json(selected_confounds_json)
         sidecar["TemporalMask"] = projection_state()[1]
         sidecar["Columns"] = list(published.columns)
-        write_json(confounds_out_json, sidecar)
+        write_public_json(confounds_out_json, sidecar)
 
     runner.add_step(
         configured(
@@ -949,7 +949,7 @@ def build_module(
 
     def validate_publication() -> tuple[bool, str]:
         try:
-            actual = read_json(publication_manifest)
+            actual = read_public_json(publication_manifest)
             validate_clean_manifest(actual)
         except (OSError, ValueError, TypeError):
             return False, f"Cleaning publication manifest is unreadable: {publication_manifest}"
@@ -964,7 +964,7 @@ def build_module(
 
     def publish_clean_manifest() -> None:
         validate_clean_manifest(clean_contract)
-        write_json(publication_manifest, clean_contract)
+        write_public_json(publication_manifest, clean_contract)
 
     runner.add_step(
         configured(

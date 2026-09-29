@@ -18,6 +18,7 @@ def refresh_scheduler_state(registry: Registry) -> int:
     from nro.orchestration.assessment import AssessmentConflict
     from nro.orchestration.branch_reconciliation import reconcile_branch_requests
     from nro.orchestration.manifests import assess_registry
+    from nro.orchestration.registry_compaction import compact_registry
 
     registry.reconcile_scheduler_submissions()
     registry.recover_orphaned_attempts()
@@ -35,4 +36,5 @@ def refresh_scheduler_state(registry: Registry) -> int:
             registry.reconcile_requests()
         finally:
             registry.finish_artifact_assessment()
+    compact_registry(registry)
     return len(cancelled)

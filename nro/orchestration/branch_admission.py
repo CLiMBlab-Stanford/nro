@@ -394,9 +394,9 @@ def _admit_resolved(
                OR branch_work_items.scientific_contract_json!=excluded.scientific_contract_json""",
             (owner, item.spec.key, ids[keys[item.spec.key]], json.dumps(item.contract)),
         )
-    from nro.orchestration.request_plans import terminal_plan
+    from nro.orchestration.request_plans import encode_plan, terminal_plan
 
-    encoded_plan = json.dumps(payload) if request_state == "active" else terminal_plan(payload)
+    encoded_plan = encode_plan(payload) if request_state == "active" else terminal_plan(payload)
     db.execute(
         """INSERT INTO request_plans VALUES (?,?) ON CONFLICT(request_id)
         DO UPDATE SET payload_json=excluded.payload_json""",

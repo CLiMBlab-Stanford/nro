@@ -8,6 +8,8 @@ from typing import Iterable
 
 import yaml
 
+from nro.engine.references import resolve_public_payload
+
 
 @dataclass(frozen=True)
 class MicroparcellationTarget:
@@ -52,7 +54,9 @@ def discover_microparcellation_targets(
             raise FileNotFoundError(
                 f"Missing microparcellation publication manifest: {manifest_path}"
             )
-        manifest = yaml.safe_load(manifest_path.read_text()) or {}
+        manifest = resolve_public_payload(
+            manifest_path, yaml.safe_load(manifest_path.read_text()) or {}
+        )
         manifest_domain = manifest.get("domain")
         if manifest_domain not in {"surface", "volume"}:
             continue
@@ -135,7 +139,9 @@ def discover_dynconn_targets(manifests: Iterable[Path]) -> tuple[DynconnTarget, 
             raise FileNotFoundError(
                 f"Missing dynamic-connectivity publication manifest: {manifest_path}"
             )
-        manifest = yaml.safe_load(manifest_path.read_text()) or {}
+        manifest = resolve_public_payload(
+            manifest_path, yaml.safe_load(manifest_path.read_text()) or {}
+        )
         domain = manifest.get("domain")
         if domain not in {"surface", "volume"}:
             continue

@@ -204,12 +204,16 @@ def test_concurrent_durable_retries_share_one_execution(tmp_path):
 
 
 def test_scheduler_separates_polling_from_maintenance_execution() -> None:
-    executors = {name: object() for name in ("poll", "worker", "command", "maintenance")}
+    executors = {
+        name: object() for name in ("poll", "worker", "completion", "command", "maintenance")
+    }
     worker = {"payload": {"operation": "worker"}}
+    completion = {"payload": {"operation": "worker", "action": "record_completion"}}
     purge = {"payload": {"operation": "purge"}}
 
     assert scheduler_service._executor_for(worker, executors, durable=False) is executors["poll"]
     assert scheduler_service._executor_for(worker, executors) is executors["worker"]
+    assert scheduler_service._executor_for(completion, executors) is executors["completion"]
     assert scheduler_service._executor_for(purge, executors) is executors["maintenance"]
 
 
@@ -531,6 +535,54 @@ def test_cached_status_neither_starts_service_nor_opens_database(tmp_path, monke
     report = scheduler_client.status(control, tmp_path / "BIDS", checkout=checkout, mode="cached")
 
     assert report["rows"] == [{"id": 1}]
+
+
+def test_component_status_snapshot_reuses_static_graph(tmp_path):
+    control = tmp_path / ".nro"
+    scheduler_bus.prepare(control)
+
+    def snapshot(generation, status, *, participant="01"):
+        return {
+            "protocol": scheduler_bus.PROTOCOL,
+            "generation": generation,
+            "published_at": f"generation-{generation}",
+            "service_active": True,
+            "workers": [{"id": "worker", "state": status.lower()}],
+            "submissions": [],
+            "branches": {
+                "main": {
+                    "rows": [
+                        {
+                            "id": 1,
+                            "project": "demo",
+                            "participant": participant,
+                            "module": "anat",
+                            "status": status,
+                            "artifact_state": "fresh" if status == "Success" else "missing",
+                        }
+                    ],
+                    "visible_ids": [1],
+                    "ingestion": [],
+                    "dependencies": [],
+                }
+            },
+        }
+
+    first = snapshot(4, "Running")
+    scheduler_bus.publish_snapshot(control, first)
+    assert scheduler_bus.read_snapshot(control) == first
+    static_paths = tuple(ControlPaths(control).service.glob("status-static-*.json"))
+    assert len(static_paths) == 1
+
+    second = snapshot(5, "Success")
+    scheduler_bus.publish_snapshot(control, second)
+    assert scheduler_bus.read_snapshot(control) == second
+    assert tuple(ControlPaths(control).service.glob("status-static-*.json")) == static_paths
+
+    changed = snapshot(6, "Success", participant="02")
+    scheduler_bus.publish_snapshot(control, changed)
+    assert scheduler_bus.read_snapshot(control) == changed
+    assert len(tuple(ControlPaths(control).service.glob("status-static-*.json"))) == 2
 
 
 def test_worker_role_cannot_open_scheduler_database(tmp_path, monkeypatch):

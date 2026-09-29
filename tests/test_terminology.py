@@ -125,6 +125,7 @@ def test_control_commands_share_selection_vocabulary_but_keep_local_options() ->
     assert "worker" not in {action.dest for action in status_parser()._actions}
     purge_actions = {action.dest: action for action in purge_parser()._actions}
     assert purge_actions["logs"].option_strings == ["-l", "--logs"]
+    assert purge_actions["excluded"].option_strings == ["--excluded"]
     assert purge_actions["force"].option_strings == ["-f", "--force"]
     assert "-p" not in {
         option

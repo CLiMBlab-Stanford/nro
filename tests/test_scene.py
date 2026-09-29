@@ -11,12 +11,14 @@ import yaml
 from nro.bin.scene import _collect, _viewer_command, build_parser, scene_id
 from nro.engine import viewer_broker
 from nro.engine.cli import core_selection
+from nro.engine.io import write_public_json
 from nro.engine.scenes import (
     SceneSource,
     base_scene,
     build_scene_bundle,
     manifest_lesion_qc_paths,
     manifest_surface_families,
+    public_manifest_paths,
 )
 from nro.engine.slurm import run_x11
 
@@ -43,6 +45,17 @@ def test_scene_parser_uses_shared_selectors() -> None:
     assert scene_id("01", "fsnative", 2, {}, selection).startswith(
         "sub-01_space-fsnative_smoothing-2mm_selection-"
     )
+
+
+def test_scene_discovers_portable_public_manifest_paths(tmp_path: Path) -> None:
+    root = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/anat"
+    image = root / "sub-01_T1w.nii.gz"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    manifest = root / "sub-01_desc-preprocessAnat_manifest.json"
+    write_public_json(manifest, {"outputs": {"t1w": str(image)}})
+
+    assert public_manifest_paths("anat", manifest) == (image,)
 
 
 def test_scene_viewer_loads_the_generated_scene_without_a_dialog(tmp_path: Path) -> None:

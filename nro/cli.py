@@ -24,6 +24,7 @@ COMMAND_HELP = {
     "get": "Read live planner settings.",
     "gc": "Remove unclaimed files from nro derivative namespaces.",
     "models": "Inspect, validate, register, and compile task models.",
+    "migrate": "Preview or apply explicit metadata representation migrations.",
     "setup": "Set up dependencies or connect to a shared installation.",
     "paths": "View and edit site paths.",
     "doctor": "Check dependencies and site access.",
@@ -32,6 +33,7 @@ COMMAND_HELP = {
     "log": "Browse work-item or worker logs.",
     "publish": "Publish a completed request as a standalone derivative dataset.",
     "promote": "Accept equivalent development artifacts after an approved merge.",
+    "project": "Rename BIDS projects across nro-managed storage and state.",
     "purge": "Remove nro-controlled derivatives and logs.",
     "qc": "Run an ad hoc quality control.",
     "run": "Plan work and supply the shared worker pool.",
@@ -42,7 +44,7 @@ COMMAND_HELP = {
     "render": "Render selected Workbench maps as image files.",
 }
 
-CENTRAL_ONLY_COMMANDS = frozenset({"release"})
+CENTRAL_ONLY_COMMANDS = frozenset({"migrate", "project", "release"})
 
 
 def package_version() -> str:

@@ -25,6 +25,7 @@ from nro.engine.io import (
     atomic_write_text,
     json_path_default,
 )
+from nro.engine.references import portable_public_payload, resolve_public_payload
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
@@ -543,11 +544,17 @@ def build_module(
             "configuration_fingerprint": selected_configuration_fingerprint(),
             "output_metadata_contract": dynconn_output_contract(),
         }
-        atomic_write_text(paths["manifest"], yaml.safe_dump(payload, sort_keys=False))
+        atomic_write_text(
+            paths["manifest"],
+            yaml.safe_dump(portable_public_payload(paths["manifest"], payload), sort_keys=False),
+        )
 
     def validate_manifest() -> tuple[bool, str]:
         try:
-            payload = yaml.safe_load(paths["manifest"].read_text(encoding="utf-8"))
+            payload = resolve_public_payload(
+                paths["manifest"],
+                yaml.safe_load(paths["manifest"].read_text(encoding="utf-8")),
+            )
             validate_dynconn_manifest(payload)
             complete = all(
                 path.is_file() and path.stat().st_size for path in (paths["timeseries"],)

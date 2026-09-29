@@ -6,11 +6,24 @@ import json
 import sqlite3
 from collections.abc import Mapping, Sequence
 
+_STATUS_WORK_ITEM_COLUMNS = """
+    t.id, t.work_item_key, t.module, t.module_lineage_id, t.project,
+    t.participant, t.entities_json, t.scope, t.artifact_state,
+    t.artifact_reason, t.current_generation, t.resource_class, t.memory_gb,
+    t.max_memory_gb, t.revision_fingerprint, t.artifact_fingerprint,
+    t.output_root, t.output_prefix, t.created_at, t.updated_at
+"""
 
-def work_item_rows(database: sqlite3.Connection) -> list[dict]:
-    """Read work-item facts and attach each item's configuration route."""
+
+def work_item_rows(database: sqlite3.Connection, *, status_only: bool = False) -> list[dict]:
+    """Read work-item facts and attach each item's configuration route.
+
+    Status projections omit large scientific payloads that no status consumer
+    reads. Full registry and assessment callers retain the complete rows.
+    """
+    columns = _STATUS_WORK_ITEM_COLUMNS if status_only else "t.*"
     rows = database.execute(
-        """
+        f"""
         WITH latest_attempt AS (
             SELECT * FROM (
                 SELECT attempt.*,
@@ -55,7 +68,7 @@ def work_item_rows(database: sqlite3.Connection) -> list[dict]:
             LEFT JOIN latest_attempt attempt ON attempt.work_item_id=link.work_item_id
             GROUP BY link.work_item_id
         )
-        SELECT t.*, lineage.config_id, lineage.directory_label,
+        SELECT {columns}, lineage.config_id, lineage.directory_label,
                lineage.lineage_fingerprint, lineage.configuration_class,
                EXISTS(
                    SELECT 1 FROM workflow_bindings binding

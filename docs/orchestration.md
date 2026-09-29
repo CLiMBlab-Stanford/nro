@@ -11,7 +11,7 @@ records in this layout:
 ```text
 CONTROL/
   shared/scheduler/registry.sqlite3
-  shared/scheduler/service/{progress,status.json}
+  shared/scheduler/service/{progress,status.json,status-static-*,status-dynamic-*}
   shared/planner/{active.json,launch}
   branches/<branch-id>/registry.sqlite3
 ```
@@ -24,7 +24,16 @@ commits. Cached status reads an atomic JSON snapshot.
 A branch
 database records that branch's compiled scientific contracts, workflow
 lineages, and artifact observations. All projects and branches therefore share
-worker capacity without requiring the scheduler to import development code.
+worker capacity without requiring the scheduler to import development code. The
+`status.json` manifest combines a reusable static graph with a small dynamic-state
+component, so routine execution changes do not rewrite the complete cached report.
+
+The scheduler retains current state rather than an unbounded request and allocation
+history. It preserves active demand, existing derivative provenance, unresolved
+diagnostics, and their dependency closures. Terminal publication handles contain only
+terminal identities, while inherited-input reconciliation plans use compressed storage.
+Periodic transactional compaction removes superseded attempts and terminal worker or
+Slurm records; incremental vacuuming reclaims the resulting free pages gradually.
 
 `nro run` starts or joins both the scheduler and a small planning broker. When
 both are absent, the command submits their Slurm allocations independently so

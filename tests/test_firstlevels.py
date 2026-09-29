@@ -12,6 +12,7 @@ from numpy.testing import assert_allclose
 from nro.configuration.store import ConfigStore
 from nro.engine.bids import BidsRun, discover_raw_runs
 from nro.engine.cifti import indexed_cifti_indices, load_indexed_cifti_map
+from nro.engine.io import read_public_json
 from nro.modules.firstlevels.compiler import compile_model, realize_run_node
 from nro.modules.firstlevels.contract import validate_completion
 from nro.modules.firstlevels.design import build_design as fit_design
@@ -415,7 +416,7 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
     )
     path = run_module(**kwargs)
     assert validate_completion(path)[0]
-    document = json.loads(path.read_text())
+    document = read_public_json(path)
     input_denoising = document["input_denoising"]
     assert input_denoising["policy"] == {
         "applied": True,
@@ -499,7 +500,7 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
     )
     assert validate_completion(output)[0]
     context.require_output(output)
-    for path in json.loads(output.read_text())["public_outputs"]:
+    for path in read_public_json(output)["public_outputs"]:
         context.require_output(Path(path))
     assert {p: p.read_bytes() for folder in (directory, other) for p in folder.iterdir()} == before
 
@@ -822,7 +823,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
     )
     output = run_module(**kwargs)
     before = {
-        p: Path(p).stat().st_mtime_ns for p in json.loads(output.read_text())["public_outputs"]
+        p: Path(p).stat().st_mtime_ns for p in read_public_json(output)["public_outputs"]
     }
     if edit == "membership":
         source["model_set"] = ["development"]

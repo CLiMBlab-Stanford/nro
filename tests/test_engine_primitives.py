@@ -18,7 +18,7 @@ from nro.engine.cleaned_timeseries import (
 )
 from nro.engine.connectivity import connectivity_run_weights
 from nro.engine.image_paths import sidecar_json_path
-from nro.engine.io import flatten_paths, manifest_value
+from nro.engine.io import flatten_paths, manifest_value, write_public_json
 
 
 def test_image_sidecars_preserve_gifti_type() -> None:
@@ -84,36 +84,36 @@ def _write_cleaned_run_contract(
     *,
     right_retained_frames: int = 3,
 ) -> tuple[Path, Path]:
-    mask = tmp_path / "sub-1_task-rest_desc-confounds_timeseries.tsv"
+    root = tmp_path / "BIDS/demo/derivatives/nro/clean/main/sub-1/func"
+    root.mkdir(parents=True, exist_ok=True)
+    mask = root / "sub-1_task-rest_desc-confounds_timeseries.tsv"
     mask.write_text("motion_outlier00\n0\n1\n0\n0\n", encoding="utf-8")
     files = tuple(
-        tmp_path / f"sub-1_task-rest_hemi-{hemi}_desc-clean_bold.func.gii" for hemi in ("L", "R")
+        root / f"sub-1_task-rest_hemi-{hemi}_desc-clean_bold.func.gii" for hemi in ("L", "R")
     )
     for file, retained_frames, effective_rank, dominant_fraction in (
         (files[0], 3, 12.0, 0.35),
         (files[1], right_retained_frames, 10.0, 0.45),
     ):
         file.touch()
-        sidecar_json_path(file).write_text(
-            json.dumps(
-                {
-                    "Cleaning": {
-                        "CleaningDefined": True,
-                        "TotalFrames": 4,
-                        "RetainedFrames": retained_frames,
-                        "CensoredFraction": 0.25,
-                        "ResidualDesignDegreesOfFreedom": 55,
-                        "AlgebraicTemporalRank": 40,
-                        "TemporalMaskFile": str(mask),
-                        "TemporalMaskRegex": ".*outlier.*",
-                        "QualityControl": {
-                            "ParticipationRatioEffectiveTemporalRank": effective_rank,
-                            "DominantTemporalVarianceFraction": dominant_fraction,
-                        },
+        write_public_json(
+            sidecar_json_path(file),
+            {
+                "Cleaning": {
+                    "CleaningDefined": True,
+                    "TotalFrames": 4,
+                    "RetainedFrames": retained_frames,
+                    "CensoredFraction": 0.25,
+                    "ResidualDesignDegreesOfFreedom": 55,
+                    "AlgebraicTemporalRank": 40,
+                    "TemporalMaskFile": str(mask),
+                    "TemporalMaskRegex": ".*outlier.*",
+                    "QualityControl": {
+                        "ParticipationRatioEffectiveTemporalRank": effective_rank,
+                        "DominantTemporalVarianceFraction": dominant_fraction,
                     }
-                }
-            ),
-            encoding="utf-8",
+                },
+            },
         )
     return files
 

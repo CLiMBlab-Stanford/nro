@@ -14,6 +14,7 @@ from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.execution_cache import cache_publication
 from nro.orchestration.execution_context import ExecutionContext
+from nro.orchestration.request_plans import decode_plan
 
 
 def candidates_locked(
@@ -165,7 +166,12 @@ def reconcile_branch_requests(registry) -> int:
                 JOIN requests r ON r.id=p.request_id WHERE r.state='active' ORDER BY r.created_at DESC""")
             ]
             for request in requests:
-                payload = json.loads(request["payload_json"])
+                payload = decode_plan(request["payload_json"])
+                # Requests without inherited inputs are compacted immediately
+                # after admission. Their registered graph is already complete
+                # and cannot require branch-local replay.
+                if "specifications" not in payload:
+                    continue
                 owner = topology.records.get(payload["branch"])
                 if owner is None or owner.retired or owner.registry_id != payload["registry_id"]:
                     ids = [
