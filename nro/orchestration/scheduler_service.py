@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
@@ -131,8 +132,11 @@ def admit_many(
     checkout: Path,
     site_values: dict,
     message_id: str = "direct",
+    progress: Callable[[str], None] | None = None,
 ) -> list[str]:
     """Admit one invocation's requests after one source check and registry assessment."""
+    if progress is not None:
+        progress("Inspecting existing artifacts")
     with registry.connection() as db:
         maintenance = db.execute(
             "SELECT value FROM metadata WHERE key='maintenance_mode'"
@@ -193,6 +197,8 @@ def admit_many(
     expected_site = protected_site_fingerprint(Path(site_values["definitions"]))
     payloads = tuple(entry["payload"] for entry in entries)
     results = []
+    if progress is not None:
+        progress("Registering requested work")
     with _installation_access(checkout, payloads), branches._lock():
         topology = branches.read().topology
         with registry.connection(write=True) as db:
@@ -742,6 +748,8 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         )
         result = {"request_id": request_id}
     elif message["operation"] == "admit_many":
+        from nro.orchestration.scheduler_bus import publish_progress
+
         result = {
             "request_ids": admit_many(
                 registry,
@@ -749,16 +757,37 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 checkout=Path(message["checkout"]),
                 site_values=values,
                 message_id=message_id,
+                progress=lambda phase: publish_progress(
+                    registry.paths.control,
+                    message_id,
+                    phase=phase,
+                    completed=0,
+                    total=0,
+                ),
             )
         }
     elif message["operation"] == "plan_run":
         from nro.orchestration.planner_client import ensure as ensure_planner
         from nro.orchestration.planner_client import execute as execute_plan
+        from nro.orchestration.scheduler_bus import publish_progress
         from nro.orchestration.scheduler_client import command
+
+        def progress(phase: str) -> None:
+            publish_progress(
+                registry.paths.control,
+                message_id,
+                phase=phase,
+                completed=0,
+                total=0,
+            )
 
         endpoint = command(registry.paths.control, registry.paths.bids_root)
         ensure_planner(endpoint)
-        planned = execute_plan(registry.paths.control, message["request"])
+        planned = execute_plan(
+            registry.paths.control,
+            message["request"],
+            progress=progress,
+        )
         required = {
             "protocol",
             "entries",
@@ -782,7 +811,9 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             checkout=checkout,
             site_values=values,
             message_id=message_id,
+            progress=progress,
         )
+        progress("Reconciling worker pool")
         result = supply(
             registry,
             request_ids,

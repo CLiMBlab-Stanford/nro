@@ -287,14 +287,19 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
     ("payload", "notice"),
     [
         ({"operation": "admit_many"}, "Registering requested work..."),
+        ({"operation": "plan_run"}, "Planning requested work..."),
         ({"operation": "supply_needed"}, "Checking worker capacity..."),
-        ({"operation": "supply"}, "Requesting worker capacity..."),
-        ({"operation": "status"}, "Updating scheduler status..."),
+        ({"operation": "supply"}, "Reconciling worker pool..."),
+        ({"operation": "status"}, "Inspecting artifacts..."),
+        ({"operation": "stop"}, "Requesting work cancellation..."),
+        ({"operation": "purge_snapshot"}, "Preparing purge..."),
+        ({"operation": "gc"}, "Scanning derivative namespaces..."),
+        ({"operation": "dataset_migration"}, "Migrating dataset..."),
         (
             {"operation": "purge", "plan": [{"id": 1}, {"id": 2}]},
-            "Purging 2 work items...",
+            "Removing 2 work items...",
         ),
-        ({"operation": "internal_name"}, "Interacting with the scheduler..."),
+        ({"operation": "internal_name"}, "Processing request..."),
     ],
 )
 def test_scheduler_operation_notices_are_user_facing(payload, notice) -> None:

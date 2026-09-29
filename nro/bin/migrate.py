@@ -7,6 +7,7 @@ from pathlib import Path
 
 from nro.cli import package_version
 from nro.configuration.site import settings
+from nro.engine.cli import page_text
 
 
 def _parser(prog: str) -> argparse.ArgumentParser:
@@ -20,16 +21,40 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         help="bring source BIDS and nro derivatives into current metadata form",
     )
     dataset.add_argument("-P", "--project", nargs="+", dest="projects")
-    dataset.add_argument(
-        "--execute",
-        action="store_true",
-        help="apply the previewed conversion; the default is read-only",
+    mode = dataset.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Preview without applying changes")
+    mode.add_argument(
+        "-f", "--force", action="store_true", help="Apply changes without confirmation"
     )
+    mode.add_argument("--execute", dest="force", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
+def _render(report: dict) -> str:
+    """Format a dataset migration preview for interactive review."""
+    lines = ["Planned dataset migration", ""]
+    lines.append(f"Metadata files scanned: {report['scanned']}")
+    lines.append(f"Metadata files to rewrite: {len(report['changed'])}")
+    lines.append(f"Work-item contracts to migrate: {report['contracts']}")
+    if report["changed"]:
+        lines.extend(("", "Files:"))
+        lines.extend(f"  {path}" for path in report["changed"])
+    if report["errors"]:
+        lines.extend(("", f"Blocking errors ({len(report['errors'])}):"))
+        lines.extend(f"  {error}" for error in report["errors"])
+    return "\n".join(lines) + "\n"
+
+
+def _confirm() -> bool:
+    try:
+        response = input("Proceed with dataset migration? [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return response.strip().lower() in {"y", "yes"}
+
+
 def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
-    """Run a selected representation migration after an explicit preview."""
+    """Preview and optionally apply a selected representation migration."""
     args = _parser(prog).parse_args(argv)
     values = settings()[0]
     bids = Path(values["bids"])
@@ -37,21 +62,37 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     from nro.configuration.site import CHECKOUT
     from nro.orchestration.scheduler_client import maintenance
 
+    preview = maintenance(
+        Path(values["registry"]),
+        bids,
+        checkout=CHECKOUT,
+        operation="dataset_migration",
+        projects=projects,
+        execute=False,
+        version=package_version(),
+    )
+    page_text(_render(preview))
+    if preview["errors"]:
+        raise SystemExit(f"Migration blocked by {len(preview['errors'])} error(s)")
+    pending = len(preview["changed"]) + int(preview["contracts"])
+    if args.dry_run or not pending:
+        return
+    if not args.force and not _confirm():
+        print("Dataset migration cancelled.")
+        return
     report = maintenance(
         Path(values["registry"]),
         bids,
         checkout=CHECKOUT,
         operation="dataset_migration",
         projects=projects,
-        execute=args.execute,
+        execute=True,
         version=package_version(),
     )
-    action = "Migrated" if args.execute else "Would migrate"
-    print(f"Scanned {report['scanned']} metadata file(s).")
-    print(f"{action} {len(report['changed'])} file(s).")
-    print(f"{action} {report['contracts']} work-item contract(s).")
-    for path in report["changed"]:
-        print(path)
     if report["errors"]:
         detail = "\n".join(f"- {error}" for error in report["errors"])
         raise SystemExit(f"Migration blocked by {len(report['errors'])} error(s):\n{detail}")
+    print(
+        f"Migrated {len(report['changed'])} metadata file(s) and "
+        f"{report['contracts']} work-item contract(s)."
+    )

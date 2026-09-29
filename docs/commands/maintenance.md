@@ -218,16 +218,18 @@ representation:
 
 ```bash
 nro migrate dataset -P PROJECT
-nro migrate dataset -P PROJECT --execute
+nro migrate dataset -P PROJECT --dry-run
+nro migrate dataset -P PROJECT -f
 ```
 
-The default is a read-only preview. Execution covers the selected source project plus
-main and registered branch derivatives. It requires a quiet worker pool, removes
-obsolete source `EventsFile` fields, converts durable contracts to field-level source
-metadata snapshots, and updates integrity records without advancing artifact
-generations. A durable journal rolls back failed or interrupted file conversion. See
-[portable derivative provenance](../portable-provenance.md) for the reference model
-and migration boundary.
+The default pages through a read-only plan and asks for confirmation before applying
+it. `--dry-run` stops after the preview. `-f`/`--force` applies the plan without a
+prompt. Execution covers the selected source project plus main and registered branch
+derivatives. It requires a quiet worker pool, removes obsolete source `EventsFile`
+fields, converts durable contracts to field-level source metadata snapshots, and
+updates integrity records without advancing artifact generations. A durable journal
+rolls back failed or interrupted file conversion. See [portable derivative
+provenance](../portable-provenance.md) for the reference model and migration boundary.
 
 ## `nro publish`
 

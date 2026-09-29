@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from nro.orchestration.planner_bus import (
@@ -88,12 +89,26 @@ def _response(response: dict) -> dict:
     return result
 
 
-def execute(control: Path, request: dict) -> dict:
+def execute(
+    control: Path,
+    request: dict,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
     """Wait for the claimed planner and execute one FIFO planning request."""
+    phase = None
+
+    def report(value: str) -> None:
+        nonlocal phase
+        if progress is not None and value != phase:
+            progress(value)
+        phase = value
+
     while True:
         active = read_active(control)
         if active is not None:
             try:
+                report("Planning requested work")
                 with socket.create_connection(
                     (str(active["host"]), int(active["port"])), timeout=10.0
                 ) as connection:
@@ -112,6 +127,7 @@ def execute(control: Path, request: dict) -> dict:
         launch = read_launch(control)
         if launch is None or _launch_abandoned(launch):
             raise RuntimeError("Planning service ended before accepting the request")
+        report("Waiting for planner allocation")
         time.sleep(1.0)
 
 

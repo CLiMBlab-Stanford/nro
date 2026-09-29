@@ -178,17 +178,13 @@ def absolute_path_values(value: Any) -> tuple[str, ...]:
 
     def visit(item: Any) -> None:
         if isinstance(item, dict):
-            for member in item.values():
+            for key, member in item.items():
+                visit(key)
                 visit(member)
         elif isinstance(item, (list, tuple)):
             for member in item:
                 visit(member)
-        elif (
-            isinstance(item, str)
-            and Path(item).is_absolute()
-            and ":" not in item
-            and "\n" not in item
-        ):
+        elif isinstance(item, str) and Path(item).is_absolute() and "\n" not in item:
             found.append(item)
 
     visit(value)
@@ -221,12 +217,15 @@ def omit_private_path_values(value: Any, roots: ReferenceRoots) -> Any:
         if isinstance(item, dict):
             converted = {}
             for key, member in item.items():
+                converted_key = visit(key)
+                if converted_key is _OMIT:
+                    continue
                 if key == "static_warp" and _private_public_value(member, roots):
-                    converted[key] = "BOLDToT1wComposite"
+                    converted[converted_key] = "BOLDToT1wComposite"
                     continue
                 value = visit(member)
                 if value is not _OMIT:
-                    converted[key] = value
+                    converted[converted_key] = value
             return converted
         if isinstance(item, (list, tuple)):
             return [converted for member in item if (converted := visit(member)) is not _OMIT]
@@ -250,7 +249,13 @@ def encode_path_values(value: Any, roots: ReferenceRoots, *, public: bool = Fals
     if isinstance(value, list):
         return [encode_path_values(item, roots, public=public) for item in value]
     if isinstance(value, dict):
-        return {key: encode_path_values(item, roots, public=public) for key, item in value.items()}
+        converted = {}
+        for key, item in value.items():
+            encoded_key = encode_path_values(key, roots, public=public)
+            if encoded_key in converted:
+                raise ValueError(f"Portable path conversion produced duplicate key {encoded_key!r}")
+            converted[encoded_key] = encode_path_values(item, roots, public=public)
+        return converted
     if (
         isinstance(value, str)
         and Path(value).is_absolute()
@@ -268,7 +273,17 @@ def resolve_path_values(value: Any, roots: ReferenceRoots) -> Any:
     if isinstance(value, list):
         return [resolve_path_values(item, roots) for item in value]
     if isinstance(value, dict):
-        return {key: resolve_path_values(item, roots) for key, item in value.items()}
+        resolved = {}
+        for key, item in value.items():
+            decoded_key = resolve_path_values(key, roots)
+            if isinstance(decoded_key, Path):
+                decoded_key = str(decoded_key)
+            if decoded_key in resolved:
+                raise ValueError(
+                    f"Portable reference resolution produced duplicate key {decoded_key!r}"
+                )
+            resolved[decoded_key] = resolve_path_values(item, roots)
+        return resolved
     return value
 
 
