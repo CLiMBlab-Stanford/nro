@@ -37,6 +37,14 @@ refuses active attempts, converts version-4 ownership receipts to version 5, rem
 obsolete `EventsFile` fields from source imaging sidecars, and rewrites supported nro
 JSON and YAML metadata. Repeating the migration is a no-op.
 
+The preflight reports separate source, derivative, and work-item-contract phases with
+file counts. It examines raw imaging sidecars under `sub-*` and structured metadata
+under `derivatives/nro`; it does not traverse `sourcedata`, third-party derivatives,
+or external code products such as FreeSurfer subject directories. Metadata reads are
+bounded and concurrent, while the migration plan, journal, and writes remain ordered.
+Large datasets can still take several minutes because every selected metadata record
+is parsed and validated before any write begins.
+
 Source images remain byte-level freshness inputs. Inherited JSON metadata is stored
 in work-item contracts as a canonical projection of the fields used by the relevant
 module. Changing `RepetitionTime`, for example, changes a functional contract;

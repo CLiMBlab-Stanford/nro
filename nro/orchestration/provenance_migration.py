@@ -6,9 +6,10 @@ import json
 import os
 import shutil
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Iterator, Mapping, TypeVar
 
 import yaml
 
@@ -16,11 +17,12 @@ from nro.configuration.store import fingerprint
 from nro.engine.bids import bids_suffix
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.references import (
+    ReferenceRoots,
     configured_reference_roots,
     derivative_dataset_description,
     encode_path_values,
     nro_derivative_root,
-    portable_public_payload,
+    omit_private_path_values,
     public_document_roots,
     resolve_path_values,
 )
@@ -60,6 +62,10 @@ _IMAGING_SIDECAR_SUFFIXES = frozenset(
         "sbref",
     }
 )
+_METADATA_READ_WORKERS = 8
+_METADATA_READ_BATCH = 256
+_T = TypeVar("_T")
+_R = TypeVar("_R")
 
 
 @dataclass(frozen=True)
@@ -164,7 +170,13 @@ def _scientific_contract_dataset_view(contract: Mapping[str, object], project_ro
     return result
 
 
-def _ownership_dataset_view(path: Path, value: object, source_project_root: Path) -> object:
+def _ownership_dataset_view(
+    path: Path,
+    value: object,
+    source_project_root: Path,
+    *,
+    roots: ReferenceRoots | None = None,
+) -> object:
     """Upgrade one ownership receipt to semantic source metadata."""
     if OWNERSHIP_DIRECTORY not in path.parts or path.name == LINEAGE_RECORD_NAME:
         return value
@@ -175,10 +187,11 @@ def _ownership_dataset_view(path: Path, value: object, source_project_root: Path
         for parent in path.parents
         if parent.name == "nro" and parent.parent.name == "derivatives"
     )
-    roots = configured_reference_roots(
-        source_project_root,
-        derivative_root=nro_derivative_root(derivative_project_root),
-    )
+    if roots is None:
+        roots = configured_reference_roots(
+            source_project_root,
+            derivative_root=nro_derivative_root(derivative_project_root),
+        )
     decoded = resolve_path_values(value, roots)
     artifact_contract = decoded.get("artifact_contract")
     if isinstance(artifact_contract, Mapping):
@@ -451,7 +464,55 @@ def _serialized(value: object, kind: str) -> str:
     return yaml.safe_dump(value, sort_keys=False)
 
 
-def _portable_document(path: Path, value: object) -> object:
+def _parallel_map(function: Callable[[_T], _R], values: Iterable[_T]) -> Iterator[_R]:
+    """Map bounded batches concurrently while preserving filesystem order."""
+    with ThreadPoolExecutor(max_workers=_METADATA_READ_WORKERS) as executor:
+        batch: list[_T] = []
+        for value in values:
+            batch.append(value)
+            if len(batch) < _METADATA_READ_BATCH:
+                continue
+            yield from executor.map(function, batch)
+            batch.clear()
+        if batch:
+            yield from executor.map(function, batch)
+
+
+def _source_document_update(path: Path) -> tuple[Path, str | None, str | None]:
+    """Return a normalized raw sidecar update without writing the file."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return path, None, f"{path}: {error}"
+    if not isinstance(value, dict) or "EventsFile" not in value:
+        return path, None, None
+    converted = dict(value)
+    converted.pop("EventsFile")
+    return path, _serialized(converted, "json"), None
+
+
+def _derivative_document_update(
+    request: tuple[Path, Path, ReferenceRoots],
+) -> tuple[Path, str | None, str | None]:
+    """Return a portable derivative-metadata update without writing the file."""
+    path, source_project_root, roots = request
+    try:
+        value, kind = _document(path)
+        converted = _portable_document(path, value, roots=roots)
+        converted = _ownership_dataset_view(
+            path,
+            converted,
+            source_project_root,
+            roots=roots,
+        )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
+        return path, None, f"{path}: {error}"
+    if converted == value:
+        return path, None, None
+    return path, _serialized(converted, kind), None
+
+
+def _portable_document(path: Path, value: object, *, roots: ReferenceRoots | None = None) -> object:
     if path.name == "dataset_description.json":
         return value
     if OWNERSHIP_DIRECTORY in path.parts:
@@ -464,7 +525,7 @@ def _portable_document(path: Path, value: object) -> object:
                 configuration_class = str(value.get("configuration_class") or "")
             return normalize_portable_ownership_record(
                 value,
-                roots=public_document_roots(path),
+                roots=roots or public_document_roots(path),
                 configuration_class=configuration_class,
             )
         if version != LEGACY_OWNERSHIP_VERSION:
@@ -474,23 +535,46 @@ def _portable_document(path: Path, value: object) -> object:
             configuration_class = str(value.get("configuration_class") or "")
         return convert_legacy_ownership_record(
             value,
-            roots=public_document_roots(path),
+            roots=roots or public_document_roots(path),
             configuration_class=configuration_class,
         )
-    return portable_public_payload(path, value)
+    if roots is None:
+        roots = public_document_roots(path)
+    return encode_path_values(omit_private_path_values(value, roots), roots, public=True)
 
 
-def _candidates(project_root: Path) -> tuple[Path, ...]:
+def _metadata_files(root: Path, *, prune_code_products: bool = False) -> Iterator[Path]:
+    """Yield structured metadata without statting every scientific output."""
+    for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+        names.sort()
+        files.sort()
+        current = Path(directory)
+        relative = current.relative_to(root)
+        if prune_code_products and len(relative.parts) == 3 and relative.parts[-1] == "code":
+            names.clear()
+            continue
+        for name in files:
+            path = current / name
+            if path.suffix.lower() in {".json", ".yaml", ".yml"}:
+                yield path
+
+
+def _source_candidates(project_root: Path) -> Iterator[Path]:
+    """Yield imaging sidecars from raw BIDS subject trees only."""
+    for subject_root in sorted(project_root.glob("sub-*")):
+        if not subject_root.is_dir():
+            continue
+        for path in _metadata_files(subject_root):
+            if _is_source_imaging_sidecar(path, project_root):
+                yield path
+
+
+def _candidates(project_root: Path) -> Iterator[Path]:
+    """Yield nro-owned public metadata while pruning external code products."""
     root = project_root / "derivatives" / "nro"
     if not root.is_dir():
-        return ()
-    return tuple(
-        sorted(
-            path
-            for path in root.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".json", ".yaml", ".yml"}
-        )
-    )
+        return
+    yield from _metadata_files(root, prune_code_products=True)
 
 
 def migrate_dataset(
@@ -500,6 +584,7 @@ def migrate_dataset(
     execute: bool = False,
     version: str,
     site_values: Mapping[str, object] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> DatasetMigrationReport:
     """Preview or apply source and derivative metadata normalization together.
 
@@ -511,6 +596,26 @@ def migrate_dataset(
     source_replacements: set[Path] = set()
     errors: list[str] = []
     scanned = 0
+    last_progress = -1
+    last_notice = None
+
+    def report(phase: str, count: int | None = None, *, force: bool = False) -> None:
+        nonlocal last_notice, last_progress
+        if progress is None:
+            return
+        if count is None:
+            notice = phase
+        else:
+            unit = "file" if count == 1 else "files"
+            notice = f"{phase} ({count:,} {unit})" if count else phase
+        if notice == last_notice or (
+            count is not None and not force and count - last_progress < 250
+        ):
+            return
+        progress(notice)
+        last_notice = notice
+        last_progress = count if count is not None else -1
+
     selected = tuple(sorted(set(projects)))
     if execute:
         with registry.connection() as database:
@@ -531,43 +636,51 @@ def migrate_dataset(
     bids_roots = _bids_roots(registry, site_values)
     project_roots = tuple(root / project for root in bids_roots for project in selected)
     source_project_roots = tuple(Path(registry.paths.bids_root) / project for project in selected)
+    source_scanned = 0
+    report("Scanning source metadata", source_scanned, force=True)
     for source_project_root in source_project_roots:
         if not source_project_root.is_dir():
             continue
-        for path in sorted(source_project_root.rglob("*.json")):
-            if not _is_source_imaging_sidecar(path, source_project_root):
-                continue
+        for path, rendered, error in _parallel_map(
+            _source_document_update,
+            _source_candidates(source_project_root),
+        ):
             scanned += 1
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as error:
-                errors.append(f"{path}: {error}")
+            source_scanned += 1
+            report("Scanning source metadata", source_scanned)
+            if error is not None:
+                errors.append(error)
                 continue
-            if not isinstance(value, dict) or "EventsFile" not in value:
+            if rendered is None:
                 continue
-            converted = dict(value)
-            converted.pop("EventsFile")
-            replacements[path] = _serialized(converted, "json")
+            replacements[path] = rendered
             source_replacements.add(path)
+    report("Scanning source metadata", source_scanned, force=True)
+    derivative_scanned = 0
+    last_progress = -1
+    report("Scanning derivative metadata", derivative_scanned, force=True)
     for project_root in project_roots:
         derivative_root = project_root / "derivatives/nro"
         if not derivative_root.is_dir():
             continue
-        for path in _candidates(project_root):
+        source_project_root = Path(registry.paths.bids_root) / project_root.name
+        roots = configured_reference_roots(
+            source_project_root,
+            derivative_root=derivative_root,
+        )
+        requests = ((path, source_project_root, roots) for path in _candidates(project_root))
+        for path, rendered, error in _parallel_map(
+            _derivative_document_update,
+            requests,
+        ):
             scanned += 1
-            try:
-                value, kind = _document(path)
-                converted = _portable_document(path, value)
-                converted = _ownership_dataset_view(
-                    path,
-                    converted,
-                    Path(registry.paths.bids_root) / project_root.name,
-                )
-            except (OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
-                errors.append(f"{path}: {error}")
+            derivative_scanned += 1
+            report("Scanning derivative metadata", derivative_scanned)
+            if error is not None:
+                errors.append(error)
                 continue
-            if converted != value:
-                replacements[path] = _serialized(converted, kind)
+            if rendered is not None:
+                replacements[path] = rendered
         description = project_root / "derivatives/nro/dataset_description.json"
         try:
             expected_description = derivative_dataset_description(project_root, version=version)
@@ -584,6 +697,8 @@ def migrate_dataset(
                 errors.append(f"{description}: {error}")
         if current_description != expected_description:
             replacements[description] = _serialized(expected_description, "json")
+    report("Scanning derivative metadata", derivative_scanned, force=True)
+    report("Checking work-item contracts", force=True)
     errors.extend(_verify_recorded_source_metadata(registry, source_replacements))
     contract_changes = 0
     try:
@@ -593,9 +708,11 @@ def migrate_dataset(
     if errors or not execute:
         return DatasetMigrationReport(scanned, tuple(replacements), contract_changes, tuple(errors))
     if not replacements:
+        report("Updating work-item contracts", force=True)
         _migrate_registry_contracts(registry, selected)
         _migrate_branch_contracts(registry, selected)
         return DatasetMigrationReport(scanned, (), contract_changes, ())
+    report("Backing up migration metadata", 0, force=True)
     root = _journal_root(registry)
     root.mkdir(parents=True, exist_ok=True, mode=0o2775)
     journal = root / uuid.uuid4().hex
@@ -608,6 +725,8 @@ def migrate_dataset(
         if existed:
             shutil.copy2(path, journal / relative)
         entries.append({"path": str(path.resolve()), "backup": relative, "existed": existed})
+        report("Backing up migration metadata", index + 1)
+    report("Backing up migration metadata", len(entries), force=True)
     journal_record = {
         "format": 1,
         "state": "prepared",
@@ -629,7 +748,8 @@ def migrate_dataset(
             mode=0o664,
             durable=True,
         )
-        for path, rendered in replacements.items():
+        report("Writing portable metadata", 0, force=True)
+        for index, (path, rendered) in enumerate(replacements.items()):
             existed = path.is_file()
             stat = path.stat() if existed else None
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
@@ -641,6 +761,9 @@ def migrate_dataset(
             )
             if stat is not None:
                 os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            report("Writing portable metadata", index + 1)
+        report("Writing portable metadata", len(replacements), force=True)
+        report("Validating migrated ownership", force=True)
         validation_errors = []
         for bids_root in bids_roots:
             represented = tuple(
@@ -659,6 +782,7 @@ def migrate_dataset(
             validation_errors.extend(found)
         if validation_errors:
             raise ValueError("; ".join(validation_errors))
+        report("Updating work-item contracts", force=True)
         with registry.connection(write=True) as database:
             _migrate_registry_contracts_locked(registry, database, selected)
             _refresh_inventory_locked(database, replacements)
