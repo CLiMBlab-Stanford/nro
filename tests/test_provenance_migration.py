@@ -57,16 +57,59 @@ def test_dataset_migration_previews_then_rewrites_metadata(tmp_path: Path) -> No
     assert repeated.changed == ()
 
 
+def test_dataset_migration_backup_does_not_copy_extended_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    output = project / "derivatives/nro/anat/main/sub-01/anat/sub-01_T1w.nii.gz"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"image")
+    manifest = output.with_name("manifest.json")
+    manifest.write_text(json.dumps({"output": str(output)}))
+    registry = Registry.for_project("", bids_root=bids)
+    monkeypatch.setattr(
+        "nro.orchestration.provenance_migration.shutil.copy2",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PermissionError(1, "extended metadata is unsupported")
+        ),
+    )
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.errors == ()
+    assert json.loads(manifest.read_text())["output"] == (
+        "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"
+    )
+
+
+def test_dataset_migration_discards_legacy_partial_backup(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    project.mkdir(parents=True)
+    registry = Registry.for_project("", bids_root=bids)
+    journal = registry.paths.control / "shared/provenance-migrations/interrupted"
+    backup = journal / "files/00000000"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("backup made before the legacy manifest")
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.errors == ()
+    assert not journal.exists()
+
+
 def test_migration_inventory_prunes_non_bids_and_external_product_trees(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "bids/demo"
     raw = project / "sub-01/func/sub-01_task-rest_bold.json"
+    excluded = project / "sub-01/func/_excluded/sub-01_task-rest_run-02_bold.json"
     sourcedata = project / "sourcedata/sub-01/func/sub-01_task-rest_bold.json"
     third_party = project / "derivatives/other/sub-01/manifest.json"
     manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
     external = project / "derivatives/nro/anat/main/code/freesurfer/metadata.json"
-    for path in (raw, sourcedata, third_party, manifest, external):
+    for path in (raw, excluded, sourcedata, third_party, manifest, external):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}")
 
@@ -400,6 +443,52 @@ def test_dataset_migration_recovers_an_interrupted_transaction(
     assert json.loads(manifest.read_text())["output"] == (
         "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"
     )
+    assert not journal.exists()
+
+
+def test_dataset_migration_recovery_skips_unchanged_file_in_read_only_directory(
+    tmp_path: Path,
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    manifest = project / "sub-01/func/_excluded/sub-01_task-rest_bold.json"
+    manifest.parent.mkdir(parents=True)
+    original = json.dumps({"EventsFile": "/legacy/events.tsv"})
+    manifest.write_text(original)
+    registry = Registry.for_project("", bids_root=bids)
+    journal = registry.paths.control / "shared/provenance-migrations/interrupted"
+    backup = journal / "files/00000000"
+    backup.parent.mkdir(parents=True)
+    backup.write_text(original)
+    (journal / "journal.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "state": "applying",
+                "projects": ["demo"],
+                "files": [
+                    {
+                        "path": str(manifest.resolve()),
+                        "backup": "files/00000000",
+                        "existed": True,
+                    }
+                ],
+            }
+        )
+    )
+    os.chmod(manifest.parent, 0o555)
+    try:
+        result = migrate_dataset(
+            registry,
+            projects=("demo",),
+            execute=True,
+            version="1.2.3",
+        )
+    finally:
+        os.chmod(manifest.parent, 0o755)
+
+    assert result.errors == ()
+    assert manifest.read_text() == original
     assert not journal.exists()
 
 
