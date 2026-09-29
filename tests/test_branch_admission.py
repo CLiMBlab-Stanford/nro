@@ -206,7 +206,8 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
     assert "nro.probe_one" not in sys.modules and "nro.probe_two" not in sys.modules
 
 
-def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup):
+@pytest.mark.parametrize("discard_execution", (False, True))
+def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, discard_execution):
     from nro.orchestration.branch_purge import purge, snapshot
 
     registry, _branches, _site, prepare = setup
@@ -217,6 +218,12 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup):
     claim = registry.claim_ready_work_item(worker.worker_id, ("small",))
     assert claim is not None
     worker._execute(claim)
+    if discard_execution:
+        with registry.connection(write=True) as db:
+            db.execute(
+                "DELETE FROM work_item_execution WHERE work_item_id=?",
+                (claim.work_item_id,),
+            )
 
     site_values = {
         "bids": str(paths.bids),

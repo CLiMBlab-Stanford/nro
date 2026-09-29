@@ -21,7 +21,12 @@ from nro.orchestration.purge_paths import (
 from nro.orchestration.registry import Registry, utcnow
 
 
-def _receipt_rows(registry, work_item_ids: set[int]) -> dict[int, dict]:
+def _receipt_rows(
+    registry,
+    work_item_ids: set[int],
+    *,
+    registry_id: str,
+) -> dict[int, dict]:
     """Return the location metadata needed to remove ownership receipts."""
     if not work_item_ids:
         return {}
@@ -30,12 +35,14 @@ def _receipt_rows(registry, work_item_ids: set[int]) -> dict[int, dict]:
         rows = db.execute(
             f"""SELECT i.id,i.project,i.module,i.work_item_key,
                        lineage.configuration_class,lineage.directory_label,
-                       execution.logical_key,execution.context_json
+                       COALESCE(branch.logical_key,execution.logical_key) AS logical_key
                 FROM work_items i
                 JOIN module_lineages lineage ON lineage.id=i.module_lineage_id
+                LEFT JOIN branch_work_items branch
+                  ON branch.work_item_id=i.id AND branch.registry_id=?
                 LEFT JOIN work_item_execution execution ON execution.work_item_id=i.id
                 WHERE i.id IN ({placeholders})""",
-            tuple(sorted(work_item_ids)),
+            (registry_id, *tuple(sorted(work_item_ids))),
         ).fetchall()
     return {int(row["id"]): dict(row) for row in rows}
 
@@ -51,14 +58,14 @@ def _selected_rows(db, table: str, key: str, work_item_ids: set[int]):
     ).fetchall()
 
 
-def _receipt_location(registry, row: dict) -> tuple[Path, tuple[Path, str, str]]:
+def _receipt_location(
+    row: dict,
+    context: ExecutionContext,
+) -> tuple[Path, tuple[Path, str, str]]:
     """Resolve one receipt and the lineage root that owns it."""
     from nro.orchestration.ownership import work_item_record_path
 
-    project_root = registry.paths.bids_root / str(row["project"])
-    if row.get("context_json"):
-        context = ExecutionContext.from_dict(json.loads(row["context_json"]))
-        project_root = context.paths.output_project(str(row["project"]))
+    project_root = context.paths.output_project(str(row["project"]))
     configuration_class = str(row["configuration_class"])
     directory_label = str(row["directory_label"])
     path = work_item_record_path(
@@ -66,7 +73,7 @@ def _receipt_location(registry, row: dict) -> tuple[Path, tuple[Path, str, str]]
         configuration_class,
         directory_label,
         str(row["module"]),
-        str(row.get("logical_key") or row["work_item_key"]),
+        str(row["logical_key"] or row["work_item_key"]),
     )
     return path, (project_root, configuration_class, directory_label)
 
@@ -126,7 +133,7 @@ def snapshot(
         return {"rows": [], "dependencies": [], "branch": name}
     report_ids = {int(row["id"]) for row in report["rows"]}
     with registry.connection() as db:
-        metadata = {
+        execution = {
             row["work_item_id"]: dict(row)
             for row in _selected_rows(
                 db,
@@ -134,6 +141,16 @@ def snapshot(
                 "work_item_id",
                 report_ids,
             )
+        }
+        ownership = {
+            row["work_item_id"]: dict(row)
+            for row in _selected_rows(
+                db,
+                "branch_work_items",
+                "work_item_id",
+                report_ids,
+            )
+            if row["registry_id"] == owner
         }
         scientific = {}
         if include_scientific_inputs and report_ids:
@@ -150,10 +167,15 @@ def snapshot(
             }
     rows = []
     for row in report["rows"]:
-        item = metadata.get(row["id"])
-        if (item is None and name != "main") or (item is not None and item["registry_id"] != owner):
+        item = execution.get(row["id"])
+        branch_item = ownership.get(row["id"])
+        if branch_item is None and (
+            name != "main" or item is not None and item["registry_id"] != owner
+        ):
             continue
-        encoded = item["context_json"] if item else None
+        encoded = (
+            item["context_json"] if item is not None and item["registry_id"] == owner else None
+        )
         context = (
             ExecutionContext.from_dict(json.loads(encoded))
             if encoded
@@ -207,9 +229,20 @@ def purge(
             raise ValueError("Log-only purge cannot delete derivative paths")
 
     deletable_ids, _retained_ids = registry.purge_record_partition(ids)
-    receipt_rows = _receipt_rows(registry, ids | set(deletable_ids))
+    topology = BranchStore(registry.paths.control).read().topology
+    branch = topology.require_checkout(checkout)
+    owner = topology.records[branch].registry_id
+    receipt_rows = _receipt_rows(
+        registry,
+        ids | set(deletable_ids),
+        registry_id=owner,
+    )
     receipt_locations = {
-        work_item_id: _receipt_location(registry, row) for work_item_id, row in receipt_rows.items()
+        work_item_id: _receipt_location(
+            row,
+            ExecutionContext.from_dict(owned[work_item_id]["execution_context"]),
+        )
+        for work_item_id, row in receipt_rows.items()
     }
     receipt_paths = {path for path, _root in receipt_locations.values()}
 
