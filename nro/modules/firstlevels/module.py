@@ -15,8 +15,15 @@ from scipy.ndimage import gaussian_filter
 from nro.configuration.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
 from nro.engine.image_paths import sidecar_json_path
-from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
+from nro.engine.io import (
+    atomic_output_path,
+    atomic_write_json,
+    atomic_write_text,
+    read_public_json,
+    write_public_json,
+)
 from nro.engine.paths import module_artifact_root
+from nro.engine.references import portable_public_payload
 from nro.engine.targets import is_surface_space
 from nro.engine.templates import find_fsaverage_surface
 from nro.orchestration.execution_context import ExecutionContext
@@ -88,7 +95,7 @@ def functional_paths(
 def _write_manifest(
     path: Path, base: dict, *, outputs: list[Path], records: list, omissions: list, sources: dict
 ) -> None:
-    previous = json.loads(path.read_text()) if path.is_file() else {}
+    previous = read_public_json(path) if path.is_file() else {}
     value = {
         **base,
         "complete": True,
@@ -98,7 +105,7 @@ def _write_manifest(
         "source_fits": sources,
         "output_metadata_contract": firstlevels_output_contract(),
     }
-    atomic_write_json(path, value)
+    write_public_json(path, value)
     # Only superseded files explicitly owned by this node's prior inventory may
     # disappear when an effect becomes unavailable. Never scan/delete by suffix.
     subject_root = next(
@@ -187,7 +194,7 @@ def create_fit_step(
     def action() -> None:
         confounds = pd.read_csv(confounds_path, sep="\t")
         events = pd.read_csv(events_path, sep="\t")
-        metadata = json.loads(sidecar_json_path(original_images[0]).read_text())
+        metadata = read_public_json(sidecar_json_path(original_images[0]))
         fit_base = {
             **base,
             "input_denoising": _input_denoising(run.stem, metadata["Denoising"]),
@@ -309,7 +316,7 @@ def create_meta_step(
     manifest = prefix.with_name(prefix.name + "_manifest.json")
 
     def action() -> None:
-        parents = [json.loads(path.read_text()) for path in inputs]
+        parents = [read_public_json(path) for path in inputs]
         input_denoising = _merge_input_denoising(parents)
         meta_base = {**base, "input_denoising": input_denoising}
         records, omissions = meta_records(
@@ -501,7 +508,7 @@ def build_module(
                         )
                         if execution_context is not None:
                             anatomy_manifest = execution_context.input_path(anatomy_manifest)
-                        surfaces = json.loads(anatomy_manifest.read_text())["outputs"]["surfaces"]
+                        surfaces = read_public_json(anatomy_manifest)["outputs"]["surfaces"]
                         surface = Path(surfaces[f"{'lh' if index == 0 else 'rh'}.midthickness"])
                     else:
                         count_vertices = len(nib.load(str(source)).darrays[0].data)
@@ -569,7 +576,7 @@ def build_module(
     inputs = tuple(path for paths in manifests.values() for path in paths)
 
     def finalize() -> None:
-        documents = [json.loads(path.read_text()) for path in inputs]
+        documents = [read_public_json(path) for path in inputs]
         input_denoising = _merge_input_denoising(documents)
         outputs = list(inputs) + [
             Path(p) for document in documents for p in document["public_outputs"]
@@ -577,9 +584,12 @@ def build_module(
         source_path = completion.with_name(prefix + "_model.yml")
         config_path = completion.with_name(prefix + "_configuration.json")
         compiled_path = completion.with_name(prefix + "_statsmodel.json")
-        atomic_write_text(source_path, yaml.safe_dump(task_definition, sort_keys=False))
-        atomic_write_json(config_path, config)
-        atomic_write_json(compiled_path, model)
+        atomic_write_text(
+            source_path,
+            yaml.safe_dump(portable_public_payload(source_path, task_definition), sort_keys=False),
+        )
+        write_public_json(config_path, config)
+        write_public_json(compiled_path, model)
         outputs.extend((source_path, config_path, compiled_path))
         _write_manifest(
             completion,

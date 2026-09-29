@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
+from copy import deepcopy
 from datetime import datetime, timezone
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Mapping
 
@@ -12,6 +15,16 @@ import yaml
 from nro.configuration.store import CONFIGURATION_CLASSES, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root, module_namespace_root
+from nro.engine.references import (
+    ReferenceRoots,
+    absolute_path_values,
+    configured_reference_roots,
+    encode_path_values,
+    ensure_derivative_dataset,
+    nro_derivative_root,
+    omit_private_path_values,
+    resolve_path_values,
+)
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
@@ -21,9 +34,109 @@ if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
 
 
-OWNERSHIP_VERSION = 4
+OWNERSHIP_VERSION = 5
+LEGACY_OWNERSHIP_VERSION = 4
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
+
+
+def _reference_roots(
+    project_root: Path,
+    *,
+    source_project_root: Path | None = None,
+) -> ReferenceRoots:
+    """Return explicit raw, derivative, and site roots for one public tree."""
+    return configured_reference_roots(
+        source_project_root or project_root,
+        derivative_root=nro_derivative_root(project_root),
+    )
+
+
+def _portable_configuration(
+    configuration_class: str,
+    configuration: Mapping[str, object],
+    roots: ReferenceRoots,
+) -> dict:
+    """Encode a resolved configuration without changing its scientific fingerprint."""
+    resolved = encode_path_values(
+        omit_private_path_values(configuration["resolved"], roots), roots, public=True
+    )
+    return {
+        "id": configuration["id"],
+        "fingerprint": configuration["fingerprint"],
+        "resolved": resolved,
+        "portable_fingerprint": fingerprint(
+            {
+                "module": configuration_class,
+                "config_id": configuration["id"],
+                "values": resolved,
+            }
+        ),
+    }
+
+
+def _module_argv(command: Iterable[object]) -> list[str]:
+    """Remove interpreter and source-snapshot paths from a Python module command."""
+    values = [str(value) for value in command]
+    if len(values) >= 3 and values[1] == "-m" and values[2].startswith("nro."):
+        return values[2:]
+    if len(values) >= 6 and Path(values[1]).name == "source_launcher.py":
+        for index in range(2, len(values)):
+            if values[index].startswith("nro."):
+                return values[index:]
+    raise ValueError("Ownership recovery requires a Python -m nro command")
+
+
+def ownership_record_fingerprint(record: Mapping[str, object]) -> str:
+    """Hash stable record content while excluding bookkeeping timestamps."""
+    selected = {
+        key: value
+        for key, value in record.items()
+        if key not in {"record_fingerprint", "recorded_at", "updated_at"}
+    }
+    return fingerprint(selected)
+
+
+def convert_legacy_ownership_record(
+    record: Mapping[str, object],
+    *,
+    roots: ReferenceRoots,
+    configuration_class: str | None = None,
+) -> dict:
+    """Convert one version-4 ownership document to portable version 5."""
+    if record.get("record_version") == OWNERSHIP_VERSION:
+        return deepcopy(dict(record))
+    if record.get("record_version") != LEGACY_OWNERSHIP_VERSION or record.get("owner") != "nro":
+        raise ValueError("unsupported ownership record")
+    converted = deepcopy(dict(record))
+    converted["record_version"] = OWNERSHIP_VERSION
+    configuration = converted.get("configuration")
+    if isinstance(configuration, Mapping):
+        if configuration_class is None:
+            configuration_class = str(converted.get("configuration_class") or "")
+        converted["configuration"] = _portable_configuration(
+            configuration_class, configuration, roots
+        )
+    for field in ("artifact_contract", "scientific_contract", "implementation"):
+        if field in converted:
+            converted[field] = encode_path_values(
+                omit_private_path_values(converted[field], roots), roots, public=True
+            )
+    execution = converted.get("execution")
+    if isinstance(execution, Mapping):
+        converted_execution = dict(execution)
+        command = converted_execution.pop("command", None)
+        if command is not None:
+            converted_execution["module_argv"] = _module_argv(command)
+        if "runtime_configuration" in converted_execution:
+            converted_execution["runtime_configuration"] = encode_path_values(
+                omit_private_path_values(converted_execution["runtime_configuration"], roots),
+                roots,
+                public=True,
+            )
+        converted["execution"] = converted_execution
+    converted["record_fingerprint"] = ownership_record_fingerprint(converted)
+    return converted
 
 
 def lineage_root(project_root: Path, configuration_class: str, directory_label: str) -> Path:
@@ -195,23 +308,34 @@ def write_work_item_ownership(
         if local is None:
             raise ValueError("Branch scientific registry lacks the completed module lineage")
         lineage, upstream = _lineage_rows(scientific, int(local["id"]))
+        source_project_root = context.paths.source_project(str(work_item["project"]))
+    else:
+        source_project_root = registry.paths.bids_root / str(work_item["project"])
+    roots = _reference_roots(project_root, source_project_root=source_project_root)
+    ensure_derivative_dataset(project_root, version=package_version("nro"))
     now = datetime.now(timezone.utc).isoformat()
+    configuration = {
+        "id": lineage["config_id"],
+        "fingerprint": lineage["config_fingerprint"],
+        "resolved": yaml.safe_load(lineage["resolved_yaml"]) or {},
+    }
     root_record = {
         "record_version": OWNERSHIP_VERSION,
         "owner": "nro",
         "configuration_class": lineage["configuration_class"],
         "directory_label": lineage["directory_label"],
-        "configuration": {
-            "id": lineage["config_id"],
-            "fingerprint": lineage["config_fingerprint"],
-            "resolved": yaml.safe_load(lineage["resolved_yaml"]) or {},
-        },
+        "configuration": _portable_configuration(
+            str(lineage["configuration_class"]), configuration, roots
+        ),
         "lineage_fingerprint": lineage["lineage_fingerprint"],
         "upstream": upstream,
         "updated_at": now,
     }
     if provenance is not None:
-        root_record["implementation"] = provenance
+        root_record["implementation"] = encode_path_values(
+            omit_private_path_values(provenance, roots), roots, public=True
+        )
+    root_record["record_fingerprint"] = ownership_record_fingerprint(root_record)
     root_path = lineage_record_path(
         project_root,
         str(lineage["configuration_class"]),
@@ -248,11 +372,17 @@ def write_work_item_ownership(
         "scope": work_item["scope"],
         "lineage_fingerprint": lineage["lineage_fingerprint"],
         "directory_label": lineage["directory_label"],
-        "artifact_contract": artifact_contract,
-        "scientific_contract": scientific_contract,
+        "artifact_contract": encode_path_values(
+            omit_private_path_values(artifact_contract, roots), roots, public=True
+        ),
+        "scientific_contract": encode_path_values(
+            omit_private_path_values(scientific_contract, roots), roots, public=True
+        ),
         "execution": {
-            "command": json.loads(work_item["command_json"]),
-            "runtime_configuration": runtime_configuration,
+            "module_argv": _module_argv(json.loads(work_item["command_json"])),
+            "runtime_configuration": encode_path_values(
+                omit_private_path_values(runtime_configuration, roots), roots, public=True
+            ),
         },
         "resources": {
             "resource_class": work_item["resource_class"],
@@ -262,7 +392,10 @@ def write_work_item_ownership(
         "recorded_at": now,
     }
     if provenance is not None:
-        receipt["implementation"] = provenance
+        receipt["implementation"] = encode_path_values(
+            omit_private_path_values(provenance, roots), roots, public=True
+        )
+    receipt["record_fingerprint"] = ownership_record_fingerprint(receipt)
     receipt_path = work_item_record_path(
         project_root,
         str(lineage["configuration_class"]),
@@ -329,15 +462,20 @@ def missing_work_item_ownership(
 
 
 def read_ownership_records(
-    bids_root: Path, projects: Iterable[str]
+    bids_root: Path,
+    projects: Iterable[str],
+    *,
+    source_bids_root: Path | None = None,
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
-    """Read current-format ownership records from the selected projects."""
+    """Read and resolve ownership records from the selected derivative trees."""
     lineages: dict[tuple[str, str], dict] = {}
     ambiguous: set[tuple[str, str]] = set()
     work_items: list[tuple[dict, Path]] = []
     errors: list[str] = []
     for project in projects:
         project_root = Path(bids_root) / project
+        source_project_root = Path(source_bids_root or bids_root) / project
+        roots = _reference_roots(project_root, source_project_root=source_project_root)
         for configuration_class in CONFIGURATION_CLASSES:
             class_root = module_namespace_root(project_root, configuration_class)
             for marker_path in sorted(
@@ -345,7 +483,9 @@ def read_ownership_records(
             ):
                 try:
                     marker = json.loads(marker_path.read_text(encoding="utf-8"))
-                    _validate_lineage_record(marker, marker_path, configuration_class)
+                    marker = _validate_lineage_record(
+                        marker, marker_path, configuration_class, roots=roots
+                    )
                 except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                     errors.append(f"{marker_path}: {error}")
                     continue
@@ -369,12 +509,13 @@ def read_ownership_records(
                 for receipt_path in sorted(work_item_root.glob("*/*.json")):
                     try:
                         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-                        _validate_work_item_record(
+                        receipt = _validate_work_item_record(
                             receipt,
                             receipt_path,
                             project=project,
                             configuration_class=configuration_class,
                             marker=marker,
+                            roots=roots,
                         )
                     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                         errors.append(f"{receipt_path}: {error}")
@@ -433,10 +574,35 @@ def complete_ownership_records(
 
 
 def _validate_lineage_record(
-    record: Mapping[str, object], path: Path, configuration_class: str
-) -> None:
-    if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
+    record: Mapping[str, object],
+    path: Path,
+    configuration_class: str,
+    *,
+    roots: ReferenceRoots,
+) -> dict:
+    version = record.get("record_version")
+    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get("owner") != "nro":
         raise ValueError("unsupported ownership record")
+    if version == OWNERSHIP_VERSION:
+        portable_record = record
+        if absolute_path_values(record):
+            raise ValueError("portable ownership record contains an absolute host path")
+        portable_configuration = record.get("configuration")
+        if not isinstance(portable_configuration, Mapping):
+            raise ValueError("configuration snapshot is missing")
+        expected_portable = fingerprint(
+            {
+                "module": configuration_class,
+                "config_id": portable_configuration.get("id"),
+                "values": portable_configuration.get("resolved"),
+            }
+        )
+        if portable_configuration.get("portable_fingerprint") != expected_portable:
+            raise ValueError("portable configuration fingerprint does not match its snapshot")
+        decoded = resolve_path_values(deepcopy(dict(record)), roots)
+    else:
+        decoded = deepcopy(dict(record))
+    record = decoded
     if record.get("configuration_class") != configuration_class:
         raise ValueError("configuration class does not match its directory")
     if record.get("directory_label") != path.parent.parent.name:
@@ -446,15 +612,18 @@ def _validate_lineage_record(
         configuration.get("resolved"), Mapping
     ):
         raise ValueError("configuration snapshot is missing")
-    expected_configuration = fingerprint(
-        {
-            "module": configuration_class,
-            "config_id": configuration.get("id"),
-            "values": configuration.get("resolved"),
-        }
-    )
-    if configuration.get("fingerprint") != expected_configuration:
-        raise ValueError("configuration fingerprint does not match its snapshot")
+    if version == LEGACY_OWNERSHIP_VERSION:
+        expected_configuration = fingerprint(
+            {
+                "module": configuration_class,
+                "config_id": configuration.get("id"),
+                "values": configuration.get("resolved"),
+            }
+        )
+        if configuration.get("fingerprint") != expected_configuration:
+            raise ValueError("configuration fingerprint does not match its snapshot")
+    elif not isinstance(configuration.get("fingerprint"), str):
+        raise ValueError("historical configuration fingerprint is missing")
     upstream = record.get("upstream")
     if not isinstance(upstream, list):
         raise ValueError("upstream lineage list is missing")
@@ -486,6 +655,11 @@ def _validate_lineage_record(
     expected_directory = lineage_directory_label(str(configuration.get("id")), expected)
     if record.get("directory_label") != expected_directory:
         raise ValueError(f"lineage directory is nondeterministic; expected {expected_directory}")
+    if version == OWNERSHIP_VERSION and portable_record.get(
+        "record_fingerprint"
+    ) != ownership_record_fingerprint(portable_record):
+        raise ValueError("ownership record fingerprint does not match its content")
+    return decoded
 
 
 def _validate_work_item_record(
@@ -495,9 +669,19 @@ def _validate_work_item_record(
     project: str,
     configuration_class: str,
     marker: Mapping[str, object],
-) -> None:
-    if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
+    roots: ReferenceRoots,
+) -> dict:
+    version = record.get("record_version")
+    if version not in {LEGACY_OWNERSHIP_VERSION, OWNERSHIP_VERSION} or record.get("owner") != "nro":
         raise ValueError("unsupported work-item ownership record")
+    if version == OWNERSHIP_VERSION:
+        portable_record = record
+        if absolute_path_values(record):
+            raise ValueError("portable ownership record contains an absolute host path")
+        decoded = resolve_path_values(deepcopy(dict(record)), roots)
+    else:
+        decoded = deepcopy(dict(record))
+    record = decoded
     if record.get("project") != project:
         raise ValueError("project does not match its derivative tree")
     module = str(record.get("module"))
@@ -552,6 +736,11 @@ def _validate_work_item_record(
         raise ValueError("execution snapshot is missing")
     if not isinstance(record.get("resources"), Mapping):
         raise ValueError("resource request is missing")
+    if version == OWNERSHIP_VERSION and portable_record.get(
+        "record_fingerprint"
+    ) != ownership_record_fingerprint(portable_record):
+        raise ValueError("ownership record fingerprint does not match its content")
+    return decoded
 
 
 def materialize_work_item_specs(
@@ -603,7 +792,15 @@ def materialize_work_item_specs(
                     config_fingerprint=str(contract["configuration"]),
                     directory_label=str(record["directory_label"]),
                     runtime_config=runtime_path,
-                    command=tuple(str(value) for value in execution["command"]),
+                    command=(
+                        tuple(str(value) for value in execution["command"])
+                        if "command" in execution
+                        else (
+                            sys.executable,
+                            "-m",
+                            *(str(value) for value in execution["module_argv"]),
+                        )
+                    ),
                     dependencies=tuple(str(value) for value in contract.get("dependencies", ())),
                     input_paths=tuple(Path(value) for value in contract.get("inputs", ())),
                     output_root=Path(output["root"]),

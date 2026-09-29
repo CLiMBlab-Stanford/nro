@@ -178,13 +178,16 @@ nro set ls
 nro get
 nro set concurrency=100
 nro purge -p 01 -P example
+nro purge --excluded
 nro gc -p 01 -P example
 ```
 
 `purge` previews and confirms destructive cleanup. A bare purge selects all
 nro-controlled derivatives across all projects; `--logs` limits cleanup to
-eligible logs. `gc` preserves controlled derivatives while removing unclaimed
-files from the matching public and private derivative namespaces.
+eligible logs. `purge --excluded` removes derivatives that used paths now
+excluded by source markup, together with their downstream consumers. `gc`
+preserves controlled derivatives while removing unclaimed files from the
+matching public and private derivative namespaces.
 
 The direct module form remains equivalent, for example:
 

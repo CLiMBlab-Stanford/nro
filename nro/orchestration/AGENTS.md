@@ -12,6 +12,9 @@ Preserve these boundaries:
 * `Runner` alone owns module-internal traversal and step freshness.
 * Public ownership records are durable recovery inputs. SQLite registries and caches
   are reconstructable.
+* Public metadata stores BIDS URIs or typed site-resource identities, never host
+  paths. Resolve references only at the execution boundary. A representation-only
+  rewrite must preserve lineage fingerprints, contracts, generations, and freshness.
 * Private completion evidence belongs in the scheduler database. Do not create a
   parallel completion certificate or manifest tree.
 
@@ -33,3 +36,8 @@ Persisted scheduler or branch-scientific changes must use the restricted chain u
 `nro.orchestration.migrations`. Do not edit a baseline or define a current schema in
 parallel. Add migration fixtures, semantic invariant tests, and fresh-versus-migrated
 schema comparison, then run `nro dev schema check`.
+
+Public-provenance format changes use the converter in
+`nro.orchestration.provenance_migration`. Keep historical readers narrow and
+versioned. Conversion refreshes integrity evidence for rewritten metadata in place;
+it must not register new science, advance generations, or infer a different DAG.

@@ -1,6 +1,7 @@
 """Compiled model equivalence and the boundaries of freshness normalization."""
 
 import json
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -136,7 +137,8 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = tmp_path / "output.txt"
+    output = tmp_path / "bids/demo/derivatives/nro/firstlevels/main/sub-01" / "output.txt"
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("synthetic completed derivative")
     entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}
     spec = WorkItemSpec.create(
@@ -150,10 +152,10 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
         config_fingerprint=workflow.configuration("firstlevels").scientific_fingerprint,
         directory_label=registered.directory_for("firstlevels"),
         runtime_config=registry.runtime_config_path(registered, "firstlevels"),
-        command=("true",),
+        command=(sys.executable, "-m", "nro.modules.firstlevels"),
         dependencies=(),
         input_paths=(),
-        output_root=tmp_path,
+        output_root=output.parent,
         output_prefix=None,
         resource_class="large",
         expected_outputs=(output,),

@@ -393,7 +393,7 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
 
 @pytest.mark.parametrize("record_full_snapshot", [False, True])
 def test_execution_edit_preserves_completed_registry_artifacts(
-    store, tmp_path, record_full_snapshot
+    store, tmp_path, record_full_snapshot, monkeypatch
 ):
     from nro.orchestration.artifact_records import file_record
     from nro.orchestration.catalog import module_descriptor
@@ -485,8 +485,13 @@ def test_execution_edit_preserves_completed_registry_artifacts(
                 completed["sha256"],
             ),
         )
+    monkeypatch.setattr(
+        "nro.orchestration.manifests.write_work_item_ownership",
+        lambda *_args, **_kwargs: None,
+    )
     assert preview_registry(registry)[work_item_id][0] == "fresh"
-    assert assess_registry(registry)[work_item_id][0] == "fresh"
+    assessed = assess_registry(registry)[work_item_id]
+    assert assessed[0] == "fresh", assessed
     stamp = output.stat().st_mtime_ns
     external_main = store.configs / "clean" / "main_clean.yml"
     external_main.write_text(yaml.safe_dump({"verbose": True}))

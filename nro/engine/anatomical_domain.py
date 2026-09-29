@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nro.engine.execution import require_existing_path
-from nro.engine.io import read_json
+from nro.engine.io import read_public_json
 from nro.modules.anat.contract import validate_anatomical_manifest
 
 
@@ -47,7 +47,7 @@ def load_anatomical_domain(manifest: Path) -> tuple[AnatomicalDomain, dict[str, 
     artifacts additionally provide a synthetic intact T1w for registration
     algorithms that assume a closed, undamaged brain.
     """
-    document = read_json(manifest)
+    document = read_public_json(manifest)
     validate_anatomical_manifest(document)
     if not bool(document.get("complete")):
         raise ValueError(f"Anatomical manifest is not marked complete: {manifest}")

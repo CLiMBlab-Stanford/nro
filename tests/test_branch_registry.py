@@ -20,7 +20,7 @@ from nro.orchestration.branch_repair import (
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.ownership import (
-    OWNERSHIP_VERSION,
+    LEGACY_OWNERSHIP_VERSION,
     lineage_record_path,
     work_item_record_path,
 )
@@ -280,7 +280,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         )
     project_root = development / "dev/BIDS/demo"
     marker = {
-        "record_version": OWNERSHIP_VERSION,
+        "record_version": LEGACY_OWNERSHIP_VERSION,
         "owner": "nro",
         "configuration_class": "anat",
         "directory_label": registered.directories["anat"],
@@ -294,7 +294,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
         "updated_at": "now",
     }
     receipt = {
-        "record_version": OWNERSHIP_VERSION,
+        "record_version": LEGACY_OWNERSHIP_VERSION,
         "owner": "nro",
         "work_item_key": spec.key,
         "module": spec.module,

@@ -60,7 +60,7 @@ from nro.engine.images import (
     nifti_spatial_shape,
     nifti_volume_count,
 )
-from nro.engine.io import read_json, write_json
+from nro.engine.io import read_json, read_public_json, write_public_json
 from nro.engine.manifests import (
     create_json_step,
     require_nested_manifest_output,
@@ -88,6 +88,7 @@ from nro.engine.paths import (
     resolve_project_path,
     resolve_project_work_path,
 )
+from nro.engine.references import portable_public_payload, resolve_public_payload
 from nro.engine.targets import supported_output_spaces
 from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.func.contract import (
@@ -2758,7 +2759,7 @@ def build_module(
                 ]
             except ValueError:
                 motion_indices = []
-        return {
+        payload = {
             **publication_identity,
             "registration": {
                 "method": registration_method,
@@ -2766,7 +2767,7 @@ def build_module(
                 "sdc_method": resolved_sdc_method,
                 "sdc_fallback_reason": sdc_fallback_reason,
                 "reference_selection": selection,
-                "static_warp": str(warp_sbref2t1_refined),
+                "static_warp": "BOLDToT1wComposite",
                 "final_resampling": final_resampling_metadata(
                     gradient_unwarping=gradient_resolution.applied
                 ),
@@ -2791,6 +2792,10 @@ def build_module(
                 ),
             },
         }
+        return resolve_public_payload(
+            publication_manifest,
+            portable_public_payload(publication_manifest, payload),
+        )
 
     def publish() -> None:
         payload = publication_payload()
@@ -2808,12 +2813,12 @@ def build_module(
                 "ConfigurationFingerprint": configuration["configuration_fingerprint"],
             }
             validate_functional_image_sidecar(metadata)
-            write_json(metadata_path, metadata)
-        write_json(publication_manifest, payload)
+            write_public_json(metadata_path, metadata)
+        write_public_json(publication_manifest, payload)
 
     def validate_publication() -> tuple[bool, str]:
         try:
-            current = read_json(publication_manifest)
+            current = read_public_json(publication_manifest)
             validate_functional_manifest(current)
         except (OSError, ValueError, TypeError):
             return False, "Functional publication manifest is missing or unreadable."
@@ -2821,25 +2826,8 @@ def build_module(
             if current.get(key) != expected:
                 return False, "Functional publication manifest differs from the requested module."
         registration = current.get("registration")
-        if not isinstance(registration, dict) or any(
-            registration.get(key) != expected
-            for key, expected in {
-                "method": registration_method,
-                "requested_sdc_method": requested_sdc_method,
-                "sdc_method": resolved_sdc_method,
-                "sdc_fallback_reason": sdc_fallback_reason,
-                "static_warp": str(warp_sbref2t1_refined),
-                "final_resampling": final_resampling_metadata(
-                    gradient_unwarping=gradient_resolution.applied
-                ),
-                "gradient_unwarping": {
-                    key: resolution.scientific_record()
-                    for key, resolution in gradient_resolutions.items()
-                },
-                "fieldmap_transfer": fieldmap_transfer_details,
-                "pe_residual_refinement": pe_residual_details,
-            }.items()
-        ):
+        expected_registration = publication_payload()["registration"]
+        if registration != expected_registration:
             return False, "Functional registration publication differs from the requested module."
         denoising = current.get("denoising")
         if not isinstance(denoising, dict) or any(
@@ -2855,7 +2843,7 @@ def build_module(
             return False, "Functional denoising publication differs from the requested module."
         try:
             for metadata_path in metadata_outputs:
-                validate_functional_image_sidecar(read_json(metadata_path))
+                validate_functional_image_sidecar(read_public_json(metadata_path))
         except (OSError, TypeError, ValueError):
             return False, "A functional image sidecar violates its metadata contract."
         missing = [

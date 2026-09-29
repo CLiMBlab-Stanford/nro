@@ -30,7 +30,14 @@ def graph(tmp_path):
     processing = module_descriptor("anat").processing_contract()
     specs = []
     for name, parents in [("root", ()), ("leaf", ("root",)), ("unrelated", ())]:
-        output = tmp_path / "outputs" / name / "result_manifest.json"
+        output = (
+            tmp_path
+            / "BIDS/demo/derivatives/nro/anat"
+            / registered.directories["anat"]
+            / "sub-01"
+            / name
+            / "result_manifest.json"
+        )
         output.parent.mkdir(parents=True)
         output.write_text(
             json.dumps(
@@ -49,7 +56,7 @@ def graph(tmp_path):
                 directory_label=registered.directories["anat"],
                 config_fingerprint=workflow.configuration("anat").scientific_fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
-                command=(sys.executable, "-c", "pass"),
+                command=(sys.executable, "-m", "nro.modules.anat"),
                 input_paths=(),
                 expected_outputs=(output,),
                 output_root=output.parent,
@@ -239,7 +246,11 @@ def test_obsolete_reports_cannot_overwrite_newer_state(graph, mutation):
     before = registry.work_item_rows()
     with pytest.raises(AssessmentConflict):
         apply_assessment(registry, snapshot, report)
-    assert registry.work_item_rows() == before
+    after = registry.work_item_rows()
+    for rows in (before, after):
+        for row in rows:
+            row.pop("elapsed_seconds", None)
+    assert after == before
 
 
 def test_unrelated_work_resources_and_heartbeats_do_not_reject_report(graph):

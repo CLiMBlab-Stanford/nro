@@ -19,6 +19,7 @@ import yaml
 
 from nro.configuration.paths import BIDS_PATH
 from nro.engine.io import atomic_write_json
+from nro.engine.references import resolve_public_payload
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import ExecutionEnvelope
 from nro.orchestration.control_paths import ControlPaths
@@ -177,6 +178,7 @@ def _outputs(work_item: ExecutionEnvelope) -> tuple[Path, ...]:
             ) from error
         if not isinstance(manifest, dict):
             raise RuntimeError(f"Work-item publication manifest is not a mapping: {manifest_path}")
+        manifest = resolve_public_payload(manifest_path, manifest)
         before = set(values)
         inventory = manifest.get("public_outputs")
         if inventory is None:

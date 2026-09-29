@@ -154,6 +154,51 @@ def test_work_item_ownership_survives_removed_workflow(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
+def test_current_ownership_records_are_portable_and_survive_project_move(
+    tmp_path: Path,
+) -> None:
+    bids = tmp_path / "first" / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="anat",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+    )[0]
+    work_item_id = registry.register_work_items((work_item,))[work_item.key]
+    receipt_path = write_work_item_ownership(registry, work_item_id)
+
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["record_version"] == 5
+    assert receipt["artifact_contract"]["inputs"] == ["bids:raw:sub-01/anat/sub-01_T1w.nii.gz"]
+    assert receipt["artifact_contract"]["output"]["root"].startswith("bids::")
+    assert "command" not in receipt["execution"]
+    assert receipt["execution"]["module_argv"][0] == "nro.modules.anat"
+    assert str(tmp_path) not in receipt_path.read_text()
+
+    moved = tmp_path / "second" / "bids"
+    shutil.copytree(bids, moved)
+    lineages, records, errors = read_ownership_records(moved, ("demo",))
+
+    assert errors == []
+    assert len(lineages) == 1
+    assert len(records) == 1
+    restored = records[0][0]
+    assert restored["artifact_contract"]["inputs"] == [
+        str(moved / "demo/sub-01/anat/sub-01_T1w.nii.gz")
+    ]
+    assert restored["artifact_contract"]["output"]["root"].startswith(
+        str(moved / "demo/derivatives/nro")
+    )
+
+
 def test_planned_work_item_key_uses_stable_lineage_fingerprint(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"

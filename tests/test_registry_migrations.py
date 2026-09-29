@@ -86,6 +86,7 @@ def test_scheduler_current_state_indexes_migrate_version_23_registry(tmp_path: P
         indexes = {
             row[0] for row in database.execute("SELECT name FROM sqlite_schema WHERE type='index'")
         }
+        assert database.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
     assert {
         "attempt_work_item_history",
         "request_work_item_demand",

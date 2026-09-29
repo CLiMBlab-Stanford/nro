@@ -68,6 +68,7 @@ def test_registry_requires_the_current_schema_without_implicit_migration(
     with sqlite3.connect(registry.paths.database) as connection:
         assert connection.execute("PRAGMA application_id").fetchone()[0] == APPLICATION_ID
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert connection.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
         connection.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
         connection.commit()
 

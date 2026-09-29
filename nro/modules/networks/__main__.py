@@ -1,7 +1,6 @@
 """Select inputs and run one individualized-networks module work item."""
 
 import argparse
-import json
 import logging
 import time
 from pathlib import Path
@@ -11,7 +10,7 @@ from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.configuration.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.cli import stderr
-from nro.engine.io import atomic_write_json, flatten_paths
+from nro.engine.io import flatten_paths, read_public_json, write_public_json
 from nro.engine.paths import (
     anatomical_manifest_path,
     module_derivatives_root,
@@ -283,7 +282,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         anat_manifest_path = execution_context.input_path(anat_manifest_path)
     if not anat_manifest_path.is_file():
         raise FileNotFoundError(f"Missing anatomical publication manifest: {anat_manifest_path}")
-    anat_manifest = json.loads(anat_manifest_path.read_text(encoding="utf-8"))
+    anat_manifest = read_public_json(anat_manifest_path)
     anat_outputs = anat_manifest.get("outputs") or {}
     anatomical_reference_value = anat_outputs.get("brain_image")
     mni_to_t1w_value = (anat_outputs.get("xfms") or {}).get("mni_to_t1w")
@@ -329,7 +328,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
         publication_index = execution_context.input_path(publication_index)
     if not publication_index.is_file():
         raise FileNotFoundError(f"Missing {source_module} publication index: {publication_index}")
-    index = json.loads(publication_index.read_text(encoding="utf-8"))
+    index = read_public_json(publication_index)
     if (
         index.get("space") != args.space
         or index.get("smoothing_fwhm_mm") != smoothing_mm
@@ -381,7 +380,11 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
     def index_payload() -> dict[str, object]:
         import yaml
 
-        publication = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        from nro.engine.references import resolve_public_payload
+
+        publication = resolve_public_payload(
+            manifest, yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        )
         public_outputs = [
             path
             for value in (publication.get("outputs") or {}).values()
@@ -403,7 +406,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
 
     def validate_index() -> tuple[bool, str]:
         try:
-            current = json.loads(output_index.read_text(encoding="utf-8"))
+            current = read_public_json(output_index)
         except (OSError, ValueError, TypeError):
             return False, "Networks publication index is missing or unreadable."
         if current != index_payload():
@@ -416,7 +419,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
             outputs=(output_index,),
             inputs=published_outputs,
             force=bool(args.overwrite),
-            action=lambda: atomic_write_json(output_index, index_payload()),
+            action=lambda: write_public_json(output_index, index_payload()),
             validate=validate_index,
             completion_boundary=True,
         )

@@ -765,11 +765,21 @@ def maintenance(
         "installation_activity",
         "installation_prepare",
         "installation_progress",
+        "project_rename",
+        "provenance_migration",
     }:
         raise ValueError("Unsupported maintenance operation")
     timeout = (
         None
-        if operation in {"purge", "gc", "promotion_publish", "publish"}
+        if operation
+        in {
+            "purge",
+            "gc",
+            "promotion_publish",
+            "publish",
+            "project_rename",
+            "provenance_migration",
+        }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )
     return exchange(

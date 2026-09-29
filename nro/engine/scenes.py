@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 import yaml
 
 from nro.engine.io import atomic_output_path, atomic_write_text
+from nro.engine.references import resolve_public_payload
 from nro.engine.workbench import (
     SURFACE_SCENE_TEMPLATE,
     SURFACE_TYPES,
@@ -104,7 +105,7 @@ def read_manifest(path: Path) -> dict[str, object]:
         raise ValueError(f"Cannot read derivative manifest: {path}") from error
     if not isinstance(value, dict):
         raise ValueError(f"Derivative manifest is not a mapping: {path}")
-    return value
+    return resolve_public_payload(path, value)
 
 
 def manifest_paths(value: object, manifest: Path) -> tuple[Path, ...]:

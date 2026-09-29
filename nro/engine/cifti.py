@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from nro.engine.io import atomic_write_json
 
 if TYPE_CHECKING:
     import numpy as np
@@ -134,7 +131,9 @@ def write_indexed_cifti_sidecar(
     ):
         raise ValueError("Indexed CIFTI lookup fields must be unique and present on every map")
     sidecar = indexed_cifti_sidecar(path)
-    atomic_write_json(
+    from nro.engine.io import write_public_json
+
+    write_public_json(
         sidecar,
         {
             "Schema": INDEXED_CIFTI_SCHEMA,
@@ -153,7 +152,9 @@ def write_indexed_cifti_sidecar(
 def validate_indexed_cifti_sidecar(path: Path) -> dict[str, object]:
     """Validate an indexed dense-scalar sidecar against its CIFTI map axis."""
     path = Path(path)
-    document = json.loads(indexed_cifti_sidecar(path).read_text(encoding="utf-8"))
+    from nro.engine.io import read_public_json
+
+    document = read_public_json(indexed_cifti_sidecar(path))
     required = {
         "Schema",
         "CIFTI",

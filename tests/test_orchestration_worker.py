@@ -10,11 +10,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from nro.bin.status import main as status_main
 from nro.configuration.store import ConfigStore
+from nro.engine.io import write_public_json
 from nro.orchestration import completion, dependency_state
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
@@ -32,7 +34,7 @@ from nro.orchestration.registry import (
 from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
-from nro.orchestration.worker import Worker, _looks_like_oom
+from nro.orchestration.worker import Worker, _looks_like_oom, _outputs
 
 
 def test_cuda_memory_failure_does_not_request_more_host_memory(tmp_path: Path) -> None:
@@ -43,6 +45,22 @@ def test_cuda_memory_failure_does_not_request_more_host_memory(tmp_path: Path) -
     )
 
     assert not _looks_like_oom(log, 1)
+
+
+def test_worker_expands_portable_publication_inventory(tmp_path: Path) -> None:
+    root = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/anat"
+    derivative = root / "sub-01_T1w.nii.gz"
+    derivative.parent.mkdir(parents=True)
+    derivative.write_bytes(b"image")
+    manifest = root / "sub-01_desc-preprocessAnat_manifest.json"
+    write_public_json(manifest, {"public_outputs": [str(derivative)]})
+    work_item = SimpleNamespace(
+        work_item_id=1,
+        output_root=root,
+        expected_outputs=(manifest,),
+    )
+
+    assert set(_outputs(work_item)) == {manifest.resolve(), derivative.resolve()}
 
 
 def test_host_memory_failure_requests_more_host_memory(tmp_path: Path) -> None:
@@ -129,6 +147,16 @@ def _spec(
         expected_outputs=(output,),
         processing=module_descriptor(module).processing_contract(),
     )
+
+
+def _disable_ownership_writes(monkeypatch) -> None:
+    """Keep synthetic shell-command work items focused on scheduler behavior."""
+
+    def replacement(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(completion, "write_work_item_ownership", replacement)
+    monkeypatch.setattr("nro.orchestration.manifests.write_work_item_ownership", replacement)
 
 
 def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Path) -> None:
@@ -761,15 +789,19 @@ def test_central_registry_shares_concurrency_without_cross_project_cancellation(
 
 
 def test_worker_runs_dependency_graph_and_manifests_detect_staleness(
-    tmp_path: Path, capsys
+    tmp_path: Path, capsys, monkeypatch
 ) -> None:
+    _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    raw = tmp_path / "raw.nii.gz"
+    raw = bids / "demo/sub-01/anat/sub-01_T1w.nii.gz"
+    raw.parent.mkdir(parents=True)
     raw.write_text("raw")
-    anat_output = tmp_path / "outputs" / "anat.txt"
+    anat_output = (
+        bids / "demo/derivatives/nro/anat" / registered.directories["anat"] / "sub-01/anat.txt"
+    )
     network_output = (
         bids
         / "demo"
@@ -916,11 +948,18 @@ def test_registry_lock_timeout_cancels_and_retries_scientific_work(
 ) -> None:
     import nro.orchestration.worker as worker_module
 
+    _disable_ownership_writes(monkeypatch)
+
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = tmp_path / "outputs" / "network.txt"
+    output = (
+        bids
+        / "demo/derivatives/nro/networks"
+        / registered.directories["networks"]
+        / "sub-01/network.txt"
+    )
     work_item = _spec(
         key="networks:" + "c" * 64,
         module="networks",
@@ -1029,6 +1068,51 @@ def test_completion_inventory_retries_a_transiently_missing_output(
     assert records[0]["path"] == str(output)
 
 
+def test_completion_inventory_waits_through_nfs_directory_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "published.json"
+    clock = 0.0
+
+    def monotonic() -> float:
+        return clock
+
+    def sleep(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+        if clock >= 61:
+            output.write_text("{}")
+
+    monkeypatch.setattr(completion.time, "monotonic", monotonic)
+    monkeypatch.setattr(completion.time, "sleep", sleep)
+
+    records = completion._completion_output_inventory((output,))
+
+    assert clock == 61
+    assert records[0]["path"] == str(output)
+
+
+def test_completion_inventory_rejects_output_after_visibility_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "missing.json"
+    clock = 0.0
+
+    def monotonic() -> float:
+        return clock
+
+    def sleep(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(completion.time, "monotonic", monotonic)
+    monkeypatch.setattr(completion.time, "sleep", sleep)
+
+    with pytest.raises(ValueError, match="Completion artifact is missing"):
+        completion._completion_output_inventory((output,))
+    assert clock == completion.COMPLETION_VISIBILITY_TIMEOUT
+
+
 def test_completion_inventory_rejects_a_directory_without_retry(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1131,7 +1215,9 @@ def test_user_cancelled_attempt_requires_new_run_request(tmp_path: Path) -> None
     assert registry.claim_ready_work_item("after-new-run", ("large",)) is not None
 
 
-def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path) -> None:
+def test_missing_private_manifest_uses_native_filesystem_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -1143,16 +1229,15 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     derivative.parent.mkdir(parents=True, exist_ok=True)
     derivative.write_text("derivative")
     native_manifest = output_root / "sub-01_desc-preprocessAnat_manifest.json"
-    native_manifest.write_text(
-        json.dumps(
-            {
-                "complete": True,
-                "public_outputs": [str(derivative)],
-                "output_metadata_contract": module_descriptor("anat").processing_contract()[
-                    "output_metadata"
-                ],
-            }
-        )
+    write_public_json(
+        native_manifest,
+        {
+            "complete": True,
+            "public_outputs": [str(derivative)],
+            "output_metadata_contract": module_descriptor("anat").processing_contract()[
+                "output_metadata"
+            ],
+        },
     )
     work_item = _spec(
         key="anat:" + "0" * 64,
@@ -1168,6 +1253,10 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
         expected_outputs=(native_manifest,),
     )
     work_item_ids = registry.register_work_items((work_item,))
+    monkeypatch.setattr(
+        "nro.orchestration.manifests.write_work_item_ownership",
+        lambda *_args, **_kwargs: None,
+    )
     row = registry.work_item_rows()[0]
     states = assess_registry(registry, work_item_ids=work_item_ids.values())
 
@@ -1192,7 +1281,8 @@ def test_missing_private_manifest_uses_native_filesystem_evidence(tmp_path: Path
     assert "direct input is newer" in states[row["id"]][1]
 
 
-def test_failed_work_item_requires_new_demand_before_retry(tmp_path: Path) -> None:
+def test_failed_work_item_requires_new_demand_before_retry(tmp_path: Path, monkeypatch) -> None:
+    _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -1444,7 +1534,8 @@ def test_failed_rebuild_after_purge_blocks_demanded_descendants(tmp_path: Path) 
     assert snapshot[downstream.key]["root_failure_ids"] == (root_id,)
 
 
-def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path) -> None:
+def test_oom_escalates_memory_and_larger_worker_retries(tmp_path: Path, monkeypatch) -> None:
+    _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -2515,7 +2606,9 @@ def test_existing_request_tracks_evolving_shared_multirun_dependencies(tmp_path:
 
 def test_freshness_detects_newly_matching_multirun_input_before_replanning(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    _disable_ownership_writes(monkeypatch)
     bids = tmp_path / "bids"
     raw_dir = bids / "demo" / "sub-01" / "func"
 
@@ -2534,7 +2627,12 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
         lineage=registered.lineages["clean"],
         config_fingerprint=workflow.configuration("clean").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "clean"),
-        output=tmp_path / "clean-output" / "clean.txt",
+        output=(
+            bids
+            / "demo/derivatives/nro/clean"
+            / registered.directories["clean"]
+            / "sub-01/clean.txt"
+        ),
     )
     clean = clean_base.evolve(
         entities={"task": "rest", "run": "1"},
@@ -2546,7 +2644,12 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
         lineage=registered.lineages["microparcellation"],
         config_fingerprint=workflow.configuration("microparcellation").fingerprint,
         runtime_config=registry.runtime_config_path(registered, "microparcellation"),
-        output=tmp_path / "micro-output" / "micro.txt",
+        output=(
+            bids
+            / "demo/derivatives/nro/microparcellation"
+            / registered.directories["microparcellation"]
+            / "sub-01/micro.txt"
+        ),
         dependencies=(clean.key,),
     )
     registry.create_request(

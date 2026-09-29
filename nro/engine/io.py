@@ -73,6 +73,20 @@ def write_json(path: Path, value: Any, *, sort_keys: bool = False) -> None:
     atomic_write_json(path, value, sort_keys=sort_keys)
 
 
+def read_public_json(path: Path) -> dict[str, Any]:
+    """Read an nro public JSON object and resolve its portable references."""
+    from nro.engine.references import resolve_public_payload
+
+    return resolve_public_payload(path, read_json(path))
+
+
+def write_public_json(path: Path, value: Any, *, sort_keys: bool = False) -> None:
+    """Write an nro public JSON object with portable file references."""
+    from nro.engine.references import portable_public_payload
+
+    atomic_write_json(path, portable_public_payload(path, value), sort_keys=sort_keys)
+
+
 def atomic_save_npy(path: Path, array: Any) -> None:
     """Write a NumPy array and atomically publish the completed file."""
     import numpy as np

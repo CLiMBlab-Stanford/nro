@@ -18,8 +18,8 @@ from nro.orchestration.completion_records import completion_record
 from nro.orchestration.ownership import write_work_item_ownership
 from nro.orchestration.registry import Registry, utcnow
 
-COMPLETION_VISIBILITY_TIMEOUT = 30.0
-COMPLETION_VISIBILITY_POLL_INTERVAL = 0.25
+COMPLETION_VISIBILITY_TIMEOUT = 120.0
+COMPLETION_VISIBILITY_POLL_INTERVAL = 1.0
 
 
 def _completion_output_inventory(paths: Iterable[str | Path]) -> list[dict]:
@@ -139,6 +139,11 @@ def record_completion(
     input_records = inventory(json.loads(work_item["input_paths_json"]))
     generation = int(work_item["current_generation"]) + 1
     completed_at = utcnow()
+    # Inventory can be slow enough for an upstream generation or cancellation
+    # request to change while the coordinator is inspecting shared storage.
+    # Reject that attempt before creating its durable public ownership record.
+    with registry.connection() as db:
+        dependency_state.check_completion(db, work_item, attempt_id)
     write_work_item_ownership(registry, work_item_id, attempt_id=attempt_id)
     with registry.connection(write=True) as db:
         dependency_state.check_completion(db, work_item, attempt_id)

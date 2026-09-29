@@ -713,6 +713,7 @@ class Registry(WorkflowRegistry):
         try:
             connection = sqlite3.connect(temporary)
             try:
+                connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.execute("PRAGMA journal_mode=DELETE")
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
@@ -1451,7 +1452,7 @@ class Registry(WorkflowRegistry):
 
         manager = self.read_connection() if read_only else self.connection()
         with manager as db:
-            rows = work_item_rows(db)
+            rows = work_item_rows(db, status_only=True)
             dependencies = work_item_dependencies(db)
         return project_work_item_status(rows, dependencies, artifact_states=artifact_states)
 
@@ -3458,7 +3459,9 @@ class Registry(WorkflowRegistry):
                 "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
             ).fetchone()
             if plan is not None:
-                terminals = set(json.loads(plan[0])["terminals"])
+                from nro.orchestration.request_plans import decode_plan
+
+                terminals = set(decode_plan(plan[0])["terminals"])
                 work_items = [
                     row
                     for row in db.execute(

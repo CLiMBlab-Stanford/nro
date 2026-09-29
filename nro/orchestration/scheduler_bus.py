@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import os
 import re
 import shutil
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text, read_json
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory, utcnow
@@ -26,6 +28,36 @@ STARTING_GRACE_SECONDS = 30.0
 DEFAULT_IDLE_GRACE_SECONDS = 12 * 60 * 60.0
 SCHEDULER_CPUS = 4
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}")
+_STATUS_FORMAT = 2
+_STATUS_STATIC_FILE = re.compile(r"status-static-[0-9a-f]{64}\.json")
+_STATUS_DYNAMIC_FILE = re.compile(r"status-dynamic-[01]\.json")
+_STATUS_STATIC_ROW_FIELDS = frozenset(
+    {
+        "artifact_fingerprint",
+        "config_id",
+        "configuration_class",
+        "configuration_route_json",
+        "created_at",
+        "directory_label",
+        "entities_json",
+        "id",
+        "lineage_fingerprint",
+        "logical_key",
+        "max_memory_gb",
+        "memory_gb",
+        "module",
+        "module_lineage_id",
+        "output_prefix",
+        "output_root",
+        "participant",
+        "project",
+        "resource_class",
+        "revision_fingerprint",
+        "scientific_revision",
+        "scope",
+        "work_item_key",
+    }
+)
 
 
 def _identifier(value: str, label: str) -> str:
@@ -452,15 +484,167 @@ def submit_controller(script: Path) -> str:
     return job_id
 
 
+def _split_status_snapshot(value: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate stable graph data from frequently changing execution state."""
+    static_branches = {}
+    dynamic_branches = {}
+    for name, report in value["branches"].items():
+        static_rows = []
+        dynamic_rows = []
+        for row in report["rows"]:
+            static_rows.append(
+                {key: item for key, item in row.items() if key in _STATUS_STATIC_ROW_FIELDS}
+            )
+            dynamic_rows.append(
+                {
+                    key: item
+                    for key, item in row.items()
+                    if key == "id" or key not in _STATUS_STATIC_ROW_FIELDS
+                }
+            )
+        static_branches[name] = {
+            "rows": static_rows,
+            "visible_ids": report["visible_ids"],
+            "dependencies": report["dependencies"],
+        }
+        dynamic_branches[name] = {
+            "rows": dynamic_rows,
+            "ingestion": report["ingestion"],
+        }
+    return (
+        {"branches": static_branches},
+        {
+            "generation": value["generation"],
+            "workers": value["workers"],
+            "submissions": value["submissions"],
+            "branches": dynamic_branches,
+        },
+    )
+
+
+def _write_status_json(path: Path, value: dict[str, Any]) -> None:
+    """Durably publish compact JSON used only as a machine-facing read model."""
+    atomic_write_text(
+        path,
+        json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n",
+        mode=0o664,
+        durable=True,
+    )
+
+
+def publish_snapshot(control: Path, value: dict[str, Any]) -> None:
+    """Publish a coherent cached read model while reusing unchanged graph data."""
+    if value.get("protocol") != PROTOCOL or not isinstance(value.get("branches"), dict):
+        raise ValueError("Invalid scheduler status snapshot")
+    paths = prepare(control)
+    static, dynamic = _split_status_snapshot(value)
+    static_fingerprint = fingerprint(static)
+    static_name = f"status-static-{static_fingerprint}.json"
+    dynamic_name = f"status-dynamic-{int(value['generation']) % 2}.json"
+    static_path = paths.service / static_name
+    if not static_path.is_file():
+        _write_status_json(
+            static_path,
+            {
+                "protocol": PROTOCOL,
+                "format": _STATUS_FORMAT,
+                "fingerprint": static_fingerprint,
+                **static,
+            },
+        )
+    _write_status_json(
+        paths.service / dynamic_name,
+        {"protocol": PROTOCOL, "format": _STATUS_FORMAT, **dynamic},
+    )
+    _write_status_json(
+        paths.service_snapshot,
+        {
+            "protocol": PROTOCOL,
+            "format": _STATUS_FORMAT,
+            "generation": value["generation"],
+            "published_at": value["published_at"],
+            "service_active": value["service_active"],
+            "static": static_name,
+            "dynamic": dynamic_name,
+        },
+    )
+
+
+def _status_component(service: Path, name: object, pattern: re.Pattern[str]) -> dict[str, Any]:
+    """Read one status component after constraining it to the service directory."""
+    if not isinstance(name, str) or pattern.fullmatch(name) is None:
+        raise ValueError("Unsupported scheduler status component")
+    return read_json(service / name)
+
+
+def _assemble_status_snapshot(control: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Join one manifest's static graph and dynamic state in memory."""
+    service = ControlPaths(control).service
+    static = _status_component(service, manifest.get("static"), _STATUS_STATIC_FILE)
+    dynamic = _status_component(service, manifest.get("dynamic"), _STATUS_DYNAMIC_FILE)
+    if (
+        static.get("protocol") != PROTOCOL
+        or static.get("format") != _STATUS_FORMAT
+        or dynamic.get("protocol") != PROTOCOL
+        or dynamic.get("format") != _STATUS_FORMAT
+        or dynamic.get("generation") != manifest.get("generation")
+        or static.get("fingerprint")
+        != str(manifest.get("static", "")).removeprefix("status-static-").removesuffix(".json")
+        or not isinstance(static.get("branches"), dict)
+        or not isinstance(dynamic.get("branches"), dict)
+        or set(static["branches"]) != set(dynamic["branches"])
+    ):
+        raise ValueError("Unsupported scheduler status snapshot")
+    branches = {}
+    for name, stable in static["branches"].items():
+        changing = dynamic["branches"][name]
+        dynamic_rows = {int(row["id"]): row for row in changing["rows"]}
+        rows = []
+        for row in stable["rows"]:
+            identifier = int(row["id"])
+            if identifier not in dynamic_rows:
+                raise ValueError("Scheduler status components describe different work items")
+            rows.append({**row, **dynamic_rows.pop(identifier)})
+        if dynamic_rows:
+            raise ValueError("Scheduler status components describe different work items")
+        branches[name] = {
+            "rows": rows,
+            "visible_ids": stable["visible_ids"],
+            "ingestion": changing["ingestion"],
+            "dependencies": stable["dependencies"],
+        }
+    return {
+        "protocol": PROTOCOL,
+        "generation": manifest["generation"],
+        "published_at": manifest["published_at"],
+        "service_active": manifest["service_active"],
+        "workers": dynamic["workers"],
+        "submissions": dynamic["submissions"],
+        "branches": branches,
+    }
+
+
 def read_snapshot(control: Path) -> dict[str, Any] | None:
     """Read the last complete scheduler read model without opening SQLite."""
-    try:
-        value = read_json(ControlPaths(control).service_snapshot)
-    except FileNotFoundError:
-        return None
-    if value.get("protocol") != PROTOCOL or not isinstance(value.get("branches"), dict):
-        raise ValueError("Unsupported scheduler status snapshot")
-    return value
+    path = ControlPaths(control).service_snapshot
+    for _attempt in range(3):
+        try:
+            value = read_json(path)
+        except FileNotFoundError:
+            return None
+        if value.get("protocol") != PROTOCOL:
+            raise ValueError("Unsupported scheduler status snapshot")
+        if isinstance(value.get("branches"), dict):
+            return value
+        if value.get("format") != _STATUS_FORMAT:
+            raise ValueError("Unsupported scheduler status snapshot")
+        try:
+            return _assemble_status_snapshot(control, value)
+        except (FileNotFoundError, ValueError):
+            # A second publication may have advanced through both alternating
+            # dynamic slots after this reader loaded its manifest.
+            continue
+    raise ValueError("Scheduler status components changed repeatedly while being read")
 
 
 def publish_shutdown(control: Path, *, token: str, generation: int) -> None:
@@ -497,11 +681,20 @@ def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) ->
     """Remove old progress records and controller files."""
     paths = ControlPaths(control)
     cutoff = time.time() - age_seconds
+    try:
+        current_static = read_json(paths.service_snapshot).get("static")
+    except (FileNotFoundError, ValueError, OSError):
+        current_static = None
     for path in (
         *paths.service_progress.glob("*.json"),
         *paths.service.glob("controller-*.sbatch"),
         *paths.service.glob("controller-local-*.log"),
         *paths.service.glob("startup-error-*.json"),
+        *(
+            path
+            for path in paths.service.glob("status-static-*.json")
+            if path.name != current_static
+        ),
     ):
         try:
             if path.stat().st_mtime < cutoff:

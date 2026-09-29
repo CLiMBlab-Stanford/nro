@@ -24,8 +24,8 @@ def graph(tmp_path):
         ("feature-leaf", ("dev-middle",)),
         ("unrelated", ()),
     ]:
-        output = tmp_path / name / "result.txt"
-        output.parent.mkdir()
+        output = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01" / name / "result.txt"
+        output.parent.mkdir(parents=True)
         output.write_text("original result")
         specs.append(
             WorkItemSpec.create(
@@ -39,7 +39,7 @@ def graph(tmp_path):
                 directory_label=registered.directory_for("anat"),
                 config_fingerprint=workflow.configuration("anat").fingerprint,
                 runtime_config=registry.runtime_config_path(registered, "anat"),
-                command=(sys.executable, "-c", "pass"),
+                command=(sys.executable, "-m", "nro.modules.anat"),
                 input_paths=(),
                 expected_outputs=(output,),
                 output_root=output.parent,

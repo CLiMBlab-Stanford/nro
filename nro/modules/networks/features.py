@@ -170,6 +170,11 @@ def informative_dimensions(cfg: ModuleConfig) -> int | None:
         return None
     import yaml
 
-    manifest = yaml.safe_load(cfg.inputs.source_manifest.read_text(encoding="utf-8")) or {}
+    from nro.engine.references import resolve_public_payload
+
+    manifest = resolve_public_payload(
+        cfg.inputs.source_manifest,
+        yaml.safe_load(cfg.inputs.source_manifest.read_text(encoding="utf-8")) or {},
+    )
     low_rank = manifest.get("low_rank")
     return int(low_rank["dimensions"]) if isinstance(low_rank, dict) else None

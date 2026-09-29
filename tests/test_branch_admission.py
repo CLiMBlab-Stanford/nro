@@ -225,6 +225,15 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup):
     }
     view = snapshot(registry, checkout=checkout, site_values=site_values)
     row = next(item for item in view["rows"] if item["module"] == spec.module)
+    scientific_view = snapshot(
+        registry,
+        checkout=checkout,
+        site_values=site_values,
+        include_scientific_inputs=True,
+    )
+    scientific_row = next(item for item in scientific_view["rows"] if item["module"] == spec.module)
+    assert isinstance(json.loads(scientific_row["input_paths_json"]), list)
+    assert "markup:" in scientific_row["resolved_configuration_yaml"]
     context = ExecutionContext.from_dict(row["execution_context"])
     facade = SimpleNamespace(
         paths=SimpleNamespace(
@@ -685,8 +694,10 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
 
     registry, branches, site, prepare = setup
     checkout, paths, spec, plan, registered, source, request_id = prepare("one")
+    from nro.orchestration.request_plans import decode_plan
+
     with registry.connection() as db:
-        payload = json.loads(
+        payload = decode_plan(
             db.execute(
                 "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
             ).fetchone()[0]
@@ -738,12 +749,12 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
 
 
 def test_terminal_request_plan_discards_reconciliation_recipe(setup):
-    from nro.orchestration.request_plans import compact_terminal_plans
+    from nro.orchestration.request_plans import compact_terminal_plans, decode_plan
 
     registry, _branches, _site, prepare = setup
     *_prepared, request_id = prepare("one")
     with registry.connection(write=True) as db:
-        payload = json.loads(
+        payload = decode_plan(
             db.execute(
                 "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
             ).fetchone()[0]
@@ -752,7 +763,7 @@ def test_terminal_request_plan_discards_reconciliation_recipe(setup):
         terminals = payload["terminals"]
         db.execute("UPDATE requests SET state='satisfied' WHERE id=?", (request_id,))
         assert compact_terminal_plans(db) == 1
-        compact = json.loads(
+        compact = decode_plan(
             db.execute(
                 "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
             ).fetchone()[0]

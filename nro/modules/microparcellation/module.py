@@ -37,6 +37,7 @@ from nro.engine.io import (
     manifest_value,
     temporary_sibling,
 )
+from nro.engine.references import portable_public_payload, resolve_public_payload
 from nro.engine.surface_geometry import load_surface_mask, load_surfaces, mesh_edges
 from nro.orchestration.runner import Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
@@ -800,14 +801,19 @@ def build_module(
         atomic_write_text(
             manifest_path,
             yaml.safe_dump(
-                json.loads(json.dumps(manifest, default=json_path_default)),
+                portable_public_payload(
+                    manifest_path,
+                    json.loads(json.dumps(manifest, default=json_path_default)),
+                ),
                 sort_keys=False,
             ),
         )
 
     def validate_manifest() -> tuple[bool, str]:
         try:
-            published = yaml.safe_load(manifest_path.read_text()) or {}
+            published = resolve_public_payload(
+                manifest_path, yaml.safe_load(manifest_path.read_text()) or {}
+            )
             validate_microparcellation_manifest(published)
             quality_metadata = json.loads(quality_path.read_text(encoding="utf-8"))
             validate_microparcellation_quality(quality_metadata)

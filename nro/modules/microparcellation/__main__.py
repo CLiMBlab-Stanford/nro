@@ -1,7 +1,6 @@
 """Select inputs and run one microparcellation module work item."""
 
 import argparse
-import json
 import logging
 import time
 from pathlib import Path
@@ -15,7 +14,7 @@ from nro.engine.bids import (
 )
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
-from nro.engine.io import atomic_write_json, flatten_paths
+from nro.engine.io import flatten_paths, read_public_json, write_public_json
 from nro.engine.paths import anatomical_manifest_path, module_derivatives_root, module_work_root
 from nro.engine.surface_geometry import surface_geometry
 from nro.engine.targets import (
@@ -85,7 +84,7 @@ def infer_gray_matter_mask(
         manifest_path = execution_context.input_path(manifest_path)
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing anatomical publication manifest: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = read_public_json(manifest_path)
     value = (manifest.get("outputs") or {}).get("gray_matter_mask")
     if not value:
         raise FileNotFoundError(
@@ -290,7 +289,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
 
     def validate_index() -> tuple[bool, str]:
         try:
-            current = json.loads(publication_index.read_text(encoding="utf-8"))
+            current = read_public_json(publication_index)
         except (OSError, ValueError, TypeError):
             return False, "Microparcellation publication index is missing or unreadable."
         if current != payload:
@@ -303,7 +302,7 @@ def main(argv: list[str] | None = None, *, execution_context: ExecutionContext |
             outputs=(publication_index,),
             inputs=published_outputs,
             force=bool(args.overwrite),
-            action=lambda: atomic_write_json(publication_index, payload),
+            action=lambda: write_public_json(publication_index, payload),
             validate=validate_index,
             completion_boundary=True,
         )

@@ -107,8 +107,14 @@ def token(row: dict, context_json: str | None) -> str:
     )
 
 
-def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
-    """Return only owned work items; inherited selections are not deletion targets."""
+def snapshot(
+    registry,
+    *,
+    checkout: Path,
+    site_values: dict,
+    include_scientific_inputs: bool = False,
+) -> dict:
+    """Return owned work items and the facts needed to select safe deletions."""
     from nro.orchestration.scheduler_service import status
 
     topology = BranchStore(registry.paths.control).read().topology
@@ -117,7 +123,7 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
     report = status(registry, checkout=checkout, mode="cached")
     paths = BranchPaths(name, *(Path(site_values[key]) for key in ("bids", "work", "development")))
     if not registry.existing_database_path().is_file():
-        return {"rows": [], "branch": name}
+        return {"rows": [], "dependencies": [], "branch": name}
     report_ids = {int(row["id"]) for row in report["rows"]}
     with registry.connection() as db:
         metadata = {
@@ -129,6 +135,19 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
                 report_ids,
             )
         }
+        scientific = {}
+        if include_scientific_inputs and report_ids:
+            placeholders = ",".join("?" for _ in report_ids)
+            scientific = {
+                int(row["id"]): dict(row)
+                for row in db.execute(
+                    f"""SELECT item.id,item.input_paths_json,lineage.resolved_yaml
+                        FROM work_items item
+                        JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
+                        WHERE item.id IN ({placeholders})""",
+                    tuple(sorted(report_ids)),
+                )
+            }
     rows = []
     for row in report["rows"]:
         item = metadata.get(row["id"])
@@ -140,8 +159,24 @@ def snapshot(registry, *, checkout: Path, site_values: dict) -> dict:
             if encoded
             else ExecutionContext(paths, row["project"], row["work_item_key"], ())
         )
-        rows.append(dict(row, execution_context=context.as_dict(), purge_token=token(row, encoded)))
-    return {"rows": rows, "branch": name}
+        payload = dict(
+            row,
+            execution_context=context.as_dict(),
+            purge_token=token(row, encoded),
+        )
+        if include_scientific_inputs:
+            payload.update(
+                input_paths_json=scientific[int(row["id"])]["input_paths_json"],
+                resolved_configuration_yaml=scientific[int(row["id"])]["resolved_yaml"],
+            )
+        rows.append(payload)
+    owned_ids = {int(row["id"]) for row in rows}
+    dependencies = [
+        [int(work_item_id), int(upstream_id)]
+        for work_item_id, upstream_id in report.get("dependencies", ())
+        if int(work_item_id) in owned_ids and int(upstream_id) in owned_ids
+    ]
+    return {"rows": rows, "dependencies": dependencies, "branch": name}
 
 
 def purge(

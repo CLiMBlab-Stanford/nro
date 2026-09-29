@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import yaml
+
 from nro.configuration.paths import WORK_PATH
 from nro.engine.cli import (
     add_core_selection_arguments,
@@ -59,6 +61,81 @@ def _modules(values: Iterable[str] | None) -> set[str]:
     return modules
 
 
+def _descendant_closure(
+    work_item_ids: Iterable[int], dependencies: Iterable[Iterable[int]]
+) -> set[int]:
+    """Return selected work items and every registered downstream consumer."""
+    selected = {int(value) for value in work_item_ids}
+    children: dict[int, set[int]] = {}
+    for work_item_id, upstream_id in dependencies:
+        children.setdefault(int(upstream_id), set()).add(int(work_item_id))
+    frontier = set(selected)
+    while frontier:
+        descendants = {
+            child
+            for work_item_id in frontier
+            for child in children.get(work_item_id, ())
+            if child not in selected
+        }
+        selected.update(descendants)
+        frontier = descendants
+    return selected
+
+
+def _excluded_work_item_ids(rows: Iterable[dict], *, bids_root: Path) -> set[int]:
+    """Identify work items whose recorded raw inputs are now excluded by markup."""
+    from nro.configuration.markup import MarkupStore
+
+    store = MarkupStore()
+    selections = {}
+    excluded = set()
+    for row in rows:
+        values = yaml.safe_load(str(row["resolved_configuration_yaml"])) or {}
+        if not isinstance(values, dict):
+            raise ValueError("Recorded module configuration is not a mapping")
+        markup_id = values.get("markup")
+        if markup_id is None:
+            continue
+        key = (str(markup_id), str(row["project"]), str(row["participant"]))
+        if key not in selections:
+            subject_dir = bids_root / key[1] / f"sub-{key[2]}"
+            selections[key] = store.subject(key[0], key[1], subject_dir)
+        markup = selections[key]
+        if any(markup.is_excluded(Path(path)) for path in json.loads(row["input_paths_json"])):
+            excluded.add(int(row["id"]))
+    return excluded
+
+
+def _matches_selection(row: dict, selection) -> bool:
+    """Apply ordinary artifact selectors to one purge snapshot row."""
+    return not (
+        (selection.projects and row["project"] not in selection.projects)
+        or (selection.participants and row["participant"] not in selection.participants)
+        or (selection.modules and row["module"] not in selection.modules)
+        or (
+            selection.workflows
+            and not set(selection.workflows).intersection(
+                str(row.get("workflow_ids") or "").split(",")
+            )
+        )
+        or not matches_module_lineage(
+            str(row["module"]), str(row["directory_label"]), selection.lineages
+        )
+        or not matches_selectors(json.loads(row["entities_json"]), selection.work_item_entities)
+    )
+
+
+def _excluded_selection(rows: list[dict], dependencies, selection, *, bids_root: Path) -> set[int]:
+    """Select excluded-source work and force its downstream closure into the purge."""
+    affected = _descendant_closure(_excluded_work_item_ids(rows, bids_root=bids_root), dependencies)
+    roots = {
+        int(row["id"])
+        for row in rows
+        if int(row["id"]) in affected and _matches_selection(row, selection)
+    }
+    return _descendant_closure(roots, dependencies) & affected
+
+
 def _matching_work_items(
     registry: Registry,
     *,
@@ -86,6 +163,38 @@ def _matching_work_items(
             continue
         result.append(row)
     return result
+
+
+def _local_excluded_selection(
+    registry: Registry,
+    rows: list[dict],
+    selection,
+    *,
+    bids_root: Path,
+) -> set[int]:
+    """Resolve excluded-source cleanup for a standalone registry."""
+    lineage_ids = {int(row["module_lineage_id"]) for row in rows}
+    resolved = {}
+    if lineage_ids:
+        placeholders = ",".join("?" for _ in lineage_ids)
+        with registry.connection() as db:
+            resolved = {
+                int(row["id"]): str(row["resolved_yaml"])
+                for row in db.execute(
+                    f"SELECT id,resolved_yaml FROM module_lineages WHERE id IN ({placeholders})",
+                    tuple(sorted(lineage_ids)),
+                )
+            }
+    enriched = [
+        dict(row, resolved_configuration_yaml=resolved[int(row["module_lineage_id"])])
+        for row in rows
+    ]
+    return _excluded_selection(
+        enriched,
+        registry.work_item_dependencies(),
+        selection,
+        bids_root=bids_root,
+    )
 
 
 def _active_work_items(registry: Registry, work_item_ids: set[int]) -> list[dict]:
@@ -235,8 +344,13 @@ def _planned_paths(
     return sorted(public), sorted(private)
 
 
-def _render_plan(public: list[Path], private: list[Path], *, logs_only: bool) -> str:
-    lines = ["Planned purge", ""]
+def _render_plan(
+    public: list[Path], private: list[Path], *, logs_only: bool, excluded: bool = False
+) -> str:
+    title = (
+        "Planned purge (excluded sources and downstream consumers)" if excluded else "Planned purge"
+    )
+    lines = [title, ""]
     if logs_only:
         lines.append("No derivative paths will be removed; only eligible logs are selected.")
     else:
@@ -280,6 +394,13 @@ def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
         "--cache",
         action="store_true",
         help="Remove unused execution snapshots lab-wide, ignoring selectors",
+    )
+    mode.add_argument(
+        "--excluded",
+        action="store_true",
+        help=(
+            "Remove work using currently excluded BIDS inputs and all of its downstream dependents"
+        ),
     )
     parser.add_argument(
         "-f",
@@ -371,23 +492,29 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
             "Branch purge uses the shared WORK root and maps output paths automatically"
         )
     control = Path(values["registry"])
-    snapshot = maintenance(control, bids_root, checkout=checkout, operation="purge_snapshot")
+    snapshot = maintenance(
+        control,
+        bids_root,
+        checkout=checkout,
+        operation="purge_snapshot",
+        include_scientific_inputs=args.excluded,
+    )
+    excluded_ids = (
+        _excluded_selection(
+            snapshot["rows"],
+            snapshot.get("dependencies", ()),
+            selection,
+            bids_root=bids_root,
+        )
+        if args.excluded
+        else None
+    )
     plan, public, private, projects = [], set(), set(), set()
     for row in snapshot["rows"]:
         if (
-            (selection.projects and row["project"] not in selection.projects)
-            or (selection.participants and row["participant"] not in selection.participants)
-            or (selection.modules and row["module"] not in selection.modules)
-            or (
-                selection.workflows
-                and not set(selection.workflows).intersection(
-                    str(row.get("workflow_ids") or "").split(",")
-                )
-            )
-            or not matches_module_lineage(
-                str(row["module"]), str(row["directory_label"]), selection.lineages
-            )
-            or not matches_selectors(json.loads(row["entities_json"]), selection.work_item_entities)
+            int(row["id"]) not in excluded_ids
+            if excluded_ids is not None
+            else not _matches_selection(row, selection)
         ):
             continue
         if not args.logs and row["attempt_state"] in {"queued", "running", "cancel_requested"}:
@@ -424,7 +551,14 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     if args.json and not args.force and not args.dry_run:
         raise SystemExit("--json requires --force when purge is not a dry run")
     if not args.json:
-        page_text(_render_plan(sorted(public), sorted(private), logs_only=args.logs))
+        page_text(
+            _render_plan(
+                sorted(public),
+                sorted(private),
+                logs_only=args.logs,
+                excluded=args.excluded,
+            )
+        )
     if not args.force and not args.dry_run and not _confirm():
         print("Purge cancelled.")
         return
@@ -439,7 +573,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
     )
     result.update(
         projects=len(projects),
-        mode="logs" if args.logs else "all",
+        mode="logs" if args.logs else "excluded" if args.excluded else "all",
         dry_run=args.dry_run,
         planned_public_paths=list(map(str, sorted(public))),
         planned_private_paths=list(map(str, sorted(private))),
@@ -499,14 +633,28 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     planned: list[tuple[Registry, list[dict]]] = []
     for project in projects:
         registry = Registry.for_project(project, bids_root=bids_root)
-        work_items = _matching_work_items(
-            registry,
-            participants=selection.participants,
-            modules=modules,
-            workflows=set(selection.workflows),
-            lineages=set(selection.lineages),
-            selectors=selectors,
-        )
+        if args.excluded:
+            rows = [
+                row
+                for row in registry.work_item_rows()
+                if str(row["project"]) == registry.paths.project
+            ]
+            selected_ids = _local_excluded_selection(
+                registry,
+                rows,
+                selection,
+                bids_root=bids_root,
+            )
+            work_items = [row for row in rows if int(row["id"]) in selected_ids]
+        else:
+            work_items = _matching_work_items(
+                registry,
+                participants=selection.participants,
+                modules=modules,
+                workflows=set(selection.workflows),
+                lineages=set(selection.lineages),
+                selectors=selectors,
+            )
         planned.append((registry, work_items))
 
     selected_work_item_ids = {
@@ -521,7 +669,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     public_paths, private_paths = (
         ([], []) if args.logs else _planned_paths(planned, work_root=work_root)
     )
-    report = _render_plan(public_paths, private_paths, logs_only=args.logs)
+    report = _render_plan(
+        public_paths,
+        private_paths,
+        logs_only=args.logs,
+        excluded=args.excluded,
+    )
     if args.json:
         if not args.force and not args.dry_run:
             raise SystemExit("--json requires --force when purge is not a dry run")
@@ -549,7 +702,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
     )
 
     payload = total.__dict__ | {
-        "mode": "logs" if args.logs else "all",
+        "mode": "logs" if args.logs else "excluded" if args.excluded else "all",
         "dry_run": args.dry_run,
         "planned_public_paths": [str(path) for path in public_paths],
         "planned_private_paths": [str(path) for path in private_paths],

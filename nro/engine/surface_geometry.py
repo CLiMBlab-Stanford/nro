@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -85,7 +84,9 @@ def anatomical_surface_paths(
     manifest_path = Path(anat_path) / f"sub-{participant}_desc-preprocessAnat_manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing anatomical publication manifest: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    from nro.engine.io import read_public_json
+
+    manifest = read_public_json(manifest_path)
     published = (manifest.get("outputs") or {}).get("surfaces") or {}
     result = []
     for hemisphere in ("lh", "rh"):
