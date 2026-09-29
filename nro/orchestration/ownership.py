@@ -38,6 +38,41 @@ OWNERSHIP_VERSION = 5
 LEGACY_OWNERSHIP_VERSION = 4
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
+_SITE_SETTING = "$nro_site_setting"
+
+
+def _portable_configuration_values(value: object, roots: ReferenceRoots) -> object:
+    """Replace host execution settings before encoding public paths."""
+
+    def replace_site_settings(item: object) -> object:
+        if isinstance(item, Mapping):
+            converted = {key: replace_site_settings(member) for key, member in item.items()}
+            if "engine" in item and "bind" in item:
+                converted["bind"] = {_SITE_SETTING: "binds"}
+            return converted
+        if isinstance(item, (list, tuple)):
+            return [replace_site_settings(member) for member in item]
+        return item
+
+    return encode_path_values(
+        omit_private_path_values(replace_site_settings(value), roots), roots, public=True
+    )
+
+
+def _resolve_configuration_values(value: object) -> object:
+    """Expand site-setting references for local execution and recovery."""
+    if isinstance(value, Mapping):
+        if set(value) == {_SITE_SETTING}:
+            name = value[_SITE_SETTING]
+            if name != "binds":
+                raise ValueError(f"Unknown portable site setting {name!r}")
+            from nro.configuration.site import settings
+
+            return list(settings()[0].get("binds", ()))
+        return {key: _resolve_configuration_values(member) for key, member in value.items()}
+    if isinstance(value, list):
+        return [_resolve_configuration_values(member) for member in value]
+    return value
 
 
 def _reference_roots(
@@ -58,9 +93,7 @@ def _portable_configuration(
     roots: ReferenceRoots,
 ) -> dict:
     """Encode a resolved configuration without changing its scientific fingerprint."""
-    resolved = encode_path_values(
-        omit_private_path_values(configuration["resolved"], roots), roots, public=True
-    )
+    resolved = _portable_configuration_values(configuration["resolved"], roots)
     return {
         "id": configuration["id"],
         "fingerprint": configuration["fingerprint"],
@@ -73,6 +106,39 @@ def _portable_configuration(
             }
         ),
     }
+
+
+def normalize_portable_ownership_record(
+    record: Mapping[str, object],
+    *,
+    roots: ReferenceRoots,
+    configuration_class: str | None = None,
+) -> dict:
+    """Normalize a version-5 ownership document to the current portable form."""
+    if record.get("record_version") != OWNERSHIP_VERSION or record.get("owner") != "nro":
+        raise ValueError("unsupported ownership record")
+    converted = deepcopy(dict(record))
+    configuration = converted.get("configuration")
+    if isinstance(configuration, Mapping):
+        if configuration_class is None:
+            configuration_class = str(converted.get("configuration_class") or "")
+        converted["configuration"] = _portable_configuration(
+            configuration_class, configuration, roots
+        )
+    for field in ("artifact_contract", "scientific_contract", "implementation"):
+        if field in converted:
+            converted[field] = encode_path_values(
+                omit_private_path_values(converted[field], roots), roots, public=True
+            )
+    execution = converted.get("execution")
+    if isinstance(execution, Mapping) and "runtime_configuration" in execution:
+        converted_execution = dict(execution)
+        converted_execution["runtime_configuration"] = _portable_configuration_values(
+            converted_execution["runtime_configuration"], roots
+        )
+        converted["execution"] = converted_execution
+    converted["record_fingerprint"] = ownership_record_fingerprint(converted)
+    return converted
 
 
 def _module_argv(command: Iterable[object]) -> list[str]:
@@ -136,7 +202,9 @@ def convert_legacy_ownership_record(
             )
         converted["execution"] = converted_execution
     converted["record_fingerprint"] = ownership_record_fingerprint(converted)
-    return converted
+    return normalize_portable_ownership_record(
+        converted, roots=roots, configuration_class=configuration_class
+    )
 
 
 def lineage_root(project_root: Path, configuration_class: str, directory_label: str) -> Path:
@@ -380,9 +448,7 @@ def write_work_item_ownership(
         ),
         "execution": {
             "module_argv": _module_argv(json.loads(work_item["command_json"])),
-            "runtime_configuration": encode_path_values(
-                omit_private_path_values(runtime_configuration, roots), roots, public=True
-            ),
+            "runtime_configuration": _portable_configuration_values(runtime_configuration, roots),
         },
         "resources": {
             "resource_class": work_item["resource_class"],
@@ -599,7 +665,7 @@ def _validate_lineage_record(
         )
         if portable_configuration.get("portable_fingerprint") != expected_portable:
             raise ValueError("portable configuration fingerprint does not match its snapshot")
-        decoded = resolve_path_values(deepcopy(dict(record)), roots)
+        decoded = _resolve_configuration_values(resolve_path_values(deepcopy(dict(record)), roots))
     else:
         decoded = deepcopy(dict(record))
     record = decoded
@@ -678,7 +744,7 @@ def _validate_work_item_record(
         portable_record = record
         if absolute_path_values(record):
             raise ValueError("portable ownership record contains an absolute host path")
-        decoded = resolve_path_values(deepcopy(dict(record)), roots)
+        decoded = _resolve_configuration_values(resolve_path_values(deepcopy(dict(record)), roots))
     else:
         decoded = deepcopy(dict(record))
     record = decoded

@@ -22,19 +22,20 @@ changes neither its scientific contracts nor its dependency graph.
 
 ## Existing datasets
 
-Preview the representation migration before applying it:
+Run the migration interactively:
 
 ```bash
 nro migrate dataset -P PROJECT
-nro migrate dataset -P PROJECT --execute
 ```
 
-The command is available only from the central installation. It coordinates changes
-to the selected raw BIDS projects, the main derivative tree, registered development
-branches, ownership receipts, and scheduler evidence. It refuses active attempts,
-converts version-4 ownership receipts to version 5, removes obsolete `EventsFile`
-fields from source imaging sidecars, and rewrites supported nro JSON and YAML
-metadata. Repeating the migration is a no-op.
+The command pages through the complete plan and asks for confirmation before it
+writes anything. Use `--dry-run` to stop after the preview or `-f`/`--force` to skip
+confirmation. The command is available only from the central installation. It
+coordinates changes to the selected raw BIDS projects, the main derivative tree,
+registered development branches, ownership receipts, and scheduler evidence. It
+refuses active attempts, converts version-4 ownership receipts to version 5, removes
+obsolete `EventsFile` fields from source imaging sidecars, and rewrites supported nro
+JSON and YAML metadata. Repeating the migration is a no-op.
 
 Source images remain byte-level freshness inputs. Inherited JSON metadata is stored
 in work-item contracts as a canonical projection of the fields used by the relevant

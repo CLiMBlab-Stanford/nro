@@ -196,6 +196,13 @@ def test_scheduler_routes_plan_run_to_single_planner_lane():
 def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch):
     endpoint = object()
     calls = []
+    phases = []
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_bus.publish_progress",
+        lambda _control, _message_id, *, phase, completed, total: phases.append(
+            (phase, completed, total)
+        ),
+    )
     monkeypatch.setattr(
         "nro.orchestration.scheduler_client.command",
         lambda control, bids_root: calls.append(("command", control, bids_root)) or endpoint,
@@ -205,30 +212,31 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         "ensure",
         lambda value: calls.append(("ensure", value)),
     )
-    monkeypatch.setattr(
-        planner_client,
-        "execute",
-        lambda control, request: (
-            calls.append(("execute", control, request))
-            or {
-                "protocol": 1,
-                "entries": [{"project": "demo", "payload": {}}],
-                "options": {"no_submit": True},
-                "projects": ["demo"],
-                "participants": {"demo": ["01"]},
-                "work_items": 1,
-                "unavailable": [],
-                "resumed": 0,
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        scheduler_service,
-        "admit_many",
-        lambda registry, entries, **options: (
-            calls.append(("admit", entries, options)) or ["request-1"]
-        ),
-    )
+
+    def execute(control, request, *, progress):
+        calls.append(("execute", control, request))
+        progress("Planning requested work")
+        return {
+            "protocol": 1,
+            "entries": [{"project": "demo", "payload": {}}],
+            "options": {"no_submit": True},
+            "projects": ["demo"],
+            "participants": {"demo": ["01"]},
+            "work_items": 1,
+            "unavailable": [],
+            "resumed": 0,
+        }
+
+    monkeypatch.setattr(planner_client, "execute", execute)
+
+    def admit(_registry, entries, **options):
+        progress = options.pop("progress")
+        progress("Inspecting existing artifacts")
+        progress("Registering requested work")
+        calls.append(("admit", entries, options))
+        return ["request-1"]
+
+    monkeypatch.setattr(scheduler_service, "admit_many", admit)
     monkeypatch.setattr(
         scheduler_service,
         "supply",
@@ -279,6 +287,12 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
             {"no_submit": True},
             {"checkout": tmp_path / "checkout"},
         ),
+    ]
+    assert [phase for phase, _completed, _total in phases] == [
+        "Planning requested work",
+        "Inspecting existing artifacts",
+        "Registering requested work",
+        "Reconciling worker pool",
     ]
 
 

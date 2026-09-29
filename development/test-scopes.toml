@@ -19,8 +19,8 @@ boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invarianc
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 
 [scope.commands]
-paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_log.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_project_rename.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
-tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py", "tests/test_gc.py"]
+paths = ["nro/bin/**", "nro/cli.py", "nro/qc/**", "tests/test_user_commands.py", "tests/test_cli.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_log.py", "tests/test_migrate_cli.py", "tests/test_scene.py", "tests/test_render.py", "tests/test_purge.py", "tests/test_project_rename.py", "tests/test_doctor.py", "tests/test_qc_registration.py"]
+tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py", "tests/test_gc.py", "tests/test_migrate_cli.py"]
 boundaries = ["tests/test_orchestration_planner.py"]
 
 [scope.installation]

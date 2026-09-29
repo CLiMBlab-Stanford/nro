@@ -30,6 +30,36 @@ _WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
 _RESET = "\x1b[0m"
 _CLEAR = "\r\x1b[2K"
 
+_OPERATION_NOTICES = {
+    "admit": "Registering requested work...",
+    "admit_many": "Registering requested work...",
+    "plan_run": "Planning requested work...",
+    "supply_needed": "Checking worker capacity...",
+    "supply": "Reconciling worker pool...",
+    "status": "Inspecting artifacts...",
+    "stop": "Requesting work cancellation...",
+    "concurrency": "Updating CPU concurrency...",
+    "gpu_concurrency": "Updating GPU concurrency...",
+    "settings": "Reading scheduler settings...",
+    "stop_workers": "Requesting worker shutdown...",
+    "server_shutdown": "Stopping scheduler services...",
+    "purge_snapshot": "Preparing purge...",
+    "gc": "Scanning derivative namespaces...",
+    "cache": "Cleaning execution cache...",
+    "repair_prepare": "Preparing registry repair...",
+    "repair_finish": "Finalizing registry repair...",
+    "promotion_preview": "Preparing derivative promotion...",
+    "promotion_publish": "Publishing promoted derivatives...",
+    "publish": "Publishing derivatives...",
+    "branch_update": "Updating branch registration...",
+    "environment_idle": "Checking environment activity...",
+    "installation_activity": "Checking shared work...",
+    "installation_prepare": "Preparing installation maintenance...",
+    "installation_progress": "Waiting for shared work to stop...",
+    "project_rename": "Renaming dataset...",
+    "dataset_migration": "Migrating dataset...",
+}
+
 
 class SchedulerError(RuntimeError):
     """Report a scheduler transport or service failure."""
@@ -122,20 +152,10 @@ def _progress_notice(record: dict | None, fallback: str) -> str:
 def _operation_notice(payload: dict) -> str:
     """Describe scheduler work without exposing internal RPC operation names."""
     operation = str(payload.get("operation") or "")
-    if operation == "admit_many":
-        return "Registering requested work..."
-    if operation == "plan_run":
-        return "Planning requested work..."
-    if operation == "supply_needed":
-        return "Checking worker capacity..."
-    if operation == "supply":
-        return "Requesting worker capacity..."
-    if operation == "status":
-        return "Updating scheduler status..."
     if operation == "purge":
         count = len(payload.get("plan", ()))
-        return f"Purging {count:,} work items..." if count else "Purging selected work..."
-    return "Interacting with the scheduler..."
+        return f"Removing {count:,} work items..." if count else "Removing selected work..."
+    return _OPERATION_NOTICES.get(operation, "Processing request...")
 
 
 def _start_service(endpoint: SchedulerEndpoint) -> str | None:
@@ -359,6 +379,7 @@ def exchange(
     notice = False
     attempted_endpoint: tuple[str, int] | None = None
     pending_poll_seconds = PENDING_REQUEST_INITIAL_POLL_SECONDS
+    acknowledged = False
     while True:
         launch = read_launch(endpoint.control)
         if launch is not None:
@@ -402,6 +423,7 @@ def exchange(
                         response = None
                         continue
                     if response.get("pending") == message_id:
+                        acknowledged = True
                         attempted_endpoint = None
                         time.sleep(
                             pending_poll_seconds
@@ -468,7 +490,9 @@ def exchange(
             fallback = (
                 "Waiting for the scheduler allocation..."
                 if waiting_for_slurm
-                else "Waiting for the scheduler..."
+                else _operation_notice(message)
+                if acknowledged
+                else "Connecting to the scheduler..."
             )
             message_text = _progress_notice(progress, fallback)
             notice = _wait_notice(frame, message_text) or notice

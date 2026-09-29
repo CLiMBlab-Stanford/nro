@@ -55,6 +55,25 @@ def test_dataset_migration_previews_then_rewrites_metadata(tmp_path: Path) -> No
     assert repeated.changed == ()
 
 
+def test_dataset_migration_rewrites_absolute_path_mapping_keys(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    source = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source")
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"gradient_unwarping": {str(source): {"applied": False}}}))
+    registry = Registry.for_project("", bids_root=bids)
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.errors == ()
+    assert json.loads(manifest.read_text())["gradient_unwarping"] == {
+        "bids:raw:sub-01/anat/sub-01_T1w.nii.gz": {"applied": False}
+    }
+
+
 def test_dataset_migration_removes_obsolete_source_events_file(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     project = bids / "demo"

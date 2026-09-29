@@ -33,6 +33,7 @@ from nro.orchestration.ownership import (
     OWNERSHIP_DIRECTORY,
     OWNERSHIP_VERSION,
     convert_legacy_ownership_record,
+    normalize_portable_ownership_record,
     ownership_record_fingerprint,
     read_ownership_records,
 )
@@ -458,7 +459,14 @@ def _portable_document(path: Path, value: object) -> object:
             raise ValueError("ownership document is not a mapping")
         version = value.get("record_version")
         if version == OWNERSHIP_VERSION:
-            return value
+            configuration_class = None
+            if path.name == LINEAGE_RECORD_NAME:
+                configuration_class = str(value.get("configuration_class") or "")
+            return normalize_portable_ownership_record(
+                value,
+                roots=public_document_roots(path),
+                configuration_class=configuration_class,
+            )
         if version != LEGACY_OWNERSHIP_VERSION:
             raise ValueError(f"unsupported ownership record version {version!r}")
         configuration_class = None

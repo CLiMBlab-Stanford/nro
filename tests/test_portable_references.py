@@ -16,7 +16,10 @@ from nro.engine.references import (
     portable_path,
     resolve_reference,
 )
-from nro.orchestration.ownership import convert_legacy_ownership_record
+from nro.orchestration.ownership import (
+    convert_legacy_ownership_record,
+    normalize_portable_ownership_record,
+)
 
 
 def _roots(tmp_path: Path) -> ReferenceRoots:
@@ -97,6 +100,22 @@ def test_public_metadata_omits_private_execution_paths(tmp_path: Path) -> None:
             "inputs": [str(project / "sub-01/func/bold.nii.gz")],
         }
     }
+
+
+def test_public_metadata_omits_private_path_mapping_keys(tmp_path: Path) -> None:
+    project = tmp_path / "BIDS/demo"
+    work = tmp_path / "WORK"
+    roots = ReferenceRoots.for_project(project, site_roots={"work": work})
+
+    converted = omit_private_path_values(
+        {
+            str(work / "private.nii.gz"): {"state": "private"},
+            str(project / "sub-01/anat/sub-01_T1w.nii.gz"): {"state": "public"},
+        },
+        roots,
+    )
+
+    assert converted == {str(project / "sub-01/anat/sub-01_T1w.nii.gz"): {"state": "public"}}
 
 
 def test_bids_reference_preserves_a_logical_symlink_member(tmp_path: Path) -> None:
@@ -189,3 +208,51 @@ def test_public_document_resolves_against_moved_project(tmp_path: Path) -> None:
         "source": str(second / source.relative_to(first)),
         "output": str(second / output.relative_to(first)),
     }
+
+
+def test_public_document_converts_path_valued_mapping_keys(tmp_path: Path) -> None:
+    project = tmp_path / "BIDS/demo"
+    source = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    manifest = project / "derivatives/nro/anat/main/sub-01/manifest.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source")
+
+    write_public_json(manifest, {str(source): {"action": "already_corrected"}})
+    stored = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert stored == {"bids:raw:sub-01/anat/sub-01_T1w.nii.gz": {"action": "already_corrected"}}
+    assert read_public_json(manifest) == {str(source): {"action": "already_corrected"}}
+
+
+def test_portable_ownership_uses_site_setting_for_container_binds(tmp_path: Path) -> None:
+    roots = _roots(tmp_path)
+    record = {
+        "record_version": 5,
+        "owner": "nro",
+        "configuration_class": "anat",
+        "configuration": {
+            "id": "main",
+            "fingerprint": "historical",
+            "resolved": {
+                "container": {
+                    "engine": "singularity",
+                    "bind": ["/host:/container"],
+                }
+            },
+        },
+        "execution": {
+            "runtime_configuration": {
+                "container": {
+                    "engine": "singularity",
+                    "bind": ["/host:/container"],
+                }
+            }
+        },
+    }
+
+    converted = normalize_portable_ownership_record(record, roots=roots)
+
+    expected = {"$nro_site_setting": "binds"}
+    assert converted["configuration"]["resolved"]["container"]["bind"] == expected
+    assert converted["execution"]["runtime_configuration"]["container"]["bind"] == expected
+    assert "/host" not in json.dumps(converted)
