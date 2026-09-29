@@ -10,6 +10,7 @@ import yaml
 
 import nro.modules.func.planning as func_planning
 import nro.orchestration.catalog as orchestration_catalog
+import nro.orchestration.manifests as orchestration_manifests
 from nro.configuration.definition_migrations import refresh_manifest
 from nro.configuration.hardware import resolve_gradient_unwarping
 from nro.configuration.markup import SubjectMarkup
@@ -975,6 +976,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "pose_normalization": pose_normalization_contract(),
         "surface_reconstruction": surface_reconstruction_contract(),
         "source_markup": source_markup,
+        "source_metadata": [{"source": "sub-01/anat/sub-01_T1w.nii.gz", "fields": {}}],
     }
     assert by_module["func"][0].work_item_contract["processing"] == {
         "final_resampling": final_resampling_contract(gradient_unwarping=False),
@@ -985,6 +987,12 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
             }
         ],
         "output_metadata": functional_output_contract(),
+        "source_metadata": [
+            {
+                "source": "sub-01/func/sub-01_task-rest_dir-LR_run-1_bold.nii.gz",
+                "fields": {},
+            }
+        ],
     }
     assert "source_markup" not in by_module["func"][0].contract.processing
     assert "source_markup" not in by_module["clean"][0].contract.processing
@@ -1103,8 +1111,57 @@ def test_functional_contract_tracks_inherited_bids_metadata(tmp_path: Path) -> N
     )
     functional = next(work_item for work_item in work_items if work_item.module == "func")
 
-    assert inherited in functional.input_paths
+    assert inherited not in functional.input_paths
     assert subject / "func" / "sub-01_task-story_bold.json" not in functional.input_paths
+    assert functional.work_item_contract["processing"]["source_metadata"] == [
+        {
+            "source": "sub-01/func/sub-01_task-story_bold.nii.gz",
+            "fields": {
+                "PhaseEncodingDirection": "j-",
+                "RepetitionTime": 2.0,
+                "TotalReadoutTime": 0.05,
+            },
+        }
+    ]
+
+
+def test_status_reassesses_only_declared_source_metadata_fields(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    subject = project / "sub-01"
+    _write(project / "dataset_description.json", "{}")
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-story_bold.nii.gz")
+    inherited = project / "task-story_bold.json"
+    _write(inherited, json.dumps({"RepetitionTime": 2.0, "TaskName": "story"}))
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(workflow)
+    work_items = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="func",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+    )
+    ids = registry.register_work_items(work_items)
+    work_item_id = next(ids[item.key] for item in work_items if item.module == "func")
+    original = next(row for row in registry.work_item_rows() if row["id"] == work_item_id)
+
+    _write(inherited, json.dumps({"RepetitionTime": 2.0, "TaskName": "renamed"}))
+    orchestration_manifests.assess_registry(registry, work_item_ids=(work_item_id,))
+    descriptive_edit = next(row for row in registry.work_item_rows() if row["id"] == work_item_id)
+
+    assert descriptive_edit["artifact_fingerprint"] == original["artifact_fingerprint"]
+
+    _write(inherited, json.dumps({"RepetitionTime": 3.0, "TaskName": "renamed"}))
+    states = orchestration_manifests.assess_registry(registry, work_item_ids=(work_item_id,))
+    scientific_edit = next(row for row in registry.work_item_rows() if row["id"] == work_item_id)
+
+    assert scientific_edit["artifact_fingerprint"] != original["artifact_fingerprint"]
+    assert states[work_item_id] == ("stale", "Current module processing contract changed")
 
 
 def test_subject_planner_creates_only_requested_space_smoothing_cross_product(

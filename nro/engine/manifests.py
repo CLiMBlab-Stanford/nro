@@ -19,15 +19,23 @@ def create_json_step(
     payload: dict[str, Any],
     inputs: Sequence[Path],
     force: bool,
+    identity_payload: dict[str, Any] | None = None,
 ) -> Step:
-    """Create an exact, semantically validated JSON-output step."""
+    """Create a JSON-output step with an optional scientific identity subset."""
+
+    identity = payload if identity_payload is None else identity_payload
 
     def validate() -> tuple[bool, str]:
         try:
             current = read_public_json(path)
         except (OSError, ValueError):
             return False, "Metadata is missing or invalid JSON."
-        if current != payload:
+        current_identity = (
+            current
+            if identity_payload is None
+            else {key: current.get(key) for key in identity_payload}
+        )
+        if current_identity != identity:
             return False, "Metadata content does not match the current module configuration."
         return True, "Metadata matches the current module configuration."
 

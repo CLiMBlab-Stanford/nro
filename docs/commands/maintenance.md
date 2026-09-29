@@ -211,20 +211,21 @@ backs up the scheduler registry, branch registries, and edited metadata. A
 failure before the registry commit reverses directory moves and restores edited
 state. Keep external readers and writers stopped until the command completes.
 
-## `nro migrate provenance`
+## `nro migrate dataset`
 
-Convert existing nro-owned metadata from host paths to portable BIDS and site-resource
-references:
+Bring source BIDS metadata and nro-owned derivative metadata into the current
+representation:
 
 ```bash
-nro migrate provenance -P PROJECT
-nro migrate provenance -P PROJECT --execute
+nro migrate dataset -P PROJECT
+nro migrate dataset -P PROJECT --execute
 ```
 
-The default is a read-only preview. Execution covers main and registered branch
-derivatives, requires a quiet worker pool, updates the integrity records for rewritten
-metadata without advancing artifact generations, and uses a durable journal to roll
-back failed or interrupted conversion. See
+The default is a read-only preview. Execution covers the selected source project plus
+main and registered branch derivatives. It requires a quiet worker pool, removes
+obsolete source `EventsFile` fields, converts durable contracts to field-level source
+metadata snapshots, and updates integrity records without advancing artifact
+generations. A durable journal rolls back failed or interrupted file conversion. See
 [portable derivative provenance](../portable-provenance.md) for the reference model
 and migration boundary.
 

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nro.engine.bids import resolve_bids_metadata
-
 
 def nifti_stem(path: Path) -> str:
     """Return a NIfTI filename without its simple or compressed suffix."""
@@ -29,13 +27,9 @@ def sidecar_json_path(path: Path) -> Path:
 
 
 def image_source_paths(path: Path, *, markup=None) -> tuple[Path, ...]:
-    """Return an image and every applicable BIDS metadata source."""
-    path = Path(path)
-    try:
-        metadata_sources = resolve_bids_metadata(path, markup=markup).sources
-    except FileNotFoundError:
-        metadata_sources = ()
-    return (path, *metadata_sources)
+    """Return the source image whose metadata is tracked semantically elsewhere."""
+    del markup
+    return (Path(path),)
 
 
 def is_gzip_nifti(path: Path) -> bool:

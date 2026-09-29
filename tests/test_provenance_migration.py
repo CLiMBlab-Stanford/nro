@@ -2,17 +2,27 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
+from nro.configuration.store import ConfigStore, fingerprint
 from nro.orchestration import scheduler_service
 from nro.orchestration.branch_store import BranchStore
-from nro.orchestration.provenance_migration import migrate_public_provenance
+from nro.orchestration.completion import record_completion
+from nro.orchestration.contract_migrations import current_contract_schema
+from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.planning_context import work_item_key
+from nro.orchestration.provenance_migration import (
+    _contract_dataset_view,
+    _scientific_contract_dataset_view,
+    migrate_dataset,
+)
 from nro.orchestration.registry import Registry
 
 
-def test_public_provenance_migration_previews_then_rewrites_metadata(tmp_path: Path) -> None:
+def test_dataset_migration_previews_then_rewrites_metadata(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     project = bids / "demo"
     output = project / "derivatives/nro/anat/main/sub-01/anat/sub-01_T1w.nii.gz"
@@ -24,9 +34,7 @@ def test_public_provenance_migration_previews_then_rewrites_metadata(tmp_path: P
     original_mtime = manifest.stat().st_mtime_ns
     registry = Registry.for_project("", bids_root=bids)
 
-    preview = migrate_public_provenance(
-        registry, projects=("demo",), execute=False, version="1.2.3"
-    )
+    preview = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
     assert preview.errors == ()
     assert set(preview.changed) == {
         manifest,
@@ -34,7 +42,7 @@ def test_public_provenance_migration_previews_then_rewrites_metadata(tmp_path: P
     }
     assert str(output) in manifest.read_text()
 
-    result = migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
     assert result.errors == ()
     assert json.loads(manifest.read_text())["outputs"]["t1w"] == (
         "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"
@@ -43,13 +51,192 @@ def test_public_provenance_migration_previews_then_rewrites_metadata(tmp_path: P
     description = json.loads((project / "derivatives/nro/dataset_description.json").read_text())
     assert description["DatasetLinks"] == {"raw": "../.."}
 
-    repeated = migrate_public_provenance(
-        registry, projects=("demo",), execute=False, version="1.2.3"
-    )
+    repeated = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
     assert repeated.changed == ()
 
 
-def test_public_provenance_migration_rolls_back_files_after_validation_failure(
+def test_dataset_migration_removes_obsolete_source_events_file(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    sidecar = project / "sub-01/func/sub-01_task-rest_bold.json"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text(
+        json.dumps(
+            {
+                "RepetitionTime": 1.5,
+                "EventsFile": "/legacy/sub-01_task-rest_events.tsv",
+            }
+        )
+    )
+    registry = Registry.for_project("", bids_root=bids)
+
+    preview = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
+    assert sidecar in preview.changed
+    assert "EventsFile" in json.loads(sidecar.read_text())
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+    assert result.errors == ()
+    assert json.loads(sidecar.read_text()) == {"RepetitionTime": 1.5}
+
+
+def test_dataset_contract_migration_replaces_sidecar_identity_with_semantics(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "demo"
+    project.mkdir()
+    (project / "dataset_description.json").write_text("{}")
+    image = project / "sub-01/func/sub-01_task-rest_bold.nii.gz"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    sidecar = image.with_name("sub-01_task-rest_bold.json")
+    sidecar.write_text(json.dumps({"RepetitionTime": 1.5, "EventsFile": "/legacy/events.tsv"}))
+    artifact = {
+        "module": "func",
+        "inputs": [str(image), str(sidecar)],
+        "processing": {},
+    }
+    scientific = {
+        "module": "func",
+        "project": "demo",
+        "inputs": [{"source": str(image)}, {"source": str(sidecar)}],
+        "processing": {},
+    }
+
+    migrated_artifact = _contract_dataset_view(artifact, project)
+    migrated_scientific = _scientific_contract_dataset_view(scientific, project)
+
+    assert migrated_artifact["inputs"] == [str(image)]
+    assert migrated_artifact["contract_schema"] == current_contract_schema("func")
+    assert migrated_artifact["processing"]["source_metadata"][0]["fields"] == {
+        "RepetitionTime": 1.5
+    }
+    assert migrated_scientific["inputs"] == [{"source": str(image)}]
+    assert "contract_schema" not in migrated_scientific
+    assert (
+        migrated_scientific["processing"]["source_metadata"]
+        == migrated_artifact["processing"]["source_metadata"]
+    )
+
+
+def test_dataset_migration_preserves_completed_generation_and_state(tmp_path: Path) -> None:
+    bids = tmp_path / "BIDS"
+    project = bids / "demo"
+    (project / "dataset_description.json").parent.mkdir(parents=True)
+    (project / "dataset_description.json").write_text(
+        json.dumps({"Name": "demo", "BIDSVersion": "1.10.0"})
+    )
+    image = project / "sub-01/func/sub-01_task-rest_bold.nii.gz"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    sidecar = image.with_name("sub-01_task-rest_bold.json")
+    sidecar.write_text(json.dumps({"RepetitionTime": 1.5, "EventsFile": "/legacy/events.tsv"}))
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    output = (
+        project
+        / "derivatives/nro/func"
+        / registered.directories["func"]
+        / "sub-01/func/sub-01_task-rest_desc-preprocess_bold.nii.gz"
+    )
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"derivative")
+    key = work_item_key(
+        "demo", "func", registered.lineage_fingerprints["func"], "01", {"task": "rest"}
+    )
+    spec = WorkItemSpec.create(
+        key=key,
+        module="func",
+        project="demo",
+        participant="01",
+        entities={"task": "rest"},
+        scope="run",
+        module_lineage_id=registered.lineages["func"],
+        config_fingerprint=workflow.configuration("func").scientific_fingerprint,
+        directory_label=registered.directories["func"],
+        runtime_config=registry.runtime_config_path(registered, "func"),
+        command=(sys.executable, "-m", "nro.modules.func"),
+        dependencies=(),
+        input_paths=(image, sidecar),
+        output_root=output.parent,
+        output_prefix=output.name.removesuffix(".nii.gz"),
+        expected_outputs=(output,),
+        resource_class="large",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="func",
+        selectors={},
+        work_items=(spec,),
+        terminal_work_item_keys=(spec.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("worker", resource_class="large")
+    claim = registry.claim_ready_work_item("worker", ("large",))
+    assert claim is not None
+    completed = record_completion(
+        registry,
+        work_item_id=claim.work_item_id,
+        attempt_id=claim.attempt_id,
+        outputs=(output,),
+    )
+    registry.finish_attempt(claim.attempt_id, state="success")
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.errors == ()
+    row = next(item for item in registry.work_item_rows() if item["id"] == claim.work_item_id)
+    assert row["artifact_state"] == "fresh"
+    assert row["current_generation"] == completed["generation"] == 1
+    contract = json.loads(row["artifact_contract_json"])
+    assert contract["inputs"] == [str(image.resolve())]
+    assert contract["processing"]["source_metadata"][0]["fields"] == {"RepetitionTime": 1.5}
+    with registry.connection() as database:
+        completion = database.execute(
+            "SELECT generation,artifact_fingerprint FROM completions WHERE work_item_id=?",
+            (claim.work_item_id,),
+        ).fetchone()
+        inputs = database.execute(
+            "SELECT path FROM artifacts WHERE work_item_id=? AND direction='input'",
+            (claim.work_item_id,),
+        ).fetchall()
+    assert completion["generation"] == 1
+    assert completion["artifact_fingerprint"] == row["artifact_fingerprint"]
+    assert [item["path"] for item in inputs] == [str(image.resolve())]
+    assert json.loads(sidecar.read_text()) == {"RepetitionTime": 1.5}
+
+    changed_contract = json.loads(json.dumps(contract))
+    changed_contract["processing"]["future_policy"] = True
+    with registry.connection(write=True) as database:
+        database.execute(
+            """UPDATE work_items SET artifact_contract_json=?,artifact_fingerprint=?,
+                      artifact_state='stale' WHERE id=?""",
+            (
+                json.dumps(changed_contract, sort_keys=True, separators=(",", ":")),
+                fingerprint(changed_contract),
+                claim.work_item_id,
+            ),
+        )
+
+    repeated = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert repeated.errors == ()
+    updated = next(item for item in registry.work_item_rows() if item["id"] == claim.work_item_id)
+    with registry.connection() as database:
+        historical = json.loads(
+            database.execute(
+                "SELECT artifact_contract_json FROM completions WHERE work_item_id=?",
+                (claim.work_item_id,),
+            ).fetchone()[0]
+        )
+    assert updated["artifact_state"] == "stale"
+    assert updated["current_generation"] == 1
+    assert json.loads(updated["artifact_contract_json"])["processing"]["future_policy"] is True
+    assert "future_policy" not in historical["processing"]
+
+
+def test_dataset_migration_rolls_back_files_after_validation_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
     bids = tmp_path / "bids"
@@ -67,7 +254,7 @@ def test_public_provenance_migration_rolls_back_files_after_validation_failure(
     )
 
     with pytest.raises(ValueError, match="invalid ownership"):
-        migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
+        migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert manifest.read_text() == original
     assert not (project / "derivatives/nro/dataset_description.json").exists()
@@ -75,7 +262,7 @@ def test_public_provenance_migration_rolls_back_files_after_validation_failure(
     assert not list(journal_root.iterdir())
 
 
-def test_public_provenance_migration_includes_registered_branch_outputs(
+def test_dataset_migration_includes_registered_branch_outputs(
     tmp_path: Path,
 ) -> None:
     bids = tmp_path / "BIDS"
@@ -95,7 +282,7 @@ def test_public_provenance_migration_includes_registered_branch_outputs(
         manifest.write_text(json.dumps({"output": str(output)}))
         manifests.append(manifest)
 
-    result = migrate_public_provenance(
+    result = migrate_dataset(
         registry,
         projects=("demo",),
         execute=True,
@@ -110,7 +297,7 @@ def test_public_provenance_migration_includes_registered_branch_outputs(
     ]
 
 
-def test_public_provenance_migration_recovers_an_interrupted_transaction(
+def test_dataset_migration_recovers_an_interrupted_transaction(
     tmp_path: Path,
 ) -> None:
     bids = tmp_path / "bids"
@@ -144,7 +331,7 @@ def test_public_provenance_migration_recovers_an_interrupted_transaction(
         )
     )
 
-    result = migrate_public_provenance(registry, projects=("demo",), execute=True, version="1.2.3")
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert manifest in result.changed
     assert json.loads(manifest.read_text())["output"] == (
@@ -153,7 +340,7 @@ def test_public_provenance_migration_recovers_an_interrupted_transaction(
     assert not journal.exists()
 
 
-def test_scheduler_routes_public_provenance_migration(tmp_path: Path) -> None:
+def test_scheduler_routes_dataset_migration(tmp_path: Path) -> None:
     bids = tmp_path / "BIDS"
     work = tmp_path / "WORK"
     development = tmp_path / "NRO_DEV"
@@ -173,7 +360,7 @@ def test_scheduler_routes_public_provenance_migration(tmp_path: Path) -> None:
     preview = scheduler_service.dispatch(
         registry,
         {
-            "operation": "provenance_migration",
+            "operation": "dataset_migration",
             "projects": ["demo"],
             "execute": False,
             "version": "1.2.3",
@@ -185,7 +372,7 @@ def test_scheduler_routes_public_provenance_migration(tmp_path: Path) -> None:
     result = scheduler_service.dispatch(
         registry,
         {
-            "operation": "provenance_migration",
+            "operation": "dataset_migration",
             "projects": ["demo"],
             "execute": True,
             "version": "1.2.3",

@@ -38,12 +38,12 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 8
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 9
     assert migrated["processing"]["source_markup"]["lesion"] is False
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=8), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=9), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None

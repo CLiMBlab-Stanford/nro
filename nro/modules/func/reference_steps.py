@@ -14,6 +14,7 @@ from nro.engine.images import (
 )
 from nro.engine.io import atomic_write_text, read_json, write_json
 from nro.engine.registration import rigid_transform_metrics
+from nro.engine.source_metadata import semantic_metadata_values
 from nro.orchestration.runner import (
     write_completion_breadcrumb,
 )
@@ -270,7 +271,6 @@ def _create_functional_reference_selection_step(
     run_child: Callable[..., Optional[str]],
     robust_ref: Path,
     epi_metadata: dict[str, Any],
-    epi_metadata_sources: tuple[Path, ...],
     sbref: Optional[Path],
     sbref_json: Optional[Path],
     sbref_metadata: Optional[dict[str, Any]],
@@ -587,9 +587,7 @@ def _create_functional_reference_selection_step(
             outputs=(selected_image, epi_to_selected, selected_to_epi, metadata_path),
             inputs=(
                 robust_ref,
-                *epi_metadata_sources,
                 sbref,
-                *sbref_metadata_sources,
             ),
             force=force,
             action=select,
@@ -599,6 +597,8 @@ def _create_functional_reference_selection_step(
                 "maximum_displacement_millimeters": max_displacement_mm,
                 "minimum_support_overlap": min_support_overlap,
                 "minimum_intensity_correlation": min_correlation,
+                "epi_metadata": semantic_metadata_values(epi_metadata, module="func"),
+                "sbref_metadata": semantic_metadata_values(sbref_metadata or {}, module="func"),
             },
         ),
         image=selected_image,

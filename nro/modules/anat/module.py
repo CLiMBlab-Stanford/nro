@@ -44,6 +44,7 @@ from nro.engine.paths import (
     resolve_project_path,
     resolve_project_work_path,
 )
+from nro.engine.source_metadata import semantic_metadata_values
 from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.anat.contract import anatomical_output_contract, validate_anatomical_manifest
 from nro.modules.anat.inputs import (
@@ -265,7 +266,6 @@ def build_module(
         require_nonempty_file(opts.gradient_unwarp_image, "gradient-unwarping image")
 
     public_inputs = [item.image for item in all_images]
-    public_inputs.extend(source for item in all_images for source in item.metadata_sources)
     public_inputs = list(dict.fromkeys(public_inputs))
     env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
     require_nonempty_file(Path(env["FS_LICENSE"]), "FreeSurfer license")
@@ -491,6 +491,21 @@ def build_module(
                 payload=plan.metadata,
                 inputs=(plan.staged_preprocessed, plan.output, plan.mask),
                 force=opts.overwrite,
+                identity_payload={
+                    **semantic_metadata_values(plan.metadata, module="anat"),
+                    **{
+                        key: plan.metadata[key]
+                        for key in (
+                            "Sources",
+                            "BiasCorrection",
+                            "GradientDistortionCorrection",
+                            "BiasCorrectionMask",
+                            "BrainExtraction",
+                            "BrainMask",
+                        )
+                        if key in plan.metadata
+                    },
+                },
             )
         )
     copied_images = [

@@ -134,5 +134,9 @@ CHAIN = ContractMigrationChain(
                 ),
             ),
         ),
+        ContractMigration(
+            destination=9,
+            summary="Track inherited source metadata by declared scientific fields",
+        ),
     ),
 )
