@@ -134,6 +134,7 @@ BUILTIN_MODULES = (
         dynamic_processing_keys=(
             "gradient_unwarping",
             "lesion_reconstruction",
+            "msmall",
             "source_metadata",
             "surface_reconstruction",
         ),

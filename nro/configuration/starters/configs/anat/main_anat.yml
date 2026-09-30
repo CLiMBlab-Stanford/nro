@@ -23,6 +23,22 @@ lesion:
   masker_command: null
   fastsurfer_image: site:fastsurfer
   use_gpu: true
+msmall:
+  enabled: true
+  high_resolution_mesh: 164
+  low_resolution_mesh: 32
+  grayordinates_resolution_mm: 2
+  functional_resolution_mm: 2
+  surface_smoothing_fwhm_mm: 2
+  input_registration: MSMSulc
+  output_registration: MSMAll
+  iteration_modes: CA_CAT
+  method: WRN
+  ica_dimension: 40
+  high_pass_seconds: 0
+  fix_threshold: 10
+  fix_training_model: HCP_Style_Single_Multirun_Dedrift
+  matlab_run_mode: octave
 freesurfer_subjects_dir: null
 fs_subject: null
 overwrite: false

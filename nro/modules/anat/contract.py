@@ -68,6 +68,21 @@ LESION_MANIFEST_FIELDS = {
     "outputs.surface_validity": "mapping",
 }
 
+MSMALL_MANIFEST_FIELDS = {
+    "msmall": "mapping",
+    "msmall.enabled": "boolean",
+    "msmall.manifest": "string",
+    "outputs.msmall": "mapping",
+    "outputs.msmall.input_identities": "string",
+    "outputs.msmall.transforms": "mapping",
+    "outputs.msmall.atlas_spheres": "mapping",
+    "outputs.msmall.atlas_surfaces": "mapping",
+    "outputs.msmall.valid_masks": "mapping",
+    "outputs.msmall.qc": "string",
+    "outputs.msmall.manifest": "string",
+    "outputs.msmall.software_versions": "string",
+}
+
 
 def pose_normalization_contract() -> dict[str, object]:
     """Describe how the participant anatomical reference is pose-normalized."""
@@ -82,11 +97,13 @@ def pose_normalization_contract() -> dict[str, object]:
     }
 
 
-def anatomical_output_contract(*, lesion: bool = False) -> dict[str, object]:
+def anatomical_output_contract(*, lesion: bool = False, msmall: bool = False) -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     fields = dict(ANATOMICAL_MANIFEST_FIELDS)
     if lesion:
         fields.update(LESION_MANIFEST_FIELDS)
+    if msmall:
+        fields.update(MSMALL_MANIFEST_FIELDS)
     return {
         "publication_manifest_fields": fields,
         "surface_metric_structure": "hemisphere_specific",
@@ -99,6 +116,9 @@ def validate_anatomical_manifest(document: Mapping[str, object]) -> None:
     fields = dict(ANATOMICAL_MANIFEST_FIELDS)
     if isinstance(lesion, Mapping) and lesion.get("enabled") is True:
         fields.update(LESION_MANIFEST_FIELDS)
+    msmall = document.get("msmall")
+    if isinstance(msmall, Mapping) and msmall.get("enabled") is True:
+        fields.update(MSMALL_MANIFEST_FIELDS)
     validate_metadata_fields(
         document,
         fields,

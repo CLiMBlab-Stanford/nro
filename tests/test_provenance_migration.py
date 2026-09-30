@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from nro.configuration.store import ConfigStore, fingerprint
-from nro.orchestration import scheduler_service
+from nro.orchestration import provenance_migration, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contract_migrations import current_contract_schema
@@ -577,7 +577,7 @@ def test_dataset_migration_recovery_skips_unchanged_file_in_read_only_directory(
     assert not journal.exists()
 
 
-def test_scheduler_routes_dataset_migration(tmp_path: Path) -> None:
+def test_scheduler_routes_dataset_migration(tmp_path: Path, monkeypatch) -> None:
     bids = tmp_path / "BIDS"
     work = tmp_path / "WORK"
     development = tmp_path / "NRO_DEV"
@@ -606,6 +606,13 @@ def test_scheduler_routes_dataset_migration(tmp_path: Path) -> None:
         message_id="migration-preview",
     )
     before = registry.work_item_rows()
+    monkeypatch.setattr(
+        provenance_migration,
+        "_source_candidates",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execution repeated dataset discovery")
+        ),
+    )
     result = scheduler_service.dispatch(
         registry,
         {
@@ -613,6 +620,7 @@ def test_scheduler_routes_dataset_migration(tmp_path: Path) -> None:
             "projects": ["demo"],
             "execute": True,
             "version": "1.2.3",
+            "preparation": preview["preparation"],
         },
         values=values,
         message_id="migration-execute",

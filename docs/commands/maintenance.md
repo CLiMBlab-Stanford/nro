@@ -197,8 +197,10 @@ project routing. Directory moves must be atomic on their filesystem. The command
 refuses symbolic-link roots, an existing destination, active demand, active
 attempts or resource steps, and active
 BIDSification for the source project.
-Inventory traversal fails if any managed directory or metadata file cannot be
-read. The command never treats an incomplete scan as a complete preview.
+The inventory uses SQL artifact records and the fixed ownership and scene
+namespaces rather than walking scientific outputs. Raw BIDS trees are traversed
+only to find symbolic links, with `derivatives/` pruned. An unreadable inspected
+path blocks execution; an incomplete inventory is never treated as complete.
 
 Raw BIDS symbolic links are materialized during execution. Regular files become
 hard links when their target is on the same filesystem; otherwise they become
@@ -206,12 +208,18 @@ metadata-preserving copies. Directory links become metadata-preserving directory
 copies. Symbolic links inside derivatives remain links. Absolute derivative
 links into the renamed project are updated without following their targets.
 
-Numerical scientific outputs are not rewritten. Structured derivative and WORK
-metadata containing absolute project paths are translated, and the registry
+Numerical scientific outputs are not rewritten. Indexed structured derivative and
+WORK metadata containing absolute project paths is translated, and the registry
 updates observations for those exact files. Project-sensitive work-item
 identities and current control contracts are translated so that existing
 artifacts retain their state under the new project name. Definition changes use
 the managed definitions transaction and update its integrity manifest.
+
+The scheduler retains the validated preview until confirmation. Execution checks
+that branch topology, definitions, managed roots, work-item count, and active-work
+barriers still match, then applies that preparation without repeating discovery.
+If the scheduler exits or relevant state changes, execution fails closed and asks
+for a new preview.
 
 Execution creates a recovery journal under the shared private control store and
 backs up the scheduler registry, branch registries, and edited metadata. A
@@ -239,6 +247,9 @@ field-level source metadata snapshots, and updates integrity records without adv
 artifact generations. A durable journal rolls back incomplete file conversion and
 resumes an interrupted registry update. See [portable derivative
 provenance](../portable-provenance.md) for the reference model and migration boundary.
+The scheduler retains the prepared file rewrites through confirmation and verifies
+their source digests before applying them. It does not rescan the dataset after the
+preview; an expired preparation or intervening metadata change requires a new preview.
 
 ## `nro publish`
 

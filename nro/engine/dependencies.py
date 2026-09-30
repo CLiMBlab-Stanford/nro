@@ -580,7 +580,16 @@ def check_installation(
         )
         script = (
             "test -s /nro-license && source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1 || exit 1; "
-            "for tool in " + tools + '; do command -v "$tool" || exit 1; done'
+            "for tool in " + tools + ' msm octave; do command -v "$tool" || exit 1; done; '
+            'test -x "$HCPPIPEDIR/MSMAll/MSMAllPipeline.sh"; '
+            'test -x "$HCPPIPEDIR/DeDriftAndResample/DeDriftAndResamplePipeline.sh"; '
+            'test -s "$HCPPIPEDIR/global/templates/MSMAll/'
+            'Q1-Q6_RelatedParcellation210.MyelinMap_BC_MSMAll_2_d41_WRN_DeDrift.32k_fs_LR.dscalar.nii"; '
+            "/opt/fsl/fsl/bin/python -c 'import pathlib, pyfix; "
+            "root=pathlib.Path(pyfix.__file__).parent; "
+            'needle=b"HCP_Style_Single_Multirun_Dedrift"; '
+            'assert any(needle in path.read_bytes() for path in root.rglob("*") '
+            "if path.is_file())'"
         )
         check(
             "QuNex execution",

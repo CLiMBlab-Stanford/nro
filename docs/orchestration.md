@@ -42,8 +42,11 @@ order. The broker processes one at a time using the requesting branch's pinned
 source in an isolated subprocess; it never opens the scheduler registry. Both
 services remain available for a 12-hour idle grace period.
 
-The worker pool has separate general and GPU resource classes. General workers
-claim complete work items. A runner may yield at a step marked for GPU
+The worker pool has general, long-CPU, and GPU resource classes. General and
+long-CPU workers claim complete work items and share the global CPU concurrency
+limit. The long-CPU profile is reserved for explicitly calibrated MSMAll anatomy
+and starts with 48 hours, eight CPUs, and at least 64 GB of memory. A runner may
+yield at a step marked for GPU
 execution; the scheduler then records a durable step task, releases the general
 worker, and starts a GPU worker only when that task is ready. The GPU worker
 reconstructs the same fixed module graph, verifies the same inputs and contract,
@@ -51,7 +54,7 @@ and executes only the named step. The parent work item then returns to the front
 of the general queue and resumes from its fresh step outputs.
 
 GPU workers never claim complete work items and exit as soon as no GPU step is
-ready. General and GPU pools have independent concurrency limits. `concurrency`
+ready. CPU and GPU pools have independent concurrency limits. `concurrency`
 limits general derivative and ingestion work; `gpu_concurrency` defaults to one
 and limits GPU step tasks. Resource classes, device identifiers, and handoffs
 are execution policy. They do not change scientific contracts or freshness.

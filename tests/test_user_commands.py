@@ -1868,3 +1868,48 @@ def test_gpu_worker_script_requests_one_gpu_and_never_lingers(tmp_path: Path) ->
         minimum_memory_gb=64,
         profile=script.stem.rsplit("-", 1)[-1],
     ) == ((64, script),)
+
+
+def test_long_cpu_worker_script_has_distinct_identity(tmp_path: Path) -> None:
+    from nro.orchestration.scheduler_service import _worker_script_tiers
+
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+
+    script = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=48,
+        memory_gb=64,
+        cpus=8,
+        resource_class="long",
+        idle_timeout=30,
+    )
+    general = _write_worker_script(
+        registry,
+        bids_root=bids,
+        partition="sphinx",
+        account="nlp",
+        hours=12,
+        memory_gb=64,
+        cpus=2,
+        resource_class="large",
+        idle_timeout=30,
+    )
+
+    text = script.read_text()
+    assert script.name.startswith("worker-long-64gb-")
+    assert "#SBATCH --job-name=nro-long-worker" in text
+    assert "#SBATCH --time=48:00:00" in text
+    assert "#SBATCH --cpus-per-task=8" in text
+    assert "--resource-class long" in text
+    assert "#SBATCH --gres=gpu:1" not in text
+    assert _worker_script_tiers(
+        registry,
+        resource_class="large",
+        minimum_memory_gb=1,
+        profile=script.stem.rsplit("-", 1)[-1],
+    ) == ((64, general),)

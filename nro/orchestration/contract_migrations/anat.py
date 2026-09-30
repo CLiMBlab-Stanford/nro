@@ -14,6 +14,24 @@ from .core import (
     RemoveField,
 )
 
+_MSMALL_DEFAULT = {
+    "enabled": True,
+    "high_resolution_mesh": 164,
+    "low_resolution_mesh": 32,
+    "grayordinates_resolution_mm": 2.0,
+    "functional_resolution_mm": 2.0,
+    "surface_smoothing_fwhm_mm": 2.0,
+    "input_registration": "MSMSulc",
+    "output_registration": "MSMAll",
+    "iteration_modes": "CA_CAT",
+    "method": "WRN",
+    "ica_dimension": 40,
+    "high_pass_seconds": 0.0,
+    "fix_threshold": 10.0,
+    "fix_training_model": "HCP_Style_Single_Multirun_Dedrift",
+    "matlab_run_mode": "octave",
+}
+
 CHAIN = ContractMigrationChain(
     module="anat",
     migrations=(
@@ -137,6 +155,24 @@ CHAIN = ContractMigrationChain(
         ContractMigration(
             destination=9,
             summary="Track inherited source metadata by declared scientific fields",
+        ),
+        ContractMigration(
+            destination=10,
+            summary="Add explicitly calibrated optional MSMAll anatomy",
+            contract=(
+                AddField(
+                    "processing.source_markup.msmall",
+                    default={"rest": []},
+                    historical={"rest": []},
+                ),
+            ),
+            configuration=(
+                AddField(
+                    "msmall",
+                    default=_MSMALL_DEFAULT,
+                    historical=_MSMALL_DEFAULT,
+                ),
+            ),
         ),
     ),
 )

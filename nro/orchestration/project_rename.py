@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -65,6 +66,7 @@ class RenamePreparation:
     ingestion: tuple[Path, ...]
     definition_updates: dict[Path, dict[Path, bytes]]
     topology: Any
+    source_digests: dict[Path, str]
 
 
 def _project(value: str) -> str:
@@ -301,94 +303,150 @@ def _metadata_reference(request: tuple[Path, str]) -> Path | None:
     return path if f"/{old}/" in text or text.rstrip().endswith(f"/{old}") else None
 
 
+def _raw_source_symlinks(
+    source_root: Path,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[dict[Path, str], int]:
+    """Find raw-data links while pruning the already migrated derivative tree."""
+    links: dict[Path, str] = {}
+    scanned = 0
+    for parent, directories, files in _strict_walk(source_root):
+        directory = Path(parent)
+        if directory == source_root and "derivatives" in directories:
+            directories.remove("derivatives")
+        for name in tuple(directories):
+            path = directory / name
+            scanned += 1
+            if path.is_symlink():
+                directories.remove(name)
+                links[path] = os.readlink(path)
+        for name in files:
+            path = directory / name
+            scanned += 1
+            if path.is_symlink():
+                links[path] = os.readlink(path)
+        if progress is not None and scanned and scanned % 1000 == 0:
+            progress(f"Inspecting raw BIDS links ({scanned:,} entries)")
+    return links, scanned
+
+
+def _public_control_files(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Return ownership receipts and scenes from their fixed public namespaces."""
+    derivative_root = project_root / "derivatives" / "nro"
+    receipts = tuple(
+        sorted(derivative_root.glob("*/*/.nro/work_items/*/*.json"))
+        if derivative_root.is_dir()
+        else ()
+    )
+    scene_root = project_root / "derivatives" / "scenes"
+    scenes = tuple(sorted(scene_root.rglob("*.scene")) if scene_root.is_dir() else ())
+    return receipts, scenes
+
+
+def _registered_project_files(registry, old: str) -> tuple[Path, ...]:
+    """Return indexed structured metadata for the selected project."""
+    with registry.connection() as database:
+        rows = database.execute(
+            """SELECT DISTINCT artifact.path
+               FROM artifacts artifact
+               JOIN work_items item ON item.id=artifact.work_item_id
+               WHERE item.project=?
+                 AND (lower(artifact.path) LIKE '%.json'
+                   OR lower(artifact.path) LIKE '%.yaml'
+                   OR lower(artifact.path) LIKE '%.yml'
+                   OR lower(artifact.path) LIKE '%.scene')""",
+            (old,),
+        )
+        return tuple(Path(str(row[0])) for row in rows)
+
+
+def _absolute_project_symlinks(
+    moves: Iterable[ProjectMove], old: str, new: str
+) -> dict[Path, tuple[str, str]]:
+    """Find translated absolute links with one native filesystem traversal."""
+    roots = [str(move.source) for move in moves if move.source.is_dir()]
+    if not roots:
+        return {}
+    result = subprocess.run(
+        ["find", "-P", *roots, "-type", "l", "-print0"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = os.fsdecode(result.stderr).strip() or f"status {result.returncode}"
+        raise OSError(f"Cannot inventory project symbolic links: {detail}")
+    translated = {}
+    for encoded in result.stdout.split(b"\0"):
+        if not encoded:
+            continue
+        path = Path(os.fsdecode(encoded))
+        target = os.readlink(path)
+        if not Path(target).is_absolute():
+            continue
+        replacement = _replace_project(target, old, new, {})
+        if replacement != target:
+            translated[path] = (target, replacement)
+    return translated
+
+
 def _project_inventory(
     moves: Iterable[ProjectMove],
     *,
     bids_root: Path,
     old: str,
     new: str,
+    registry=None,
     progress: Callable[[str], None] | None = None,
 ) -> ProjectInventory:
-    """Inventory every managed root once without following symbolic links."""
-    receipts = []
-    scenes = []
-    metadata_candidates = []
-    source_symlinks: dict[Path, str] = {}
-    absolute_symlinks: dict[Path, tuple[str, str]] = {}
-    scanned = 0
+    """Inventory indexed metadata and raw links without walking scientific outputs."""
+    moves = tuple(moves)
     source_root = bids_root / old
-    suffixes = {".json", ".yaml", ".yml", ".scene"}
-
-    def report() -> None:
-        if progress is not None and (scanned == 1 or scanned % 1000 == 0):
-            progress(f"Inventorying managed project files ({scanned:,} entries)")
-
+    source_symlinks, scanned = _raw_source_symlinks(source_root, progress=progress)
+    receipts: set[Path] = set()
+    scenes: set[Path] = set()
     for move in moves:
-        includes_metadata = move.source.parent.name in {"BIDS", "bids", "WORK"}
-        is_public_bids = move.source.parent.name in {"BIDS", "bids"}
-        is_source = move.source == source_root
-        for parent, directories, files in _strict_walk(move.source):
-            directory = Path(parent)
-            relative_directory = directory.relative_to(move.source)
-            for name in tuple(directories):
-                path = directory / name
-                scanned += 1
-                report()
-                if not path.is_symlink():
-                    continue
-                directories.remove(name)
-                target = os.readlink(path)
-                relative = relative_directory / name
-                if is_source and (not relative.parts or relative.parts[0] != "derivatives"):
-                    source_symlinks[path] = target
-                    continue
-                if Path(target).is_absolute():
-                    translated = _replace_project(target, old, new, {})
-                    if translated != target:
-                        absolute_symlinks[path] = (target, translated)
-            for name in files:
-                path = directory / name
-                scanned += 1
-                report()
-                relative = relative_directory / name
-                if path.is_symlink():
-                    target = os.readlink(path)
-                    if is_source and (not relative.parts or relative.parts[0] != "derivatives"):
-                        source_symlinks[path] = target
-                    elif Path(target).is_absolute():
-                        translated = _replace_project(target, old, new, {})
-                        if translated != target:
-                            absolute_symlinks[path] = (target, translated)
-                    continue
-                rendered = relative.as_posix()
-                if is_public_bids and "/.nro/work_items/" in f"/{rendered}":
-                    try:
-                        record = json.loads(path.read_text(encoding="utf-8"))
-                    except (OSError, json.JSONDecodeError) as error:
-                        raise ValueError(
-                            f"Cannot inventory ownership receipt {path}: {error}"
-                        ) from error
-                    if record.get("project") == old:
-                        receipts.append(path)
-                    continue
-                if (
-                    is_public_bids
-                    and relative.parts[:2] == ("derivatives", "scenes")
-                    and path.suffix == ".scene"
-                ):
-                    scenes.append(path)
-                if includes_metadata and path.suffix.lower() in suffixes:
-                    metadata_candidates.append(path)
+        if move.source.parent.name not in {"BIDS", "bids"}:
+            continue
+        found_receipts, found_scenes = _public_control_files(move.source)
+        receipts.update(found_receipts)
+        scenes.update(found_scenes)
+
+    registered = _registered_project_files(registry, old) if registry is not None else ()
+    candidates = set(receipts) | set(scenes)
+    candidates.update(
+        path for path in registered if path.suffix.lower() in {".json", ".yaml", ".yml", ".scene"}
+    )
+    scanned += len(candidates) + len(registered)
     if progress is not None:
-        progress(f"Inspecting structured project metadata ({len(metadata_candidates):,} files)")
+        progress(f"Inspecting indexed project metadata ({len(candidates):,} files)")
+
+    valid_receipts = []
+    for path in sorted(receipts):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"Cannot inventory ownership receipt {path}: {error}") from error
+        if record.get("record_version") != OWNERSHIP_VERSION:
+            raise ValueError(
+                f"Ownership receipt requires `nro migrate dataset` before rename: {path}"
+            )
+        if record.get("project") == old:
+            valid_receipts.append(path)
+
     metadata = []
     with ThreadPoolExecutor(max_workers=8) as executor:
-        for offset in range(0, len(metadata_candidates), 256):
-            batch = metadata_candidates[offset : offset + 256]
-            matched = executor.map(_metadata_reference, ((path, old) for path in batch))
-            metadata.extend(path for path in matched if path is not None)
+        ordered = sorted(candidates - receipts)
+        matched = executor.map(_metadata_reference, ((path, old) for path in ordered))
+        metadata.extend(path for path in matched if path is not None)
+
+    if progress is not None:
+        progress("Inspecting managed symbolic links")
+    absolute_symlinks = _absolute_project_symlinks(moves, old, new)
+    for path in source_symlinks:
+        absolute_symlinks.pop(path, None)
     return ProjectInventory(
-        tuple(sorted(receipts)),
+        tuple(valid_receipts),
         tuple(sorted(scenes)),
         tuple(sorted(metadata)),
         source_symlinks,
@@ -679,6 +737,7 @@ def _prepare_rename(
         bids_root=Path(values["bids"]),
         old=old,
         new=new,
+        registry=registry,
         progress=progress,
     )
     if progress is not None:
@@ -720,7 +779,16 @@ def _prepare_rename(
         "unhandled_definition_references": [str(path) for path in unhandled],
         "blockers": blockers,
     }
-    return RenamePreparation(report, inventory, ingestion, definition_updates, topology)
+    guarded_files = (*inventory.receipts, *inventory.metadata, *ingestion)
+    source_digests = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in guarded_files}
+    return RenamePreparation(
+        report,
+        inventory,
+        ingestion,
+        definition_updates,
+        topology,
+        source_digests,
+    )
 
 
 def preview(
@@ -1004,6 +1072,7 @@ def execute(
     values: dict,
     old: str,
     new: str,
+    prepared: RenamePreparation | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Apply a previously previewable rename and retain a recovery journal."""
@@ -1016,22 +1085,59 @@ def execute(
     recovered = _recover_interrupted(registry, old, new)
     if recovered is not None:
         return recovered
-    prepared = _prepare_rename(
-        registry,
-        checkout=checkout,
-        values=values,
-        old=old,
-        new=new,
-        progress=progress,
-    )
+    if prepared is None:
+        prepared = _prepare_rename(
+            registry,
+            checkout=checkout,
+            values=values,
+            old=old,
+            new=new,
+            progress=progress,
+        )
+    elif prepared.report.get("old") != old or prepared.report.get("new") != new:
+        raise ValueError("Prepared project rename does not match the requested identifiers")
     report = prepared.report
     if report["blockers"]:
         raise ValueError("Project rename is blocked: " + "; ".join(report["blockers"]))
     old, new = report["old"], report["new"]
+    current_store = BranchStore(registry.paths.control)
+    current_topology = current_store.read().topology
+    if dict(current_topology.records) != dict(prepared.topology.records):
+        raise ValueError("Branch topology changed after the project rename preview")
+    if current_topology.registered_checkout(checkout) != "main":
+        raise ValueError("Project renames require the registered main checkout")
+    current_moves = _moves(values, current_topology, old, new)
+    expected_moves = tuple(
+        ProjectMove(Path(item["source"]), Path(item["destination"])) for item in report["moves"]
+    )
+    if current_moves != expected_moves or any(
+        move.destination.exists() or move.destination.is_symlink() for move in expected_moves
+    ):
+        raise ValueError("Managed project roots changed after the project rename preview")
+    if _definition_updates(values, current_store, old, new) != prepared.definition_updates:
+        raise ValueError("Project definitions changed after the project rename preview")
+    with registry.connection() as database:
+        current_work_items = int(
+            database.execute("SELECT COUNT(*) FROM work_items WHERE project=?", (old,)).fetchone()[
+                0
+            ]
+        )
+    if current_work_items != int(report["work_items"]):
+        raise ValueError("Project work items changed after the project rename preview")
+    for path, expected in prepared.source_digests.items():
+        current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        if current != expected:
+            raise ValueError(f"Project metadata changed after the rename preview: {path}")
+    for path, expected in prepared.inventory.source_symlinks.items():
+        if not path.is_symlink() or os.readlink(path) != expected:
+            raise ValueError(f"Raw BIDS link changed after the rename preview: {path}")
+    for path, (expected, _translated) in prepared.inventory.absolute_symlinks.items():
+        if not path.is_symlink() or os.readlink(path) != expected:
+            raise ValueError(f"Managed link changed after the rename preview: {path}")
     from nro.orchestration.planner_client import shutdown as shutdown_planner
 
     shutdown_planner(registry.paths.control)
-    store = BranchStore(registry.paths.control)
+    store = current_store
     topology = prepared.topology
     moves = tuple(
         ProjectMove(Path(item["source"]), Path(item["destination"])) for item in report["moves"]

@@ -13,7 +13,7 @@ from nro.configuration.site import definitions_roots
 from nro.configuration.store import validate_config_id
 
 SOURCE_MARKUP_ENV = "NRO_SOURCE_MARKUP"
-_FIELDS = frozenset({"T1w", "T2w", "exclude", "lesion"})
+_FIELDS = frozenset({"T1w", "T2w", "exclude", "lesion", "msmall"})
 
 
 def _paths(value, *, location: str, list_only: bool = False) -> tuple[str, ...]:
@@ -52,6 +52,7 @@ class SubjectMarkup:
     t2w: tuple[Path, ...] = ()
     excluded: tuple[Path, ...] = ()
     lesion: bool = False
+    msmall_rest: tuple[Path, ...] = ()
 
     def is_excluded(self, path: Path) -> bool:
         """Return whether a path equals or descends from an excluded BIDS path."""
@@ -72,6 +73,7 @@ class SubjectMarkup:
             "T2w": [str(path) for path in self.t2w],
             "exclude": [str(path) for path in self.excluded],
             "lesion": self.lesion,
+            "msmall": {"rest": [str(path) for path in self.msmall_rest]},
         }
 
     @classmethod
@@ -88,7 +90,7 @@ class SubjectMarkup:
         if (
             not isinstance(value, Mapping)
             or not required.issubset(value)
-            or set(value) - (required | {"lesion"})
+            or set(value) - (required | {"lesion", "msmall"})
         ):
             raise ValueError("Invalid captured source markup")
         if value["id"] is not None and not isinstance(value["id"], str):
@@ -109,6 +111,17 @@ class SubjectMarkup:
             if any(not path.is_relative_to(subject_dir) for path in paths):
                 raise ValueError("Captured markup path escapes its BIDS subject directory")
             groups[key] = paths
+        raw_msmall = value.get("msmall", {"rest": []})
+        if (
+            not isinstance(raw_msmall, Mapping)
+            or set(raw_msmall) != {"rest"}
+            or not isinstance(raw_msmall["rest"], list)
+            or any(not isinstance(item, str) for item in raw_msmall["rest"])
+        ):
+            raise ValueError("Invalid captured markup MSMAll calibration paths")
+        msmall_rest = tuple(Path(item).expanduser().absolute() for item in raw_msmall["rest"])
+        if any(not path.is_relative_to(subject_dir) for path in msmall_rest):
+            raise ValueError("Captured MSMAll path escapes its BIDS subject directory")
         return cls(
             value["id"],
             value["project"],
@@ -117,6 +130,7 @@ class SubjectMarkup:
             groups["T2w"],
             groups["exclude"],
             lesion,
+            msmall_rest,
         )
 
 
@@ -176,6 +190,7 @@ class MarkupStore:
             tuple(root / path for path in record.get("T2w", ())),
             tuple(root / path for path in record.get("exclude", ())),
             bool(record.get("lesion", False)),
+            tuple(root / path for path in record.get("msmall", {}).get("rest", ())),
         )
 
 
@@ -228,10 +243,36 @@ def compile_markup(
             if not isinstance(lesion, bool):
                 raise DefinitionError(f"{project}.sub-{subject}.lesion must be a boolean")
             record["lesion"] = lesion
+            raw_msmall = raw_record.get("msmall")
+            if raw_msmall is None:
+                record["msmall"] = {"rest": ()}
+            else:
+                if not isinstance(raw_msmall, Mapping) or set(raw_msmall) != {"rest"}:
+                    raise DefinitionError(
+                        f"{path}: {project}/sub-{subject}.msmall must contain only rest"
+                    )
+                rest = _paths(
+                    raw_msmall.get("rest"),
+                    location=f"{project}.sub-{subject}.msmall.rest",
+                    list_only=True,
+                )
+                if not rest:
+                    raise DefinitionError(
+                        f"{path}: {project}/sub-{subject}.msmall.rest must not be empty"
+                    )
+                record["msmall"] = {"rest": rest}
+            if lesion and record["msmall"]["rest"]:
+                raise DefinitionError(
+                    f"{path}: {project}/sub-{subject} cannot combine lesion and MSMAll anatomy"
+                )
             overlap = [
-                anatomical
-                for anatomical in (*record["T1w"], *record["T2w"])
-                if any(_contains(excluded, anatomical) for excluded in record["exclude"])
+                selected
+                for selected in (
+                    *record["T1w"],
+                    *record["T2w"],
+                    *record["msmall"]["rest"],
+                )
+                if any(_contains(excluded, selected) for excluded in record["exclude"])
             ]
             if overlap:
                 raise DefinitionError(

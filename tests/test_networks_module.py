@@ -346,7 +346,8 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
     anatomy.mkdir(parents=True)
     image = anatomy / "sub-01_T1w.nii.gz"
     image.touch()
-    (anatomy / "sub-01_desc-preprocessAnat_manifest.json").write_text(
+    anatomy_manifest = anatomy / "sub-01_desc-preprocessAnat_manifest.json"
+    anatomy_manifest.write_text(
         json.dumps({"outputs": {"brain_image": str(image), "xfms": {"mni_to_t1w": str(image)}}})
     )
     context = ExecutionContext(
@@ -396,6 +397,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="Test stopped after initialization"):
         networks_main.main(["-P", "demo", "-p", "01", "-s", "T1w"], execution_context=context)
     assert len(graphs) == 1
+    assert all(anatomy_manifest not in step.inputs for step in graphs[0].steps)
     assert any(manifest in step.inputs for step in graphs[0].steps)
     completion = next(step for step in graphs[0].steps if step.completion_boundary)
     assert any(path.name.endswith("_desc-networks_stat.dscalar.nii") for path in completion.inputs)

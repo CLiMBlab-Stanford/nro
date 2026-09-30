@@ -103,6 +103,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
         old=args.old,
         new=args.new,
         execute=True,
+        preparation=preview["preparation"],
     )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

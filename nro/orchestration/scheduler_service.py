@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -51,6 +52,35 @@ _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
+_PREPARATION_LOCK = threading.Lock()
+_PREPARATIONS: dict[str, tuple[str, object, float]] = {}
+
+
+def _retain_preparation(kind: str, value: object) -> str:
+    """Retain one scheduler-local maintenance preview for confirmed execution."""
+    token = uuid.uuid4().hex
+    now = time.monotonic()
+    with _PREPARATION_LOCK:
+        expired = [
+            candidate
+            for candidate, (_kind, _value, created) in _PREPARATIONS.items()
+            if now - created > 3600
+        ]
+        for candidate in expired:
+            _PREPARATIONS.pop(candidate, None)
+        while len(_PREPARATIONS) >= 8:
+            _PREPARATIONS.pop(next(iter(_PREPARATIONS)))
+        _PREPARATIONS[token] = (kind, value, now)
+    return token
+
+
+def _consume_preparation(kind: str, token: str) -> object:
+    """Consume an exact maintenance preview or fail without recomputing it."""
+    with _PREPARATION_LOCK:
+        record = _PREPARATIONS.pop(token, None)
+    if record is None or record[0] != kind or time.monotonic() - record[2] > 3600:
+        raise ValueError("Prepared maintenance preview expired; run the preview again")
+    return record[1]
 
 
 class _ActivitySignal:
@@ -416,14 +446,27 @@ def _worker_script_tiers(
 ) -> tuple[tuple[int, Path], ...]:
     """Return one request profile's eligible scripts in ascending memory order."""
     prefix = f"worker-{resource_class}-"
-    suffix = f"gb-{profile}.sbatch" if profile else "gb.sbatch"
+    suffix = f"gb-{profile}.sbatch" if profile else None
     scripts = []
-    for candidate in registry.paths.workers.glob(f"{prefix}*{suffix}"):
-        value = candidate.name.removeprefix(prefix).removesuffix(suffix)
+    pattern = f"{prefix}*{suffix}" if suffix else f"{prefix}*gb-*.sbatch"
+    for candidate in registry.paths.workers.glob(pattern):
+        value = candidate.name.removeprefix(prefix).split("gb-", 1)[0]
         if value.isdigit() and int(value) >= minimum_memory_gb:
             scripts.append((int(value), candidate))
     if scripts:
-        return tuple(sorted(scripts))
+        latest_by_tier: dict[int, Path] = {}
+        for memory_gb, candidate in scripts:
+            current = latest_by_tier.get(memory_gb)
+            if current is None or candidate.stat().st_mtime_ns > current.stat().st_mtime_ns:
+                latest_by_tier[memory_gb] = candidate
+        return tuple(sorted(latest_by_tier.items()))
+    if profile is not None:
+        return _worker_script_tiers(
+            registry,
+            resource_class=resource_class,
+            minimum_memory_gb=minimum_memory_gb,
+            profile=None,
+        )
     return (
         (
             minimum_memory_gb,
@@ -1028,44 +1071,78 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             parent=message.get("parent"),
         )
     elif message["operation"] == "project_rename":
-        from nro.orchestration.project_rename import execute, preview
+        from nro.orchestration.project_rename import _prepare_rename, execute
         from nro.orchestration.scheduler_bus import publish_progress
 
-        operation = execute if message["execute"] else preview
-        result = operation(
-            registry,
-            checkout=Path(message["checkout"]),
-            values=values,
-            old=message["old"],
-            new=message["new"],
-            progress=lambda phase: publish_progress(
+        def rename_progress(phase: str) -> None:
+            publish_progress(
                 registry.paths.control,
                 message_id,
                 phase=phase,
                 completed=0,
                 total=0,
-            ),
-        )
-        if not message["execute"]:
+            )
+
+        if message["execute"]:
+            prepared = _consume_preparation("project_rename", message["preparation"])
+            result = execute(
+                registry,
+                checkout=Path(message["checkout"]),
+                values=values,
+                old=message["old"],
+                new=message["new"],
+                prepared=prepared,
+                progress=rename_progress,
+            )
+        else:
+            prepared = _prepare_rename(
+                registry,
+                checkout=Path(message["checkout"]),
+                values=values,
+                old=message["old"],
+                new=message["new"],
+                progress=rename_progress,
+            )
+            result = dict(prepared.report)
+            result["preparation"] = _retain_preparation("project_rename", prepared)
             result["executed"] = False
     elif message["operation"] == "dataset_migration":
         from nro.orchestration.provenance_migration import migrate_dataset
         from nro.orchestration.scheduler_bus import publish_progress
 
-        report = migrate_dataset(
-            registry,
-            projects=message["projects"],
-            execute=bool(message["execute"]),
-            version=str(message["version"]),
-            site_values=values,
-            progress=lambda phase: publish_progress(
+        def migration_progress(phase: str) -> None:
+            publish_progress(
                 registry.paths.control,
                 message_id,
                 phase=phase,
                 completed=0,
                 total=0,
-            ),
-        )
+            )
+
+        if message["execute"]:
+            prepared = _consume_preparation("dataset_migration", message["preparation"])
+            report = migrate_dataset(
+                registry,
+                projects=message["projects"],
+                execute=True,
+                version=str(message["version"]),
+                site_values=values,
+                prepared=prepared,
+                progress=migration_progress,
+            )
+            preparation_token = None
+        else:
+            prepared = migrate_dataset(
+                registry,
+                projects=message["projects"],
+                execute=False,
+                version=str(message["version"]),
+                site_values=values,
+                retain_preparation=True,
+                progress=migration_progress,
+            )
+            report = prepared.report
+            preparation_token = _retain_preparation("dataset_migration", prepared)
         result = {
             "scanned": report.scanned,
             "changed": [str(path) for path in report.changed],
@@ -1073,6 +1150,8 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             "errors": list(report.errors),
             "recovery": [str(path) for path in report.recovery],
         }
+        if preparation_token is not None:
+            result["preparation"] = preparation_token
     else:
         raise ValueError("Unsupported scheduler operation")
     return result

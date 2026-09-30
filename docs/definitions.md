@@ -193,6 +193,11 @@ nptl:
     exclude:
       - ses-bad/func/sub-t20_ses-bad_task-rest_bold.nii.gz
     lesion: true
+  sub-t21:
+    msmall:
+      rest:
+        - ses-rest1/func/sub-t21_ses-rest1_task-rest_run-01_bold.nii.gz
+        - ses-rest2/func/sub-t21_ses-rest2_task-rest_run-01_bold.nii.gz
 ```
 
 Paths are relative to the participant directory. `T1w` and `T2w` accept one
@@ -206,6 +211,13 @@ cannot also be excluded.
 `lesion` is an optional boolean. `true` selects lesion-aware anatomical
 reconstruction for that participant; omission and `false` select ordinary
 reconstruction. This flag is a processing instruction, not a diagnosis.
+`msmall.rest` is an optional, fixed list of resting-state BOLD images used to
+estimate a fixed MSMAll surface registration. Every path must resolve below the
+participant directory. nro derives the corresponding metadata and opposite-PE
+fieldmap pair from BIDS; it does not infer or extend the calibration set.
+MSMAll calibration requires T1w and T2w anatomy, FreeSurfer reconstruction, and
+compatible fieldmaps for every selected run. It cannot be combined with
+`lesion: true` in the initial implementation.
 
 Every module configuration has a `markup` field. Its default is `main`, which
 selects `markup/main_markup.yml`; set it to `null` to ignore markup. The packaged

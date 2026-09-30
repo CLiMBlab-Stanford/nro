@@ -233,6 +233,12 @@ def manifest_surface_families(manifest: Path) -> tuple[Path, ...]:
     outputs = document.get("outputs")
     if isinstance(outputs, dict) and isinstance(outputs.get("surfaces"), dict):
         values.extend(Path(str(value)).expanduser() for value in outputs["surfaces"].values())
+    if isinstance(outputs, dict) and isinstance(outputs.get("msmall"), dict):
+        atlas_surfaces = outputs["msmall"].get("atlas_surfaces")
+        if isinstance(atlas_surfaces, dict):
+            for hemisphere in atlas_surfaces.values():
+                if isinstance(hemisphere, dict):
+                    values.extend(Path(str(value)).expanduser() for value in hemisphere.values())
     candidates: list[Path] = []
     expanded: list[Path] = []
     for value in values:

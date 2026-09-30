@@ -450,7 +450,9 @@ OSLOM checks are mandatory by default; `--without-oslom` makes them optional.
 
 `nro doctor --deep` also imports the scientific libraries, validates every stored
 definition, starts each container, checks the required tools and license bind in
-QuNex, and verifies pinned template checksums and existing image acquisition
+QuNex, checks the HCP Pipelines, MSM, pyFIX, Octave, FIX-model, template, and
+dedrifting resources required by optional MSMAll anatomy, and verifies pinned
+template checksums and existing image acquisition
 receipts. These probes do not process subject data. Run the
 command within a compute allocation as well as on the login node to check shared mounts and
 runtime policy there. Setup runs deep checks before marking an installation

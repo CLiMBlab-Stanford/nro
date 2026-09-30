@@ -4,9 +4,11 @@ from __future__ import annotations
 
 GPU_RESOURCE_CLASS = "gpu"
 GENERAL_RESOURCE_CLASS = "large"
+LONG_CPU_RESOURCE_CLASS = "long"
 
 WORKER_COMPATIBILITY = {
     GPU_RESOURCE_CLASS: (GPU_RESOURCE_CLASS,),
+    LONG_CPU_RESOURCE_CLASS: (LONG_CPU_RESOURCE_CLASS,),
     GENERAL_RESOURCE_CLASS: (GENERAL_RESOURCE_CLASS, "medium", "small"),
     "medium": ("medium", "small"),
     "small": ("small",),
@@ -14,7 +16,11 @@ WORKER_COMPATIBILITY = {
 
 # The shared scheduler launches these worker classes. Medium and small describe
 # work-item requirements that a general worker can satisfy.
-SCHEDULABLE_RESOURCE_CLASSES = (GPU_RESOURCE_CLASS, GENERAL_RESOURCE_CLASS)
+SCHEDULABLE_RESOURCE_CLASSES = (
+    GPU_RESOURCE_CLASS,
+    LONG_CPU_RESOURCE_CLASS,
+    GENERAL_RESOURCE_CLASS,
+)
 WORK_ITEM_RESOURCE_CLASSES = tuple(
     dict.fromkeys(item for worker_class in WORKER_COMPATIBILITY.values() for item in worker_class)
 )

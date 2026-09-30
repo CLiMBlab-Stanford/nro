@@ -168,6 +168,9 @@ def build_module(
     manifest_path = fixed_output_paths(out, cfg.output.prefix)["manifest"]
     publication_breadcrumb = out / f".{cfg.output.prefix}_complete"
     labeling_inputs = reference_paths() if cfg.labeling.enabled else ()
+    # The anatomical manifest resolves these paths before graph construction.
+    # Track only the concrete products used for labeling so unrelated anatomy
+    # additions do not invalidate network estimation.
     source_inputs = tuple(
         dict.fromkeys(
             (
@@ -175,11 +178,6 @@ def build_module(
                 cfg.inputs.features,
                 cfg.inputs.spatial_reference,
                 *cfg.inputs.source_surfaces,
-                *(
-                    (cfg.inputs.anatomical_manifest,)
-                    if cfg.inputs.anatomical_manifest is not None
-                    else ()
-                ),
                 *(
                     (cfg.inputs.anatomical_reference,)
                     if cfg.inputs.anatomical_reference is not None
@@ -774,11 +772,6 @@ def build_module(
                         network_state_path,
                         spatial_reference_path,
                         *cfg.inputs.source_surfaces,
-                        *(
-                            (cfg.inputs.anatomical_manifest,)
-                            if cfg.inputs.anatomical_manifest
-                            else ()
-                        ),
                         *(
                             (cfg.inputs.anatomical_reference,)
                             if cfg.inputs.anatomical_reference

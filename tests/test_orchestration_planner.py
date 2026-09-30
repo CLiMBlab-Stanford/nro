@@ -962,6 +962,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         "T2w": [],
         "exclude": [],
         "lesion": False,
+        "msmall": {"rest": []},
     }
     no_gradient_match = resolve_gradient_unwarping({}, mode="auto").scientific_record()
     assert by_module["anat"][0].work_item_contract["processing"] == {

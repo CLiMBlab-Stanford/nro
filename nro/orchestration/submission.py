@@ -11,7 +11,7 @@ from nro.engine.io import atomic_write_text
 
 from .execution_cache import cache_publication
 from .registry import Registry
-from .resources import GENERAL_RESOURCE_CLASS, GPU_RESOURCE_CLASS
+from .resources import GENERAL_RESOURCE_CLASS, GPU_RESOURCE_CLASS, LONG_CPU_RESOURCE_CLASS
 
 DEFAULT_WORKER_IDLE_TIMEOUT = 30
 
@@ -73,7 +73,10 @@ def _write_worker_script(
         "--profile",
         profile,
     ]
-    job_name = "nro-gpu-worker" if resource_class == GPU_RESOURCE_CLASS else "nro-worker"
+    job_name = {
+        GPU_RESOURCE_CLASS: "nro-gpu-worker",
+        LONG_CPU_RESOURCE_CLASS: "nro-long-worker",
+    }.get(resource_class, "nro-worker")
     lines = [
         "#!/usr/bin/env bash",
         f"#SBATCH --job-name={job_name}",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from nro.configuration.store import ConfigStore, configuration_fingerprint
@@ -38,12 +40,13 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 9
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 10
     assert migrated["processing"]["source_markup"]["lesion"] is False
+    assert migrated["processing"]["source_markup"]["msmall"] == {"rest": []}
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=9), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=10), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
@@ -80,7 +83,7 @@ def test_anatomy_configuration_migration_preserves_ordinary_scientific_identity(
     historical = {
         key: value
         for key, value in current.items()
-        if key not in {"lesion", "surface_reconstruction_engine"}
+        if key not in {"lesion", "msmall", "surface_reconstruction_engine"}
     }
     _, migrated = migrate_contract(_anat_contract(), historical)
 
@@ -91,13 +94,23 @@ def test_anatomy_configuration_migration_preserves_ordinary_scientific_identity(
     assert migrated["surface_reconstruction_engine"] == "freesurfer"
 
 
+def test_msmall_settings_do_not_change_ordinary_anatomy_lineage() -> None:
+    current = ConfigStore().load_configuration("anat", "main").values
+    revised = deepcopy(current)
+    revised["msmall"]["fix_threshold"] = 20
+
+    assert configuration_fingerprint("anat", "main", current, scientific=True) == (
+        configuration_fingerprint("anat", "main", revised, scientific=True)
+    )
+
+
 def test_freesurfer_contract_survives_introduction_of_engine_selector() -> None:
     resolved = ConfigStore().load_configuration("anat", "main")
     current = resolved.values
     historical = {
         key: value
         for key, value in current.items()
-        if key not in {"fastsurfer_container", "surface_reconstruction_engine"}
+        if key not in {"fastsurfer_container", "msmall", "surface_reconstruction_engine"}
     }
     historical_full_fingerprint = configuration_fingerprint("anat", "main", historical)
     old_fingerprint = "historical-anat-scientific-fingerprint"
@@ -155,7 +168,7 @@ def test_canonical_contract_distinguishes_revised_anatomical_methods() -> None:
     historical = {
         key: value
         for key, value in current.items()
-        if key not in {"lesion", "surface_reconstruction_engine"}
+        if key not in {"lesion", "msmall", "surface_reconstruction_engine"}
     }
     source_markup = {
         "id": "main",

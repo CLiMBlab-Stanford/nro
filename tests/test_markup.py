@@ -45,7 +45,43 @@ def test_markup_compiler_uses_project_and_subject_hierarchy() -> None:
         "T2w": (),
         "exclude": (),
         "lesion": False,
+        "msmall": {"rest": ()},
     }
+
+
+def test_markup_compiler_accepts_fixed_msmall_calibration_runs(tmp_path: Path) -> None:
+    result = compile_markup(
+        {
+            "nptl": {
+                "t20": {
+                    "msmall": {
+                        "rest": [
+                            "ses-a/func/sub-t20_ses-a_task-Rest_run-01_bold.nii.gz",
+                            "ses-b/func/sub-t20_ses-b_task-Rest_run-01_bold.nii.gz",
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    assert result["nptl"]["t20"]["msmall"]["rest"] == (
+        "ses-a/func/sub-t20_ses-a_task-Rest_run-01_bold.nii.gz",
+        "ses-b/func/sub-t20_ses-b_task-Rest_run-01_bold.nii.gz",
+    )
+    with pytest.raises(DefinitionError, match="must not be empty"):
+        compile_markup({"nptl": {"t20": {"msmall": {"rest": []}}}})
+    with pytest.raises(DefinitionError, match="cannot combine lesion and MSMAll"):
+        compile_markup(
+            {
+                "nptl": {
+                    "t20": {
+                        "lesion": True,
+                        "msmall": {"rest": ["ses-a/func/sub-t20_task-Rest_bold.nii.gz"]},
+                    }
+                }
+            }
+        )
 
 
 def test_markup_compiler_accepts_only_boolean_lesion_flags() -> None:
@@ -59,6 +95,13 @@ def test_captured_markup_defaults_historical_missing_lesion_to_false(tmp_path: P
     value.pop("lesion")
 
     assert SubjectMarkup.from_dict(value).lesion is False
+
+
+def test_captured_markup_defaults_historical_missing_msmall_to_empty(tmp_path: Path) -> None:
+    value = SubjectMarkup("main", "nptl", tmp_path / "sub-01").as_dict()
+    value.pop("msmall")
+
+    assert SubjectMarkup.from_dict(value).msmall_rest == ()
 
 
 def test_missing_markup_fields_retain_automatic_discovery(tmp_path: Path) -> None:

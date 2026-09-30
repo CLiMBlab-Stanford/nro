@@ -11,6 +11,7 @@ def _report(*, changed=(), contracts=0, errors=()):
         "changed": list(changed),
         "contracts": contracts,
         "errors": list(errors),
+        "preparation": "prepared-migration",
     }
 
 
@@ -43,6 +44,7 @@ def test_migrate_previews_in_pager_then_confirms_execution(monkeypatch, capsys) 
     main(["dataset", "-P", "demo"])
 
     assert [call["execute"] for call in calls] == [False, True]
+    assert calls[1]["preparation"] == "prepared-migration"
     assert "Planned dataset migration" in pages[0]
     assert str(path) in pages[0]
     assert "Migrated 1 metadata file(s) and 2 work-item contract(s)." in capsys.readouterr().out

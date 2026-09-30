@@ -22,7 +22,7 @@ the model format. FitLins is not a dependency.
 | FastSurfer / NeuroLIT | Optional cortical reconstruction; lesion inpainting. | [FastSurfer](https://github.com/Deep-MI/FastSurfer), [NeuroLIT weights](https://doi.org/10.5281/zenodo.14510136) |
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
-| HCP Pipelines | Hardware-specific gradient-distortion estimation and correction. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
+| HCP Pipelines | Hardware-specific gradient correction and optional MSMAll surface registration. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
 | ICA-AROMA | Motion-component classification and denoising. | [Upstream implementation](https://github.com/maartenmennes/ICA-AROMA) |
 | CICADA | Alternative ICA component classification. | [Method paper](https://direct.mit.edu/imag/article/doi/10.1162/IMAG.a.114/132108/CICADA-An-automated-and-flexible-tool-for) |
 | MARSS 1.0.2 | Native-space estimation and removal of signal shared by simultaneous slices. | [Official implementation](https://github.com/CNaP-Lab/MARSS) |
@@ -56,6 +56,15 @@ Ordinary anatomy can use FastSurfer 2.5.4 as an alternative to FreeSurfer.
 FastSurferVINN segmentation runs at 1 mm on an on-demand GPU worker; surface
 reconstruction runs on a general CPU worker and produces the
 FreeSurfer-compatible files consumed by later anatomical steps.
+
+Optional MSMAll anatomy uses the HCP Pipelines, MSM, pyFIX, FSL, FreeSurfer,
+Workbench, Octave, the HCP dedrifting assets, and the
+`HCP_Style_Single_Multirun_Dedrift` FIX model bundled in the pinned QuNex image.
+The selected resting-state calibration runs are fixed in source markup. nro
+adapts the HCP route to its skull-stripped source contract with explicit FNIRT
+masks, retains the HCP route as private checkpointed work, and publishes only
+the surface registrations, atlas geometry, QC, and version records required to
+use the resulting space.
 
 Lesion inpainting uses NeuroLIT 0.6.1 from the FastSurfer 2.5.4 image at source
 revision `cdfccea`. The configured FreeSurfer or FastSurfer backend then

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,10 @@ class ConfigNode:
     def get(self, key: str, default: Any = None) -> Any:
         """Return a value or default, wrapping nested mappings as ConfigNode objects."""
         return _wrap(self._data.get(key, default))
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return an independent plain mapping of this configuration node."""
+        return deepcopy(self._data)
 
 
 def _wrap(value: Any) -> Any:

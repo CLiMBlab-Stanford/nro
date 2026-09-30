@@ -100,6 +100,7 @@ def _row_matches(row: dict, selection, *, match_module: bool = True) -> bool:
 
 def _source(row: dict, path: Path, *, role: str = "derivative") -> SceneSource:
     entities = _mapping(row.get("entities_json"))
+    path_entities = parse_bids_entities(path.name)
     return SceneSource(
         module=str(row["module"]),
         role=role,
@@ -109,7 +110,7 @@ def _source(row: dict, path: Path, *, role: str = "derivative") -> SceneSource:
         output_root=Path(str(row["output_root"])),
         project=str(row["project"]),
         participant=str(row["participant"]),
-        space=entities.get("space"),
+        space=path_entities.get("space", entities.get("space")),
     )
 
 
