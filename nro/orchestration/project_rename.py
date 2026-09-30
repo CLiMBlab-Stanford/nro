@@ -220,7 +220,9 @@ def _ingestion_files(control: ControlPaths, topology, old: str) -> tuple[Path, .
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
-                raise ValueError(f"Cannot inventory BIDSification record {path}: {error}") from error
+                raise ValueError(
+                    f"Cannot inventory BIDSification record {path}: {error}"
+                ) from error
             if record.get("project") == old:
                 matched.append(path)
     return tuple(matched)
@@ -363,7 +365,9 @@ def _project_inventory(
                     try:
                         record = json.loads(path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError) as error:
-                        raise ValueError(f"Cannot inventory ownership receipt {path}: {error}") from error
+                        raise ValueError(
+                            f"Cannot inventory ownership receipt {path}: {error}"
+                        ) from error
                     if record.get("project") == old:
                         receipts.append(path)
                     continue
@@ -1003,6 +1007,7 @@ def execute(
     progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Apply a previously previewable rename and retain a recovery journal."""
+
     def report_phase(phase: str) -> None:
         if progress is not None:
             progress(phase)
@@ -1108,16 +1113,12 @@ def execute(
     completed = False
     changed = report["work_items"]
     try:
-        current_ingestion = _ingestion_files(
-            ControlPaths(registry.paths.control), topology, old
-        )
+        current_ingestion = _ingestion_files(ControlPaths(registry.paths.control), topology, old)
         if current_ingestion != ingestion:
             raise ValueError("BIDSification records changed after the rename preview")
         final_blockers = _rename_blockers(registry, old=old, ingestion=current_ingestion)
         if final_blockers:
-            raise ValueError(
-                "Project rename became blocked: " + "; ".join(final_blockers)
-            )
+            raise ValueError("Project rename became blocked: " + "; ".join(final_blockers))
         report_phase("Rewriting project identities")
         with registry.connection() as db:
             _stored, mapping = _key_maps(db, old, new)
