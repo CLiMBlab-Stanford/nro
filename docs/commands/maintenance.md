@@ -185,6 +185,10 @@ metadata, symbolic links, and definition files. Use `--dry-run` to stop after
 the preview or `-f`/`--force` to skip confirmation. The command is available
 only from the registered main checkout.
 
+The command starts the central scheduler when one is not already running. Both
+the preview and execution therefore run in the scheduler's Slurm allocation,
+not in the invoking login-shell process.
+
 The rename covers the shared BIDS and WORK projects, every registered branch's
 development BIDS and WORK projects, project log directories, scheduler and
 branch registries, ownership receipts, BIDSification records, Workbench scene

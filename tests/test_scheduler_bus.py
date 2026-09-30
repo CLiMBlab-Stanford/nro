@@ -388,7 +388,10 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][1]["timeout"] == 60.0
 
 
-def test_dataset_migration_requires_scheduler_service(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("operation", ("dataset_migration", "project_rename"))
+def test_long_running_maintenance_requires_scheduler_service(
+    tmp_path: Path, monkeypatch, operation: str
+) -> None:
     endpoint = SimpleNamespace()
     calls = []
     monkeypatch.setattr(
@@ -406,14 +409,14 @@ def test_dataset_migration_requires_scheduler_service(tmp_path: Path, monkeypatc
         tmp_path / "control",
         tmp_path / "BIDS",
         checkout=tmp_path / "checkout",
-        operation="dataset_migration",
+        operation=operation,
         projects=["demo"],
         execute=False,
         version="1.2.3",
     )
 
     assert calls[0][0] is endpoint
-    assert calls[0][1]["operation"] == "dataset_migration"
+    assert calls[0][1]["operation"] == operation
     assert calls[0][2]["require_service"] is True
     assert calls[0][2]["start_epoch"] is True
     assert calls[0][2]["timeout"] is None
