@@ -30,12 +30,14 @@ nro migrate dataset -P PROJECT
 
 The command pages through the complete plan and asks for confirmation before it
 writes anything. Use `--dry-run` to stop after the preview or `-f`/`--force` to skip
-confirmation. The command is available only from the central installation. It
-coordinates changes to the selected raw BIDS projects, the main derivative tree,
-registered development branches, ownership receipts, and scheduler evidence. It
-refuses active attempts, converts version-4 ownership receipts to version 5, removes
-obsolete `EventsFile` fields from source imaging sidecars, and rewrites supported nro
-JSON and YAML metadata. Repeating the migration is a no-op.
+confirmation. The command is available only from the central installation. Before
+the preview, it starts or joins the central Slurm scheduler without creating
+scientific demand. Preview and execution therefore run on the scheduler allocation,
+not the login node. It coordinates changes to the selected raw BIDS projects, the
+main derivative tree, registered development branches, ownership receipts, and
+scheduler evidence. It refuses active attempts, converts version-4 ownership receipts
+to version 5, removes obsolete `EventsFile` fields from source imaging sidecars, and
+rewrites supported nro JSON and YAML metadata. Repeating the migration is a no-op.
 
 The preflight reports separate source, derivative, and work-item-contract phases with
 file counts. It examines raw imaging sidecars under `sub-*` and structured metadata
@@ -55,8 +57,9 @@ index.
 Unknown ownership versions, invalid metadata, path traversal, and paths outside the
 known BIDS and site roots stop the migration during its read-only preflight. Execution
 records every replacement in a durable private journal before writing. An ordinary
-failure rolls back immediately; a later invocation rolls back an interrupted
-transaction before starting another migration.
+failure rolls back immediately. If public files have passed validation, a later
+invocation resumes the registry phase without rewriting them; earlier interruptions
+roll back before another migration begins.
 
 Third-party derivatives remain outside this migration. Source fields without an
 explicit migration rule remain untouched.
