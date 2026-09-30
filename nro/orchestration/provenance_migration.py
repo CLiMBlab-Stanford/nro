@@ -650,6 +650,10 @@ def _metadata_files(root: Path, *, prune_code_products: bool = False) -> Iterato
             names.clear()
             continue
         for name in files:
+            if name.startswith(".") and ".tmp-" in name:
+                # A killed atomic writer can leave its unpublished sibling
+                # behind. It is garbage, not part of the public metadata set.
+                continue
             path = current / name
             if path.suffix.lower() in {".json", ".yaml", ".yml"}:
                 yield path

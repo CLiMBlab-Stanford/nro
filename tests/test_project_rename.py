@@ -2,12 +2,16 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from nro.configuration.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchTopology
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.project_rename import (
+    ProjectMove,
     _copy_or_link,
+    _project_inventory,
     _replace_project,
     _rewrite_central,
     _rewrite_markup,
@@ -52,6 +56,67 @@ def test_copy_fallback_preserves_file_metadata(tmp_path, monkeypatch):
     assert destination.read_bytes() == source.read_bytes()
     assert destination.stat().st_mode & 0o777 == source.stat().st_mode & 0o777
     assert destination.stat().st_mtime_ns == source.stat().st_mtime_ns
+
+
+def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkeypatch):
+    source = tmp_path / "BIDS/old"
+    source.mkdir(parents=True)
+
+    def unreadable(_root, *, topdown, followlinks, onerror):
+        assert topdown is True and followlinks is False
+        onerror(PermissionError(13, "Permission denied", str(source / "private")))
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("nro.orchestration.project_rename.os.walk", unreadable)
+
+    with pytest.raises(OSError, match="Cannot inventory project directory.*private"):
+        _project_inventory(
+            (ProjectMove(source, tmp_path / "BIDS/new"),),
+            bids_root=tmp_path / "BIDS",
+            old="old",
+            new="new",
+        )
+
+
+def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch, capsys):
+    from nro.bin import project as project_cli
+
+    preview = {
+        "old": "old",
+        "new": "new",
+        "work_items": 2,
+        "inventory_entries": 4,
+        "ownership_receipts": 1,
+        "scene_files": 0,
+        "metadata_files": 1,
+        "source_symlinks": 0,
+        "absolute_symlinks": 0,
+        "ingestion_records": 0,
+        "definition_files": [],
+        "moves": [{"source": "/bids/old", "destination": "/bids/new"}],
+        "blockers": [],
+    }
+    calls = []
+    pages = []
+
+    monkeypatch.setattr(
+        "nro.configuration.site.settings",
+        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+    )
+    monkeypatch.setattr(project_cli, "page_text", pages.append)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    def maintenance(*_args, **fields):
+        calls.append(fields["execute"])
+        return preview if not fields["execute"] else {**preview, "executed": True}
+
+    monkeypatch.setattr("nro.orchestration.scheduler_client.maintenance", maintenance)
+
+    project_cli.main(["rename", "old", "new"])
+
+    assert calls == [False, True]
+    assert pages and "Project rename: old -> new" in pages[0]
+    assert "Renamed project old to new." in capsys.readouterr().out
 
 
 def test_markup_rename_preserves_comments_and_rejects_collisions(tmp_path):

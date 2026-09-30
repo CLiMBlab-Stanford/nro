@@ -9,9 +9,10 @@ import re
 import shutil
 import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import yaml
 
@@ -41,6 +42,29 @@ class ProjectMove:
 
     source: Path
     destination: Path
+
+
+@dataclass(frozen=True)
+class ProjectInventory:
+    """Files requiring inspection or translation during one project rename."""
+
+    receipts: tuple[Path, ...]
+    scenes: tuple[Path, ...]
+    metadata: tuple[Path, ...]
+    source_symlinks: dict[Path, str]
+    absolute_symlinks: dict[Path, tuple[str, str]]
+    scanned: int
+
+
+@dataclass(frozen=True)
+class RenamePreparation:
+    """Validated rename report and the inventory from which it was built."""
+
+    report: dict
+    inventory: ProjectInventory
+    ingestion: tuple[Path, ...]
+    definition_updates: dict[Path, dict[Path, bytes]]
+    topology: Any
 
 
 def _project(value: str) -> str:
@@ -195,81 +219,13 @@ def _ingestion_files(control: ControlPaths, topology, old: str) -> tuple[Path, .
         for path in sorted(root.glob("*.json")):
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
+            except (OSError, json.JSONDecodeError) as error:
+                raise ValueError(
+                    f"Cannot inventory BIDSification record {path}: {error}"
+                ) from error
             if record.get("project") == old:
                 matched.append(path)
     return tuple(matched)
-
-
-def _receipt_files(moves: Iterable[ProjectMove], old: str) -> tuple[Path, ...]:
-    matched = []
-    for move in moves:
-        if move.source.name != old or move.source.parent.name not in {"BIDS", "bids"}:
-            continue
-        for path in move.source.glob("derivatives/nro/*/*/.nro/work_items/*/*.json"):
-            try:
-                record = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if record.get("project") == old:
-                matched.append(path)
-    return tuple(sorted(matched))
-
-
-def _scene_files(moves: Iterable[ProjectMove], old: str) -> tuple[Path, ...]:
-    """Return generated Workbench scenes whose absolute links need translation."""
-    matched = []
-    for move in moves:
-        if move.source.name == old and move.source.parent.name in {"BIDS", "bids"}:
-            matched.extend(move.source.glob("derivatives/scenes/**/*.scene"))
-    return tuple(sorted(path for path in matched if path.is_file() and not path.is_symlink()))
-
-
-def _metadata_files(moves: Iterable[ProjectMove], old: str) -> tuple[Path, ...]:
-    """Find managed structured metadata that embeds absolute project paths."""
-    matched = []
-    suffixes = {".json", ".yaml", ".yml", ".scene"}
-    for move in moves:
-        if move.source.name != old or move.source.parent.name not in {"BIDS", "bids", "WORK"}:
-            continue
-        for path in move.source.rglob("*"):
-            if (
-                not path.is_file()
-                or path.is_symlink()
-                or path.suffix.lower() not in suffixes
-                or ".nro/work_items" in path.as_posix()
-            ):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            if f"/{old}/" in text or text.rstrip().endswith(f"/{old}"):
-                matched.append(path)
-    return tuple(sorted(set(matched)))
-
-
-def _source_symlinks(bids_root: Path, old: str) -> dict[Path, str]:
-    """Inventory raw BIDS links without traversing them or derivative trees."""
-    project = bids_root / old
-    links = {}
-    for parent, directories, files in os.walk(project, followlinks=False):
-        directory = Path(parent)
-        relative = directory.relative_to(project)
-        if relative.parts and relative.parts[0] == "derivatives":
-            directories[:] = []
-            continue
-        for name in tuple(directories):
-            path = directory / name
-            if path.is_symlink():
-                links[path] = os.readlink(path)
-                directories.remove(name)
-        for name in files:
-            path = directory / name
-            if path.is_symlink():
-                links[path] = os.readlink(path)
-    return links
 
 
 def _copy_or_link(source: str | Path, destination: str | Path) -> str:
@@ -326,27 +282,119 @@ def _restore_recorded_symlink(path: Path, target: str) -> None:
     path.symlink_to(target)
 
 
-def _absolute_symlinks(
-    moves: Iterable[ProjectMove], old: str, new: str, *, excluded: Iterable[Path] = ()
-) -> dict[Path, tuple[str, str]]:
-    """Find links into renamed roots without following directory links."""
-    updates = {}
-    excluded = set(excluded)
+def _strict_walk(root: Path):
+    """Walk a managed root and fail when any directory cannot be inspected."""
+
+    def failed(error: OSError) -> None:
+        raise OSError(f"Cannot inventory project directory: {error.filename}: {error.strerror}")
+
+    return os.walk(root, topdown=True, followlinks=False, onerror=failed)
+
+
+def _metadata_reference(request: tuple[Path, str]) -> Path | None:
+    """Return a structured file when it embeds the old absolute project path."""
+    path, old = request
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValueError(f"Cannot inspect project metadata {path}: {error}") from error
+    return path if f"/{old}/" in text or text.rstrip().endswith(f"/{old}") else None
+
+
+def _project_inventory(
+    moves: Iterable[ProjectMove],
+    *,
+    bids_root: Path,
+    old: str,
+    new: str,
+    progress: Callable[[str], None] | None = None,
+) -> ProjectInventory:
+    """Inventory every managed root once without following symbolic links."""
+    receipts = []
+    scenes = []
+    metadata_candidates = []
+    source_symlinks: dict[Path, str] = {}
+    absolute_symlinks: dict[Path, tuple[str, str]] = {}
+    scanned = 0
+    source_root = bids_root / old
+    suffixes = {".json", ".yaml", ".yml", ".scene"}
+
+    def report() -> None:
+        if progress is not None and (scanned == 1 or scanned % 1000 == 0):
+            progress(f"Inventorying managed project files ({scanned:,} entries)")
+
     for move in moves:
-        for parent, directories, files in os.walk(move.source, followlinks=False):
+        includes_metadata = move.source.parent.name in {"BIDS", "bids", "WORK"}
+        is_public_bids = move.source.parent.name in {"BIDS", "bids"}
+        is_source = move.source == source_root
+        for parent, directories, files in _strict_walk(move.source):
             directory = Path(parent)
-            names = [*directories, *files]
-            for name in names:
+            relative_directory = directory.relative_to(move.source)
+            for name in tuple(directories):
                 path = directory / name
-                if path in excluded or not path.is_symlink():
+                scanned += 1
+                report()
+                if not path.is_symlink():
                     continue
+                directories.remove(name)
                 target = os.readlink(path)
-                if not Path(target).is_absolute():
+                relative = relative_directory / name
+                if is_source and (not relative.parts or relative.parts[0] != "derivatives"):
+                    source_symlinks[path] = target
                     continue
-                translated = _replace_project(target, old, new, {})
-                if translated != target:
-                    updates[path] = (target, translated)
-    return updates
+                if Path(target).is_absolute():
+                    translated = _replace_project(target, old, new, {})
+                    if translated != target:
+                        absolute_symlinks[path] = (target, translated)
+            for name in files:
+                path = directory / name
+                scanned += 1
+                report()
+                relative = relative_directory / name
+                if path.is_symlink():
+                    target = os.readlink(path)
+                    if is_source and (not relative.parts or relative.parts[0] != "derivatives"):
+                        source_symlinks[path] = target
+                    elif Path(target).is_absolute():
+                        translated = _replace_project(target, old, new, {})
+                        if translated != target:
+                            absolute_symlinks[path] = (target, translated)
+                    continue
+                rendered = relative.as_posix()
+                if is_public_bids and "/.nro/work_items/" in f"/{rendered}":
+                    try:
+                        record = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as error:
+                        raise ValueError(
+                            f"Cannot inventory ownership receipt {path}: {error}"
+                        ) from error
+                    if record.get("project") == old:
+                        receipts.append(path)
+                    continue
+                if (
+                    is_public_bids
+                    and relative.parts[:2] == ("derivatives", "scenes")
+                    and path.suffix == ".scene"
+                ):
+                    scenes.append(path)
+                if includes_metadata and path.suffix.lower() in suffixes:
+                    metadata_candidates.append(path)
+    if progress is not None:
+        progress(f"Inspecting structured project metadata ({len(metadata_candidates):,} files)")
+    metadata = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for offset in range(0, len(metadata_candidates), 256):
+            batch = metadata_candidates[offset : offset + 256]
+            matched = executor.map(_metadata_reference, ((path, old) for path in batch))
+            metadata.extend(path for path in matched if path is not None)
+    return ProjectInventory(
+        tuple(sorted(receipts)),
+        tuple(sorted(scenes)),
+        tuple(sorted(metadata)),
+        source_symlinks,
+        absolute_symlinks,
+        scanned,
+    )
 
 
 def _replace_symlink(path: Path, target: str) -> None:
@@ -539,8 +587,55 @@ def _receipt_key_map(paths: Iterable[Path], new: str) -> dict[str, str]:
     return mapping
 
 
-def preview(registry, *, checkout: Path, values: dict, old: str, new: str) -> dict:
-    """Describe a safe rename without changing files or registries."""
+def _rename_blockers(registry, *, old: str, ingestion: Iterable[Path]) -> tuple[str, ...]:
+    """Return current execution or ingestion activity that prevents a rename."""
+    with registry.connection() as db:
+        active_attempts = int(
+            db.execute(
+                """SELECT COUNT(*) FROM attempts attempt JOIN work_items item
+                 ON item.id=attempt.work_item_id
+                 WHERE item.project=? AND attempt.state IN ('queued','running','cancel_requested')""",
+                (old,),
+            ).fetchone()[0]
+        )
+        active_steps = int(
+            db.execute(
+                """SELECT COUNT(*) FROM resource_step_tasks task JOIN work_items item
+                 ON item.id=task.work_item_id
+                 WHERE item.project=? AND task.state IN ('pending','running')""",
+                (old,),
+            ).fetchone()[0]
+        )
+        active_requests = int(
+            db.execute(
+                "SELECT COUNT(*) FROM requests WHERE project=? AND state='active'", (old,)
+            ).fetchone()[0]
+        )
+    active_ingestion = 0
+    for path in ingestion:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        active_ingestion += record.get("state") in _ACTIVE
+    blockers = []
+    if active_attempts or active_steps or active_requests:
+        blockers.append(
+            f"project has {active_requests} active request(s), {active_attempts} active attempt(s), "
+            f"and {active_steps} active resource step(s); stop its work first"
+        )
+    if active_ingestion:
+        blockers.append(f"project has {active_ingestion} active BIDSification request(s)")
+    return tuple(blockers)
+
+
+def _prepare_rename(
+    registry,
+    *,
+    checkout: Path,
+    values: dict,
+    old: str,
+    new: str,
+    progress: Callable[[str], None] | None = None,
+) -> RenamePreparation:
+    """Validate a rename and retain the exact inventory behind its report."""
     old, new = _project(old), _project(new)
     if old == new:
         raise ValueError("Old and new project identifiers are identical")
@@ -571,49 +666,23 @@ def preview(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
         if move.source.stat().st_dev != move.destination.parent.stat().st_dev:
             raise ValueError(f"Project rename is not atomic across filesystems: {move.source}")
 
+    if progress is not None:
+        progress("Checking project registry state")
     with registry.connection() as db:
-        active_attempts = int(
-            db.execute(
-                """SELECT COUNT(*) FROM attempts attempt JOIN work_items item
-                 ON item.id=attempt.work_item_id
-                 WHERE item.project=? AND attempt.state IN ('queued','running','cancel_requested')""",
-                (old,),
-            ).fetchone()[0]
-        )
-        active_steps = int(
-            db.execute(
-                """SELECT COUNT(*) FROM resource_step_tasks task JOIN work_items item
-                 ON item.id=task.work_item_id
-                 WHERE item.project=? AND task.state IN ('pending','running')""",
-                (old,),
-            ).fetchone()[0]
-        )
-        active_requests = int(
-            db.execute(
-                "SELECT COUNT(*) FROM requests WHERE project=? AND state='active'", (old,)
-            ).fetchone()[0]
-        )
         work_items = int(
             db.execute("SELECT COUNT(*) FROM work_items WHERE project=?", (old,)).fetchone()[0]
         )
     ingestion = _ingestion_files(ControlPaths(registry.paths.control), topology, old)
-    active_ingestion = 0
-    for path in ingestion:
-        record = json.loads(path.read_text(encoding="utf-8"))
-        active_ingestion += record.get("state") in _ACTIVE
-    blockers = []
-    if active_attempts or active_steps or active_requests:
-        blockers.append(
-            f"project has {active_requests} active request(s), {active_attempts} active attempt(s), "
-            f"and {active_steps} active resource step(s); stop its work first"
-        )
-    if active_ingestion:
-        blockers.append(f"project has {active_ingestion} active BIDSification request(s)")
-    receipts = _receipt_files(moves, old)
-    scenes = _scene_files(moves, old)
-    metadata = _metadata_files(moves, old)
-    source_symlinks = _source_symlinks(Path(values["bids"]), old)
-    symlinks = _absolute_symlinks(moves, old, new, excluded=source_symlinks)
+    blockers = list(_rename_blockers(registry, old=old, ingestion=ingestion))
+    inventory = _project_inventory(
+        moves,
+        bids_root=Path(values["bids"]),
+        old=old,
+        new=new,
+        progress=progress,
+    )
+    if progress is not None:
+        progress("Checking project definitions")
     definition_updates = _definition_updates(values, store, old, new)
     unhandled = _unhandled_definition_references(values, store, old, definition_updates)
     if unhandled:
@@ -621,25 +690,26 @@ def preview(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
             "definitions contain project references outside supported markup or "
             "BIDSification routing fields: " + ", ".join(map(str, unhandled))
         )
-    return {
+    report = {
         "old": old,
         "new": new,
         "moves": [
             {"source": str(item.source), "destination": str(item.destination)} for item in moves
         ],
         "work_items": work_items,
-        "ownership_receipts": len(receipts),
-        "scene_files": len(scenes),
-        "metadata_files": len(metadata),
-        "source_symlinks": len(source_symlinks),
+        "ownership_receipts": len(inventory.receipts),
+        "scene_files": len(inventory.scenes),
+        "metadata_files": len(inventory.metadata),
+        "source_symlinks": len(inventory.source_symlinks),
+        "inventory_entries": inventory.scanned,
         "source_symlink_records": [
             {"path": str(path), "target": target}
-            for path, target in sorted(source_symlinks.items())
+            for path, target in sorted(inventory.source_symlinks.items())
         ],
-        "absolute_symlinks": len(symlinks),
+        "absolute_symlinks": len(inventory.absolute_symlinks),
         "absolute_symlink_records": [
             {"path": str(path), "old_target": targets[0], "new_target": targets[1]}
-            for path, targets in sorted(symlinks.items())
+            for path, targets in sorted(inventory.absolute_symlinks.items())
         ],
         "ingestion_records": len(ingestion),
         "definition_files": [
@@ -650,6 +720,27 @@ def preview(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
         "unhandled_definition_references": [str(path) for path in unhandled],
         "blockers": blockers,
     }
+    return RenamePreparation(report, inventory, ingestion, definition_updates, topology)
+
+
+def preview(
+    registry,
+    *,
+    checkout: Path,
+    values: dict,
+    old: str,
+    new: str,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    """Describe a safe rename without changing files or registries."""
+    return _prepare_rename(
+        registry,
+        checkout=checkout,
+        values=values,
+        old=old,
+        new=new,
+        progress=progress,
+    ).report
 
 
 def _rewrite_markup(path: Path, old: str, new: str) -> str:
@@ -906,13 +997,34 @@ def _rewrite_central(
     return len(stored), mapping
 
 
-def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> dict:
+def execute(
+    registry,
+    *,
+    checkout: Path,
+    values: dict,
+    old: str,
+    new: str,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
     """Apply a previously previewable rename and retain a recovery journal."""
+
+    def report_phase(phase: str) -> None:
+        if progress is not None:
+            progress(phase)
+
     old, new = _project(old), _project(new)
     recovered = _recover_interrupted(registry, old, new)
     if recovered is not None:
         return recovered
-    report = preview(registry, checkout=checkout, values=values, old=old, new=new)
+    prepared = _prepare_rename(
+        registry,
+        checkout=checkout,
+        values=values,
+        old=old,
+        new=new,
+        progress=progress,
+    )
+    report = prepared.report
     if report["blockers"]:
         raise ValueError("Project rename is blocked: " + "; ".join(report["blockers"]))
     old, new = report["old"], report["new"]
@@ -920,16 +1032,17 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
 
     shutdown_planner(registry.paths.control)
     store = BranchStore(registry.paths.control)
-    topology = store.read().topology
+    topology = prepared.topology
     moves = tuple(
         ProjectMove(Path(item["source"]), Path(item["destination"])) for item in report["moves"]
     )
-    receipts = _receipt_files(moves, old)
-    metadata = _metadata_files(moves, old)
-    source_symlinks = _source_symlinks(Path(values["bids"]), old)
-    symlinks = _absolute_symlinks(moves, old, new, excluded=source_symlinks)
-    ingestion = _ingestion_files(ControlPaths(registry.paths.control), topology, old)
-    definition_updates = _definition_updates(values, store, old, new)
+    receipts = prepared.inventory.receipts
+    metadata = prepared.inventory.metadata
+    source_symlinks = prepared.inventory.source_symlinks
+    symlinks = prepared.inventory.absolute_symlinks
+    ingestion = prepared.ingestion
+    definition_updates = prepared.definition_updates
+    report_phase("Preparing project rename recovery journal")
     journal = ControlPaths(registry.paths.control).shared / "project-renames" / uuid.uuid4().hex
     ensure_shared_directory(journal)
     atomic_write_json(
@@ -942,6 +1055,7 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
 
     # Databases and edited metadata are inexpensive to back up. Project directories
     # are rolled back by reversing their same-filesystem atomic renames.
+    report_phase("Backing up scheduler registry")
     with registry.connection() as db:
         backup = sqlite3.connect(journal / "scheduler.sqlite3")
         try:
@@ -950,6 +1064,7 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
             backup.close()
     (journal / "scheduler.sqlite3").chmod(0o664)
     branch_backups: dict[str, Path] = {}
+    report_phase("Backing up branch registries")
     for name in topology.records:
         scientific = store.registry(name)
         backup = journal / f"branch-{scientific.record.registry_id}.sqlite3"
@@ -966,6 +1081,7 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
         root / relative for root, changes in definition_updates.items() for relative in changes
     )
     manifests = tuple(root / MANIFEST for root in definition_updates if (root / MANIFEST).is_file())
+    report_phase("Backing up project metadata")
     for index, path in enumerate((*definition_paths, *manifests, *ingestion, *receipts, *metadata)):
         backup = journal / "files" / f"{index:08d}"
         backup.parent.mkdir(parents=True, exist_ok=True)
@@ -997,11 +1113,13 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
     completed = False
     changed = report["work_items"]
     try:
-        final_preview = preview(registry, checkout=checkout, values=values, old=old, new=new)
-        if final_preview["blockers"]:
-            raise ValueError(
-                "Project rename became blocked: " + "; ".join(final_preview["blockers"])
-            )
+        current_ingestion = _ingestion_files(ControlPaths(registry.paths.control), topology, old)
+        if current_ingestion != ingestion:
+            raise ValueError("BIDSification records changed after the rename preview")
+        final_blockers = _rename_blockers(registry, old=old, ingestion=current_ingestion)
+        if final_blockers:
+            raise ValueError("Project rename became blocked: " + "; ".join(final_blockers))
+        report_phase("Rewriting project identities")
         with registry.connection() as db:
             _stored, mapping = _key_maps(db, old, new)
         mapping.update(_receipt_key_map(receipts, new))
@@ -1018,9 +1136,10 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
         for path in ingestion:
             value = _translate(json.loads(path.read_text(encoding="utf-8")), old, new, mapping)
             atomic_write_json(path, value, sort_keys=True, mode=0o660, durable=True)
+        if source_symlinks:
+            report_phase(f"Materializing raw BIDS links ({len(source_symlinks):,} links)")
         for path in source_symlinks:
             _materialize_source_symlink(path)
-        metadata = tuple(sorted(set(metadata) | set(_metadata_files(moves, old))))
         for path in metadata:
             text = path.read_text(encoding="utf-8")
             translated = _replace_project(text, old, new, mapping)
@@ -1036,6 +1155,7 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
         _receipt_count, created_receipts = _rewrite_receipts(receipts, old, new, mapping)
         for path, (_old_target, new_target) in symlinks.items():
             _replace_symlink(path, new_target)
+        report_phase(f"Moving managed project directories ({len(moves):,} directories)")
         for move in moves:
             move.source.rename(move.destination)
             moved.append(move)
@@ -1050,6 +1170,7 @@ def execute(registry, *, checkout: Path, values: dict, old: str, new: str) -> di
                 "INSERT OR REPLACE INTO metadata(key,value) VALUES ('project_rename_commit',?)",
                 (str(journal / "journal.json"),),
             )
+        report_phase("Committing project rename")
         completed = True
     except BaseException:
         if _rename_commit_journal(registry) == journal / "journal.json":

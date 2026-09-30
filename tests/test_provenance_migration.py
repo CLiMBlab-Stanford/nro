@@ -188,8 +188,9 @@ def test_migration_inventory_prunes_non_bids_and_external_product_trees(
     sourcedata = project / "sourcedata/sub-01/func/sub-01_task-rest_bold.json"
     third_party = project / "derivatives/other/sub-01/manifest.json"
     manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
+    abandoned = manifest.with_name(".manifest.tmp-0123456789abcdef.json")
     external = project / "derivatives/nro/anat/main/code/freesurfer/metadata.json"
-    for path in (raw, excluded, sourcedata, third_party, manifest, external):
+    for path in (raw, excluded, sourcedata, third_party, manifest, abandoned, external):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}")
 

@@ -218,6 +218,7 @@ def test_scheduler_exchange_reports_startup_failure(monkeypatch, tmp_path) -> No
         "read_startup_error",
         lambda *_args: {"error": "database is locked"},
     )
+    monkeypatch.setattr(scheduler_bus, "read_startup_progress", lambda *_args: None)
     monkeypatch.setattr(scheduler_client, "_ensure_coordinator", lambda *_args, **_kwargs: True)
     with pytest.raises(RuntimeError, match="could not start: database is locked"):
         scheduler_client.exchange(endpoint, {"operation": "status"})

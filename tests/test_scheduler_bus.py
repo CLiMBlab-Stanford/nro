@@ -527,6 +527,22 @@ def test_controller_startup_error_is_scoped_to_launch_token(tmp_path):
     assert scheduler_bus.read_startup_error(control, "other") is None
 
 
+def test_controller_startup_progress_is_scoped_and_cleared_on_activation(tmp_path):
+    control = tmp_path / ".nro"
+    scheduler_bus.prepare(control)
+    claim = scheduler_bus.claim_launch(control)
+    assert claim is not None
+    scheduler_bus.publish_startup_progress(control, claim.token, "Opening scheduler registry")
+
+    record = scheduler_bus.read_startup_progress(control, claim.token)
+    assert record is not None
+    assert record["phase"] == "Opening scheduler registry"
+    assert scheduler_bus.read_startup_progress(control, "other") is None
+
+    scheduler_bus.activate(control, claim.token, 1, host="scheduler.example", port=23001)
+    assert scheduler_bus.read_startup_progress(control, claim.token) is None
+
+
 def test_cached_status_neither_starts_service_nor_opens_database(tmp_path, monkeypatch):
     control = tmp_path / ".nro"
     checkout = tmp_path / "checkout"
