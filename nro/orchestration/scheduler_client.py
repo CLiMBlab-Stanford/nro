@@ -815,7 +815,7 @@ def maintenance(
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )
-    require_service = operation == "dataset_migration"
+    require_service = operation in {"dataset_migration", "project_rename"}
     return exchange(
         _endpoint(
             control,
