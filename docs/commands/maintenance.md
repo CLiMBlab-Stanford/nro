@@ -175,14 +175,15 @@ Rename a BIDS project after stopping its demand and active work:
 
 ```bash
 nro project rename climblab_multisession climb
-nro project rename climblab_multisession climb --execute
+nro project rename climblab_multisession climb --dry-run
 ```
 
-The first command is a read-only preview. It reports every managed directory
-move and the affected work items, ownership receipts, Workbench scenes,
-BIDSification records, structured metadata, symbolic links, and definition
-files. `--execute` applies that exact kind of migration. The command is
-available only from the registered main checkout.
+The default command opens a read-only preview in the pager and then asks for
+confirmation. It reports every managed directory move and the affected work
+items, ownership receipts, Workbench scenes, BIDSification records, structured
+metadata, symbolic links, and definition files. Use `--dry-run` to stop after
+the preview or `-f`/`--force` to skip confirmation. The command is available
+only from the registered main checkout.
 
 The rename covers the shared BIDS and WORK projects, every registered branch's
 development BIDS and WORK projects, project log directories, scheduler and
@@ -192,6 +193,8 @@ project routing. Directory moves must be atomic on their filesystem. The command
 refuses symbolic-link roots, an existing destination, active demand, active
 attempts or resource steps, and active
 BIDSification for the source project.
+Inventory traversal fails if any managed directory or metadata file cannot be
+read. The command never treats an incomplete scan as a complete preview.
 
 Raw BIDS symbolic links are materialized during execution. Regular files become
 hard links when their target is on the same filesystem; otherwise they become

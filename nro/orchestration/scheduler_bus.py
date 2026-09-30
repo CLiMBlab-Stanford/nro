@@ -236,6 +236,56 @@ def read_launch(control: Path) -> dict[str, Any] | None:
         return None
 
 
+def startup_progress_path(control: Path, token: str) -> Path:
+    """Return the transient startup record for one launch token."""
+    return ControlPaths(control).service / (
+        f"startup-progress-{_identifier(token, 'launch token')}.json"
+    )
+
+
+def publish_startup_progress(control: Path, token: str, phase: str) -> None:
+    """Expose scheduler initialization after its allocation has started."""
+    if not phase or len(phase) > 160:
+        raise ValueError("Scheduler startup phase must contain at most 160 characters")
+    atomic_write_json(
+        startup_progress_path(control, token),
+        {
+            "protocol": PROTOCOL,
+            "token": token,
+            "phase": phase,
+            "host": socket.gethostname(),
+            "pid": os.getpid(),
+            "updated_at": time.time(),
+        },
+        sort_keys=True,
+        mode=0o664,
+    )
+
+
+def read_startup_progress(control: Path, token: str) -> dict[str, Any] | None:
+    """Read the current initialization phase for one launch token."""
+    if not token:
+        return None
+    try:
+        value = read_json(startup_progress_path(control, token))
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+    required = {"protocol", "token", "phase", "host", "pid", "updated_at"}
+    if (
+        not isinstance(value, dict)
+        or set(value) != required
+        or value["protocol"] != PROTOCOL
+        or value["token"] != token
+    ):
+        return None
+    return value
+
+
+def clear_startup_progress(control: Path, token: str) -> None:
+    """Remove one launch token's transient initialization record."""
+    startup_progress_path(control, token).unlink(missing_ok=True)
+
+
 def _slurm_terminal(job_id: str) -> bool | None:
     """Return a positive terminal-state result without guessing on scheduler failure."""
     return RegistryLock._slurm_terminal(job_id)
@@ -376,7 +426,7 @@ def activate(control: Path, token: str, generation: int, *, host: str, port: int
     active = read_active(control)
     if active and active.get("token") != token:
         raise RuntimeError("Another controller is already active")
-    return publish_active(
+    record = publish_active(
         control,
         token=token,
         generation=generation,
@@ -384,6 +434,8 @@ def activate(control: Path, token: str, generation: int, *, host: str, port: int
         host=host,
         port=port,
     )
+    clear_startup_progress(control, token)
+    return record
 
 
 def deactivate(control: Path, token: str) -> None:
@@ -412,6 +464,7 @@ def publish_startup_error(control: Path, token: str, error: str) -> None:
         mode=0o664,
         durable=True,
     )
+    clear_startup_progress(control, token)
 
 
 def read_startup_error(control: Path, token: str) -> dict[str, Any] | None:
@@ -690,6 +743,7 @@ def collect_transport_garbage(control: Path, *, age_seconds: float = 86400.0) ->
         *paths.service.glob("controller-*.sbatch"),
         *paths.service.glob("controller-local-*.log"),
         *paths.service.glob("startup-error-*.json"),
+        *paths.service.glob("startup-progress-*.json"),
         *(
             path
             for path in paths.service.glob("status-static-*.json")

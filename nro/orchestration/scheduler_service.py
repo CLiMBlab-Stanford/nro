@@ -1029,6 +1029,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         )
     elif message["operation"] == "project_rename":
         from nro.orchestration.project_rename import execute, preview
+        from nro.orchestration.scheduler_bus import publish_progress
 
         operation = execute if message["execute"] else preview
         result = operation(
@@ -1037,6 +1038,13 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             values=values,
             old=message["old"],
             new=message["new"],
+            progress=lambda phase: publish_progress(
+                registry.paths.control,
+                message_id,
+                phase=phase,
+                completed=0,
+                total=0,
+            ),
         )
         if not message["execute"]:
             result["executed"] = False
@@ -1306,6 +1314,7 @@ def serve(
         deactivate,
         publish_active,
         publish_startup_error,
+        publish_startup_progress,
     )
     from nro.orchestration.scheduler_implementation import require_worker_source
     from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
@@ -1314,7 +1323,9 @@ def serve(
     _STOP = False
     values = settings()[0]
     control = Path(values["registry"])
+    publish_startup_progress(control, launch_token, "Validating scheduler implementation")
     require_worker_source(control)
+    publish_startup_progress(control, launch_token, "Opening scheduler registry")
     registry = Registry.for_project("", bids_root=bids_root, registry_path=control)
     from nro.orchestration.scheduler_rpc import open_listener
 
@@ -1326,6 +1337,7 @@ def serve(
     try:
         registry_session.__enter__()
         registry_session_open = True
+        publish_startup_progress(control, launch_token, "Validating scheduler registry")
         registry.initialize()
         with registry.connection(write=True) as db:
             row = db.execute(

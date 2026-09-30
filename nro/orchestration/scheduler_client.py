@@ -355,6 +355,7 @@ def exchange(
         read_launch,
         read_progress,
         read_startup_error,
+        read_startup_progress,
     )
 
     kind = "worker" if message.get("operation") == "worker" else "command"
@@ -385,8 +386,10 @@ def exchange(
     acknowledged = False
     while True:
         launch = read_launch(endpoint.control)
+        startup_progress = None
         if launch is not None:
-            startup_error = read_startup_error(endpoint.control, str(launch.get("token") or ""))
+            launch_token = str(launch.get("token") or "")
+            startup_error = read_startup_error(endpoint.control, launch_token)
             if startup_error is not None:
                 if notice:
                     sys.stderr.write(_CLEAR)
@@ -394,6 +397,7 @@ def exchange(
                 raise SchedulerError(
                     "Central scheduler could not start: " + str(startup_error["error"])
                 )
+            startup_progress = read_startup_progress(endpoint.control, launch_token)
         now = time.monotonic()
         active = read_active(endpoint.control)
         if active is not None:
@@ -491,7 +495,9 @@ def exchange(
         if elapsed >= 0.75:
             progress = read_progress(endpoint.control, message_id) if durable else None
             fallback = (
-                "Waiting for the scheduler allocation..."
+                f"{startup_progress['phase']}..."
+                if startup_progress is not None
+                else "Waiting for the scheduler allocation..."
                 if waiting_for_slurm
                 else _operation_notice(message)
                 if acknowledged
