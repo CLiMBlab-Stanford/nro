@@ -1063,6 +1063,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             "changed": [str(path) for path in report.changed],
             "contracts": report.contracts,
             "errors": list(report.errors),
+            "recovery": [str(path) for path in report.recovery],
         }
     else:
         raise ValueError("Unsupported scheduler operation")

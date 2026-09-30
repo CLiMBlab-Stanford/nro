@@ -809,6 +809,7 @@ def maintenance(
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )
+    require_service = operation == "dataset_migration"
     return exchange(
         _endpoint(
             control,
@@ -818,4 +819,6 @@ def maintenance(
         ),
         dict(operation=operation, checkout=str(checkout), **fields),
         timeout=timeout,
+        require_service=require_service,
+        start_epoch=require_service,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.provenance_migration import (
     _candidates,
     _contract_dataset_view,
+    _refresh_inventory_locked,
     _scientific_contract_dataset_view,
     _source_candidates,
     migrate_dataset,
@@ -96,6 +98,84 @@ def test_dataset_migration_discards_legacy_partial_backup(tmp_path: Path) -> Non
     result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert result.errors == ()
+    assert not journal.exists()
+
+
+def test_inventory_refresh_scans_artifacts_once(tmp_path: Path) -> None:
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    first.write_text("first")
+    second.write_text("second")
+    database = sqlite3.connect(":memory:")
+    database.row_factory = sqlite3.Row
+    database.execute(
+        """CREATE TABLE artifacts (
+               id INTEGER PRIMARY KEY,
+               direction TEXT NOT NULL,
+               path TEXT NOT NULL,
+               size INTEGER,
+               mtime_ns INTEGER,
+               digest_algorithm TEXT,
+               digest TEXT
+           )"""
+    )
+    database.executemany(
+        "INSERT INTO artifacts(direction,path) VALUES('output',?)",
+        ((str(first.resolve()),), (str(first.resolve()),), (str(second.resolve()),)),
+    )
+    statements = []
+    database.set_trace_callback(statements.append)
+
+    _refresh_inventory_locked(database, (first, second))
+
+    scans = [
+        statement
+        for statement in statements
+        if statement == "SELECT id,path FROM artifacts WHERE direction='output'"
+    ]
+    assert len(scans) == 1
+    rows = database.execute("SELECT size FROM artifacts ORDER BY id").fetchall()
+    assert [row["size"] for row in rows] == [5, 5, 6]
+
+
+def test_dataset_migration_resumes_registry_phase_without_restoring_files(
+    tmp_path: Path,
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    output = project / "derivatives/nro/anat/main/sub-01/anat/sub-01_T1w.nii.gz"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"image")
+    manifest = output.with_name("manifest.json")
+    original = json.dumps({"output": str(output)})
+    migrated = json.dumps({"output": "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"})
+    manifest.write_text(migrated)
+    registry = Registry.for_project("", bids_root=bids)
+    journal = registry.paths.control / "shared/provenance-migrations/interrupted"
+    backup = journal / "files/00000000"
+    backup.parent.mkdir(parents=True)
+    backup.write_text(original)
+    (journal / "journal.json").write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "state": "registry_pending",
+                "projects": ["demo"],
+                "files": [
+                    {
+                        "path": str(manifest.resolve()),
+                        "backup": "files/00000000",
+                        "existed": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.errors == ()
+    assert manifest.read_text() == migrated
     assert not journal.exists()
 
 
@@ -437,6 +517,10 @@ def test_dataset_migration_recovers_an_interrupted_transaction(
         )
     )
 
+    preview = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
+    assert preview.errors == ()
+    assert preview.recovery == (journal,)
+
     result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
 
     assert manifest in result.changed
@@ -534,6 +618,7 @@ def test_scheduler_routes_dataset_migration(tmp_path: Path) -> None:
     )
 
     assert preview["errors"] == []
+    assert preview["recovery"] == []
     assert str(manifest) in preview["changed"]
     assert result["errors"] == []
     assert json.loads(manifest.read_text())["output"] == (

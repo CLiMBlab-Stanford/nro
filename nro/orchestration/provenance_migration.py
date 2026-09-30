@@ -76,6 +76,7 @@ class DatasetMigrationReport:
     changed: tuple[Path, ...]
     contracts: int
     errors: tuple[str, ...]
+    recovery: tuple[Path, ...] = ()
 
 
 def _bids_roots(registry, site_values: Mapping[str, object] | None) -> tuple[Path, ...]:
@@ -216,38 +217,57 @@ def _refresh_inventory(registry, paths: Iterable[Path]) -> None:
 
 def _refresh_inventory_locked(database, paths: Iterable[Path]) -> None:
     """Refresh integrity evidence inside the caller's transaction."""
-    for path in paths:
-        resolved = str(path.resolve())
+    targets = {str(path.resolve()): path for path in paths}
+    if not targets:
+        return
+    artifact_ids: dict[str, list[int]] = {}
+    for row in database.execute("SELECT id,path FROM artifacts WHERE direction='output'"):
+        if row["path"] in targets:
+            artifact_ids.setdefault(row["path"], []).append(int(row["id"]))
+    updates = []
+    removals = []
+    for resolved, path in targets.items():
+        ids = artifact_ids.get(resolved, ())
+        if not ids:
+            continue
         if not path.is_file():
-            database.execute(
-                "DELETE FROM artifacts WHERE direction='output' AND path=?", (resolved,)
-            )
+            removals.extend((artifact_id,) for artifact_id in ids)
             continue
         record = file_record(path)
-        database.execute(
-            """UPDATE artifacts SET size=?,mtime_ns=?,digest_algorithm=?,digest=?
-               WHERE direction='output' AND path=?""",
+        updates.extend(
             (
                 record["size"],
                 record["mtime_ns"],
                 "sha256" if "sha256" in record else None,
                 record.get("sha256"),
-                resolved,
-            ),
+                artifact_id,
+            )
+            for artifact_id in ids
         )
+    database.executemany(
+        """UPDATE artifacts SET size=?,mtime_ns=?,digest_algorithm=?,digest=?
+           WHERE id=?""",
+        updates,
+    )
+    database.executemany("DELETE FROM artifacts WHERE id=?", removals)
 
 
 def _verify_recorded_source_metadata(registry, paths: Iterable[Path]) -> tuple[str, ...]:
     """Reject cleanup when a recorded sidecar no longer matches completion evidence."""
+    targets = {str(path.resolve()): path for path in paths}
+    if not targets:
+        return ()
     errors = []
     with registry.connection() as database:
-        for path in paths:
-            resolved = str(path.resolve())
-            rows = database.execute(
-                """SELECT size,mtime_ns,digest_algorithm,digest FROM artifacts
-                   WHERE direction='input' AND path=?""",
-                (resolved,),
-            ).fetchall()
+        recorded: dict[str, list] = {}
+        for row in database.execute(
+            """SELECT path,size,mtime_ns,digest_algorithm,digest FROM artifacts
+               WHERE direction='input'"""
+        ):
+            if row["path"] in targets:
+                recorded.setdefault(row["path"], []).append(row)
+        for resolved, path in targets.items():
+            rows = recorded.get(resolved, ())
             if not rows:
                 continue
             current = file_record(path)
@@ -274,10 +294,24 @@ def _migrate_registry_contracts(registry, projects: tuple[str, ...]) -> None:
 def _migrate_registry_contracts_locked(registry, database, projects: tuple[str, ...]) -> None:
     """Migrate scheduler contracts inside the caller's transaction."""
     selected = set(projects)
-    rows = database.execute("SELECT id,project,artifact_contract_json FROM work_items").fetchall()
+    if not selected:
+        return
+    placeholders = ",".join("?" for _ in selected)
+    rows = database.execute(
+        f"""SELECT id,project,artifact_contract_json FROM work_items
+            WHERE project IN ({placeholders})""",
+        tuple(sorted(selected)),
+    ).fetchall()
+    selected_ids = {int(row["id"]) for row in rows}
+    branch_contracts: dict[int, list] = {}
+    for item in database.execute(
+        "SELECT rowid,work_item_id,scientific_contract_json FROM branch_work_items"
+    ):
+        work_item_id = int(item["work_item_id"])
+        if work_item_id in selected_ids:
+            branch_contracts.setdefault(work_item_id, []).append(item)
     for row in rows:
-        if row["project"] not in selected:
-            continue
+        work_item_id = int(row["id"])
         project_root = Path(registry.paths.bids_root) / str(row["project"])
         contract = _contract_dataset_view(json.loads(row["artifact_contract_json"]), project_root)
         rendered = json.dumps(contract, sort_keys=True, separators=(",", ":"))
@@ -286,11 +320,11 @@ def _migrate_registry_contracts_locked(registry, database, projects: tuple[str, 
         database.execute(
             """UPDATE work_items SET artifact_contract_json=?,artifact_fingerprint=?,
                       input_paths_json=? WHERE id=?""",
-            (rendered, digest, inputs, row["id"]),
+            (rendered, digest, inputs, work_item_id),
         )
         completion = database.execute(
             "SELECT artifact_contract_json FROM completions WHERE work_item_id=?",
-            (row["id"],),
+            (work_item_id,),
         ).fetchone()
         if completion is not None:
             completed_contract = _contract_dataset_view(
@@ -302,32 +336,42 @@ def _migrate_registry_contracts_locked(registry, database, projects: tuple[str, 
                 (
                     json.dumps(completed_contract, sort_keys=True, separators=(",", ":")),
                     fingerprint(completed_contract),
-                    row["id"],
+                    work_item_id,
                 ),
             )
-        for table in ("work_item_execution", "branch_work_items"):
-            stored = database.execute(
-                f"SELECT scientific_contract_json FROM {table} WHERE work_item_id=?",
-                (row["id"],),
-            ).fetchall()
-            for item in stored:
-                scientific = _scientific_contract_dataset_view(
-                    json.loads(item["scientific_contract_json"]), project_root
-                )
-                database.execute(
-                    f"""UPDATE {table} SET scientific_contract_json=?
-                        WHERE work_item_id=? AND scientific_contract_json=?""",
-                    (
-                        json.dumps(scientific, sort_keys=True, separators=(",", ":")),
-                        row["id"],
-                        item["scientific_contract_json"],
-                    ),
-                )
+        execution = database.execute(
+            """SELECT scientific_contract_json FROM work_item_execution
+               WHERE work_item_id=?""",
+            (work_item_id,),
+        ).fetchone()
+        if execution is not None:
+            scientific = _scientific_contract_dataset_view(
+                json.loads(execution["scientific_contract_json"]), project_root
+            )
+            database.execute(
+                """UPDATE work_item_execution SET scientific_contract_json=?
+                   WHERE work_item_id=?""",
+                (
+                    json.dumps(scientific, sort_keys=True, separators=(",", ":")),
+                    work_item_id,
+                ),
+            )
+        for item in branch_contracts.get(work_item_id, ()):
+            scientific = _scientific_contract_dataset_view(
+                json.loads(item["scientific_contract_json"]), project_root
+            )
+            database.execute(
+                "UPDATE branch_work_items SET scientific_contract_json=? WHERE rowid=?",
+                (
+                    json.dumps(scientific, sort_keys=True, separators=(",", ":")),
+                    item["rowid"],
+                ),
+            )
         source_prefix = str(project_root.resolve()) + os.sep
         database.execute(
             """DELETE FROM artifacts WHERE work_item_id=? AND direction='input'
                AND path LIKE ? ESCAPE '\\' AND path LIKE '%.json'""",
-            (row["id"], source_prefix.replace("%", "\\%").replace("_", "\\_") + "%"),
+            (work_item_id, source_prefix.replace("%", "\\%").replace("_", "\\_") + "%"),
         )
 
 
@@ -422,6 +466,31 @@ def _restore_journal(registry, journal: Path, record: dict) -> None:
     )
 
 
+def _finish_registry_update(registry, journal: Path, record: dict) -> None:
+    """Commit the restartable registry phase after public files validate."""
+    projects = tuple(str(value) for value in record.get("projects", ()))
+    paths = tuple(Path(entry["path"]) for entry in record.get("files", ()))
+    with registry.connection(write=True) as database:
+        _migrate_registry_contracts_locked(registry, database, projects)
+        _refresh_inventory_locked(database, paths)
+    marker = journal / "journal.json"
+    atomic_write_json(
+        marker,
+        {**record, "state": "committing"},
+        sort_keys=True,
+        mode=0o664,
+        durable=True,
+    )
+    _migrate_branch_contracts(registry, projects)
+    atomic_write_json(
+        marker,
+        {**record, "state": "complete"},
+        sort_keys=True,
+        mode=0o664,
+        durable=True,
+    )
+
+
 def _recover_interrupted(registry) -> None:
     """Restore any conversion that did not reach its durable commit marker."""
     root = _journal_root(registry)
@@ -441,6 +510,8 @@ def _recover_interrupted(registry) -> None:
             # No public file is written until every backup is durable and the
             # journal advances to prepared.
             pass
+        elif state == "registry_pending":
+            _finish_registry_update(registry, journal, record)
         elif state == "committing":
             projects = tuple(str(value) for value in record.get("projects", ()))
             if _registry_contract_change_count(registry, projects) == 0:
@@ -644,6 +715,7 @@ def migrate_dataset(
         last_progress = count if count is not None else -1
 
     selected = tuple(sorted(set(projects)))
+    recovery = _unfinished_journals(registry)
     if execute:
         with registry.connection() as database:
             active = int(
@@ -655,11 +727,6 @@ def migrate_dataset(
         if active:
             raise ValueError("Dataset migration requires all attempts to be stopped")
         _recover_interrupted(registry)
-    else:
-        errors.extend(
-            f"Interrupted migration requires --execute recovery: {path}"
-            for path in _unfinished_journals(registry)
-        )
     bids_roots = _bids_roots(registry, site_values)
     project_roots = tuple(root / project for root in bids_roots for project in selected)
     source_project_roots = tuple(Path(registry.paths.bids_root) / project for project in selected)
@@ -733,7 +800,13 @@ def migrate_dataset(
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         errors.append(f"Could not prepare scheduler contracts: {error}")
     if errors or not execute:
-        return DatasetMigrationReport(scanned, tuple(replacements), contract_changes, tuple(errors))
+        return DatasetMigrationReport(
+            scanned,
+            tuple(replacements),
+            contract_changes,
+            tuple(errors),
+            recovery if not execute else (),
+        )
     if not replacements:
         report("Updating work-item contracts", force=True)
         _migrate_registry_contracts(registry, selected)
@@ -831,24 +904,14 @@ def migrate_dataset(
         if validation_errors:
             raise ValueError("; ".join(validation_errors))
         report("Updating work-item contracts", force=True)
-        with registry.connection(write=True) as database:
-            _migrate_registry_contracts_locked(registry, database, selected)
-            _refresh_inventory_locked(database, replacements)
-            atomic_write_json(
-                journal / "journal.json",
-                {**journal_record, "state": "committing"},
-                sort_keys=True,
-                mode=0o664,
-                durable=True,
-            )
         atomic_write_json(
             journal / "journal.json",
-            {**journal_record, "state": "complete"},
+            {**journal_record, "state": "registry_pending"},
             sort_keys=True,
             mode=0o664,
             durable=True,
         )
-        _migrate_branch_contracts(registry, selected)
+        _finish_registry_update(registry, journal, journal_record)
     except Exception:
         _recover_interrupted(registry)
         raise

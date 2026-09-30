@@ -224,11 +224,13 @@ nro migrate dataset -P PROJECT -f
 
 The default pages through a read-only plan and asks for confirmation before applying
 it. `--dry-run` stops after the preview. `-f`/`--force` applies the plan without a
-prompt. Execution covers the selected source project plus main and registered branch
-derivatives. It requires a quiet worker pool, removes obsolete source `EventsFile`
-fields, converts durable contracts to field-level source metadata snapshots, and
-updates integrity records without advancing artifact generations. A durable journal
-rolls back failed or interrupted file conversion. See [portable derivative
+prompt. The command starts or joins the central Slurm scheduler before preparing the
+preview; starting it does not create scientific demand. Execution covers the selected
+source project plus main and registered branch derivatives. It requires a quiet worker
+pool, removes obsolete source `EventsFile` fields, converts durable contracts to
+field-level source metadata snapshots, and updates integrity records without advancing
+artifact generations. A durable journal rolls back incomplete file conversion and
+resumes an interrupted registry update. See [portable derivative
 provenance](../portable-provenance.md) for the reference model and migration boundary.
 
 ## `nro publish`
