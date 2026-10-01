@@ -21,8 +21,7 @@ from nro.configuration.definition_migrations import MANIFEST, update_store
 from nro.configuration.site import make_site_document, read_site_definition, site_definition_path
 from nro.configuration.store import fingerprint
 from nro.engine.freesurfer_templates import (
-    FASTSURFER_FSAVERAGE_SOURCE,
-    FREESURFER_FSAVERAGE_SOURCE,
+    LEGACY_FSAVERAGE_SOURCES,
 )
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
@@ -298,7 +297,7 @@ def _raw_source_symlinks(
     if links:
         path, target = next(iter(sorted(links.items())))
         raise ValueError(
-            f"Raw BIDS link requires `nro migrate dataset` before rename: {path} -> {target}"
+            f"Raw BIDS link requires `nro migrate -P PROJECT` before rename: {path} -> {target}"
         )
     return links, scanned
 
@@ -370,10 +369,10 @@ def _nro_derivative_symlinks(
                     len(relative) == 5
                     and relative[0] == "anat"
                     and relative[2:5] == ("code", "freesurfer", "fsaverage")
-                    and target in {FREESURFER_FSAVERAGE_SOURCE, FASTSURFER_FSAVERAGE_SOURCE}
+                    and target in LEGACY_FSAVERAGE_SOURCES
                 ):
                     raise ValueError(
-                        "nro derivative requires `nro migrate dataset` before rename: "
+                        "nro derivative requires `nro migrate -P PROJECT` before rename: "
                         f"{path} -> {target}"
                     )
                 raise ValueError(f"nro derivative link must be relative: {path} -> {target}")
@@ -429,7 +428,7 @@ def _project_inventory(
             raise ValueError(f"Cannot inventory ownership receipt {path}: {error}") from error
         if record.get("record_version") != OWNERSHIP_VERSION:
             raise ValueError(
-                f"Ownership receipt requires `nro migrate dataset` before rename: {path}"
+                f"Ownership receipt requires `nro migrate -P PROJECT` before rename: {path}"
             )
         if record.get("project") == old:
             valid_receipts.append(path)

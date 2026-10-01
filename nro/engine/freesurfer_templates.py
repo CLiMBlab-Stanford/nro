@@ -17,6 +17,16 @@ FREESURFER_BUILD = "freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460"
 FREESURFER_FSAVERAGE_SOURCE = "/usr/local/freesurfer/subjects/fsaverage"
 FASTSURFER_FREESURFER_BUILD = "freesurfer-linux-ubuntu22_x86_64-7.4.1-20230614-7eb8460"
 FASTSURFER_FSAVERAGE_SOURCE = "/opt/freesurfer/subjects/fsaverage"
+QUNEX_FREESURFER_BUILD = "freesurfer-linux-centos6_x86_64-stable-pub-v6.0.0"
+QUNEX_FSAVERAGE_SOURCE = "/opt/freesurfer/freesurfer/subjects/fsaverage"
+
+LEGACY_FSAVERAGE_SOURCES = frozenset(
+    {
+        FREESURFER_FSAVERAGE_SOURCE,
+        FASTSURFER_FSAVERAGE_SOURCE,
+        QUNEX_FSAVERAGE_SOURCE,
+    }
+)
 
 _REQUIRED = (
     "mri/T1.mgz",
