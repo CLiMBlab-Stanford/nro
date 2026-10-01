@@ -203,13 +203,13 @@ only `derivatives/nro` to validate its links. Third-party derivative trees and
 private WORK trees are not inspected for symbolic links. An unreadable inspected
 path blocks execution; an incomplete inventory is never treated as complete.
 
-Raw BIDS symbolic links are materialized during execution. Regular files become
-hard links when their target is on the same filesystem; otherwise they become
-metadata-preserving copies. Directory links become metadata-preserving directory
-copies. Symbolic links inside `derivatives/nro` must be relative and resolve
+Raw BIDS must not contain symbolic links; run `nro migrate dataset -P PROJECT`
+first when it does. Symbolic links inside `derivatives/nro` must be relative and resolve
 within their BIDS project. They remain unchanged because the project tree moves
 as a unit. Invalid nro-owned links block the rename; links in third-party
-derivatives are outside nro's scope.
+derivatives are outside nro's scope. Run `nro migrate dataset -P PROJECT` first
+when an older project still contains a container-internal FreeSurfer `fsaverage`
+link.
 
 Numerical scientific outputs are not rewritten. Indexed structured derivative and
 WORK metadata containing absolute project paths is translated, and the registry
@@ -247,7 +247,12 @@ preview; starting it does not create scientific demand. Execution covers the sel
 source project plus main and registered branch derivatives. It requires a quiet worker
 pool, removes obsolete source `EventsFile` fields, converts durable contracts to
 field-level source metadata snapshots, and updates integrity records without advancing
-artifact generations. A durable journal rolls back incomplete file conversion and
+artifact generations. It also copies a versioned FreeSurfer `fsaverage` template into
+the project's hidden nro template namespace when an older anatomical derivative links
+to a container-internal template, then replaces that link with a relative project-local
+link. Raw BIDS symbolic links become hard links when their targets are on the same
+filesystem and metadata-preserving copies otherwise. Directory links become
+metadata-preserving directory copies. A durable journal rolls back incomplete file conversion and
 resumes an interrupted registry update. See [portable derivative
 provenance](../portable-provenance.md) for the reference model and migration boundary.
 The scheduler retains the prepared file rewrites through confirmation and verifies

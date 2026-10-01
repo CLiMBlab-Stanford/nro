@@ -32,7 +32,12 @@ from .constants import (
     _FREESURFER_ASEG_LABELS,
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
-from .policy import FREESURFER_BUILD, FREESURFER_VERSION
+from .freesurfer_templates import (
+    container_template_directory,
+    ensure_portable_fsaverage,
+    template_directory,
+)
+from .policy import FREESURFER_BUILD, FREESURFER_FSAVERAGE_SOURCE, FREESURFER_VERSION
 
 _FREESURFER_STATUS_TIMESTAMP = re.compile(
     r"\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+"
@@ -908,18 +913,23 @@ def _create_recon_all_step(
     image: Path,
     license_file: Path,
     force: bool,
+    template_root: Path | None = None,
 ) -> Step:
     if t1w is None and t2w is None:
         raise SystemExit(
             "Need at least one subject-level T1w or T2w image for anatomical preprocessing."
         )
     subject_dir = subjects_dir / fs_subject
+    template_root = template_root or subjects_dir / ".nro/templates/freesurfer"
     recon_done = subject_dir / "scripts" / "recon-all.done"
     breadcrumb = _recon_breadcrumb(subject_dir)
 
     def container_command(command: Sequence[str]) -> list[str]:
+        fsaverage = template_directory(template_root, build=FREESURFER_BUILD)
+        container_fsaverage = container_template_directory(build=FREESURFER_BUILD)
         binds = [
             f"{subjects_dir}:/subjects",
+            f"{fsaverage}:{container_fsaverage}:ro",
             f"{license_file}:/license.txt:ro",
         ]
         inputs = [path for path in (t1w, t2w, brain_mask) if path is not None]
@@ -963,6 +973,20 @@ def _create_recon_all_step(
         return False, _recon_invalid_reason(subject_dir)
 
     def action() -> None:
+        ensure_portable_fsaverage(
+            runtime=runtime,
+            image=image,
+            subjects_dir=subjects_dir,
+            template_root=template_root,
+            build=FREESURFER_BUILD,
+            container_source=FREESURFER_FSAVERAGE_SOURCE,
+            execute=lambda command: run_child(
+                command,
+                direct=True,
+                env=env,
+                discard_stdout=True,
+            ),
+        )
         primary = t1w or t2w
         assert primary is not None
         primary_arg = f"NRO:{primary}"

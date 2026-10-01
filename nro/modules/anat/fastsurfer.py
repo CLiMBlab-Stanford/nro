@@ -15,7 +15,14 @@ import nibabel as nib
 import numpy as np
 
 from nro.engine.io import atomic_output_path, atomic_write_text
+from nro.modules.anat.freesurfer_templates import (
+    container_template_directory,
+    ensure_portable_fsaverage,
+    template_directory,
+)
 from nro.modules.anat.policy import (
+    FASTSURFER_FREESURFER_BUILD,
+    FASTSURFER_FSAVERAGE_SOURCE,
     FASTSURFER_OCI_DIGEST,
     FASTSURFER_SOURCE_REVISION,
     FASTSURFER_VERSION,
@@ -177,6 +184,7 @@ def _container_prefix(
     image: Path,
     t1w: Path,
     subjects_directory: Path,
+    template_root: Path | None,
     license_file: Path,
     gpu: bool,
     cuda_visible_devices: str | None = None,
@@ -189,12 +197,18 @@ def _container_prefix(
     command.append("--cleanenv")
     if cuda_visible_devices is not None:
         command.extend(("--env", f"CUDA_VISIBLE_DEVICES={cuda_visible_devices}"))
+    command.extend(("--bind", f"{t1w.parent.resolve()}:/input:ro"))
+    command.extend(("--bind", f"{subjects_directory.resolve()}:/subjects"))
+    if template_root is not None:
+        command.extend(
+            (
+                "--bind",
+                f"{template_directory(template_root, build=FASTSURFER_FREESURFER_BUILD)}:"
+                f"{container_template_directory(build=FASTSURFER_FREESURFER_BUILD)}:ro",
+            )
+        )
     command.extend(
         (
-            "--bind",
-            f"{t1w.parent.resolve()}:/input:ro",
-            "--bind",
-            f"{subjects_directory.resolve()}:/subjects",
             "--bind",
             f"{license_file.resolve()}:/license.txt:ro",
             str(image.resolve()),
@@ -215,6 +229,7 @@ def create_fastsurfer_plan(
     segmentation_threads: int,
     surface_threads: int,
     cuda_visible_devices: str | None = None,
+    template_root: Path | None = None,
 ) -> FastSurferPlan:
     """Build the tested FastSurfer 2.5.4 segmentation and surface invocations.
 
@@ -223,6 +238,7 @@ def create_fastsurfer_plan(
     ``--surf_only`` and does not request a GPU.
     """
     subject = _subject_id(subject)
+    template_root = template_root or subjects_directory / ".nro/templates/freesurfer"
     if segmentation_threads < 1 or surface_threads < 1:
         raise ValueError("FastSurfer thread counts must be positive")
     subject_directory = subjects_directory / subject
@@ -249,6 +265,7 @@ def create_fastsurfer_plan(
                 image=image,
                 t1w=t1w,
                 subjects_directory=subjects_directory,
+                template_root=None,
                 license_file=license_file,
                 gpu=True,
                 cuda_visible_devices=cuda_visible_devices,
@@ -273,6 +290,7 @@ def create_fastsurfer_plan(
                 image=image,
                 t1w=t1w,
                 subjects_directory=subjects_directory,
+                template_root=template_root,
                 license_file=license_file,
                 gpu=False,
             ),
@@ -306,6 +324,7 @@ def create_fastsurfer_steps(
     segmentation_threads: int,
     surface_threads: int,
     force: bool,
+    template_root: Path | None = None,
 ) -> tuple[Step, Step]:
     """Create GPU segmentation and CPU surface-reconstruction steps.
 
@@ -315,6 +334,7 @@ def create_fastsurfer_steps(
     without contaminating the other.
     """
     subject = _subject_id(subject)
+    template_root = template_root or subjects_dir / ".nro/templates/freesurfer"
     if segmentation_threads < 1 or surface_threads < 1:
         raise ValueError("FastSurfer thread counts must be positive")
     staging_subject = staging_subjects_dir / subject
@@ -339,6 +359,7 @@ def create_fastsurfer_steps(
             image=image,
             t1w=t1w,
             subjects_directory=staging_subjects_dir,
+            template_root=template_root,
             subject=subject,
             license_file=license_file,
             segmentation_threads=segmentation_threads,
@@ -367,11 +388,21 @@ def create_fastsurfer_steps(
         if not final_subject.is_dir():
             raise RuntimeError("FastSurfer segmentation archive lacks its subject directory")
         _reconcile_mask(final_subject)
+        ensure_portable_fsaverage(
+            runtime=runtime,
+            image=image,
+            subjects_dir=subjects_dir,
+            template_root=template_root,
+            build=FASTSURFER_FREESURFER_BUILD,
+            container_source=FASTSURFER_FSAVERAGE_SOURCE,
+            execute=lambda command: run_child(command, direct=True, stream_output=True),
+        )
         plan = create_fastsurfer_plan(
             runtime=runtime,
             image=image,
             t1w=t1w,
             subjects_directory=subjects_dir,
+            template_root=template_root,
             subject=subject,
             license_file=license_file,
             segmentation_threads=segmentation_threads,

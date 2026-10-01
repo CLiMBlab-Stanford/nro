@@ -4,10 +4,12 @@ from __future__ import annotations
 
 FREESURFER_VERSION = "7.4.1"
 FREESURFER_BUILD = "freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460"
+FREESURFER_FSAVERAGE_SOURCE = "/usr/local/freesurfer/subjects/fsaverage"
 FASTSURFER_VERSION = "2.5.4"
 FASTSURFER_SOURCE_REVISION = "cdfccea"
 FASTSURFER_OCI_DIGEST = "sha256:8db4881c12961a7d6e2c8ed879f6207fbba82d1668c1d64bef281512cebbe1e5"
 FASTSURFER_FREESURFER_BUILD = "freesurfer-linux-ubuntu22_x86_64-7.4.1-20230614-7eb8460"
+FASTSURFER_FSAVERAGE_SOURCE = "/opt/freesurfer/subjects/fsaverage"
 FASTSURFER_VOXEL_SIZE_MM = 1.0
 
 

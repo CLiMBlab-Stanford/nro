@@ -41,7 +41,6 @@ def _render(result: dict) -> str:
     lines.append(f"Ownership receipts: {result['ownership_receipts']}")
     lines.append(f"Workbench scenes: {result['scene_files']}")
     lines.append(f"Structured metadata files: {result['metadata_files']}")
-    lines.append(f"Raw BIDS symbolic links to materialize: {result['source_symlinks']}")
     lines.append(f"Portable nro derivative links validated: {result['derivative_symlinks']}")
     lines.append(f"BIDSification records: {result['ingestion_records']}")
     lines.append(f"Definition files: {len(result['definition_files'])}")

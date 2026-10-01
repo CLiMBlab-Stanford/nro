@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -28,6 +29,16 @@ from nro.engine.references import (
     resolve_path_values,
 )
 from nro.engine.source_metadata import semantic_metadata_snapshot
+from nro.modules.anat.freesurfer_templates import (
+    ensure_portable_fsaverage,
+    template_directory,
+)
+from nro.modules.anat.policy import (
+    FASTSURFER_FREESURFER_BUILD,
+    FASTSURFER_FSAVERAGE_SOURCE,
+    FREESURFER_BUILD,
+    FREESURFER_FSAVERAGE_SOURCE,
+)
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.ownership import (
@@ -78,6 +89,8 @@ class DatasetMigrationReport:
     contracts: int
     errors: tuple[str, ...]
     recovery: tuple[Path, ...] = ()
+    templates: tuple[Path, ...] = ()
+    source_links: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,6 +103,132 @@ class DatasetMigrationPreparation:
     projects: tuple[str, ...]
     bids_roots: tuple[Path, ...]
     source_digests: Mapping[Path, str | None]
+    template_symlinks: Mapping[Path, str]
+    source_symlinks: Mapping[Path, str]
+
+
+def _copy_or_link(source: str | Path, destination: str | Path) -> str:
+    """Hard-link one file when possible, otherwise preserve its metadata."""
+    try:
+        os.link(source, destination)
+    except OSError:
+        shutil.copy2(source, destination)
+    return str(destination)
+
+
+def _materialize_source_symlink(path: Path) -> None:
+    """Replace one raw-data link with project-owned bytes transactionally."""
+    target = path.resolve(strict=True)
+    temporary = path.with_name(f".{path.name}.materialize-{uuid.uuid4().hex}")
+    saved = path.with_name(f".{path.name}.symlink-{uuid.uuid4().hex}")
+    try:
+        if target.is_dir():
+            shutil.copytree(target, temporary, symlinks=False, copy_function=_copy_or_link)
+        elif target.is_file():
+            _copy_or_link(target, temporary)
+        else:
+            raise ValueError(f"Unsupported raw BIDS symbolic-link target: {path} -> {target}")
+        os.replace(path, saved)
+        try:
+            os.replace(temporary, path)
+        except BaseException:
+            os.replace(saved, path)
+            raise
+        saved.unlink()
+    finally:
+        if temporary.is_dir() and not temporary.is_symlink():
+            shutil.rmtree(temporary)
+        else:
+            temporary.unlink(missing_ok=True)
+        saved.unlink(missing_ok=True)
+
+
+def _restore_source_symlink(path: Path, target: str) -> None:
+    """Restore a raw-data link after an interrupted migration."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+    path.symlink_to(target)
+
+
+def _source_symlinks(project_root: Path) -> tuple[dict[Path, str], tuple[str, ...]]:
+    """Inventory raw-data links without entering the derivatives namespace."""
+    links: dict[Path, str] = {}
+    errors = []
+
+    def failed(error: OSError) -> None:
+        errors.append(f"Cannot inspect raw BIDS path {error.filename}: {error.strerror}")
+
+    for parent, directories, files in os.walk(
+        project_root, topdown=True, followlinks=False, onerror=failed
+    ):
+        directory = Path(parent)
+        if directory == project_root and "derivatives" in directories:
+            directories.remove("derivatives")
+        for name in tuple(directories):
+            path = directory / name
+            if path.is_symlink():
+                directories.remove(name)
+                links[path] = os.readlink(path)
+        for name in files:
+            path = directory / name
+            if path.is_symlink():
+                links[path] = os.readlink(path)
+    for path in links:
+        try:
+            target = path.resolve(strict=True)
+        except (OSError, RuntimeError) as error:
+            errors.append(f"Cannot materialize raw BIDS link {path}: {error}")
+            continue
+        if not target.is_file() and not target.is_dir():
+            errors.append(f"Unsupported raw BIDS link target: {path} -> {target}")
+    return links, tuple(errors)
+
+
+def _template_spec(target: str, site_values: Mapping[str, object]) -> tuple[str, Path]:
+    """Resolve a legacy container link to the configured image that owns it."""
+    if target == FREESURFER_FSAVERAGE_SOURCE:
+        return FREESURFER_BUILD, Path(str(site_values["freesurfer"]))
+    if target == FASTSURFER_FSAVERAGE_SOURCE:
+        return FASTSURFER_FREESURFER_BUILD, Path(str(site_values["fastsurfer"]))
+    raise ValueError(f"Unsupported FreeSurfer template target: {target}")
+
+
+def _template_root(link: Path) -> Path:
+    """Return the project-shared template root for one anatomical code link."""
+    for parent in link.parents:
+        if parent.name == "nro" and parent.parent.name == "derivatives":
+            return parent / ".nro/templates/freesurfer"
+    raise ValueError(f"FreeSurfer template link is outside nro derivatives: {link}")
+
+
+def _legacy_template_links(project_root: Path) -> tuple[dict[Path, str], tuple[str, ...]]:
+    """Find repairable container links without walking reconstruction products."""
+    links: dict[Path, str] = {}
+    errors = []
+    anat_root = project_root / "derivatives/nro/anat"
+    if not anat_root.is_dir():
+        return links, ()
+    resolved_project = project_root.resolve()
+    for link in sorted(anat_root.glob("*/code/freesurfer/fsaverage")):
+        if not link.is_symlink():
+            continue
+        target = os.readlink(link)
+        if Path(target).is_absolute():
+            if target in {FREESURFER_FSAVERAGE_SOURCE, FASTSURFER_FSAVERAGE_SOURCE}:
+                links[link] = target
+            else:
+                errors.append(f"Unsupported absolute nro derivative link: {link} -> {target}")
+            continue
+        try:
+            resolved = (link.parent / target).resolve(strict=False)
+        except RuntimeError as error:
+            errors.append(f"Cannot resolve nro derivative link {link}: {error}")
+            continue
+        if not resolved.is_relative_to(resolved_project):
+            errors.append(f"nro derivative link escapes its BIDS project: {link} -> {target}")
+    return links, tuple(errors)
 
 
 def _bids_roots(registry, site_values: Mapping[str, object] | None) -> tuple[Path, ...]:
@@ -442,6 +581,18 @@ def _registry_contract_change_count(registry, projects: tuple[str, ...]) -> int:
 def _restore_journal(registry, journal: Path, record: dict) -> None:
     """Roll back one prepared or interrupted public-metadata transaction."""
     restored = []
+    for entry in reversed(record.get("source_links", [])):
+        path = Path(entry["path"])
+        if path.parent.is_dir():
+            _restore_source_symlink(path, str(entry["old_target"]))
+    for entry in reversed(record.get("templates", [])):
+        path = Path(entry["path"])
+        if path.parent.is_dir():
+            path.unlink(missing_ok=True)
+            path.symlink_to(str(entry["old_target"]))
+        directory = Path(entry["template_directory"])
+        if not entry.get("template_directory_preexisting") and directory.is_dir():
+            shutil.rmtree(directory)
     for entry in reversed(record.get("files", [])):
         path = Path(entry["path"])
         if entry["existed"]:
@@ -696,6 +847,7 @@ def _apply_dataset_migration(
     registry,
     prepared: DatasetMigrationPreparation,
     *,
+    site_values: Mapping[str, object] | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> DatasetMigrationReport:
     """Apply one retained migration preview without rediscovering its files."""
@@ -716,6 +868,8 @@ def _apply_dataset_migration(
         raise ValueError("Interrupted migration recovered; preview the dataset migration again")
     _recover_interrupted(registry)
     replacements = dict(prepared.replacements)
+    template_symlinks = dict(prepared.template_symlinks)
+    source_symlinks = dict(prepared.source_symlinks)
     selected = prepared.projects
     bids_roots = prepared.bids_roots
     if _registry_contract_change_count(registry, selected) != report.contracts:
@@ -734,11 +888,16 @@ def _apply_dataset_migration(
         current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if current != expected:
             raise ValueError(f"Migration input changed after preview: {path}")
-    if not replacements:
+    for path, expected in source_symlinks.items():
+        if not path.is_symlink() or os.readlink(path) != expected:
+            raise ValueError(f"Raw BIDS link changed after migration preview: {path}")
+    if not replacements and not template_symlinks and not source_symlinks:
         notify("Updating work-item contracts")
         _migrate_registry_contracts(registry, selected)
         _migrate_branch_contracts(registry, selected)
         return DatasetMigrationReport(report.scanned, (), report.contracts, ())
+    if template_symlinks and site_values is None:
+        raise ValueError("FreeSurfer template migration requires site configuration")
     notify("Backing up migration metadata", 0)
     root = _journal_root(registry)
     root.mkdir(parents=True, exist_ok=True, mode=0o2775)
@@ -758,11 +917,27 @@ def _apply_dataset_migration(
         entries.append(entry)
     backups = journal / "files"
     backups.mkdir(parents=True, mode=0o2775)
+    template_entries = []
+    for path, old_target in template_symlinks.items():
+        build, _image = _template_spec(old_target, site_values or {})
+        directory = template_directory(_template_root(path), build=build)
+        template_entries.append(
+            {
+                "path": str(path),
+                "old_target": old_target,
+                "template_directory": str(directory),
+                "template_directory_preexisting": directory.exists(),
+            }
+        )
     journal_record = {
-        "format": 2,
+        "format": 3,
         "state": "preparing",
         "projects": list(selected),
         "files": entries,
+        "templates": template_entries,
+        "source_links": [
+            {"path": str(path), "old_target": target} for path, target in source_symlinks.items()
+        ],
     }
     atomic_write_json(
         journal / "journal.json",
@@ -791,6 +966,25 @@ def _apply_dataset_migration(
             mode=0o664,
             durable=True,
         )
+        if source_symlinks:
+            notify("Materializing raw BIDS links", 0)
+        for index, path in enumerate(source_symlinks):
+            _materialize_source_symlink(path)
+            notify("Materializing raw BIDS links", index + 1)
+        if template_symlinks:
+            notify("Repairing FreeSurfer template links", 0)
+        for index, (path, old_target) in enumerate(template_symlinks.items()):
+            build, image = _template_spec(old_target, site_values or {})
+            ensure_portable_fsaverage(
+                runtime=str((site_values or {})["runtime"]),
+                image=image,
+                subjects_dir=path.parent,
+                template_root=_template_root(path),
+                build=build,
+                container_source=old_target,
+                execute=lambda command: subprocess.run(command, check=True),
+            )
+            notify("Repairing FreeSurfer template links", index + 1)
         notify("Writing portable metadata", 0)
         for index, (path, rendered) in enumerate(replacements.items()):
             existed = path.is_file()
@@ -841,7 +1035,14 @@ def _apply_dataset_migration(
             state = json.loads(marker.read_text(encoding="utf-8")).get("state")
             if state in {"complete", "rolled_back"}:
                 shutil.rmtree(journal)
-    return DatasetMigrationReport(report.scanned, tuple(replacements), report.contracts, ())
+    return DatasetMigrationReport(
+        report.scanned,
+        tuple(replacements),
+        report.contracts,
+        (),
+        templates=tuple(template_symlinks),
+        source_links=tuple(source_symlinks),
+    )
 
 
 def migrate_dataset(
@@ -864,10 +1065,13 @@ def migrate_dataset(
     if prepared is not None:
         if not execute:
             raise ValueError("A retained dataset migration may only be executed")
-        return _apply_dataset_migration(registry, prepared, progress=progress)
+        return _apply_dataset_migration(
+            registry, prepared, site_values=site_values, progress=progress
+        )
     replacements: dict[Path, str] = {}
     source_replacements: set[Path] = set()
     errors: list[str] = []
+    source_symlinks: dict[Path, str] = {}
     scanned = 0
     last_progress = -1
     last_notice = None
@@ -910,6 +1114,9 @@ def migrate_dataset(
     for source_project_root in source_project_roots:
         if not source_project_root.is_dir():
             continue
+        found_links, link_errors = _source_symlinks(source_project_root)
+        source_symlinks.update(found_links)
+        errors.extend(link_errors)
         for path, rendered, error in _parallel_map(
             _source_document_update,
             _source_candidates(source_project_root),
@@ -926,12 +1133,16 @@ def migrate_dataset(
             source_replacements.add(path)
     report("Scanning source metadata", source_scanned, force=True)
     derivative_scanned = 0
+    template_symlinks: dict[Path, str] = {}
     last_progress = -1
     report("Scanning derivative metadata", derivative_scanned, force=True)
     for project_root in project_roots:
         derivative_root = project_root / "derivatives/nro"
         if not derivative_root.is_dir():
             continue
+        found_templates, template_errors = _legacy_template_links(project_root)
+        template_symlinks.update(found_templates)
+        errors.extend(template_errors)
         source_project_root = Path(registry.paths.bids_root) / project_root.name
         roots = configured_reference_roots(
             source_project_root,
@@ -980,6 +1191,8 @@ def migrate_dataset(
         contract_changes,
         tuple(errors),
         recovery if not execute else (),
+        tuple(template_symlinks),
+        tuple(source_symlinks),
     )
     preparation = DatasetMigrationPreparation(
         migration_report,
@@ -991,9 +1204,13 @@ def migrate_dataset(
             path: hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
             for path in replacements
         },
+        dict(template_symlinks),
+        dict(source_symlinks),
     )
     if retain_preparation:
         return preparation
     if not execute:
         return migration_report
-    return _apply_dataset_migration(registry, preparation, progress=progress)
+    return _apply_dataset_migration(
+        registry, preparation, site_values=site_values, progress=progress
+    )

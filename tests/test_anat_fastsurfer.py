@@ -165,6 +165,10 @@ def test_fastsurfer_runner_rejects_archive_with_unexpected_root(tmp_path) -> Non
 def test_fastsurfer_runner_steps_execute_across_resource_boundary(tmp_path, monkeypatch) -> None:
     calls = []
     targets = []
+    monkeypatch.setattr(
+        "nro.modules.anat.fastsurfer.ensure_portable_fsaverage",
+        lambda **_kwargs: (tmp_path / "subjects/.nro/templates/fsaverage", False),
+    )
 
     def run_child(command, **kwargs):
         calls.append((tuple(command), kwargs))
