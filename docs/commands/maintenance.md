@@ -203,11 +203,11 @@ only `derivatives/nro` to validate its links. Third-party derivative trees and
 private WORK trees are not inspected for symbolic links. An unreadable inspected
 path blocks execution; an incomplete inventory is never treated as complete.
 
-Raw BIDS must not contain symbolic links; run `nro migrate dataset -P PROJECT`
+Raw BIDS must not contain symbolic links; run `nro migrate -P PROJECT`
 first when it does. Symbolic links inside `derivatives/nro` must be relative and resolve
 within their BIDS project. They remain unchanged because the project tree moves
 as a unit. Invalid nro-owned links block the rename; links in third-party
-derivatives are outside nro's scope. Run `nro migrate dataset -P PROJECT` first
+derivatives are outside nro's scope. Run `nro migrate -P PROJECT` first
 when an older project still contains a container-internal FreeSurfer `fsaverage`
 link.
 
@@ -229,16 +229,20 @@ backs up the scheduler registry, branch registries, and edited metadata. A
 failure before the registry commit reverses directory moves and restores edited
 state. Keep external readers and writers stopped until the command completes.
 
-## `nro migrate dataset`
+## `nro migrate`
 
 Bring source BIDS metadata and nro-owned derivative metadata into the current
 representation:
 
 ```bash
-nro migrate dataset -P PROJECT
-nro migrate dataset -P PROJECT --dry-run
-nro migrate dataset -P PROJECT -f
+nro migrate -P PROJECT
+nro migrate -P PROJECT --dry-run
+nro migrate -P PROJECT -f
 ```
+
+Pass multiple project IDs after `-P` to migrate them together. Omitting `-P`
+selects every BIDS project. Other scientific selectors do not apply to project
+migration and are rejected.
 
 The default pages through a read-only plan and asks for confirmation before applying
 it. `--dry-run` stops after the preview. `-f`/`--force` applies the plan without a

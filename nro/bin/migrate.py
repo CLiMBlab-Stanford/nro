@@ -15,13 +15,8 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         prog=prog,
         description="Preview or apply explicit nro metadata migrations.",
     )
-    commands = parser.add_subparsers(dest="migration", required=True)
-    dataset = commands.add_parser(
-        "dataset",
-        help="bring source BIDS and nro derivatives into current metadata form",
-    )
-    dataset.add_argument("-P", "--project", nargs="+", dest="projects")
-    mode = dataset.add_mutually_exclusive_group()
+    parser.add_argument("-P", "--project", nargs="+", dest="projects", metavar="PROJECT")
+    mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without applying changes")
     mode.add_argument(
         "-f", "--force", action="store_true", help="Apply changes without confirmation"
@@ -31,8 +26,8 @@ def _parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _render(report: dict) -> str:
-    """Format a dataset migration preview for interactive review."""
-    lines = ["Planned dataset migration", ""]
+    """Format a project migration preview for interactive review."""
+    lines = ["Planned project migration", ""]
     lines.append(f"Metadata files scanned: {report['scanned']}")
     lines.append(f"Metadata files to rewrite: {len(report['changed'])}")
     lines.append(f"Raw BIDS links to materialize: {len(report.get('source_links', ()))}")
@@ -57,7 +52,7 @@ def _render(report: dict) -> str:
 
 def _confirm() -> bool:
     try:
-        response = input("Proceed with dataset migration? [y/N] ")
+        response = input("Proceed with project migration? [y/N] ")
     except (EOFError, KeyboardInterrupt):
         return False
     return response.strip().lower() in {"y", "yes"}
@@ -94,7 +89,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     if args.dry_run or not pending:
         return
     if not args.force and not _confirm():
-        print("Dataset migration cancelled.")
+        print("Project migration cancelled.")
         return
     report = maintenance(
         Path(values["registry"]),

@@ -152,7 +152,7 @@ def _operation_notice(payload: dict) -> str:
     """Describe scheduler work without exposing internal RPC operation names."""
     operation = str(payload.get("operation") or "")
     if operation == "dataset_migration":
-        return "Migrating dataset..." if payload.get("execute") else "Preparing migration..."
+        return "Migrating project..." if payload.get("execute") else "Preparing migration..."
     if operation == "purge":
         count = len(payload.get("plan", ()))
         return f"Removing {count:,} work items..." if count else "Removing selected work..."

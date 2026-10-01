@@ -9,6 +9,12 @@ from pathlib import Path
 import pytest
 
 from nro.configuration.store import ConfigStore, fingerprint
+from nro.engine.freesurfer_templates import (
+    FREESURFER_BUILD,
+    FREESURFER_FSAVERAGE_SOURCE,
+    QUNEX_FREESURFER_BUILD,
+    QUNEX_FSAVERAGE_SOURCE,
+)
 from nro.orchestration import provenance_migration, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.completion import record_completion
@@ -49,17 +55,26 @@ def test_dataset_migration_materializes_raw_bids_links(tmp_path: Path) -> None:
     assert repeated.source_links == ()
 
 
+@pytest.mark.parametrize(
+    ("legacy", "image_key", "expected_build"),
+    (
+        (FREESURFER_FSAVERAGE_SOURCE, "freesurfer", FREESURFER_BUILD),
+        (QUNEX_FSAVERAGE_SOURCE, "qunex", QUNEX_FREESURFER_BUILD),
+    ),
+)
 def test_dataset_migration_repairs_legacy_freesurfer_template_link(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, legacy: str, image_key: str, expected_build: str
 ) -> None:
     bids = tmp_path / "bids"
     project = bids / "demo"
     link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
     link.parent.mkdir(parents=True)
-    link.symlink_to("/usr/local/freesurfer/subjects/fsaverage")
+    link.symlink_to(legacy)
     registry = Registry.for_project("", bids_root=bids)
+    materialized = {}
 
-    def materialize(*, subjects_dir, template_root, build, **_kwargs):
+    def materialize(*, subjects_dir, template_root, build, image, container_source, **_kwargs):
+        materialized.update(build=build, image=image, container_source=container_source)
         target = provenance_migration.template_directory(template_root, build=build)
         target.mkdir(parents=True)
         link_path = Path(subjects_dir) / "fsaverage"
@@ -72,6 +87,7 @@ def test_dataset_migration_repairs_legacy_freesurfer_template_link(
         "runtime": "singularity",
         "freesurfer": tmp_path / "freesurfer.sif",
         "fastsurfer": tmp_path / "fastsurfer.sif",
+        "qunex": tmp_path / "qunex.sif",
     }
 
     preview = migrate_dataset(
@@ -92,6 +108,11 @@ def test_dataset_migration_repairs_legacy_freesurfer_template_link(
     )
 
     assert result.templates == (link,)
+    assert materialized == {
+        "build": expected_build,
+        "image": site[image_key],
+        "container_source": legacy,
+    }
     assert not Path(os.readlink(link)).is_absolute()
     assert link.resolve().is_relative_to(project.resolve())
     repeated = migrate_dataset(

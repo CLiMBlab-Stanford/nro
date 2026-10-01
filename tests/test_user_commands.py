@@ -316,7 +316,7 @@ def test_installation_maintenance_uses_one_shot_coordinator(monkeypatch, tmp_pat
         ({"operation": "purge_snapshot"}, "Preparing purge..."),
         ({"operation": "gc"}, "Scanning derivative namespaces..."),
         ({"operation": "dataset_migration", "execute": False}, "Preparing migration..."),
-        ({"operation": "dataset_migration", "execute": True}, "Migrating dataset..."),
+        ({"operation": "dataset_migration", "execute": True}, "Migrating project..."),
         (
             {"operation": "purge", "plan": [{"id": 1}, {"id": 2}]},
             "Removing 2 work items...",

@@ -25,8 +25,11 @@ changes neither its scientific contracts nor its dependency graph.
 Run the migration interactively:
 
 ```bash
-nro migrate dataset -P PROJECT
+nro migrate -P PROJECT
 ```
+
+List multiple IDs after `-P` to migrate several projects together. A bare
+`nro migrate` selects every project.
 
 The command pages through the complete plan and asks for confirmation before it
 writes anything. Use `--dry-run` to stop after the preview or `-f`/`--force` to skip

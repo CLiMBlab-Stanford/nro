@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from nro.bin.migrate import main
 
 
@@ -43,11 +45,11 @@ def test_migrate_previews_in_pager_then_confirms_execution(monkeypatch, capsys) 
     monkeypatch.setattr("nro.bin.migrate.page_text", pages.append)
     monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
 
-    main(["dataset", "-P", "demo"])
+    main(["-P", "demo"])
 
     assert [call["execute"] for call in calls] == [False, True]
     assert calls[1]["preparation"] == "prepared-migration"
-    assert "Planned dataset migration" in pages[0]
+    assert "Planned project migration" in pages[0]
     assert str(path) in pages[0]
     assert (
         "Migrated 1 metadata file(s), 0 raw BIDS link(s), 0 template link(s), "
@@ -62,7 +64,7 @@ def test_migrate_dry_run_only_previews(monkeypatch) -> None:
         "builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt"))
     )
 
-    main(["dataset", "-P", "demo", "--dry-run"])
+    main(["-P", "demo", "--dry-run"])
 
     assert [call["execute"] for call in calls] == [False]
 
@@ -72,7 +74,22 @@ def test_migrate_cancel_leaves_preview_unapplied(monkeypatch, capsys) -> None:
     monkeypatch.setattr("nro.bin.migrate.page_text", lambda _text: None)
     monkeypatch.setattr("builtins.input", lambda _prompt: "no")
 
-    main(["dataset", "-P", "demo"])
+    main(["-P", "demo"])
 
     assert [call["execute"] for call in calls] == [False]
-    assert "Dataset migration cancelled." in capsys.readouterr().out
+    assert "Project migration cancelled." in capsys.readouterr().out
+
+
+def test_migrate_rejects_removed_dataset_subcommand() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        main(["dataset"])
+
+
+def test_migrate_rejects_removed_project_subcommand() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        main(["project", "demo"])
+
+
+def test_migrate_rejects_nonproject_selectors() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        main(["-p", "01"])

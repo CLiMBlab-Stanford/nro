@@ -22,6 +22,9 @@ from nro.engine.freesurfer_templates import (
     FASTSURFER_FSAVERAGE_SOURCE,
     FREESURFER_BUILD,
     FREESURFER_FSAVERAGE_SOURCE,
+    LEGACY_FSAVERAGE_SOURCES,
+    QUNEX_FREESURFER_BUILD,
+    QUNEX_FSAVERAGE_SOURCE,
     ensure_portable_fsaverage,
     template_directory,
 )
@@ -190,6 +193,8 @@ def _template_spec(target: str, site_values: Mapping[str, object]) -> tuple[str,
         return FREESURFER_BUILD, Path(str(site_values["freesurfer"]))
     if target == FASTSURFER_FSAVERAGE_SOURCE:
         return FASTSURFER_FREESURFER_BUILD, Path(str(site_values["fastsurfer"]))
+    if target == QUNEX_FSAVERAGE_SOURCE:
+        return QUNEX_FREESURFER_BUILD, Path(str(site_values["qunex"]))
     raise ValueError(f"Unsupported FreeSurfer template target: {target}")
 
 
@@ -214,7 +219,7 @@ def _legacy_template_links(project_root: Path) -> tuple[dict[Path, str], tuple[s
             continue
         target = os.readlink(link)
         if Path(target).is_absolute():
-            if target in {FREESURFER_FSAVERAGE_SOURCE, FASTSURFER_FSAVERAGE_SOURCE}:
+            if target in LEGACY_FSAVERAGE_SOURCES:
                 links[link] = target
             else:
                 errors.append(f"Unsupported absolute nro derivative link: {link} -> {target}")
@@ -860,10 +865,10 @@ def _apply_dataset_migration(
             ).fetchone()[0]
         )
     if active:
-        raise ValueError("Dataset migration requires all attempts to be stopped")
+        raise ValueError("Project migration requires all attempts to be stopped")
     if report.recovery:
         _recover_interrupted(registry)
-        raise ValueError("Interrupted migration recovered; preview the dataset migration again")
+        raise ValueError("Interrupted migration recovered; preview the project migration again")
     _recover_interrupted(registry)
     replacements = dict(prepared.replacements)
     template_symlinks = dict(prepared.template_symlinks)
@@ -871,7 +876,7 @@ def _apply_dataset_migration(
     selected = prepared.projects
     bids_roots = prepared.bids_roots
     if _registry_contract_change_count(registry, selected) != report.contracts:
-        raise ValueError("Work-item contracts changed after the dataset migration preview")
+        raise ValueError("Work-item contracts changed after the project migration preview")
 
     def notify(phase: str, count: int | None = None) -> None:
         if progress is None:
@@ -1062,7 +1067,7 @@ def migrate_dataset(
     """
     if prepared is not None:
         if not execute:
-            raise ValueError("A retained dataset migration may only be executed")
+            raise ValueError("A retained project migration may only be executed")
         return _apply_dataset_migration(
             registry, prepared, site_values=site_values, progress=progress
         )
@@ -1102,7 +1107,7 @@ def migrate_dataset(
                 ).fetchone()[0]
             )
         if active:
-            raise ValueError("Dataset migration requires all attempts to be stopped")
+            raise ValueError("Project migration requires all attempts to be stopped")
         _recover_interrupted(registry)
     bids_roots = _bids_roots(registry, site_values)
     project_roots = tuple(root / project for root in bids_roots for project in selected)

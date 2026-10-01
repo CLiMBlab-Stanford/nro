@@ -69,7 +69,7 @@ def test_project_inventory_requires_raw_link_migration(tmp_path):
     link.parent.mkdir(parents=True)
     link.symlink_to(target)
 
-    with pytest.raises(ValueError, match="nro migrate dataset"):
+    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
         _project_inventory(
             (ProjectMove(source, tmp_path / "BIDS/new"),),
             bids_root=tmp_path / "BIDS",
@@ -107,13 +107,20 @@ def test_nro_derivative_links_reject_absolute_or_external_targets(tmp_path, targ
         _nro_derivative_symlinks((project,))
 
 
-def test_legacy_freesurfer_template_link_requires_dataset_migration(tmp_path):
+@pytest.mark.parametrize(
+    "target",
+    (
+        "/usr/local/freesurfer/subjects/fsaverage",
+        "/opt/freesurfer/freesurfer/subjects/fsaverage",
+    ),
+)
+def test_legacy_freesurfer_template_link_requires_dataset_migration(tmp_path, target):
     project = tmp_path / "BIDS/old"
     link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
     link.parent.mkdir(parents=True)
-    link.symlink_to("/usr/local/freesurfer/subjects/fsaverage")
+    link.symlink_to(target)
 
-    with pytest.raises(ValueError, match="nro migrate dataset"):
+    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
         _nro_derivative_symlinks((project,))
 
 
