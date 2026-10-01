@@ -5,6 +5,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+import nro.engine.functional_references as functional_references
 from nro.engine.bids import BidsRun
 from nro.modules.func import resolver as func_resolver
 from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
@@ -43,7 +44,7 @@ def test_fieldmaps_are_resolved_when_sbref_has_no_json(tmp_path: Path, monkeypat
                 }
             )
         )
-    monkeypatch.setattr(func_resolver, "project_data_root", lambda _project: tmp_path)
+    monkeypatch.setattr(functional_references, "project_data_root", lambda _project: tmp_path)
 
     resolved = func_resolver.resolve_func_run_request(
         project="test",
@@ -95,7 +96,7 @@ def test_unreadable_optional_fieldmap_does_not_hide_valid_pair(tmp_path: Path, m
             )
         )
     _image(root / "fmap" / "sub-01_ses-a_acq-unrelated_dir-AP_epi.nii.gz")
-    monkeypatch.setattr(func_resolver, "project_data_root", lambda _project: tmp_path)
+    monkeypatch.setattr(functional_references, "project_data_root", lambda _project: tmp_path)
 
     resolved = func_resolver.resolve_func_run_request(
         project="test",
@@ -139,7 +140,7 @@ def test_bold_uses_inherited_dataset_metadata(tmp_path: Path, monkeypatch) -> No
     func = tmp_path / "sub-01" / "ses-a" / "func"
     bold = func / "sub-01_ses-a_task-story_bold.nii.gz"
     _image(bold)
-    monkeypatch.setattr(func_resolver, "project_data_root", lambda _project: tmp_path)
+    monkeypatch.setattr(functional_references, "project_data_root", lambda _project: tmp_path)
 
     resolved = func_resolver.resolve_func_run_request(
         project="test",
@@ -165,7 +166,7 @@ def test_sidecarless_sbref_inheritance_fails_closed_when_ambiguous(
     )
     _image(root / "sub-01_task-rest_run-1_sbref.nii.gz")
     _image(root / "sub-01_task-rest_run-1_sbref.nii")
-    monkeypatch.setattr(func_resolver, "project_data_root", lambda _project: tmp_path)
+    monkeypatch.setattr(functional_references, "project_data_root", lambda _project: tmp_path)
 
     resolved = func_resolver.resolve_func_run_request(
         project="test",
@@ -212,7 +213,7 @@ def test_bidsification_associations_override_heuristics(tmp_path, monkeypatch, u
                 }
             )
         )
-    monkeypatch.setattr(func_resolver, "project_data_root", lambda _: tmp_path)
+    monkeypatch.setattr(functional_references, "project_data_root", lambda _: tmp_path)
 
     def resolve():
         return func_resolver.resolve_func_run_request(

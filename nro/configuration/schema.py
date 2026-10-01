@@ -163,6 +163,34 @@ SCHEMAS = {
             "fastsurfer_image": Field("str", nullable=True, nonempty=True, execution=True),
             "use_gpu": Field("bool", execution=True),
         },
+        "msmall": {
+            # These scientific values enter only an enabled MSMAll branch's
+            # explicit processing contract. Excluding them from the module-wide
+            # fingerprint preserves ordinary anatomical lineages.
+            "enabled": Field("bool", execution=True),
+            "high_resolution_mesh": Field("int", minimum=1, execution=True),
+            "low_resolution_mesh": Field("int", minimum=1, execution=True),
+            "grayordinates_resolution_mm": Field(
+                "float", minimum=0, exclusive_minimum=True, execution=True
+            ),
+            "functional_resolution_mm": Field(
+                "float", minimum=0, exclusive_minimum=True, execution=True
+            ),
+            "surface_smoothing_fwhm_mm": Field("float", minimum=0, execution=True),
+            "input_registration": Field("str", choices=("MSMSulc",), execution=True),
+            "output_registration": Field("str", choices=("MSMAll",), execution=True),
+            "iteration_modes": Field("str", nonempty=True, execution=True),
+            "method": Field("str", choices=("WRN",), execution=True),
+            "ica_dimension": Field("int", minimum=1, execution=True),
+            "high_pass_seconds": Field("float", minimum=0, execution=True),
+            "fix_threshold": Field("float", minimum=0, execution=True),
+            "fix_training_model": Field(
+                "str",
+                choices=("HCP_Style_Single_Multirun_Dedrift",),
+                execution=True,
+            ),
+            "matlab_run_mode": Field("str", choices=("octave",), execution=True),
+        },
         "freesurfer_subjects_dir": OPTIONAL_TEXT,
         "fs_subject": OPTIONAL_TEXT,
     },

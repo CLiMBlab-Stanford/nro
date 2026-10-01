@@ -11,6 +11,7 @@ from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.project_rename import (
     ProjectMove,
     _copy_or_link,
+    _prepare_rename,
     _project_inventory,
     _replace_project,
     _rewrite_central,
@@ -95,6 +96,7 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
         "definition_files": [],
         "moves": [{"source": "/bids/old", "destination": "/bids/new"}],
         "blockers": [],
+        "preparation": "prepared-rename",
     }
     calls = []
     pages = []
@@ -107,14 +109,15 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     def maintenance(*_args, **fields):
-        calls.append(fields["execute"])
+        calls.append(fields)
         return preview if not fields["execute"] else {**preview, "executed": True}
 
     monkeypatch.setattr("nro.orchestration.scheduler_client.maintenance", maintenance)
 
     project_cli.main(["rename", "old", "new"])
 
-    assert calls == [False, True]
+    assert [call["execute"] for call in calls] == [False, True]
+    assert calls[1]["preparation"] == "prepared-rename"
     assert pages and "Project rename: old -> new" in pages[0]
     assert "Renamed project old to new." in capsys.readouterr().out
 
@@ -316,6 +319,10 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     derivative_link.symlink_to(bids / "old/marker.txt")
     manifest = derivative / "sub-01_manifest.json"
     manifest.write_text(json.dumps({"input": str(bids / "old/marker.txt")}))
+    monkeypatch.setattr(
+        "nro.orchestration.project_rename._registered_project_files",
+        lambda _registry, _project: (derivative_link, manifest),
+    )
     for name in topology.records:
         events = control / "branches" / name / "events/old"
         events.mkdir(parents=True)
@@ -328,7 +335,21 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
         "definitions": str(definitions_fixture),
     }
 
-    result = execute(registry, checkout=checkout, values=values, old="old", new="new")
+    prepared = _prepare_rename(registry, checkout=checkout, values=values, old="old", new="new")
+    monkeypatch.setattr(
+        "nro.orchestration.project_rename._project_inventory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("execution repeated project discovery")
+        ),
+    )
+    result = execute(
+        registry,
+        checkout=checkout,
+        values=values,
+        old="old",
+        new="new",
+        prepared=prepared,
+    )
 
     assert result["executed"] is True
     for root in roots:

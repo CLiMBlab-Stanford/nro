@@ -137,6 +137,8 @@ def test_clean_graph_keeps_selected_inputs_and_owned_outputs(cleaning_case, spac
         args + ["--space", space, "--smoothing", str(smoothing)], execution_context=context
     )
     graph = job._graph.freeze()
+    anatomy_manifest = next(sources[0].glob("*_manifest.json"))
+    assert all(anatomy_manifest not in step.inputs for step in graph.steps)
     for step in graph.steps:
         for path in step.outputs:
             context.require_output(path)

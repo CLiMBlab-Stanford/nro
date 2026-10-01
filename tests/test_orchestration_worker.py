@@ -178,6 +178,78 @@ def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Pa
     assert gpu.work_item_contract == general.work_item_contract
 
 
+def test_long_cpu_work_requires_long_worker(tmp_path: Path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="anat:" + "1" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "anat.txt",
+        resource_class="long",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=2,
+        partition=None,
+    )
+    registry.register_worker("general", resource_class="large")
+    registry.register_worker("long", resource_class="long")
+
+    assert registry.claim_ready_work_item("general", ("large",)) is None
+    assert registry.claim_ready_work_item("long", ("long",)) is not None
+
+
+def test_long_and_general_workers_share_cpu_concurrency(tmp_path: Path) -> None:
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registered = registry.register_workflow(workflow)
+    common = {
+        "module": "anat",
+        "lineage": registered.lineages["anat"],
+        "config_fingerprint": workflow.configuration("anat").fingerprint,
+        "runtime_config": registry.runtime_config_path(registered, "anat"),
+    }
+    long_item = _spec(
+        key="anat:" + "2" * 64,
+        output=tmp_path / "long.txt",
+        resource_class="long",
+        **common,
+    )
+    general_item = _spec(
+        key="anat:" + "3" * 64,
+        output=tmp_path / "general.txt",
+        **common,
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(long_item, general_item),
+        terminal_work_item_keys=(long_item.key, general_item.key),
+        concurrency=1,
+        partition=None,
+    )
+
+    long_submissions = registry.reserve_worker_submissions(
+        request_id=request, resource_class="long", memory_gb=32
+    )
+    assert len(long_submissions) == 1
+    assert (
+        registry.reserve_worker_submissions(
+            request_id=request, resource_class="large", memory_gb=32
+        )
+        == []
+    )
+
+
 def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     tmp_path: Path,
 ) -> None:

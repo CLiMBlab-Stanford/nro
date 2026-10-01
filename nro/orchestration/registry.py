@@ -2933,14 +2933,20 @@ class Registry(WorkflowRegistry):
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
 
-            def allocated_workers(minimum_memory: int = 0) -> int:
+            def allocated_workers(minimum_memory: int = 0, *, whole_cpu_pool: bool = False) -> int:
+                allocation_classes = (
+                    ("large", "long")
+                    if whole_cpu_pool and resource_class in {"large", "long"}
+                    else (resource_class,)
+                )
+                class_placeholders = ",".join("?" for _ in allocation_classes)
                 return int(
                     db.execute(
-                        """
+                        f"""
                         SELECT COUNT(*) FROM (
                             SELECT 'submission:' || ss.id AS allocation
                             FROM scheduler_submissions ss
-                            WHERE ss.resource_class=? AND ss.memory_gb>=?
+                            WHERE ss.resource_class IN ({class_placeholders}) AND ss.memory_gb>=?
                               AND (
                                   ss.state IN ('running','cancel_requested')
                                   OR (
@@ -2952,7 +2958,7 @@ class Registry(WorkflowRegistry):
                             SELECT 'worker:' || w.id AS allocation
                             FROM workers w
                             WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
-                              AND w.resource_class=? AND w.memory_gb>=?
+                              AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
                               AND NOT EXISTS (
                                   SELECT 1 FROM scheduler_submissions ss
                                   WHERE ss.slurm_job_id=w.slurm_job_id
@@ -2967,17 +2973,17 @@ class Registry(WorkflowRegistry):
                         )
                         """,
                         (
-                            resource_class,
+                            *allocation_classes,
                             minimum_memory,
                             time.time(),
-                            resource_class,
+                            *allocation_classes,
                             minimum_memory,
                         ),
                     ).fetchone()[0]
                 )
 
             capable_allocations = allocated_workers(memory_gb)
-            pool_allocations = allocated_workers()
+            pool_allocations = allocated_workers(whole_cpu_pool=True)
             available = max(0, global_limit - pool_allocations)
             count = min(max(0, desired - capable_allocations), available)
             if ingestion_ready:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -77,6 +78,18 @@ class DatasetMigrationReport:
     contracts: int
     errors: tuple[str, ...]
     recovery: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class DatasetMigrationPreparation:
+    """Validated metadata rewrites retained between preview and confirmation."""
+
+    report: DatasetMigrationReport
+    replacements: Mapping[Path, str]
+    source_replacements: frozenset[Path]
+    projects: tuple[str, ...]
+    bids_roots: tuple[Path, ...]
+    source_digests: Mapping[Path, str | None]
 
 
 def _bids_roots(registry, site_values: Mapping[str, object] | None) -> tuple[Path, ...]:
@@ -679,6 +692,158 @@ def _candidates(project_root: Path) -> Iterator[Path]:
     yield from _metadata_files(root, prune_code_products=True)
 
 
+def _apply_dataset_migration(
+    registry,
+    prepared: DatasetMigrationPreparation,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> DatasetMigrationReport:
+    """Apply one retained migration preview without rediscovering its files."""
+    report = prepared.report
+    if report.errors:
+        return report
+    with registry.connection() as database:
+        active = int(
+            database.execute(
+                """SELECT COUNT(*) FROM attempts
+                   WHERE state IN ('queued','running','cancel_requested')"""
+            ).fetchone()[0]
+        )
+    if active:
+        raise ValueError("Dataset migration requires all attempts to be stopped")
+    if report.recovery:
+        _recover_interrupted(registry)
+        raise ValueError("Interrupted migration recovered; preview the dataset migration again")
+    _recover_interrupted(registry)
+    replacements = dict(prepared.replacements)
+    selected = prepared.projects
+    bids_roots = prepared.bids_roots
+    if _registry_contract_change_count(registry, selected) != report.contracts:
+        raise ValueError("Work-item contracts changed after the dataset migration preview")
+
+    def notify(phase: str, count: int | None = None) -> None:
+        if progress is None:
+            return
+        if count is None:
+            progress(phase)
+        else:
+            unit = "file" if count == 1 else "files"
+            progress(f"{phase} ({count:,} {unit})" if count else phase)
+
+    for path, expected in prepared.source_digests.items():
+        current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        if current != expected:
+            raise ValueError(f"Migration input changed after preview: {path}")
+    if not replacements:
+        notify("Updating work-item contracts")
+        _migrate_registry_contracts(registry, selected)
+        _migrate_branch_contracts(registry, selected)
+        return DatasetMigrationReport(report.scanned, (), report.contracts, ())
+    notify("Backing up migration metadata", 0)
+    root = _journal_root(registry)
+    root.mkdir(parents=True, exist_ok=True, mode=0o2775)
+    journal = root / uuid.uuid4().hex
+    entries = []
+    for index, path in enumerate(replacements):
+        relative = f"files/{index:08d}"
+        existed = path.is_file()
+        stat = path.stat() if existed else None
+        entry = {"path": str(path.resolve()), "backup": relative, "existed": existed}
+        if stat is not None:
+            entry.update(
+                mode=stat.st_mode & 0o777,
+                atime_ns=stat.st_atime_ns,
+                mtime_ns=stat.st_mtime_ns,
+            )
+        entries.append(entry)
+    backups = journal / "files"
+    backups.mkdir(parents=True, mode=0o2775)
+    journal_record = {
+        "format": 2,
+        "state": "preparing",
+        "projects": list(selected),
+        "files": entries,
+    }
+    atomic_write_json(
+        journal / "journal.json",
+        journal_record,
+        sort_keys=True,
+        mode=0o664,
+        durable=True,
+    )
+    try:
+        for index, entry in enumerate(entries):
+            if entry["existed"]:
+                with atomic_output_path(journal / entry["backup"]) as temporary:
+                    shutil.copyfile(Path(entry["path"]), temporary)
+            notify("Backing up migration metadata", index + 1)
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "prepared"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "applying"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
+        notify("Writing portable metadata", 0)
+        for index, (path, rendered) in enumerate(replacements.items()):
+            existed = path.is_file()
+            stat = path.stat() if existed else None
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
+            atomic_write_text(
+                path,
+                rendered,
+                mode=(stat.st_mode & 0o777) if stat is not None else 0o664,
+                durable=True,
+            )
+            if stat is not None:
+                os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            notify("Writing portable metadata", index + 1)
+        notify("Validating migrated ownership")
+        validation_errors = []
+        for bids_root in bids_roots:
+            represented = tuple(
+                project
+                for project in selected
+                if (bids_root / project / "derivatives/nro").is_dir()
+            )
+            if not represented:
+                continue
+            _lineages, _receipts, found = read_ownership_records(
+                bids_root,
+                represented,
+                source_bids_root=registry.paths.bids_root,
+            )
+            validation_errors.extend(found)
+        if validation_errors:
+            raise ValueError("; ".join(validation_errors))
+        notify("Updating work-item contracts")
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "registry_pending"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
+        _finish_registry_update(registry, journal, journal_record)
+    except Exception:
+        _recover_interrupted(registry)
+        raise
+    finally:
+        marker = journal / "journal.json"
+        if marker.is_file():
+            state = json.loads(marker.read_text(encoding="utf-8")).get("state")
+            if state in {"complete", "rolled_back"}:
+                shutil.rmtree(journal)
+    return DatasetMigrationReport(report.scanned, tuple(replacements), report.contracts, ())
+
+
 def migrate_dataset(
     registry,
     *,
@@ -686,14 +851,20 @@ def migrate_dataset(
     execute: bool = False,
     version: str,
     site_values: Mapping[str, object] | None = None,
+    prepared: DatasetMigrationPreparation | None = None,
+    retain_preparation: bool = False,
     progress: Callable[[str], None] | None = None,
-) -> DatasetMigrationReport:
+) -> DatasetMigrationReport | DatasetMigrationPreparation:
     """Preview or apply source and derivative metadata normalization together.
 
     Representation-only source fields are removed only while matching durable
     work-item contracts are converted to semantic metadata snapshots. Scientific
     generations, states, and dependency edges remain unchanged.
     """
+    if prepared is not None:
+        if not execute:
+            raise ValueError("A retained dataset migration may only be executed")
+        return _apply_dataset_migration(registry, prepared, progress=progress)
     replacements: dict[Path, str] = {}
     source_replacements: set[Path] = set()
     errors: list[str] = []
@@ -803,126 +974,26 @@ def migrate_dataset(
         contract_changes = _registry_contract_change_count(registry, selected)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         errors.append(f"Could not prepare scheduler contracts: {error}")
-    if errors or not execute:
-        return DatasetMigrationReport(
-            scanned,
-            tuple(replacements),
-            contract_changes,
-            tuple(errors),
-            recovery if not execute else (),
-        )
-    if not replacements:
-        report("Updating work-item contracts", force=True)
-        _migrate_registry_contracts(registry, selected)
-        _migrate_branch_contracts(registry, selected)
-        return DatasetMigrationReport(scanned, (), contract_changes, ())
-    report("Backing up migration metadata", 0, force=True)
-    root = _journal_root(registry)
-    root.mkdir(parents=True, exist_ok=True, mode=0o2775)
-    journal = root / uuid.uuid4().hex
-    entries = []
-    for index, path in enumerate(replacements):
-        relative = f"files/{index:08d}"
-        existed = path.is_file()
-        stat = path.stat() if existed else None
-        entry = {"path": str(path.resolve()), "backup": relative, "existed": existed}
-        if stat is not None:
-            entry.update(
-                mode=stat.st_mode & 0o777,
-                atime_ns=stat.st_atime_ns,
-                mtime_ns=stat.st_mtime_ns,
-            )
-        entries.append(entry)
-    backups = journal / "files"
-    backups.mkdir(parents=True, mode=0o2775)
-    journal_record = {
-        "format": 2,
-        "state": "preparing",
-        "projects": list(selected),
-        "files": entries,
-    }
-    atomic_write_json(
-        journal / "journal.json",
-        journal_record,
-        sort_keys=True,
-        mode=0o664,
-        durable=True,
+    migration_report = DatasetMigrationReport(
+        scanned,
+        tuple(replacements),
+        contract_changes,
+        tuple(errors),
+        recovery if not execute else (),
     )
-    try:
-        for index, entry in enumerate(entries):
-            if entry["existed"]:
-                with atomic_output_path(journal / entry["backup"]) as temporary:
-                    # Rollback needs original bytes and selected portable stat
-                    # fields, not ACLs or extended attributes. copy2 attempts
-                    # to reproduce unsupported metadata on some shared file
-                    # systems and can fail with EPERM.
-                    shutil.copyfile(Path(entry["path"]), temporary)
-            report("Backing up migration metadata", index + 1)
-        report("Backing up migration metadata", len(entries), force=True)
-        atomic_write_json(
-            journal / "journal.json",
-            {**journal_record, "state": "prepared"},
-            sort_keys=True,
-            mode=0o664,
-            durable=True,
-        )
-        atomic_write_json(
-            journal / "journal.json",
-            {**journal_record, "state": "applying"},
-            sort_keys=True,
-            mode=0o664,
-            durable=True,
-        )
-        report("Writing portable metadata", 0, force=True)
-        for index, (path, rendered) in enumerate(replacements.items()):
-            existed = path.is_file()
-            stat = path.stat() if existed else None
-            path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
-            atomic_write_text(
-                path,
-                rendered,
-                mode=(stat.st_mode & 0o777) if stat is not None else 0o664,
-                durable=True,
-            )
-            if stat is not None:
-                os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-            report("Writing portable metadata", index + 1)
-        report("Writing portable metadata", len(replacements), force=True)
-        report("Validating migrated ownership", force=True)
-        validation_errors = []
-        for bids_root in bids_roots:
-            represented = tuple(
-                project
-                for project in selected
-                if (bids_root / project / "derivatives/nro").is_dir()
-            )
-            if not represented:
-                continue
-            lineages, receipts, found = read_ownership_records(
-                bids_root,
-                represented,
-                source_bids_root=registry.paths.bids_root,
-            )
-            _ = (lineages, receipts)
-            validation_errors.extend(found)
-        if validation_errors:
-            raise ValueError("; ".join(validation_errors))
-        report("Updating work-item contracts", force=True)
-        atomic_write_json(
-            journal / "journal.json",
-            {**journal_record, "state": "registry_pending"},
-            sort_keys=True,
-            mode=0o664,
-            durable=True,
-        )
-        _finish_registry_update(registry, journal, journal_record)
-    except Exception:
-        _recover_interrupted(registry)
-        raise
-    finally:
-        marker = journal / "journal.json"
-        if marker.is_file():
-            state = json.loads(marker.read_text(encoding="utf-8")).get("state")
-            if state in {"complete", "rolled_back"}:
-                shutil.rmtree(journal)
-    return DatasetMigrationReport(scanned, tuple(replacements), contract_changes, ())
+    preparation = DatasetMigrationPreparation(
+        migration_report,
+        dict(replacements),
+        frozenset(source_replacements),
+        selected,
+        bids_roots,
+        {
+            path: hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+            for path in replacements
+        },
+    )
+    if retain_preparation:
+        return preparation
+    if not execute:
+        return migration_report
+    return _apply_dataset_migration(registry, preparation, progress=progress)

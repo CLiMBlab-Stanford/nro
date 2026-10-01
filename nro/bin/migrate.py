@@ -90,6 +90,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         projects=projects,
         execute=True,
         version=package_version(),
+        preparation=preview["preparation"],
     )
     if report["errors"]:
         detail = "\n".join(f"- {error}" for error in report["errors"])

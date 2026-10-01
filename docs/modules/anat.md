@@ -85,6 +85,25 @@ selected sources before comparing subjects with different acquisition schemes.
    results have separate paths; the subject manifest identifies the complete
    public result set, including the FreeSurfer directory.
 
+When participant markup supplies a nonempty `msmall.rest` list, anatomy adds a
+separate HCP Pipelines calibration branch after ordinary surface reconstruction.
+The branch uses the fixed marked runs and their opposite-PE fieldmaps to run the
+HCP structural, minimal functional, multi-run FIX, MSMAll, and dedrifting route.
+Because nro source anatomy is already skull-stripped, nonlinear atlas
+registration uses explicit moving and reference masks and disables FNIRT's
+whole-head intensity model. The branch preserves internal HCP checkpoints after
+preemption and runs on a long CPU worker. It does not publish the calibration
+time series as ordinary functional derivatives.
+
+nro transfers the resulting participant registration onto its canonical
+`fsnative` topology with Workbench spherical project/unproject operations. It
+then publishes the forward registration sphere, the fsLR atlas sphere and
+surface family, valid-domain metrics, software identities, and mechanical QC.
+The QC rejects implausible atlas warps, nonfinite coordinates, and inconsistent
+atlas vertex counts or topology.
+MSMAll calibration is currently limited to FreeSurfer anatomy and is mutually
+exclusive with lesion-aware reconstruction.
+
 For a participant marked `lesion: true`, nro adds inpainting before the same
 surface-reconstruction backend used by ordinary anatomy. nro's SynthStroke
 adapter estimates a stroke-lesion mask on the
@@ -141,6 +160,17 @@ segmentation. The ordinary T1w reference remains
 the primary anatomy. Published surfaces contain surviving cortex only.
 Automatic masks and reconstructed boundaries require visual review.
 
+MSMAll-enabled artifacts additionally contain a participant
+`fsnative`-to-MSMAll registration sphere for each hemisphere, the corresponding
+fsLR atlas sphere and white, midthickness, pial, and inflated surfaces, validity
+metrics, registration QC, software versions, and a dedicated MSMAll manifest.
+That manifest records the fixed calibration inputs and parameters with portable
+BIDS references. A separate provenance document records a SHA-256 identity for
+every selected source image; the manifest records the inherited metadata fields
+that affect calibration. The ordinary anatomical manifest points to these
+products but does not expose the HCP calibration time series as a functional
+output.
+
 The functional module reads this public anatomical-domain contract. For
 lesion-aware anatomy, registration tools that assume an intact brain use the
 synthetic inpainted T1w and complete FreeSurfer scaffold. Functional sampling
@@ -176,6 +206,13 @@ for their respective engines. The paths are execution settings; pinned versions
 and reconstruction policies are part of the scientific artifact contract.
 `freesurfer_subjects_dir` and `fs_subject` override the shared
 FreeSurfer-compatible storage and identity.
+The nested `msmall` block controls the optional HCP calibration route. Markup,
+not discovery, determines whether the route exists for a participant.
+`enabled: false` disables it even when markup selects runs. The other fields pin
+the HCP mesh densities, functional resolution, smoothing, registration modes,
+ICA dimension, high-pass setting, FIX threshold and model, and Octave execution
+mode. Changing these values affects only an enabled MSMAll branch. Historical
+and ordinary anatomicals inherit an empty calibration set and remain compatible.
 The initial lesion method pins the SynthStroke model, source and model revisions,
 model hashes, 1 mm inference grid, sliding-window settings, probability
 threshold, test-time augmentation, NeuroLIT version, and surface-boundary policy

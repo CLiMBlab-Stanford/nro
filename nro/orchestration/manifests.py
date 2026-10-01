@@ -489,7 +489,11 @@ def _assess_direct_inputs(
     from nro.configuration.hardware import gradient_unwarping_records
     from nro.configuration.markup import MarkupStore
     from nro.engine.source_metadata import semantic_metadata_snapshot
-    from nro.modules.anat.planning import raw_anatomical_inputs
+    from nro.modules.anat.planning import (
+        raw_anatomical_images,
+        raw_anatomical_inputs,
+        resolve_msmall_calibration,
+    )
     from nro.modules.clean.planning import clean_direct_inputs
     from nro.modules.func.contract import final_resampling_contract
     from nro.modules.func.planning import load_session_inventory, resolved_func_inputs
@@ -513,6 +517,8 @@ def _assess_direct_inputs(
     aggregate_source = primary_dependency(row["module"], module_config)
     managed_direct_inputs = bool(descriptor.execution_module in command)
     expected_paths: tuple[Path, ...] | set[str] = ()
+    metadata_images: list[Path] | None = None
+    expected_msmall = None
     direct_universe_error: str | None = None
     matched_run = None
 
@@ -565,21 +571,45 @@ def _assess_direct_inputs(
         except (KeyError, OSError, ValueError) as error:
             direct_universe_error = f"Could not reassess selected direct inputs: {error}"
     elif managed_direct_inputs and row["module"] == "anat":
-        expected_paths = {
-            str(path.resolve()) for path in raw_anatomical_inputs(subject_dir, source_markup)
-        }
-        recorded_paths = {
-            str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
-        }
-        if expected_paths != recorded_paths:
-            workspace.input_updates[work_item_id] = json.dumps(sorted(expected_paths))
-            direct_universe_error = (
-                "Selected anatomical input set changed: expected "
-                f"{len(expected_paths)} file(s), work item records {len(recorded_paths)}"
+        try:
+            anatomical_images = raw_anatomical_images(subject_dir, source_markup)
+            metadata_images = list(anatomical_images)
+            direct_inputs = raw_anatomical_inputs(subject_dir, source_markup)
+            t1w = tuple(
+                path
+                for path in anatomical_images
+                if path.name.endswith(("_T1w.nii", "_T1w.nii.gz"))
             )
+            t2w = tuple(
+                path
+                for path in anatomical_images
+                if path.name.endswith(("_T2w.nii", "_T2w.nii.gz"))
+            )
+            expected_msmall = resolve_msmall_calibration(
+                markup=source_markup,
+                t1w=t1w,
+                t2w=t2w,
+                parameters=module_config["msmall"],
+                surface_engine=str(module_config["surface_reconstruction_engine"]),
+                selection_strategy=str(module_config["selection_strategy"]),
+            )
+            if expected_msmall is not None:
+                direct_inputs = tuple(dict.fromkeys((*direct_inputs, *expected_msmall.input_paths)))
+            expected_paths = {str(path.resolve()) for path in direct_inputs}
+            recorded_paths = {
+                str(Path(value).resolve()) for value in json.loads(row["input_paths_json"])
+            }
+            if expected_paths != recorded_paths:
+                workspace.input_updates[work_item_id] = json.dumps(sorted(expected_paths))
+                direct_universe_error = (
+                    "Selected anatomical input set changed: expected "
+                    f"{len(expected_paths)} file(s), work item records {len(recorded_paths)}"
+                )
+        except (KeyError, OSError, ValueError) as error:
+            direct_universe_error = f"Could not reassess selected anatomical inputs: {error}"
 
     if managed_direct_inputs and expected_paths and row["module"] in {"anat", "func"}:
-        images = [
+        images = metadata_images or [
             Path(path) for path in expected_paths if Path(path).name.endswith((".nii", ".nii.gz"))
         ]
         records, resolutions = gradient_unwarping_records(
@@ -601,6 +631,8 @@ def _assess_direct_inputs(
             expected_dynamic["final_resampling"] = final_resampling_contract(
                 gradient_unwarping=bool(bold_resolution and bold_resolution.applied)
             )
+        if row["module"] == "anat" and expected_msmall is not None:
+            expected_dynamic["msmall"] = expected_msmall.contract(subject_dir)
         contract = json.loads(row["artifact_contract_json"])
         processing = dict(contract.get("processing", {}))
         if any(processing.get(key) != value for key, value in expected_dynamic.items()):

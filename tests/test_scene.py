@@ -230,6 +230,47 @@ def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> No
     assert manifest_surface_families(manifest) == surfaces
 
 
+def test_anatomical_manifest_discovers_msmall_surface_family(tmp_path: Path) -> None:
+    surfaces = []
+    for hemi in ("L", "R"):
+        for kind in ("pial", "midthickness", "white", "inflated"):
+            path = tmp_path / f"sub-01_space-MSMAll_den-32k_hemi-{hemi}_{kind}.surf.gii"
+            path.write_text(f"{hemi} {kind}\n", encoding="utf-8")
+            surfaces.append(path)
+    manifest = tmp_path / "sub-01_desc-preprocessAnat_manifest.json"
+    write_public_json(
+        manifest,
+        {
+            "outputs": {
+                "msmall": {
+                    "atlas_surfaces": {
+                        "L": {path.stem: str(path) for path in surfaces[:4]},
+                        "R": {path.stem: str(path) for path in surfaces[4:]},
+                    }
+                }
+            }
+        },
+    )
+
+    assert manifest_surface_families(manifest) == tuple(surfaces)
+    _data, discovered, _diagnostic = _collect(
+        [
+            {
+                "module": "anat",
+                "project": "demo",
+                "participant": "01",
+                "directory_label": "main",
+                "output_prefix": "sub-01",
+                "output_root": str(tmp_path),
+                "entities_json": "{}",
+                "expected_outputs_json": f'["{manifest}"]',
+                "status": "Success",
+            }
+        ]
+    )
+    assert {source.space for source in discovered} == {"MSMAll"}
+
+
 def test_lesion_manifest_excludes_incompatible_intact_surfaces(tmp_path: Path) -> None:
     lesion = tmp_path / "sub-01_space-T1w_desc-lesion_mask.nii.gz"
     inpainted = tmp_path / "sub-01_space-T1w_desc-inpainted_T1w.nii.gz"

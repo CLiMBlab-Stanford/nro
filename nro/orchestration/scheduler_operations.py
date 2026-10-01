@@ -7,6 +7,7 @@ from pathlib import Path
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.resources import (
     GPU_RESOURCE_CLASS,
+    LONG_CPU_RESOURCE_CLASS,
     SCHEDULABLE_RESOURCE_CLASSES,
     memory_tiers,
 )
@@ -49,16 +50,20 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
 
     submitted = []
     if options["local"]:
-        lower_memory = 0
-        for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
-            if registry.worker_capacity_needed(
-                request_id=request_ids[0] if request_ids else None,
-                resource_class=GPU_RESOURCE_CLASS,
-                memory_gb=tier,
-                minimum_memory_gb=lower_memory,
-            ):
-                raise ValueError("Lesion-aware GPU anatomy requires a scheduled GPU worker")
-            lower_memory = tier
+        for resource_class, label in (
+            (GPU_RESOURCE_CLASS, "Lesion-aware GPU anatomy"),
+            (LONG_CPU_RESOURCE_CLASS, "MSMAll anatomy"),
+        ):
+            lower_memory = 0
+            for tier in memory_tiers(int(options["memory"]), int(options["max_memory"])):
+                if registry.worker_capacity_needed(
+                    request_id=request_ids[0] if request_ids else None,
+                    resource_class=resource_class,
+                    memory_gb=tier,
+                    minimum_memory_gb=lower_memory,
+                ):
+                    raise ValueError(f"{label} requires a scheduled worker")
+                lower_memory = tier
         process = run_local_worker(
             registry,
             memory_gb=options["memory"],
@@ -73,14 +78,15 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
         scripts = {}
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
             for tier in memory_tiers(options["memory"], options["max_memory"]):
+                long_cpu = resource_class == LONG_CPU_RESOURCE_CLASS
                 scripts[(resource_class, tier)] = _write_worker_script(
                     registry,
                     bids_root=registry.paths.bids_root,
                     partition=options["partition"],
                     account=options["account"],
-                    hours=options["time"],
+                    hours=max(options["time"], 48) if long_cpu else options["time"],
                     memory_gb=tier,
-                    cpus=options["cpus"],
+                    cpus=max(options["cpus"], 8) if long_cpu else options["cpus"],
                     resource_class=resource_class,
                     idle_timeout=options["worker_idle_timeout"],
                     drain_seconds=options["drain_minutes"] * 60,

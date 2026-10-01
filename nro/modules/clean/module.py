@@ -317,11 +317,13 @@ def build_module(
     confounds_out = clean_dir / f"{confounds_basename}.tsv"
     confounds_out_json = confounds_out.with_suffix(".json")
 
+    # The anatomical manifest resolves graph inputs, but each step declares the
+    # mask or surface it consumes. Unrelated additions to anatomy must not
+    # invalidate cleaning.
     source_inputs: list[Path] = [
         functional_manifest,
         confounds_tsv,
         confounds_json,
-        anatomical_path,
     ]
     if events_available:
         source_inputs.append(events_path)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from nro.configuration.hardware import resolve_gradient_unwarping
+from nro.configuration.markup import active_source_markup
 from nro.configuration.runtime import SETTINGS
 from nro.configuration.site import settings as site_settings
 from nro.engine.container import (
@@ -78,6 +79,7 @@ from .lesions import (
     create_lesion_reconstruction_summary_step,
     create_neurolit_inpainting_plan,
 )
+from .msmall import MsmAllCalibration, add_msmall_plan, resolve_msmall_calibration
 from .policy import (
     bias_correction_contract,
     surface_reconstruction_contract,
@@ -163,6 +165,7 @@ class Options:
     fastsurfer_image: Optional[Path] = None
     fastsurfer_data: Optional[Path] = None
     lesion_use_gpu: bool = True
+    msmall: MsmAllCalibration | None = None
 
 
 def build_module(
@@ -194,6 +197,15 @@ def build_module(
                     or execution_context.input_path(path) != path
                 ):
                     raise ValueError("Anatomical acquisitions must be shared source inputs")
+        if opts.msmall is not None:
+            for path in opts.msmall.input_paths:
+                if (
+                    not path.absolute().is_relative_to(
+                        execution_context.paths.source_project(opts.project)
+                    )
+                    or execution_context.input_path(path) != path
+                ):
+                    raise ValueError("MSMAll calibration files must be shared source inputs")
     all_images = [*inputs.t1w, *inputs.t2w]
     if not all_images:
         raise SystemExit(f"No anatomical images provided for {inputs.sub_id}.")
@@ -247,6 +259,11 @@ def build_module(
             if opts.fastsurfer_image is None:
                 raise SystemExit("FastSurfer reconstruction requires a configured image.")
             require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
+    if opts.msmall is not None:
+        if opts.lesion:
+            raise SystemExit("MSMAll calibration is not supported for lesion-aware anatomy.")
+        if opts.surface_reconstruction_engine != "freesurfer":
+            raise SystemExit("MSMAll calibration currently requires FreeSurfer reconstruction.")
     require_nonempty_file(opts.mni_template, "MNI template")
     mni_brain_template = Path(
         str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
@@ -266,6 +283,8 @@ def build_module(
         require_nonempty_file(opts.gradient_unwarp_image, "gradient-unwarping image")
 
     public_inputs = [item.image for item in all_images]
+    if opts.msmall is not None:
+        public_inputs.extend(opts.msmall.input_paths)
     public_inputs = list(dict.fromkeys(public_inputs))
     env = neuroimaging_environment(subjects_dir=opts.freesurfer_subjects_dir)
     require_nonempty_file(Path(env["FS_LICENSE"]), "FreeSurfer license")
@@ -291,6 +310,11 @@ def build_module(
             if opts.lesion or opts.surface_reconstruction_engine == "fastsurfer"
             else None,
             opts.fastsurfer_data if opts.lesion else None,
+            *(opts.msmall.input_paths if opts.msmall is not None else ()),
+            Path(__file__).with_name("msmall_driver.sh") if opts.msmall is not None else None,
+            Path(__file__).with_name("msmall_validate_atlas.py")
+            if opts.msmall is not None
+            else None,
         ]
     )
     runner = Runner(
@@ -1606,6 +1630,22 @@ def build_module(
         if opts.lesion:
             lesion_scaffold_surfaces[hemi][generated_forward] = forward
 
+    msmall_outputs: dict[str, object] | None = None
+    if opts.msmall is not None:
+        msmall_outputs = add_msmall_plan(
+            runner,
+            calibration=opts.msmall,
+            subject=inputs.sub_id,
+            out_dir=opts.out_dir,
+            work_dir=opts.work_dir,
+            license_path=Path(env["FS_LICENSE"]),
+            native_registration_spheres={
+                hemi: Path(exported_surfaces[f"{hemi}.sphere.reg"]) for hemi in ("lh", "rh")
+            },
+            env=env,
+            force=opts.overwrite,
+        )
+
     lesion_vertex_mappings: dict[str, str] = {}
     lesion_surface_validity: dict[str, str] = {}
     if opts.lesion:
@@ -1915,7 +1955,10 @@ def build_module(
             },
             "configuration_fingerprint": selected_configuration_fingerprint(),
         },
-        "output_metadata_contract": anatomical_output_contract(lesion=opts.lesion),
+        "output_metadata_contract": anatomical_output_contract(
+            lesion=opts.lesion,
+            msmall=opts.msmall is not None,
+        ),
         "complete": True,
     }
     if opts.lesion:
@@ -1961,6 +2004,15 @@ def build_module(
             surface_vertex_mappings=lesion_vertex_mappings,
             surface_validity=lesion_surface_validity,
         )
+    if opts.msmall is not None:
+        assert msmall_outputs is not None
+        manifest["msmall"] = {
+            "enabled": True,
+            "manifest": msmall_outputs["manifest"],
+        }
+        manifest_outputs = manifest["outputs"]
+        assert isinstance(manifest_outputs, dict)
+        manifest_outputs["msmall"] = msmall_outputs
     manifest_path = anatomical_manifest_path(
         inputs.sub_id,
         project=opts.project,
@@ -1992,6 +2044,11 @@ def build_module(
 
     def publish_manifest() -> None:
         validate_anatomical_manifest(manifest)
+        try:
+            if read_public_json(manifest_path) == manifest:
+                return
+        except (OSError, ValueError, TypeError):
+            pass
         write_public_json(manifest_path, manifest)
 
     runner.add_step(
@@ -2082,6 +2139,19 @@ def main(
     project = str(args.project)
     t1w = [load_anat_image(resolve_project_path(path, project=project)) for path in args.t1w]
     t2w = [load_anat_image(resolve_project_path(path, project=project)) for path in args.t2w]
+    markup = active_source_markup(project=project)
+    msmall = (
+        resolve_msmall_calibration(
+            markup=markup,
+            t1w=[image.image for image in t1w],
+            t2w=[image.image for image in t2w],
+            parameters=SETTINGS.anat.msmall.as_dict(),
+            surface_engine=str(args.surface_reconstruction_engine),
+            selection_strategy=str(args.selection_strategy),
+        )
+        if markup is not None
+        else None
+    )
     out_dir = resolve_project_path(
         args.out_dir
         or anat_subject_dir(str(args.sub_id), project=project, anat_id=str(args.anat_id)),
@@ -2149,6 +2219,7 @@ def main(
             fastsurfer_image=fastsurfer_image,
             fastsurfer_data=Path(site["fastsurfer_data"]),
             lesion_use_gpu=bool(args.lesion_use_gpu),
+            msmall=msmall,
         ),
         execution_context=execution_context,
     )

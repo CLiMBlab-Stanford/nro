@@ -13,6 +13,7 @@ from nro.engine.paths import anat_subject_dir, anatomical_manifest_path
 from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.lesion_policy import lesion_reconstruction_contract
+from nro.modules.anat.msmall import resolve_msmall_calibration
 from nro.modules.anat.policy import surface_reconstruction_contract
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (
@@ -115,6 +116,25 @@ def plan_work_items(
     config = context.workflow.configuration(descriptor.configuration_class).values
     surface_engine = str(config["surface_reconstruction_engine"])
     anatomical_images = raw_anatomical_images(context.subject_dir, context.source_markup)
+    t1w = tuple(
+        path for path in anatomical_images if path.name.endswith(("_T1w.nii", "_T1w.nii.gz"))
+    )
+    t2w = tuple(
+        path for path in anatomical_images if path.name.endswith(("_T2w.nii", "_T2w.nii.gz"))
+    )
+    try:
+        calibration = resolve_msmall_calibration(
+            markup=context.source_markup,
+            t1w=t1w,
+            t2w=t2w,
+            parameters=config["msmall"],
+            surface_engine=surface_engine,
+            selection_strategy=str(config["selection_strategy"]),
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as error:
+        raise ParticipantUnavailableError(str(error)) from error
+    if calibration is not None:
+        inputs = tuple(dict.fromkeys((*inputs, *calibration.input_paths)))
     if (
         surface_engine == "fastsurfer"
         and not context.source_markup.lesion
@@ -123,7 +143,7 @@ def plan_work_items(
         raise ParticipantUnavailableError("FastSurfer surface reconstruction requires T1w data")
     # Resource-specific runner steps are dispatched independently. The parent
     # anatomical work item always returns to the ordinary CPU pool.
-    resource_class = descriptor.resource_class
+    resource_class = "long" if calibration is not None else descriptor.resource_class
     gradient_records, _ = gradient_unwarping_records(
         list(anatomical_images),
         mode=str(config["gradient_unwarping"]),
@@ -133,7 +153,10 @@ def plan_work_items(
     )
     processing_values: dict[str, object] = {
         "gradient_unwarping": gradient_records,
-        "output_metadata": anatomical_output_contract(lesion=context.source_markup.lesion),
+        "output_metadata": anatomical_output_contract(
+            lesion=context.source_markup.lesion,
+            msmall=calibration is not None,
+        ),
         "source_markup": _effective_markup_contract(context.subject_dir, context.source_markup),
         "source_metadata": semantic_metadata_snapshot(
             anatomical_images,
@@ -143,6 +166,8 @@ def plan_work_items(
     }
     if context.source_markup.lesion:
         processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()
+    if calibration is not None:
+        processing_values["msmall"] = calibration.contract(context.subject_dir)
     processing_values["surface_reconstruction"] = surface_reconstruction_contract(surface_engine)
     return (
         WorkItemSpec.create(
@@ -184,8 +209,10 @@ def plan_work_items(
             output_prefix=context.sub_id,
             output_format=descriptor.output_format,
             resource_class=resource_class,
-            memory_gb=context.memory_gb,
-            max_memory_gb=context.max_memory_gb,
+            memory_gb=max(context.memory_gb, 64) if calibration is not None else context.memory_gb,
+            max_memory_gb=(
+                max(context.max_memory_gb, 64) if calibration is not None else context.max_memory_gb
+            ),
             expected_outputs=(
                 anatomical_manifest_path(
                     context.sub_id,
