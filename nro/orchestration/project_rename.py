@@ -20,11 +20,11 @@ from nro.configuration.branch_definitions import read_selection
 from nro.configuration.definition_migrations import MANIFEST, update_store
 from nro.configuration.site import make_site_document, read_site_definition, site_definition_path
 from nro.configuration.store import fingerprint
-from nro.engine.io import atomic_write_json
-from nro.modules.anat.policy import (
+from nro.engine.freesurfer_templates import (
     FASTSURFER_FSAVERAGE_SOURCE,
     FREESURFER_FSAVERAGE_SOURCE,
 )
+from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.control_paths import ControlPaths

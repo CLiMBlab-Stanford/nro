@@ -223,7 +223,7 @@ def test_pose_finalization_remasks_without_reflecting_negative_values(tmp_path: 
     assert "-abs" not in step.command
 
 
-def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> None:
+def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path, monkeypatch) -> None:
     t1w = tmp_path / "input" / "sub-1_T1w.nii.gz"
     t1w.parent.mkdir()
     t1w.write_bytes(b"image")
@@ -236,6 +236,7 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path) -> No
     subjects_dir = tmp_path / "subjects"
     subject_dir = subjects_dir / "sub-1"
     calls: list[list[str]] = []
+    monkeypatch.setattr(anat_steps, "ensure_portable_fsaverage", lambda **_kwargs: None)
 
     def run_child(command, **_kwargs):
         command = list(command)

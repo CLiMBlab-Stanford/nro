@@ -17,6 +17,14 @@ import yaml
 
 from nro.configuration.store import fingerprint
 from nro.engine.bids import bids_suffix
+from nro.engine.freesurfer_templates import (
+    FASTSURFER_FREESURFER_BUILD,
+    FASTSURFER_FSAVERAGE_SOURCE,
+    FREESURFER_BUILD,
+    FREESURFER_FSAVERAGE_SOURCE,
+    ensure_portable_fsaverage,
+    template_directory,
+)
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
 from nro.engine.references import (
     ReferenceRoots,
@@ -29,16 +37,6 @@ from nro.engine.references import (
     resolve_path_values,
 )
 from nro.engine.source_metadata import semantic_metadata_snapshot
-from nro.modules.anat.freesurfer_templates import (
-    ensure_portable_fsaverage,
-    template_directory,
-)
-from nro.modules.anat.policy import (
-    FASTSURFER_FREESURFER_BUILD,
-    FASTSURFER_FSAVERAGE_SOURCE,
-    FREESURFER_BUILD,
-    FREESURFER_FSAVERAGE_SOURCE,
-)
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.ownership import (

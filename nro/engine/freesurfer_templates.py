@@ -13,6 +13,11 @@ from typing import Any
 
 from nro.engine.io import atomic_write_text
 
+FREESURFER_BUILD = "freesurfer-linux-centos8_x86_64-7.4.1-20230613-7eb8460"
+FREESURFER_FSAVERAGE_SOURCE = "/usr/local/freesurfer/subjects/fsaverage"
+FASTSURFER_FREESURFER_BUILD = "freesurfer-linux-ubuntu22_x86_64-7.4.1-20230614-7eb8460"
+FASTSURFER_FSAVERAGE_SOURCE = "/opt/freesurfer/subjects/fsaverage"
+
 _REQUIRED = (
     "mri/T1.mgz",
     "surf/lh.sphere.reg",

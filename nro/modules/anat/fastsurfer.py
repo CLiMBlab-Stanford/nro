@@ -14,15 +14,15 @@ from typing import Any, Literal
 import nibabel as nib
 import numpy as np
 
-from nro.engine.io import atomic_output_path, atomic_write_text
-from nro.modules.anat.freesurfer_templates import (
+from nro.engine.freesurfer_templates import (
+    FASTSURFER_FREESURFER_BUILD,
+    FASTSURFER_FSAVERAGE_SOURCE,
     container_template_directory,
     ensure_portable_fsaverage,
     template_directory,
 )
+from nro.engine.io import atomic_output_path, atomic_write_text
 from nro.modules.anat.policy import (
-    FASTSURFER_FREESURFER_BUILD,
-    FASTSURFER_FSAVERAGE_SOURCE,
     FASTSURFER_OCI_DIGEST,
     FASTSURFER_SOURCE_REVISION,
     FASTSURFER_VERSION,

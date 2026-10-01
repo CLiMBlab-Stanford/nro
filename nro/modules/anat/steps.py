@@ -14,6 +14,13 @@ from nro.engine.execution import (
     create_copy_file_step,
     ensure_directory,
 )
+from nro.engine.freesurfer_templates import (
+    FREESURFER_BUILD,
+    FREESURFER_FSAVERAGE_SOURCE,
+    container_template_directory,
+    ensure_portable_fsaverage,
+    template_directory,
+)
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import invalid_gzip_files, write_json
 from nro.engine.manifests import create_json_step
@@ -32,12 +39,7 @@ from .constants import (
     _FREESURFER_ASEG_LABELS,
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
-from .freesurfer_templates import (
-    container_template_directory,
-    ensure_portable_fsaverage,
-    template_directory,
-)
-from .policy import FREESURFER_BUILD, FREESURFER_FSAVERAGE_SOURCE, FREESURFER_VERSION
+from .policy import FREESURFER_VERSION
 
 _FREESURFER_STATUS_TIMESTAMP = re.compile(
     r"\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+"

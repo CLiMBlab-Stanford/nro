@@ -2,7 +2,7 @@ import os
 import shutil
 from pathlib import Path
 
-from nro.modules.anat.freesurfer_templates import ensure_portable_fsaverage
+from nro.engine.freesurfer_templates import ensure_portable_fsaverage
 
 
 def _fake_template(root: Path) -> Path:
