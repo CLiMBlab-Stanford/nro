@@ -204,6 +204,9 @@ selects the registration target; `synthstrip_container` selects brain extraction
 `freesurfer_container` and `fastsurfer_container` select the execution images
 for their respective engines. The paths are execution settings; pinned versions
 and reconstruction policies are part of the scientific artifact contract.
+Each BIDS project keeps one copy of every required FreeSurfer `fsaverage`
+version under `derivatives/nro/.nro/templates`. FreeSurfer-compatible subject
+directories use relative links to those copies, so the project remains portable.
 `freesurfer_subjects_dir` and `fs_subject` override the shared
 FreeSurfer-compatible storage and identity.
 The nested `msmall` block controls the optional HCP calibration route. Markup,

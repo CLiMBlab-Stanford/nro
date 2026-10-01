@@ -35,12 +35,20 @@ def _render(report: dict) -> str:
     lines = ["Planned dataset migration", ""]
     lines.append(f"Metadata files scanned: {report['scanned']}")
     lines.append(f"Metadata files to rewrite: {len(report['changed'])}")
+    lines.append(f"Raw BIDS links to materialize: {len(report.get('source_links', ()))}")
+    lines.append(f"FreeSurfer template links to repair: {len(report.get('templates', ()))}")
     lines.append(f"Work-item contracts to migrate: {report['contracts']}")
     if report.get("recovery"):
         lines.append(f"Interrupted migrations to recover: {len(report['recovery'])}")
     if report["changed"]:
         lines.extend(("", "Files:"))
         lines.extend(f"  {path}" for path in report["changed"])
+    if report.get("templates"):
+        lines.extend(("", "Template links:"))
+        lines.extend(f"  {path}" for path in report["templates"])
+    if report.get("source_links"):
+        lines.extend(("", "Raw BIDS links:"))
+        lines.extend(f"  {path}" for path in report["source_links"])
     if report["errors"]:
         lines.extend(("", f"Blocking errors ({len(report['errors'])}):"))
         lines.extend(f"  {error}" for error in report["errors"])
@@ -76,7 +84,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     page_text(_render(preview))
     if preview["errors"]:
         raise SystemExit(f"Migration blocked by {len(preview['errors'])} error(s)")
-    pending = len(preview["changed"]) + int(preview["contracts"]) + len(preview.get("recovery", ()))
+    pending = (
+        len(preview["changed"])
+        + len(preview.get("source_links", ()))
+        + len(preview.get("templates", ()))
+        + int(preview["contracts"])
+        + len(preview.get("recovery", ()))
+    )
     if args.dry_run or not pending:
         return
     if not args.force and not _confirm():
@@ -96,6 +110,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         detail = "\n".join(f"- {error}" for error in report["errors"])
         raise SystemExit(f"Migration blocked by {len(report['errors'])} error(s):\n{detail}")
     print(
-        f"Migrated {len(report['changed'])} metadata file(s) and "
+        f"Migrated {len(report['changed'])} metadata file(s), "
+        f"{len(report.get('source_links', ()))} raw BIDS link(s), "
+        f"{len(report.get('templates', ()))} template link(s), and "
         f"{report['contracts']} work-item contract(s)."
     )

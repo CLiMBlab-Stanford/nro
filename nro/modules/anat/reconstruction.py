@@ -43,6 +43,7 @@ class SurfaceReconstructionResources:
     staging_subjects_dir: Path
     subject: str
     cpu_threads: int
+    template_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def create_surface_reconstruction_plan(
     adapters produce the same private FreeSurfer-style subject directory.
     """
     subject_dir = resources.subjects_dir / resources.subject
+    template_root = resources.template_root or resources.subjects_dir / ".nro/templates/freesurfer"
     products = SurfaceReconstructionProducts(subject_dir=subject_dir)
     if engine == "freesurfer":
         if resources.freesurfer_image is None:
@@ -79,6 +81,7 @@ def create_surface_reconstruction_plan(
             t2w=inputs.t2w,
             brain_mask=inputs.brain_mask,
             subjects_dir=resources.subjects_dir,
+            template_root=template_root,
             fs_subject=resources.subject,
             runtime=resources.runtime,
             image=resources.freesurfer_image,
@@ -98,6 +101,7 @@ def create_surface_reconstruction_plan(
             t1w=inputs.t1w,
             staging_subjects_dir=resources.staging_subjects_dir,
             subjects_dir=resources.subjects_dir,
+            template_root=template_root,
             subject=resources.subject,
             license_file=resources.license_file,
             segmentation_threads=resources.cpu_threads,

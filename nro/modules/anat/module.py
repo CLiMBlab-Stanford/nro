@@ -1026,6 +1026,7 @@ def build_module(
             fastsurfer_image=opts.fastsurfer_image,
             license_file=Path(env["FS_LICENSE"]),
             subjects_dir=opts.freesurfer_subjects_dir,
+            template_root=(derivative_root.parents[1] / ".nro/templates/freesurfer"),
             staging_subjects_dir=opts.work_dir / "fastsurfer-segmentation",
             subject=opts.fs_subject,
             cpu_threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),

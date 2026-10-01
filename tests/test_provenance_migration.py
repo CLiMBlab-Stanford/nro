@@ -26,6 +26,130 @@ from nro.orchestration.provenance_migration import (
 from nro.orchestration.registry import Registry
 
 
+def test_dataset_migration_materializes_raw_bids_links(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    source = tmp_path / "shared/sub-01_T1w.nii.gz"
+    source.parent.mkdir()
+    source.write_bytes(b"image")
+    link = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(source)
+    registry = Registry.for_project("", bids_root=bids)
+
+    preview = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
+    assert preview.source_links == (link,)
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.source_links == (link,)
+    assert link.is_file() and not link.is_symlink()
+    assert link.read_bytes() == source.read_bytes()
+    repeated = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
+    assert repeated.source_links == ()
+
+
+def test_dataset_migration_repairs_legacy_freesurfer_template_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
+    link.parent.mkdir(parents=True)
+    link.symlink_to("/usr/local/freesurfer/subjects/fsaverage")
+    registry = Registry.for_project("", bids_root=bids)
+
+    def materialize(*, subjects_dir, template_root, build, **_kwargs):
+        target = provenance_migration.template_directory(template_root, build=build)
+        target.mkdir(parents=True)
+        link_path = Path(subjects_dir) / "fsaverage"
+        link_path.unlink()
+        link_path.symlink_to(os.path.relpath(target, link_path.parent))
+        return target, True
+
+    monkeypatch.setattr(provenance_migration, "ensure_portable_fsaverage", materialize)
+    site = {
+        "runtime": "singularity",
+        "freesurfer": tmp_path / "freesurfer.sif",
+        "fastsurfer": tmp_path / "fastsurfer.sif",
+    }
+
+    preview = migrate_dataset(
+        registry,
+        projects=("demo",),
+        execute=False,
+        version="1.2.3",
+        site_values=site,
+    )
+    assert preview.templates == (link,)
+
+    result = migrate_dataset(
+        registry,
+        projects=("demo",),
+        execute=True,
+        version="1.2.3",
+        site_values=site,
+    )
+
+    assert result.templates == (link,)
+    assert not Path(os.readlink(link)).is_absolute()
+    assert link.resolve().is_relative_to(project.resolve())
+    repeated = migrate_dataset(
+        registry,
+        projects=("demo",),
+        execute=False,
+        version="1.2.3",
+        site_values=site,
+    )
+    assert repeated.templates == ()
+
+
+def test_dataset_migration_rolls_back_freesurfer_template_repair(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
+    link.parent.mkdir(parents=True)
+    legacy = "/usr/local/freesurfer/subjects/fsaverage"
+    link.symlink_to(legacy)
+    registry = Registry.for_project("", bids_root=bids)
+    created = None
+
+    def fail_after_materializing(*, subjects_dir, template_root, build, **_kwargs):
+        nonlocal created
+        created = provenance_migration.template_directory(template_root, build=build)
+        created.mkdir(parents=True)
+        link_path = Path(subjects_dir) / "fsaverage"
+        link_path.unlink()
+        link_path.symlink_to(os.path.relpath(created, link_path.parent))
+        raise RuntimeError("simulated template failure")
+
+    monkeypatch.setattr(
+        provenance_migration,
+        "ensure_portable_fsaverage",
+        fail_after_materializing,
+    )
+    site = {
+        "runtime": "singularity",
+        "freesurfer": tmp_path / "freesurfer.sif",
+        "fastsurfer": tmp_path / "fastsurfer.sif",
+    }
+
+    with pytest.raises(RuntimeError, match="simulated template failure"):
+        migrate_dataset(
+            registry,
+            projects=("demo",),
+            execute=True,
+            version="1.2.3",
+            site_values=site,
+        )
+
+    assert os.readlink(link) == legacy
+    assert created is not None and not created.exists()
+    assert not (project / "derivatives/nro/dataset_description.json").exists()
+
+
 def test_dataset_migration_previews_then_rewrites_metadata(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     project = bids / "demo"

@@ -20,6 +20,10 @@ from nro.configuration.branch_definitions import read_selection
 from nro.configuration.definition_migrations import MANIFEST, update_store
 from nro.configuration.site import make_site_document, read_site_definition, site_definition_path
 from nro.configuration.store import fingerprint
+from nro.engine.freesurfer_templates import (
+    FASTSURFER_FSAVERAGE_SOURCE,
+    FREESURFER_FSAVERAGE_SOURCE,
+)
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
@@ -51,7 +55,6 @@ class ProjectInventory:
     receipts: tuple[Path, ...]
     scenes: tuple[Path, ...]
     metadata: tuple[Path, ...]
-    source_symlinks: dict[Path, str]
     derivative_symlinks: dict[Path, str]
     scanned: int
 
@@ -229,41 +232,6 @@ def _ingestion_files(control: ControlPaths, topology, old: str) -> tuple[Path, .
     return tuple(matched)
 
 
-def _copy_or_link(source: str | Path, destination: str | Path) -> str:
-    """Hard-link one file when possible, otherwise preserve its metadata in a copy."""
-    try:
-        os.link(source, destination)
-    except OSError:
-        shutil.copy2(source, destination)
-    return str(destination)
-
-
-def _materialize_source_symlink(path: Path) -> None:
-    target = path.resolve(strict=True)
-    temporary = path.with_name(f".{path.name}.materialize-{uuid.uuid4().hex}")
-    saved = path.with_name(f".{path.name}.symlink-{uuid.uuid4().hex}")
-    try:
-        if target.is_dir():
-            shutil.copytree(target, temporary, symlinks=False, copy_function=_copy_or_link)
-        elif target.is_file():
-            _copy_or_link(target, temporary)
-        else:
-            raise ValueError(f"Unsupported raw BIDS symbolic-link target: {path} -> {target}")
-        os.replace(path, saved)
-        try:
-            os.replace(temporary, path)
-        except BaseException:
-            os.replace(saved, path)
-            raise
-        saved.unlink()
-    finally:
-        if temporary.is_dir() and not temporary.is_symlink():
-            shutil.rmtree(temporary)
-        else:
-            temporary.unlink(missing_ok=True)
-        saved.unlink(missing_ok=True)
-
-
 def _restore_source_symlink(path: Path, target: str) -> None:
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
@@ -327,6 +295,11 @@ def _raw_source_symlinks(
                 links[path] = os.readlink(path)
         if progress is not None and scanned and scanned % 1000 == 0:
             progress(f"Inspecting raw BIDS links ({scanned:,} entries)")
+    if links:
+        path, target = next(iter(sorted(links.items())))
+        raise ValueError(
+            f"Raw BIDS link requires `nro migrate dataset` before rename: {path} -> {target}"
+        )
     return links, scanned
 
 
@@ -388,10 +361,21 @@ def _nro_derivative_symlinks(
                     links[path] = os.readlink(path)
             if progress is not None and scanned and scanned % 1000 == 0:
                 progress(f"Validating nro derivative links ({scanned:,} entries)")
-        for path, target in links.items():
+        for path, target in tuple(links.items()):
             if not path.is_relative_to(derivative_root):
                 continue
             if Path(target).is_absolute():
+                relative = path.relative_to(derivative_root).parts
+                if (
+                    len(relative) == 5
+                    and relative[0] == "anat"
+                    and relative[2:5] == ("code", "freesurfer", "fsaverage")
+                    and target in {FREESURFER_FSAVERAGE_SOURCE, FASTSURFER_FSAVERAGE_SOURCE}
+                ):
+                    raise ValueError(
+                        "nro derivative requires `nro migrate dataset` before rename: "
+                        f"{path} -> {target}"
+                    )
                 raise ValueError(f"nro derivative link must be relative: {path} -> {target}")
             try:
                 resolved_target = (path.parent / target).resolve(strict=False)
@@ -418,7 +402,7 @@ def _project_inventory(
     """Inventory indexed metadata and raw links without walking scientific outputs."""
     moves = tuple(moves)
     source_root = bids_root / old
-    source_symlinks, scanned = _raw_source_symlinks(source_root, progress=progress)
+    _source_symlinks, scanned = _raw_source_symlinks(source_root, progress=progress)
     receipts: set[Path] = set()
     scenes: set[Path] = set()
     for move in moves:
@@ -469,7 +453,6 @@ def _project_inventory(
         tuple(valid_receipts),
         tuple(sorted(scenes)),
         tuple(sorted(metadata)),
-        source_symlinks,
         derivative_symlinks,
         scanned,
     )
@@ -779,12 +762,7 @@ def _prepare_rename(
         "ownership_receipts": len(inventory.receipts),
         "scene_files": len(inventory.scenes),
         "metadata_files": len(inventory.metadata),
-        "source_symlinks": len(inventory.source_symlinks),
         "inventory_entries": inventory.scanned,
-        "source_symlink_records": [
-            {"path": str(path), "target": target}
-            for path, target in sorted(inventory.source_symlinks.items())
-        ],
         "derivative_symlinks": len(inventory.derivative_symlinks),
         "ingestion_records": len(ingestion),
         "definition_files": [
@@ -1144,9 +1122,6 @@ def execute(
         current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if current != expected:
             raise ValueError(f"Project metadata changed after the rename preview: {path}")
-    for path, expected in prepared.inventory.source_symlinks.items():
-        if not path.is_symlink() or os.readlink(path) != expected:
-            raise ValueError(f"Raw BIDS link changed after the rename preview: {path}")
     for path, expected in prepared.inventory.derivative_symlinks.items():
         if not path.is_symlink() or os.readlink(path) != expected:
             raise ValueError(f"nro derivative link changed after the rename preview: {path}")
@@ -1160,7 +1135,6 @@ def execute(
     )
     receipts = prepared.inventory.receipts
     metadata = prepared.inventory.metadata
-    source_symlinks = prepared.inventory.source_symlinks
     ingestion = prepared.ingestion
     definition_updates = prepared.definition_updates
     report_phase("Preparing project rename recovery journal")
@@ -1257,10 +1231,6 @@ def execute(
         for path in ingestion:
             value = _translate(json.loads(path.read_text(encoding="utf-8")), old, new, mapping)
             atomic_write_json(path, value, sort_keys=True, mode=0o660, durable=True)
-        if source_symlinks:
-            report_phase(f"Materializing raw BIDS links ({len(source_symlinks):,} links)")
-        for path in source_symlinks:
-            _materialize_source_symlink(path)
         for path in metadata:
             text = path.read_text(encoding="utf-8")
             translated = _replace_project(text, old, new, mapping)
@@ -1298,8 +1268,6 @@ def execute(
             for move in reversed(moved):
                 if move.destination.exists() and not move.source.exists():
                     move.destination.rename(move.source)
-            for path, target in source_symlinks.items():
-                _restore_source_symlink(path, target)
             for name, backup in branch_backups.items():
                 shutil.copy2(backup, store.registry(name).database)
             for path in created_receipts:

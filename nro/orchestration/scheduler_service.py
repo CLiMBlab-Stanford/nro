@@ -1147,6 +1147,8 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             "scanned": report.scanned,
             "changed": [str(path) for path in report.changed],
             "contracts": report.contracts,
+            "templates": [str(path) for path in report.templates],
+            "source_links": [str(path) for path in report.source_links],
             "errors": list(report.errors),
             "recovery": [str(path) for path in report.recovery],
         }

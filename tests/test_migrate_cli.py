@@ -5,11 +5,13 @@ from pathlib import Path
 from nro.bin.migrate import main
 
 
-def _report(*, changed=(), contracts=0, errors=()):
+def _report(*, changed=(), contracts=0, errors=(), templates=(), source_links=()):
     return {
         "scanned": 12,
         "changed": list(changed),
         "contracts": contracts,
+        "templates": list(templates),
+        "source_links": list(source_links),
         "errors": list(errors),
         "preparation": "prepared-migration",
     }
@@ -47,7 +49,10 @@ def test_migrate_previews_in_pager_then_confirms_execution(monkeypatch, capsys) 
     assert calls[1]["preparation"] == "prepared-migration"
     assert "Planned dataset migration" in pages[0]
     assert str(path) in pages[0]
-    assert "Migrated 1 metadata file(s) and 2 work-item contract(s)." in capsys.readouterr().out
+    assert (
+        "Migrated 1 metadata file(s), 0 raw BIDS link(s), 0 template link(s), "
+        "and 2 work-item contract(s)." in capsys.readouterr().out
+    )
 
 
 def test_migrate_dry_run_only_previews(monkeypatch) -> None:

@@ -10,7 +10,6 @@ from nro.orchestration.branches import BranchTopology
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.project_rename import (
     ProjectMove,
-    _copy_or_link,
     _nro_derivative_symlinks,
     _prepare_rename,
     _project_inventory,
@@ -42,24 +41,6 @@ def test_translation_changes_identities_and_paths_without_rewriting_prose():
     assert _replace_project("/data/old", "old", "new", {}) == "/data/new"
 
 
-def test_copy_fallback_preserves_file_metadata(tmp_path, monkeypatch):
-    source = tmp_path / "source"
-    destination = tmp_path / "destination"
-    source.write_bytes(b"source bytes")
-    source.chmod(0o640)
-
-    def fail_link(*_args):
-        raise OSError("cross-device link")
-
-    monkeypatch.setattr("nro.orchestration.project_rename.os.link", fail_link)
-
-    _copy_or_link(source, destination)
-
-    assert destination.read_bytes() == source.read_bytes()
-    assert destination.stat().st_mode & 0o777 == source.stat().st_mode & 0o777
-    assert destination.stat().st_mtime_ns == source.stat().st_mtime_ns
-
-
 def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkeypatch):
     source = tmp_path / "BIDS/old"
     source.mkdir(parents=True)
@@ -72,6 +53,23 @@ def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkey
     monkeypatch.setattr("nro.orchestration.project_rename.os.walk", unreadable)
 
     with pytest.raises(OSError, match="Cannot inventory project directory.*private"):
+        _project_inventory(
+            (ProjectMove(source, tmp_path / "BIDS/new"),),
+            bids_root=tmp_path / "BIDS",
+            old="old",
+            new="new",
+        )
+
+
+def test_project_inventory_requires_raw_link_migration(tmp_path):
+    source = tmp_path / "BIDS/old"
+    target = tmp_path / "shared.nii.gz"
+    target.write_bytes(b"image")
+    link = source / "sub-01/anat/sub-01_T1w.nii.gz"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    with pytest.raises(ValueError, match="nro migrate dataset"):
         _project_inventory(
             (ProjectMove(source, tmp_path / "BIDS/new"),),
             bids_root=tmp_path / "BIDS",
@@ -109,6 +107,16 @@ def test_nro_derivative_links_reject_absolute_or_external_targets(tmp_path, targ
         _nro_derivative_symlinks((project,))
 
 
+def test_legacy_freesurfer_template_link_requires_dataset_migration(tmp_path):
+    project = tmp_path / "BIDS/old"
+    link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
+    link.parent.mkdir(parents=True)
+    link.symlink_to("/usr/local/freesurfer/subjects/fsaverage")
+
+    with pytest.raises(ValueError, match="nro migrate dataset"):
+        _nro_derivative_symlinks((project,))
+
+
 def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch, capsys):
     from nro.bin import project as project_cli
 
@@ -120,7 +128,6 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
         "ownership_receipts": 1,
         "scene_files": 0,
         "metadata_files": 1,
-        "source_symlinks": 0,
         "derivative_symlinks": 0,
         "ingestion_records": 0,
         "definition_files": [],
@@ -341,8 +348,6 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
         project = root / "old"
         project.mkdir(parents=True)
         (project / "marker.txt").write_text("present")
-    absolute_link = bids / "old/absolute-link"
-    absolute_link.symlink_to(bids / "old/marker.txt")
     derivative = bids / "old/derivatives/nro/anat/main/sub-01"
     derivative.mkdir(parents=True)
     derivative_link = derivative / "source-link"
@@ -385,9 +390,6 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     for root in roots:
         assert not (root / "old").exists()
         assert (root / "new/marker.txt").is_file()
-    materialized = bids / "new/absolute-link"
-    assert materialized.is_file() and not materialized.is_symlink()
-    assert materialized.samefile(bids / "new/marker.txt")
     assert (bids / "new/derivatives/nro/anat/main/sub-01/source-link").readlink() == Path(
         "../../../../../marker.txt"
     )
