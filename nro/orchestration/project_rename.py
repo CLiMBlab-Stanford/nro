@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import sqlite3
-import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -53,7 +52,7 @@ class ProjectInventory:
     scenes: tuple[Path, ...]
     metadata: tuple[Path, ...]
     source_symlinks: dict[Path, str]
-    absolute_symlinks: dict[Path, tuple[str, str]]
+    derivative_symlinks: dict[Path, str]
     scanned: int
 
 
@@ -361,33 +360,50 @@ def _registered_project_files(registry, old: str) -> tuple[Path, ...]:
         return tuple(Path(str(row[0])) for row in rows)
 
 
-def _absolute_project_symlinks(
-    moves: Iterable[ProjectMove], old: str, new: str
-) -> dict[Path, tuple[str, str]]:
-    """Find translated absolute links with one native filesystem traversal."""
-    roots = [str(move.source) for move in moves if move.source.is_dir()]
-    if not roots:
-        return {}
-    result = subprocess.run(
-        ["find", "-P", *roots, "-type", "l", "-print0"],
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = os.fsdecode(result.stderr).strip() or f"status {result.returncode}"
-        raise OSError(f"Cannot inventory project symbolic links: {detail}")
-    translated = {}
-    for encoded in result.stdout.split(b"\0"):
-        if not encoded:
+def _nro_derivative_symlinks(
+    project_roots: Iterable[Path],
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[dict[Path, str], int]:
+    """Validate portable links without traversing third-party derivatives."""
+    links: dict[Path, str] = {}
+    scanned = 0
+    for project_root in dict.fromkeys(project_roots):
+        derivative_root = project_root / "derivatives" / "nro"
+        if not derivative_root.is_dir():
             continue
-        path = Path(os.fsdecode(encoded))
-        target = os.readlink(path)
-        if not Path(target).is_absolute():
-            continue
-        replacement = _replace_project(target, old, new, {})
-        if replacement != target:
-            translated[path] = (target, replacement)
-    return translated
+        resolved_project = project_root.resolve()
+        for parent, directories, files in _strict_walk(derivative_root):
+            directory = Path(parent)
+            for name in tuple(directories):
+                path = directory / name
+                scanned += 1
+                if path.is_symlink():
+                    directories.remove(name)
+                    links[path] = os.readlink(path)
+            for name in files:
+                path = directory / name
+                scanned += 1
+                if path.is_symlink():
+                    links[path] = os.readlink(path)
+            if progress is not None and scanned and scanned % 1000 == 0:
+                progress(f"Validating nro derivative links ({scanned:,} entries)")
+        for path, target in links.items():
+            if not path.is_relative_to(derivative_root):
+                continue
+            if Path(target).is_absolute():
+                raise ValueError(f"nro derivative link must be relative: {path} -> {target}")
+            try:
+                resolved_target = (path.parent / target).resolve(strict=False)
+            except RuntimeError as error:
+                raise ValueError(
+                    f"Cannot resolve nro derivative link: {path} -> {target}"
+                ) from error
+            if not resolved_target.is_relative_to(resolved_project):
+                raise ValueError(
+                    f"nro derivative link escapes its BIDS project: {path} -> {target}"
+                )
+    return links, scanned
 
 
 def _project_inventory(
@@ -441,16 +457,20 @@ def _project_inventory(
         metadata.extend(path for path in matched if path is not None)
 
     if progress is not None:
-        progress("Inspecting managed symbolic links")
-    absolute_symlinks = _absolute_project_symlinks(moves, old, new)
-    for path in source_symlinks:
-        absolute_symlinks.pop(path, None)
+        progress("Validating nro derivative symbolic links")
+    public_projects = tuple(
+        move.source for move in moves if move.source.parent.name.lower() == "bids"
+    )
+    derivative_symlinks, derivative_scanned = _nro_derivative_symlinks(
+        public_projects, progress=progress
+    )
+    scanned += derivative_scanned
     return ProjectInventory(
         tuple(valid_receipts),
         tuple(sorted(scenes)),
         tuple(sorted(metadata)),
         source_symlinks,
-        absolute_symlinks,
+        derivative_symlinks,
         scanned,
     )
 
@@ -765,11 +785,7 @@ def _prepare_rename(
             {"path": str(path), "target": target}
             for path, target in sorted(inventory.source_symlinks.items())
         ],
-        "absolute_symlinks": len(inventory.absolute_symlinks),
-        "absolute_symlink_records": [
-            {"path": str(path), "old_target": targets[0], "new_target": targets[1]}
-            for path, targets in sorted(inventory.absolute_symlinks.items())
-        ],
+        "derivative_symlinks": len(inventory.derivative_symlinks),
         "ingestion_records": len(ingestion),
         "definition_files": [
             str(root / relative)
@@ -1131,9 +1147,9 @@ def execute(
     for path, expected in prepared.inventory.source_symlinks.items():
         if not path.is_symlink() or os.readlink(path) != expected:
             raise ValueError(f"Raw BIDS link changed after the rename preview: {path}")
-    for path, (expected, _translated) in prepared.inventory.absolute_symlinks.items():
+    for path, expected in prepared.inventory.derivative_symlinks.items():
         if not path.is_symlink() or os.readlink(path) != expected:
-            raise ValueError(f"Managed link changed after the rename preview: {path}")
+            raise ValueError(f"nro derivative link changed after the rename preview: {path}")
     from nro.orchestration.planner_client import shutdown as shutdown_planner
 
     shutdown_planner(registry.paths.control)
@@ -1145,7 +1161,6 @@ def execute(
     receipts = prepared.inventory.receipts
     metadata = prepared.inventory.metadata
     source_symlinks = prepared.inventory.source_symlinks
-    symlinks = prepared.inventory.absolute_symlinks
     ingestion = prepared.ingestion
     definition_updates = prepared.definition_updates
     report_phase("Preparing project rename recovery journal")
@@ -1259,8 +1274,6 @@ def execute(
                     durable=True,
                 )
         _receipt_count, created_receipts = _rewrite_receipts(receipts, old, new, mapping)
-        for path, (_old_target, new_target) in symlinks.items():
-            _replace_symlink(path, new_target)
         report_phase(f"Moving managed project directories ({len(moves):,} directories)")
         for move in moves:
             move.source.rename(move.destination)
@@ -1285,9 +1298,6 @@ def execute(
             for move in reversed(moved):
                 if move.destination.exists() and not move.source.exists():
                     move.destination.rename(move.source)
-            for path, (old_target, _new_target) in symlinks.items():
-                if path.is_symlink():
-                    _replace_symlink(path, old_target)
             for path, target in source_symlinks.items():
                 _restore_source_symlink(path, target)
             for name, backup in branch_backups.items():

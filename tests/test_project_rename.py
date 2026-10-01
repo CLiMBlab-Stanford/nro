@@ -11,6 +11,7 @@ from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.project_rename import (
     ProjectMove,
     _copy_or_link,
+    _nro_derivative_symlinks,
     _prepare_rename,
     _project_inventory,
     _replace_project,
@@ -79,6 +80,35 @@ def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkey
         )
 
 
+def test_nro_derivative_links_are_validated_without_scanning_other_derivatives(tmp_path):
+    project = tmp_path / "BIDS/old"
+    target = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    target.parent.mkdir(parents=True)
+    target.write_text("image")
+    owned = project / "derivatives/nro/anat/main/sub-01/source.nii.gz"
+    owned.parent.mkdir(parents=True)
+    owned.symlink_to("../../../../../sub-01/anat/sub-01_T1w.nii.gz")
+    unmanaged = project / "derivatives/other/absolute-link"
+    unmanaged.parent.mkdir(parents=True)
+    unmanaged.symlink_to(tmp_path / "outside")
+
+    links, scanned = _nro_derivative_symlinks((project,))
+
+    assert links == {owned: "../../../../../sub-01/anat/sub-01_T1w.nii.gz"}
+    assert scanned > 0
+
+
+@pytest.mark.parametrize("target", ("/outside/project", "../../../../outside"))
+def test_nro_derivative_links_reject_absolute_or_external_targets(tmp_path, target):
+    project = tmp_path / "BIDS/old"
+    link = project / "derivatives/nro/anat/source"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    with pytest.raises(ValueError, match="must be relative|escapes its BIDS project"):
+        _nro_derivative_symlinks((project,))
+
+
 def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch, capsys):
     from nro.bin import project as project_cli
 
@@ -91,7 +121,7 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
         "scene_files": 0,
         "metadata_files": 1,
         "source_symlinks": 0,
-        "absolute_symlinks": 0,
+        "derivative_symlinks": 0,
         "ingestion_records": 0,
         "definition_files": [],
         "moves": [{"source": "/bids/old", "destination": "/bids/new"}],
@@ -316,7 +346,7 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     derivative = bids / "old/derivatives/nro/anat/main/sub-01"
     derivative.mkdir(parents=True)
     derivative_link = derivative / "source-link"
-    derivative_link.symlink_to(bids / "old/marker.txt")
+    derivative_link.symlink_to("../../../../../marker.txt")
     manifest = derivative / "sub-01_manifest.json"
     manifest.write_text(json.dumps({"input": str(bids / "old/marker.txt")}))
     monkeypatch.setattr(
@@ -358,9 +388,12 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     materialized = bids / "new/absolute-link"
     assert materialized.is_file() and not materialized.is_symlink()
     assert materialized.samefile(bids / "new/marker.txt")
+    assert (bids / "new/derivatives/nro/anat/main/sub-01/source-link").readlink() == Path(
+        "../../../../../marker.txt"
+    )
     assert (
         bids / "new/derivatives/nro/anat/main/sub-01/source-link"
-    ).readlink() == bids / "new/marker.txt"
+    ).resolve() == bids / "new/marker.txt"
     assert json.loads(
         (bids / "new/derivatives/nro/anat/main/sub-01/sub-01_manifest.json").read_text()
     )["input"] == str(bids / "new/marker.txt")

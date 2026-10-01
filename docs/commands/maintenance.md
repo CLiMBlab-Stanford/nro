@@ -181,9 +181,9 @@ nro project rename climblab_multisession climb --dry-run
 The default command opens a read-only preview in the pager and then asks for
 confirmation. It reports every managed directory move and the affected work
 items, ownership receipts, Workbench scenes, BIDSification records, structured
-metadata, symbolic links, and definition files. Use `--dry-run` to stop after
-the preview or `-f`/`--force` to skip confirmation. The command is available
-only from the registered main checkout.
+metadata, raw-data links, validated nro-derivative links, and definition files.
+Use `--dry-run` to stop after the preview or `-f`/`--force` to skip confirmation.
+The command is available only from the registered main checkout.
 
 The command starts the central scheduler when one is not already running. Both
 the preview and execution therefore run in the scheduler's Slurm allocation,
@@ -192,21 +192,24 @@ not in the invoking login-shell process.
 The rename covers the shared BIDS and WORK projects, every registered branch's
 development BIDS and WORK projects, project log directories, scheduler and
 branch registries, ownership receipts, BIDSification records, Workbench scene
-links, absolute symbolic links into renamed roots, markup, and BIDSification
-project routing. Directory moves must be atomic on their filesystem. The command
-refuses symbolic-link roots, an existing destination, active demand, active
-attempts or resource steps, and active
+metadata, markup, and BIDSification project routing. Directory moves must be
+atomic on their filesystem. The command refuses symbolic-link roots, an existing
+destination, active demand, active attempts or resource steps, and active
 BIDSification for the source project.
 The inventory uses SQL artifact records and the fixed ownership and scene
-namespaces rather than walking scientific outputs. Raw BIDS trees are traversed
-only to find symbolic links, with `derivatives/` pruned. An unreadable inspected
+namespaces rather than walking scientific outputs. It traverses the raw BIDS tree
+only to find symbolic links, with `derivatives/` pruned, and separately traverses
+only `derivatives/nro` to validate its links. Third-party derivative trees and
+private WORK trees are not inspected for symbolic links. An unreadable inspected
 path blocks execution; an incomplete inventory is never treated as complete.
 
 Raw BIDS symbolic links are materialized during execution. Regular files become
 hard links when their target is on the same filesystem; otherwise they become
 metadata-preserving copies. Directory links become metadata-preserving directory
-copies. Symbolic links inside derivatives remain links. Absolute derivative
-links into the renamed project are updated without following their targets.
+copies. Symbolic links inside `derivatives/nro` must be relative and resolve
+within their BIDS project. They remain unchanged because the project tree moves
+as a unit. Invalid nro-owned links block the rename; links in third-party
+derivatives are outside nro's scope.
 
 Numerical scientific outputs are not rewritten. Indexed structured derivative and
 WORK metadata containing absolute project paths is translated, and the registry
