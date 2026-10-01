@@ -489,8 +489,11 @@ def _assess_direct_inputs(
     from nro.configuration.hardware import gradient_unwarping_records
     from nro.configuration.markup import MarkupStore
     from nro.engine.source_metadata import semantic_metadata_snapshot
-    from nro.modules.anat.msmall import resolve_msmall_calibration
-    from nro.modules.anat.planning import raw_anatomical_images, raw_anatomical_inputs
+    from nro.modules.anat.planning import (
+        raw_anatomical_images,
+        raw_anatomical_inputs,
+        resolve_msmall_calibration,
+    )
     from nro.modules.clean.planning import clean_direct_inputs
     from nro.modules.func.contract import final_resampling_contract
     from nro.modules.func.planning import load_session_inventory, resolved_func_inputs

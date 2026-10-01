@@ -21,7 +21,6 @@ from nro.orchestration.planning_context import (
     SubjectPlanningContext,
     work_item_key,
 )
-from nro.orchestration.resources import LONG_CPU_RESOURCE_CLASS
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
@@ -144,9 +143,7 @@ def plan_work_items(
         raise ParticipantUnavailableError("FastSurfer surface reconstruction requires T1w data")
     # Resource-specific runner steps are dispatched independently. The parent
     # anatomical work item always returns to the ordinary CPU pool.
-    resource_class = (
-        LONG_CPU_RESOURCE_CLASS if calibration is not None else descriptor.resource_class
-    )
+    resource_class = "long" if calibration is not None else descriptor.resource_class
     gradient_records, _ = gradient_unwarping_records(
         list(anatomical_images),
         mode=str(config["gradient_unwarping"]),

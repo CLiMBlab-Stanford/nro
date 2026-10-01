@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import nibabel as nib
-import numpy as np
-
 from nro.configuration.markup import SubjectMarkup
 from nro.configuration.store import fingerprint
 from nro.engine.execution import create_copy_file_step
-from nro.engine.image_paths import image_source_paths
-from nro.engine.io import atomic_write_text, read_public_json, write_public_json
-from nro.engine.manifests import create_json_step
-from nro.modules.func.resolver import (
+from nro.engine.functional_references import (
     load_rec,
     load_reference_inventory,
     pe_axis_and_sign,
     resolve_func_references,
 )
+from nro.engine.image_paths import image_source_paths
+from nro.engine.io import atomic_write_text, read_public_json, write_public_json
+from nro.engine.manifests import create_json_step
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 
@@ -223,7 +221,12 @@ def resolve_msmall_calibration(
             raise ValueError(
                 f"MSMAll fieldmaps require EffectiveEchoSpacing: {pair.se1.img}, {pair.se2.img}"
             )
-        if not np.isclose(float(fieldmap_echo_spacing), float(second_echo_spacing)):
+        if not math.isclose(
+            float(fieldmap_echo_spacing),
+            float(second_echo_spacing),
+            rel_tol=1e-09,
+            abs_tol=0.0,
+        ):
             raise ValueError(
                 "MSMAll opposite-PE fieldmaps must share EffectiveEchoSpacing: "
                 f"{pair.se1.img}, {pair.se2.img}"
@@ -602,6 +605,9 @@ def add_msmall_plan(
     )
 
     def write_registration_qc() -> None:
+        import nibabel as nib
+        import numpy as np
+
         hemispheres: dict[str, object] = {}
         for hemi, long_hemi in (("L", "lh"), ("R", "rh")):
             transform = nib.load(Path(outputs["transforms"][hemi]))

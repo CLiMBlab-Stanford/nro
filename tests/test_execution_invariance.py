@@ -42,14 +42,17 @@ def test_every_declared_execution_setting_is_excluded_from_scientific_identity(k
     for key in keys[:-1]:
         parent = parent[key]
     old = parent[keys[-1]]
+    rule = SCHEMAS[kind]
+    for key in keys:
+        rule = rule[key]
     if isinstance(old, bool):
         parent[keys[-1]] = not old
     elif isinstance(old, str):
-        parent[keys[-1]] = old + ".alternative"
+        alternatives = tuple(choice for choice in rule.choices or () if choice != old)
+        if rule.choices and not alternatives:
+            pytest.skip("execution setting has one supported value")
+        parent[keys[-1]] = alternatives[0] if alternatives else old + ".alternative"
     elif old is None:
-        rule = SCHEMAS[kind]
-        for key in keys:
-            rule = rule[key]
         parent[keys[-1]] = "/tmp/nro-alternative" if rule.kind == "str" else 1
     else:
         parent[keys[-1]] = (old or 0) + 1

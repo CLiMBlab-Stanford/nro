@@ -8,15 +8,15 @@ from typing import TYPE_CHECKING, Mapping
 
 from nro.configuration.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
-from nro.engine.paths import functional_manifest_path, module_subject_dir
-from nro.engine.source_metadata import semantic_metadata_snapshot
-from nro.modules.func.contract import final_resampling_contract
-from nro.modules.func.resolver import (
+from nro.engine.functional_references import (
     ReferenceInventory,
     load_rec,
     load_reference_inventory,
     resolve_func_references,
 )
+from nro.engine.paths import functional_manifest_path, module_subject_dir
+from nro.engine.source_metadata import semantic_metadata_snapshot
+from nro.modules.func.contract import final_resampling_contract
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
 
