@@ -33,6 +33,7 @@ from nro.orchestration.ownership import (
     work_item_record_path,
 )
 from nro.orchestration.planning_context import work_item_key
+from nro.orchestration.project_scope import source_bids_walk
 from nro.orchestration.registry import ensure_shared_directory
 
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -250,13 +251,14 @@ def _restore_recorded_symlink(path: Path, target: str) -> None:
     path.symlink_to(target)
 
 
+def _fail_walk(error: OSError) -> None:
+    """Convert an incomplete filesystem inventory into a closed failure."""
+    raise OSError(f"Cannot inventory project directory: {error.filename}: {error.strerror}")
+
+
 def _strict_walk(root: Path):
     """Walk a managed root and fail when any directory cannot be inspected."""
-
-    def failed(error: OSError) -> None:
-        raise OSError(f"Cannot inventory project directory: {error.filename}: {error.strerror}")
-
-    return os.walk(root, topdown=True, followlinks=False, onerror=failed)
+    return os.walk(root, topdown=True, followlinks=False, onerror=_fail_walk)
 
 
 def _metadata_reference(request: tuple[Path, str]) -> Path | None:
@@ -274,15 +276,11 @@ def _raw_source_symlinks(
     *,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[dict[Path, str], int]:
-    """Find raw-data links while pruning derivative and code trees."""
+    """Find links only in source BIDS namespaces owned by nro migration."""
     links: dict[Path, str] = {}
     scanned = 0
-    for parent, directories, files in _strict_walk(source_root):
+    for parent, directories, files in source_bids_walk(source_root, onerror=_fail_walk):
         directory = Path(parent)
-        if directory == source_root:
-            for excluded in ("derivatives", "code"):
-                if excluded in directories:
-                    directories.remove(excluded)
         for name in tuple(directories):
             path = directory / name
             scanned += 1
