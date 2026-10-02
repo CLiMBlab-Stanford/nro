@@ -78,6 +78,24 @@ def test_project_inventory_requires_raw_link_migration(tmp_path):
         )
 
 
+def test_project_inventory_ignores_links_in_bids_code_directory(tmp_path):
+    source = tmp_path / "BIDS/old"
+    target = tmp_path / "shared.yml"
+    target.write_text("configuration")
+    link = source / "code/containers/.build/tool/assets/config.yml"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    inventory = _project_inventory(
+        (ProjectMove(source, tmp_path / "BIDS/new"),),
+        bids_root=tmp_path / "BIDS",
+        old="old",
+        new="new",
+    )
+
+    assert inventory.scanned == 0
+
+
 def test_nro_derivative_links_are_validated_without_scanning_other_derivatives(tmp_path):
     project = tmp_path / "BIDS/old"
     target = project / "sub-01/anat/sub-01_T1w.nii.gz"

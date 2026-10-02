@@ -274,13 +274,15 @@ def _raw_source_symlinks(
     *,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[dict[Path, str], int]:
-    """Find raw-data links while pruning the already migrated derivative tree."""
+    """Find raw-data links while pruning derivative and code trees."""
     links: dict[Path, str] = {}
     scanned = 0
     for parent, directories, files in _strict_walk(source_root):
         directory = Path(parent)
-        if directory == source_root and "derivatives" in directories:
-            directories.remove("derivatives")
+        if directory == source_root:
+            for excluded in ("derivatives", "code"):
+                if excluded in directories:
+                    directories.remove(excluded)
         for name in tuple(directories):
             path = directory / name
             scanned += 1
