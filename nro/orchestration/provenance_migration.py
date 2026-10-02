@@ -52,6 +52,7 @@ from nro.orchestration.ownership import (
     ownership_record_fingerprint,
     read_ownership_records,
 )
+from nro.orchestration.project_scope import is_source_datatype_directory, source_bids_walk
 
 _IMAGING_SIDECAR_SUFFIXES = frozenset(
     {
@@ -154,19 +155,15 @@ def _restore_source_symlink(path: Path, target: str) -> None:
 
 
 def _source_symlinks(project_root: Path) -> tuple[dict[Path, str], tuple[str, ...]]:
-    """Inventory raw-data links without entering the derivatives namespace."""
+    """Inventory links in source BIDS namespaces owned by the migration."""
     links: dict[Path, str] = {}
     errors = []
 
     def failed(error: OSError) -> None:
         errors.append(f"Cannot inspect raw BIDS path {error.filename}: {error.strerror}")
 
-    for parent, directories, files in os.walk(
-        project_root, topdown=True, followlinks=False, onerror=failed
-    ):
+    for parent, directories, files in source_bids_walk(project_root, onerror=failed):
         directory = Path(parent)
-        if directory == project_root and "derivatives" in directories:
-            directories.remove("derivatives")
         for name in tuple(directories):
             path = directory / name
             if path.is_symlink():
@@ -864,12 +861,13 @@ def _metadata_files(root: Path, *, prune_code_products: bool = False) -> Iterato
 
 def _source_candidates(project_root: Path) -> Iterator[Path]:
     """Yield imaging sidecars from raw BIDS subject trees only."""
-    for subject_root in sorted(project_root.glob("sub-*")):
-        if not subject_root.is_dir():
+    for directory, _names, files in source_bids_walk(project_root):
+        parent = Path(directory)
+        relative = parent.relative_to(project_root)
+        if not is_source_datatype_directory(relative):
             continue
-        for path in _metadata_files(subject_root):
-            if "_excluded" in path.relative_to(subject_root).parts:
-                continue
+        for name in sorted(files):
+            path = parent / name
             if _is_source_imaging_sidecar(path, project_root):
                 yield path
 

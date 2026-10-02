@@ -36,19 +36,25 @@ writes anything. Use `--dry-run` to stop after the preview or `-f`/`--force` to 
 confirmation. The command is available only from the central installation. Before
 the preview, it starts or joins the central Slurm scheduler without creating
 scientific demand. Preview and execution therefore run on the scheduler allocation,
-not the login node. It coordinates changes to the selected raw BIDS projects, the
-main derivative tree, registered development branches, ownership receipts, and
-scheduler evidence. It refuses active attempts, converts version-4 ownership receipts
-to version 5, removes obsolete `EventsFile` fields from source imaging sidecars, and
-rewrites supported nro JSON and YAML metadata. Repeating the migration is a no-op.
+not the login node. It coordinates changes to the selected source BIDS projects,
+nro-owned public and private derivative trees, registered development branches,
+ownership receipts, and scheduler evidence. It refuses active attempts, converts
+version-4 ownership receipts to version 5, removes obsolete `EventsFile` fields from
+source imaging sidecars, and rewrites supported nro JSON and YAML metadata. Repeating
+the migration is a no-op.
 
 The preflight reports separate source, derivative, and work-item-contract phases with
-file counts. It examines raw imaging sidecars under `sub-*` and structured metadata
-under `derivatives/nro`; it does not traverse `sourcedata`, third-party derivatives,
-or external code products such as FreeSurfer subject directories. Metadata reads are
-bounded and concurrent, while the migration plan, journal, and writes remain ordered.
-Large datasets can still take several minutes because every selected metadata record
-is parsed and validated before any write begins.
+file counts. Its source boundary includes BIDS participant data and the opaque
+`sourcedata`, `stimuli`, and `phenotype` namespaces, but excludes the project's
+`code` directory and unrecognized content. Source-link materialization applies
+throughout that boundary. Imaging-sidecar rewrites remain limited to `sub-*` because
+files under `sourcedata` are not publication metadata. Public metadata discovery is
+limited to `derivatives/nro`; third-party derivatives and external code products such
+as FreeSurfer subject directories are not traversed. Private WORK trees participate
+in project moves and scheduler state but are not rewritten as public BIDS metadata.
+Metadata reads are bounded and concurrent, while the migration plan, journal, and
+writes remain ordered. Large datasets can still take several minutes because every
+selected metadata record is parsed and validated before any write begins.
 
 Source images remain byte-level freshness inputs. Inherited JSON metadata is stored
 in work-item contracts as a canonical projection of the fields used by the relevant
@@ -64,5 +70,6 @@ failure rolls back immediately. If public files have passed validation, a later
 invocation resumes the registry phase without rewriting them; earlier interruptions
 roll back before another migration begins.
 
-Third-party derivatives remain outside this migration. Source fields without an
+Third-party derivatives, the project `code` directory, and content outside the
+recognized BIDS namespaces remain outside this migration. Source fields without an
 explicit migration rule remain untouched.

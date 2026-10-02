@@ -27,6 +27,7 @@ from nro.orchestration.provenance_migration import (
     _refresh_inventory_locked,
     _scientific_contract_dataset_view,
     _source_candidates,
+    _source_symlinks,
     migrate_dataset,
 )
 from nro.orchestration.registry import Registry
@@ -75,6 +76,33 @@ def test_dataset_migration_materializes_raw_bids_directory_links(tmp_path: Path)
     assert nested.read_bytes() == b"dicom"
     repeated = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
     assert repeated.source_links == ()
+
+
+def test_dataset_migration_limits_raw_links_to_managed_bids_namespaces(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "bids/demo"
+    target = tmp_path / "shared/image.nii.gz"
+    target.parent.mkdir()
+    target.write_bytes(b"image")
+    included = (
+        project / "sub-01/anat/sub-01_T1w.nii.gz",
+        project / "sourcedata/sub-01/image.nii.gz",
+    )
+    skipped = (
+        project / "code/tool/input.nii.gz",
+        project / "derivatives/other/input.nii.gz",
+        project / "misc/input.nii.gz",
+        project / "sub-01/notes/input.nii.gz",
+    )
+    for link in (*included, *skipped):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+
+    links, errors = _source_symlinks(project)
+
+    assert errors == ()
+    assert set(links) == set(included)
 
 
 @pytest.mark.parametrize(
@@ -352,12 +380,24 @@ def test_migration_inventory_prunes_non_bids_and_external_product_trees(
     project = tmp_path / "bids/demo"
     raw = project / "sub-01/func/sub-01_task-rest_bold.json"
     excluded = project / "sub-01/func/_excluded/sub-01_task-rest_run-02_bold.json"
+    misplaced = project / "sub-01/notes/sub-01_T1w.json"
+    session_root = project / "sub-01/ses-01/sub-01_ses-01_T1w.json"
     sourcedata = project / "sourcedata/sub-01/func/sub-01_task-rest_bold.json"
     third_party = project / "derivatives/other/sub-01/manifest.json"
     manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
     abandoned = manifest.with_name(".manifest.tmp-0123456789abcdef.json")
     external = project / "derivatives/nro/anat/main/code/freesurfer/metadata.json"
-    for path in (raw, excluded, sourcedata, third_party, manifest, abandoned, external):
+    for path in (
+        raw,
+        excluded,
+        misplaced,
+        session_root,
+        sourcedata,
+        third_party,
+        manifest,
+        abandoned,
+        external,
+    ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}")
 

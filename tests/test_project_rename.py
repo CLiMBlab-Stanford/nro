@@ -50,7 +50,7 @@ def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkey
         onerror(PermissionError(13, "Permission denied", str(source / "private")))
         yield  # pragma: no cover
 
-    monkeypatch.setattr("nro.orchestration.project_rename.os.walk", unreadable)
+    monkeypatch.setattr("nro.orchestration.project_scope.os.walk", unreadable)
 
     with pytest.raises(OSError, match="Cannot inventory project directory.*private"):
         _project_inventory(
@@ -94,6 +94,46 @@ def test_project_inventory_ignores_links_in_bids_code_directory(tmp_path):
     )
 
     assert inventory.scanned == 0
+
+
+def test_project_inventory_ignores_unmanaged_project_namespaces(tmp_path):
+    source = tmp_path / "BIDS/old"
+    target = tmp_path / "shared.json"
+    target.write_text("metadata")
+    links = (
+        source / "misc/linked.json",
+        source / "derivatives/other/linked.json",
+        source / "sub-01/notes/linked.json",
+    )
+    for link in links:
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+
+    inventory = _project_inventory(
+        (ProjectMove(source, tmp_path / "BIDS/new"),),
+        bids_root=tmp_path / "BIDS",
+        old="old",
+        new="new",
+    )
+
+    assert inventory.scanned == 1  # The BIDS participant directory itself.
+
+
+def test_project_inventory_requires_sourcedata_link_migration(tmp_path):
+    source = tmp_path / "BIDS/old"
+    target = tmp_path / "source-session"
+    target.mkdir()
+    link = source / "sourcedata/sub-01/ses-01"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
+        _project_inventory(
+            (ProjectMove(source, tmp_path / "BIDS/new"),),
+            bids_root=tmp_path / "BIDS",
+            old="old",
+            new="new",
+        )
 
 
 def test_nro_derivative_links_are_validated_without_scanning_other_derivatives(tmp_path):
