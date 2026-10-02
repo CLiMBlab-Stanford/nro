@@ -418,7 +418,7 @@ def pool_operation(registry, *, checkout: Path, operation: str, concurrency=None
         raise ValueError("Unknown pool operation")
     from nro.orchestration.worker_control import cancel_worker_allocations
 
-    shutdown = registry.request_worker_shutdown()
+    shutdown = registry.request_worker_shutdown(all_users=True)
     stopped, failures = cancel_worker_allocations(registry, shutdown)
     return dict(shutdown, stopped_jobs=stopped, failures=failures)
 

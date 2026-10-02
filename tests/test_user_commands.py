@@ -130,6 +130,43 @@ def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:
         scheduler_client.exchange(endpoint, {"operation": "status"}, timeout=0.01)
 
 
+def test_start_reports_a_live_scheduler_without_reconfiguring_it(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_client, "_endpoint", lambda *_args, **_kwargs: endpoint)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: {"job_id": "12345"})
+    monkeypatch.setattr(
+        scheduler_client,
+        "_start_service",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not restart")),
+    )
+
+    assert scheduler_client.start(tmp_path, tmp_path, checkout=tmp_path, options={"cpus": 8}) == {
+        "state": "running",
+        "job_id": "12345",
+    }
+
+
+def test_start_reports_a_pending_scheduler_without_reconfiguring_it(monkeypatch, tmp_path) -> None:
+    from nro.orchestration import scheduler_bus, scheduler_client
+
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    monkeypatch.setattr(scheduler_client, "_endpoint", lambda *_args, **_kwargs: endpoint)
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda *_args: None)
+    monkeypatch.setattr(scheduler_bus, "read_launch", lambda *_args: {"job_id": "12345"})
+    monkeypatch.setattr(
+        scheduler_client,
+        "_start_service",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not restart")),
+    )
+
+    assert scheduler_client.start(tmp_path, tmp_path, checkout=tmp_path) == {
+        "state": "starting",
+        "job_id": "12345",
+    }
+
+
 def test_scheduler_exchange_describes_non_durable_timeout(monkeypatch, tmp_path) -> None:
     from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc
 
@@ -696,10 +733,17 @@ def test_module_specific_selectors_can_accompany_mixed_module_requests() -> None
 
 def test_stop_workers_short_flag_and_long_workflow_option() -> None:
     worker_args = stop_parser().parse_args(["-W"])
-    assert worker_args.workers is True
+    assert worker_args.worker is True
+    assert worker_args.scheduler is False
     assert worker_args.workflow is None
+    singular_args = stop_parser().parse_args(["--worker"])
+    assert singular_args.worker is True
+    scheduler_args = stop_parser().parse_args(["--worker", "--scheduler"])
+    assert scheduler_args.worker is True
+    assert scheduler_args.scheduler is True
     workflow_args = stop_parser().parse_args(["-w", "experiment"])
-    assert workflow_args.workers is False
+    assert workflow_args.worker is False
+    assert workflow_args.scheduler is False
     assert workflow_args.workflow == ["experiment"]
 
 

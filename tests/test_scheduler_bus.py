@@ -45,6 +45,29 @@ def test_controller_requests_resources_for_threaded_service(tmp_path):
     assert "#SBATCH --mem=4G\n" in text
 
 
+def test_controller_accepts_explicit_resource_request(tmp_path):
+    source = SimpleNamespace(command=lambda command, *, site: list(command))
+
+    script = scheduler_bus.write_controller_script(
+        tmp_path,
+        bids_root=tmp_path / "BIDS",
+        token="launch",
+        source=source,
+        site=tmp_path / "site.toml",
+        python=Path("/usr/bin/python3"),
+        partition="interactive",
+        account="nlp",
+        time_hours=12,
+        memory_gb=8,
+        cpus=6,
+    )
+
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --time=12:00:00\n" in text
+    assert "#SBATCH --mem=8G\n" in text
+    assert "#SBATCH --cpus-per-task=6\n" in text
+
+
 def test_scheduler_session_shares_one_connection_across_registry_handles(tmp_path):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     project = Registry.for_project(

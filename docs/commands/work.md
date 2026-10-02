@@ -1,6 +1,21 @@
 # Request, inspect, and stop work
 
-[Common selectors](index.md#shared-selectors) apply to every command here except `set`.
+[Common selectors](index.md#shared-selectors) apply to every command here except `start`,
+`set`, and `get`.
+
+## `nro start`
+
+Start the shared scheduler without requesting or planning scientific work. If a
+scheduler is already running, or its Slurm allocation is pending, `nro start`
+reports that state and exits without changing the existing allocation.
+
+When it creates a scheduler, `--partition`, `--account`, `--time`, `--memory`,
+and `--cpus` configure that scheduler's Slurm allocation. They do not configure
+derivative workers; use `nro run` for worker resources and demand.
+
+```bash
+nro start --partition sphinx --account nlp --time 24 --memory 4 --cpus 4
+```
 
 ## `nro run`
 
@@ -216,9 +231,12 @@ demand can keep shared work alive. `--only` limits cancellation to the selected
 derivative. `-f`/`--force` cancels matching demand from all users and stops the
 shared attempt; it does not delete outputs or history.
 
-`-W`/`--workers` shuts down the current user's site-wide worker pool without
-cancelling work item demand. Worker shutdown and demand cancellation are distinct
-operations. Coordinate with other users before installation maintenance.
+`-W`/`--worker` stops every worker and active work-item attempt. `--workers`
+remains an alias. `--scheduler` does the same and then stops the scheduler.
+These global controls do not accept selectors, `--only`, or `--force`; combining
+`--worker --scheduler` is equivalent to `--scheduler`. They do not remove
+demand or completed outputs. Coordinate with other users before using either
+control.
 
 ## `nro set`
 

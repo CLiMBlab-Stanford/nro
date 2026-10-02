@@ -27,6 +27,8 @@ LEASE_SECONDS = 30.0
 STARTING_GRACE_SECONDS = 30.0
 DEFAULT_IDLE_GRACE_SECONDS = 12 * 60 * 60.0
 SCHEDULER_CPUS = 4
+SCHEDULER_TIME_HOURS = 24
+SCHEDULER_MEMORY_GB = 4
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}")
 _STATUS_FORMAT = 2
 _STATUS_STATIC_FILE = re.compile(r"status-static-[0-9a-f]{64}\.json")
@@ -490,9 +492,15 @@ def write_controller_script(
     python: Path,
     partition: str,
     account: str | None,
+    time_hours: int = SCHEDULER_TIME_HOURS,
+    memory_gb: int = SCHEDULER_MEMORY_GB,
+    cpus: int = SCHEDULER_CPUS,
 ) -> Path:
     """Write the pinned Slurm script for one controller launch."""
     import shlex
+
+    if time_hours < 1 or memory_gb < 1 or cpus < 1:
+        raise ValueError("Scheduler time, memory, and CPUs must be positive")
 
     paths = prepare(control)
     script = paths.service / f"controller-{token}.sbatch"
@@ -513,9 +521,9 @@ def write_controller_script(
         "#!/usr/bin/env bash",
         "#SBATCH --job-name=nro-scheduler",
         f"#SBATCH --partition={partition}",
-        "#SBATCH --time=24:00:00",
-        "#SBATCH --mem=4G",
-        f"#SBATCH --cpus-per-task={SCHEDULER_CPUS}",
+        f"#SBATCH --time={time_hours}:00:00",
+        f"#SBATCH --mem={memory_gb}G",
+        f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --output={paths.service}/controller-%j.log",
     ]
     if account:
