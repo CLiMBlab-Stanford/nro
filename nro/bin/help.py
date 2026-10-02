@@ -29,6 +29,11 @@ TASK_GUIDES = {
 
           nro run -P PROJECT -p PARTICIPANT -m MODULE
 
+        Start the scheduler without creating demand when you expect to make
+        several requests later:
+
+          nro start
+
         Inspect work and read its logs:
 
           nro status -P PROJECT -p PARTICIPANT

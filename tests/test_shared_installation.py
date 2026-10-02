@@ -190,10 +190,7 @@ def test_installation_rebuilds_obsolete_schema_before_scheduler_calls(
 
     assert result["done"]
     assert repaired == [(registry, (tmp_path / "main").resolve())]
-    assert [operation for operation, _ in operations] == [
-        "installation_activity",
-        "installation_prepare",
-    ]
+    assert operations == []
     assert "Rebuilt scheduler schema 17" in capsys.readouterr().out
 
 
@@ -219,7 +216,6 @@ def test_schema_rebuild_stops_the_live_scheduler_before_direct_registry_access(
             },
         ),
     )
-    monkeypatch.setattr(registry, "stored_schema_version", lambda: 17)
     scheduler_stopped = False
     active_records = [{"token": "old"}]
     monkeypatch.setattr(
@@ -233,6 +229,22 @@ def test_schema_rebuild_stops_the_live_scheduler_before_direct_registry_access(
         return {"stopping": True}
 
     monkeypatch.setattr("nro.orchestration.scheduler_client.shutdown_service", stop_scheduler)
+
+    def stored_schema_version():
+        assert scheduler_stopped
+        return 17
+
+    monkeypatch.setattr(registry, "stored_schema_version", stored_schema_version)
+
+    from nro.engine import maintenance
+
+    audit_shared_state = maintenance.audit_shared_state
+
+    def audited(*args, **kwargs):
+        assert scheduler_stopped
+        return audit_shared_state(*args, **kwargs)
+
+    monkeypatch.setattr(maintenance, "audit_shared_state", audited)
 
     def activity(**_options):
         assert scheduler_stopped

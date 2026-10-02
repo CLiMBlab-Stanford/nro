@@ -19,9 +19,15 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
     add_core_selection_arguments(parser, module_choices=MODULES)
     parser.add_argument(
         "-W",
+        "--worker",
         "--workers",
         action="store_true",
-        help="Shut down the current user's lab-wide worker pool without cancelling work item demand",
+        help="Stop all workers and their active work; cannot be combined with selectors",
+    )
+    parser.add_argument(
+        "--scheduler",
+        action="store_true",
+        help="Stop all workers and their active work, then stop the scheduler",
     )
     parser.add_argument(
         "-f",
@@ -64,7 +70,25 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
         site.installation_record().get("mode") == "branch"
         or implementation_path(Path(values["registry"])).is_file()
     )
-    if branch_execution and not args.workers:
+    pool_control = args.worker or args.scheduler
+    if pool_control and (
+        selection.projects
+        or selection.participants
+        or selection.modules
+        or selection.workflows
+        or selection.lineages
+        or selection.runs
+        or selection.spaces
+        or selection.smoothing
+        or selection.models
+        or selection.model_sets
+        or args.only
+        or args.force
+    ):
+        raise SystemExit(
+            "--worker and --scheduler control the global pool and cannot use selectors"
+        )
+    if branch_execution and not pool_control:
         from nro.orchestration.scheduler_client import stop
 
         for project in selected_projects(bids_root, selection.projects):
@@ -90,26 +114,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             f"signalled {total['attempts']} running attempt(s)."
         )
         return
-    if args.workers:
-        if (
-            selection.projects
-            or selection.participants
-            or selection.modules
-            or selection.workflows
-            or selection.lineages
-            or selection.runs
-            or selection.spaces
-            or selection.smoothing
-            or selection.models
-            or selection.model_sets
-            or args.only
-            or args.force
-        ):
-            raise SystemExit(
-                "--workers controls the lab-wide pool and cannot be combined with selectors"
-            )
+    if pool_control:
         if branch_execution:
-            from nro.orchestration.scheduler_client import pool_operation
+            from nro.orchestration.scheduler_client import pool_operation, shutdown_service
 
             shutdown = pool_operation(
                 Path(values["registry"]),
@@ -132,6 +139,17 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
         )
         for failure in failures:
             print(f"WARNING: could not cancel Slurm job {failure}")
+        if args.scheduler:
+            if branch_execution:
+                scheduler = shutdown_service(
+                    Path(values["registry"]), bids_root, checkout=site.CHECKOUT
+                )
+                if scheduler["stopping"]:
+                    print("Requested scheduler shutdown.")
+                else:
+                    print("No live scheduler was running.")
+            else:
+                print("No scheduler service is active in this installation mode.")
         return
     projects = selected_projects(bids_root, selection.projects)
     if not projects:

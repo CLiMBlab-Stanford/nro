@@ -39,143 +39,60 @@ def _repair_scientific_schemas(registry: Registry) -> list[dict]:
     return repaired
 
 
-def prepare_pool(
+def _set_installation_barrier(registry: Registry, checkout: Path, *, action: str) -> None:
+    """Record an installation barrier after direct, quiescent registry maintenance."""
+    with registry.connection(write=True) as db:
+        db.executemany(
+            "INSERT INTO metadata(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (
+                ("maintenance_mode", "installation"),
+                ("installation_checkout", str(checkout)),
+                ("installation_action", action),
+            ),
+        )
+
+
+def _wait_for_scheduler_shutdown(control: Path, *, timeout: float = 60.0) -> None:
+    """Wait until the scheduler releases its active-service record."""
+    from nro.orchestration.scheduler_bus import read_active
+
+    deadline = time.monotonic() + timeout
+    while read_active(control) is not None:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Scheduler did not release installation maintenance")
+        time.sleep(0.1)
+
+
+def _quiesce_service(
     registry: Registry,
     *,
     checkout: Path,
     confirm: Callable[[dict], MaintenanceAction | None],
-    poll_interval: float = 5.0,
-    report_interval: float = 30.0,
-    update_schema: bool = False,
-) -> dict:
-    """Quiesce workers under an installation barrier while preserving demand."""
-    checkout = Path(checkout).expanduser().resolve()
-    from nro.engine.maintenance import MaintenanceJournal, audit_shared_state
-    from nro.orchestration.selection import discover_bids_inventory
-
-    journal = MaintenanceJournal(registry.paths.control, checkout)
-    audit = audit_shared_state(registry, discover_bids_inventory(registry.paths.bids_root))
-    journal.record("audited", audit=audit.as_dict())
-    if audit.fatal_errors:
-        raise RuntimeError("Shared-maintenance audit failed:\n- " + "\n- ".join(audit.fatal_errors))
-    for message in audit.ownership_errors:
-        print(f"Corrupt or obsolete derivative ownership: {message}", flush=True)
-    from nro.orchestration.scheduler_implementation import implementation_path
-
-    if not implementation_path(registry.paths.control).is_file():
-        # Initial activation has no controller implementation to launch. This
-        # is the one normal offline bootstrap of the scheduler database.
-        registry.initialize()
-        activity = registry.worker_pool_activity()
-        if activity["workers"] or activity["submissions"]:
-            raise RuntimeError(
-                "An unmanaged worker pool is still active; stop it before scheduler activation"
-            )
-        with registry.connection(write=True) as db:
-            db.executemany(
-                "INSERT INTO metadata(key,value) VALUES (?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (
-                    ("maintenance_mode", "installation"),
-                    ("installation_checkout", str(checkout)),
-                    ("installation_action", "drain"),
-                ),
-            )
-        scientific = _repair_scientific_schemas(registry)
-        result = {
-            "workers": 0,
-            "submissions": 0,
-            "attempts": 0,
-            "ingestion": 0,
-            "action": "drain",
-            "done": True,
-            "stopped_jobs": [],
-            "failures": [],
-            "scientific": scientific,
-        }
-        journal.finish(result=result)
-        return result
-    from nro.orchestration.scheduler_bus import read_active
+    poll_interval: float,
+    report_interval: float,
+) -> tuple[dict, dict]:
+    """Ask the live scheduler to quiesce its pool and release the registry."""
     from nro.orchestration.scheduler_client import maintenance, shutdown_service
 
     control, bids_root = registry.paths.control, registry.paths.bids_root
-    from nro.orchestration.registry import SCHEMA_VERSION
-
-    stored_schema = registry.stored_schema_version()
-    if stored_schema != SCHEMA_VERSION:
-        if not update_schema:
-            raise RuntimeError(
-                f"Scheduler schema {stored_schema} does not match {SCHEMA_VERSION}; "
-                "shared installation maintenance must update it"
-            )
-        if read_active(control) is not None:
-            shutdown_service(
-                control,
-                bids_root,
-                checkout=checkout,
-                allow_changed_checkout=True,
-            )
-            deadline = time.monotonic() + 60
-            while read_active(control) is not None:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Scheduler did not stop before its registry schema rebuild")
-                time.sleep(0.1)
-        activity = registry.worker_pool_activity(for_repair=True)
-        if activity["workers"] or activity["submissions"]:
-            choice = confirm(
-                {
-                    "workers": len(activity["workers"]),
-                    "submissions": len(activity["submissions"]),
-                    "attempts": 0,
-                    "ingestion": 0,
-                }
-            )
-            if choice != "stop":
-                raise RuntimeError(
-                    "An incompatible scheduler schema cannot be drained by the new release; "
-                    "wait for current work to finish or rerun maintenance and choose stop"
-                )
-            from nro.orchestration.worker_control import stop_worker_pool_for_repair
-
-            stop_worker_pool_for_repair(registry)
-        from nro.orchestration.registry_schema import SCHEMA as SCHEDULER_SCHEMA
-
-        if SCHEDULER_SCHEMA.supports(stored_schema):
-            backup = registry.migrate_schema()
-            registry.finish_repair_stop()
-            print(
-                f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",
-                flush=True,
-            )
-        else:
-            from nro.orchestration.scheduler_repair import repair_for_installation
-
-            repaired = repair_for_installation(registry, checkout=checkout)
-            print(
-                f"Rebuilt scheduler schema {stored_schema} as {SCHEMA_VERSION}; "
-                f"backup: {repaired['backup']}",
-                flush=True,
-            )
-    journal.record("quiescing", audit=audit.as_dict())
     summary = maintenance(
         control,
         bids_root,
         checkout=checkout,
         operation="installation_activity",
     )
-    active = any(summary.values())
     action = None
-    if active:
+    if any(summary.values()):
         action = confirm(summary)
         if action is None:
             raise RuntimeError("Shared installation cancelled; the worker pool was not changed")
-    action = action or "drain"
     progress = maintenance(
         control,
         bids_root,
         checkout=checkout,
         operation="installation_prepare",
-        action=action,
+        action=action or "drain",
     )
     next_report = 0.0
     while not progress["done"]:
@@ -205,11 +122,153 @@ def prepare_pool(
         checkout=checkout,
         allow_changed_checkout=True,
     )
-    deadline = time.monotonic() + 60
-    while read_active(control) is not None:
-        if time.monotonic() >= deadline:
-            raise RuntimeError("Scheduler did not release installation maintenance")
-        time.sleep(0.1)
+    _wait_for_scheduler_shutdown(control)
+    return summary, progress
+
+
+def prepare_pool(
+    registry: Registry,
+    *,
+    checkout: Path,
+    confirm: Callable[[dict], MaintenanceAction | None],
+    poll_interval: float = 5.0,
+    report_interval: float = 30.0,
+    update_schema: bool = False,
+) -> dict:
+    """Quiesce workers under an installation barrier while preserving demand."""
+    checkout = Path(checkout).expanduser().resolve()
+    from nro.engine.maintenance import MaintenanceJournal, audit_shared_state
+    from nro.orchestration.selection import discover_bids_inventory
+
+    journal = MaintenanceJournal(registry.paths.control, checkout)
+    from nro.orchestration.scheduler_implementation import implementation_path
+
+    if not implementation_path(registry.paths.control).is_file():
+        # Initial activation has no controller implementation to launch. This
+        # is the one normal offline bootstrap of the scheduler database.
+        registry.initialize()
+        activity = registry.worker_pool_activity()
+        if activity["workers"] or activity["submissions"]:
+            raise RuntimeError(
+                "An unmanaged worker pool is still active; stop it before scheduler activation"
+            )
+        _set_installation_barrier(registry, checkout, action="drain")
+        audit = audit_shared_state(registry, discover_bids_inventory(registry.paths.bids_root))
+        journal.record("audited", audit=audit.as_dict())
+        if audit.fatal_errors:
+            raise RuntimeError(
+                "Shared-maintenance audit failed:\n- " + "\n- ".join(audit.fatal_errors)
+            )
+        for message in audit.ownership_errors:
+            print(f"Corrupt or obsolete derivative ownership: {message}", flush=True)
+        scientific = _repair_scientific_schemas(registry)
+        result = {
+            "workers": 0,
+            "submissions": 0,
+            "attempts": 0,
+            "ingestion": 0,
+            "action": "drain",
+            "done": True,
+            "stopped_jobs": [],
+            "failures": [],
+            "scientific": scientific,
+        }
+        journal.finish(result=result)
+        return result
+    control = registry.paths.control
+    from nro.orchestration.registry import SCHEMA_VERSION
+    from nro.orchestration.scheduler_bus import read_active
+
+    summary = None
+    progress = None
+    if read_active(control) is not None:
+        journal.record("quiescing")
+        summary, progress = _quiesce_service(
+            registry,
+            checkout=checkout,
+            confirm=confirm,
+            poll_interval=poll_interval,
+            report_interval=report_interval,
+        )
+
+    stored_schema = registry.stored_schema_version()
+    if stored_schema != SCHEMA_VERSION:
+        if not update_schema:
+            raise RuntimeError(
+                f"Scheduler schema {stored_schema} does not match {SCHEMA_VERSION}; "
+                "shared installation maintenance must update it"
+            )
+        activity = registry.worker_pool_activity(for_repair=True)
+        if activity["workers"] or activity["submissions"]:
+            choice = confirm(
+                {
+                    "workers": len(activity["workers"]),
+                    "submissions": len(activity["submissions"]),
+                    "attempts": 0,
+                    "ingestion": 0,
+                }
+            )
+            if choice != "stop":
+                raise RuntimeError(
+                    "An incompatible scheduler schema cannot be drained by the new release; "
+                    "wait for current work to finish or rerun maintenance and choose stop"
+                )
+            from nro.orchestration.worker_control import stop_worker_pool_for_repair
+
+            stop_worker_pool_for_repair(registry)
+        from nro.orchestration.registry_schema import SCHEMA as SCHEDULER_SCHEMA
+
+        if SCHEDULER_SCHEMA.supports(stored_schema):
+            backup = registry.migrate_schema()
+            if summary is None:
+                registry.finish_repair_stop()
+            print(
+                f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",
+                flush=True,
+            )
+        else:
+            from nro.orchestration.scheduler_repair import repair_for_installation
+
+            repaired = repair_for_installation(registry, checkout=checkout)
+            _set_installation_barrier(registry, checkout, action="stop")
+            print(
+                f"Rebuilt scheduler schema {stored_schema} as {SCHEMA_VERSION}; "
+                f"backup: {repaired['backup']}",
+                flush=True,
+            )
+        if summary is None:
+            _set_installation_barrier(registry, checkout, action="stop")
+            summary = {
+                "workers": len(activity["workers"]),
+                "submissions": len(activity["submissions"]),
+                "attempts": 0,
+                "ingestion": 0,
+            }
+            progress = {
+                **summary,
+                "action": "stop",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            }
+
+    audit = audit_shared_state(registry, discover_bids_inventory(registry.paths.bids_root))
+    journal.record("audited", audit=audit.as_dict())
+    if audit.fatal_errors:
+        raise RuntimeError("Shared-maintenance audit failed:\n- " + "\n- ".join(audit.fatal_errors))
+    for message in audit.ownership_errors:
+        print(f"Corrupt or obsolete derivative ownership: {message}", flush=True)
+
+    if summary is None:
+        journal.record("quiescing", audit=audit.as_dict())
+        summary, progress = _quiesce_service(
+            registry,
+            checkout=checkout,
+            confirm=confirm,
+            poll_interval=poll_interval,
+            report_interval=report_interval,
+        )
+    assert progress is not None
     journal.record("rebuilding", audit=audit.as_dict())
     scientific = _repair_scientific_schemas(registry)
     result = {**summary, **progress, "scientific": scientific}

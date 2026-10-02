@@ -37,6 +37,7 @@ COMMAND_HELP = {
     "purge": "Remove nro-controlled derivatives and logs.",
     "qc": "Run an ad hoc quality control.",
     "run": "Plan work and supply the shared worker pool.",
+    "start": "Start the shared scheduler without requesting scientific work.",
     "set": "Update live planner settings.",
     "status": "Report derivative status.",
     "stop": "Cancel derivative demand or stop workers.",

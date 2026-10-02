@@ -159,7 +159,7 @@ def _operation_notice(payload: dict) -> str:
     return _OPERATION_NOTICES.get(operation, "Processing request...")
 
 
-def _start_service(endpoint: SchedulerEndpoint) -> str | None:
+def _start_service(endpoint: SchedulerEndpoint, *, options: dict | None = None) -> str | None:
     """Submit one controller when this caller wins the atomic launch claim."""
     from nro.configuration.site import settings
     from nro.orchestration.scheduler_bus import (
@@ -170,6 +170,10 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
         write_controller_script,
     )
 
+    options = dict(options or {})
+    unexpected = set(options) - {"partition", "account", "time", "memory", "cpus"}
+    if unexpected:
+        raise ValueError("Unsupported scheduler launch option(s): " + ", ".join(sorted(unexpected)))
     claim = claim_launch(endpoint.control)
     if claim is None:
         return None
@@ -218,8 +222,11 @@ def _start_service(endpoint: SchedulerEndpoint) -> str | None:
                 source=endpoint.source,
                 site=endpoint.site,
                 python=endpoint.python,
-                partition=values["partition"],
-                account=values.get("account") or None,
+                partition=str(options.get("partition") or values["partition"]),
+                account=options.get("account", values.get("account") or None),
+                time_hours=int(options.get("time", 24)),
+                memory_gb=int(options.get("memory", 4)),
+                cpus=int(options.get("cpus", 4)),
             )
             job_id = submit_controller(script)
         update_launch_job(claim, job_id)
@@ -334,6 +341,34 @@ def _ensure_coordinator(
         else:
             return False
     return True
+
+
+def start(
+    control: Path,
+    bids_root: Path,
+    *,
+    checkout: Path,
+    options: dict | None = None,
+) -> dict:
+    """Start one scheduler allocation, or report the existing scheduler state."""
+    from nro.orchestration.scheduler_bus import clear_shutdown, read_active, read_launch
+
+    endpoint = _endpoint(control, bids_root)
+    active = read_active(control)
+    if active is not None:
+        return {"state": "running", "job_id": str(active.get("job_id") or "")}
+    launching = read_launch(control)
+    if launching is not None:
+        return {"state": "starting", "job_id": str(launching.get("job_id") or "")}
+    clear_shutdown(control)
+    job_id = _start_service(endpoint, options=options)
+    if job_id is not None:
+        return {"state": "submitted", "job_id": job_id}
+    active = read_active(control)
+    if active is not None:
+        return {"state": "running", "job_id": str(active.get("job_id") or "")}
+    launching = read_launch(control)
+    return {"state": "starting", "job_id": str((launching or {}).get("job_id") or "")}
 
 
 def exchange(
