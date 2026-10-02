@@ -55,6 +55,28 @@ def test_dataset_migration_materializes_raw_bids_links(tmp_path: Path) -> None:
     assert repeated.source_links == ()
 
 
+def test_dataset_migration_materializes_raw_bids_directory_links(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    source = tmp_path / "shared/sub-01/ses-01"
+    nested = source / "dicom/series-01/image.dcm"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"dicom")
+    link = project / "sourcedata/sub-01/ses-01"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(source, target_is_directory=True)
+    registry = Registry.for_project("", bids_root=bids)
+
+    result = migrate_dataset(registry, projects=("demo",), execute=True, version="1.2.3")
+
+    assert result.source_links == (link,)
+    assert link.is_dir() and not link.is_symlink()
+    assert (link / "dicom/series-01/image.dcm").read_bytes() == b"dicom"
+    assert nested.read_bytes() == b"dicom"
+    repeated = migrate_dataset(registry, projects=("demo",), execute=False, version="1.2.3")
+    assert repeated.source_links == ()
+
+
 @pytest.mark.parametrize(
     ("legacy", "image_key", "expected_build"),
     (
@@ -673,6 +695,41 @@ def test_dataset_migration_recovers_an_interrupted_transaction(
     assert json.loads(manifest.read_text())["output"] == (
         "bids::anat/main/sub-01/anat/sub-01_T1w.nii.gz"
     )
+    assert not journal.exists()
+
+
+def test_dataset_migration_recovery_keeps_completed_source_materialization(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    project = bids / "demo"
+    source = tmp_path / "shared/sub-01_T1w.nii.gz"
+    source.parent.mkdir()
+    source.write_bytes(b"image")
+    link = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(source)
+    registry = Registry.for_project("", bids_root=bids)
+    journal = registry.paths.control / "shared/provenance-migrations/interrupted"
+    journal.mkdir(parents=True)
+
+    provenance_migration._materialize_source_symlink(link)
+    (journal / "journal.json").write_text(
+        json.dumps(
+            {
+                "format": 3,
+                "state": "applying",
+                "phase": "source_links",
+                "projects": ["demo"],
+                "files": [],
+                "templates": [],
+                "source_links": [{"path": str(link), "old_target": str(source)}],
+            }
+        )
+    )
+
+    provenance_migration._recover_interrupted(registry)
+
+    assert link.is_file() and not link.is_symlink()
+    assert link.read_bytes() == source.read_bytes()
     assert not journal.exists()
 
 

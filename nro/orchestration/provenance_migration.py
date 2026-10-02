@@ -633,6 +633,36 @@ def _restore_journal(registry, journal: Path, record: dict) -> None:
     )
 
 
+def _source_materialization_only(record: dict, journal: Path) -> bool:
+    """Return whether an interrupted transaction changed only raw-data links."""
+    if record.get("state") != "applying" or record.get("phase", "source_links") != "source_links":
+        return False
+    for entry in record.get("files", []):
+        path = Path(entry["path"])
+        if entry["existed"]:
+            backup = journal / entry["backup"]
+            if (
+                not backup.is_file()
+                or not path.is_file()
+                or path.read_bytes() != backup.read_bytes()
+            ):
+                return False
+        elif path.exists() or path.is_symlink():
+            return False
+    for entry in record.get("templates", []):
+        path = Path(entry["path"])
+        if not path.is_symlink() or os.readlink(path) != str(entry["old_target"]):
+            return False
+    for entry in record.get("source_links", []):
+        path = Path(entry["path"])
+        if path.is_symlink():
+            if os.readlink(path) != str(entry["old_target"]):
+                return False
+        elif not path.is_file() and not path.is_dir():
+            return False
+    return True
+
+
 def _finish_registry_update(registry, journal: Path, record: dict) -> None:
     """Commit the restartable registry phase after public files validate."""
     projects = tuple(str(value) for value in record.get("projects", ()))
@@ -659,7 +689,7 @@ def _finish_registry_update(registry, journal: Path, record: dict) -> None:
 
 
 def _recover_interrupted(registry) -> None:
-    """Restore any conversion that did not reach its durable commit marker."""
+    """Recover interrupted migrations without discarding completed raw-data copies."""
     root = _journal_root(registry)
     if not root.is_dir():
         return
@@ -692,6 +722,12 @@ def _recover_interrupted(registry) -> None:
                 )
             else:
                 _restore_journal(registry, journal, record)
+        elif _source_materialization_only(record, journal):
+            # Each raw-data link is materialized by an atomic replacement.  A
+            # stopped process can therefore retain completed directories and
+            # let the next migration preview inventory only the remaining
+            # links.  No metadata, template, or registry mutation has begun.
+            pass
         elif state not in {"complete", "rolled_back"}:
             _restore_journal(registry, journal, record)
         shutil.rmtree(journal)
@@ -964,7 +1000,7 @@ def _apply_dataset_migration(
         )
         atomic_write_json(
             journal / "journal.json",
-            {**journal_record, "state": "applying"},
+            {**journal_record, "state": "applying", "phase": "source_links"},
             sort_keys=True,
             mode=0o664,
             durable=True,
@@ -974,6 +1010,13 @@ def _apply_dataset_migration(
         for index, path in enumerate(source_symlinks):
             _materialize_source_symlink(path)
             notify("Materializing raw BIDS links", index + 1)
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "applying", "phase": "template_links"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
         if template_symlinks:
             notify("Repairing FreeSurfer template links", 0)
         for index, (path, old_target) in enumerate(template_symlinks.items()):
@@ -988,6 +1031,13 @@ def _apply_dataset_migration(
                 execute=lambda command: subprocess.run(command, check=True),
             )
             notify("Repairing FreeSurfer template links", index + 1)
+        atomic_write_json(
+            journal / "journal.json",
+            {**journal_record, "state": "applying", "phase": "metadata"},
+            sort_keys=True,
+            mode=0o664,
+            durable=True,
+        )
         notify("Writing portable metadata", 0)
         for index, (path, rendered) in enumerate(replacements.items()):
             existed = path.is_file()
