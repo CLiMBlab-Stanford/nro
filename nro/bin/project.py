@@ -88,10 +88,34 @@ def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
     else:
         page_text(_render(preview) + "\n")
     if preview["blockers"]:
+        maintenance(
+            Path(values["registry"]),
+            Path(values["bids"]),
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="project_rename",
+            preparation=preview["preparation"],
+        )
         raise SystemExit(f"Project rename blocked by {len(preview['blockers'])} error(s)")
     if args.dry_run:
+        maintenance(
+            Path(values["registry"]),
+            Path(values["bids"]),
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="project_rename",
+            preparation=preview["preparation"],
+        )
         return
     if not args.force and not _confirm():
+        maintenance(
+            Path(values["registry"]),
+            Path(values["bids"]),
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="project_rename",
+            preparation=preview["preparation"],
+        )
         print("Project rename cancelled.")
         return
     result = maintenance(

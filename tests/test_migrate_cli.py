@@ -21,10 +21,16 @@ def _report(*, changed=(), contracts=0, errors=(), templates=(), source_links=()
 
 def _configure(monkeypatch, reports):
     calls = []
+    report_index = 0
 
     def maintenance(*args, **kwargs):
+        nonlocal report_index
         calls.append(kwargs)
-        return reports[len(calls) - 1]
+        if kwargs["operation"] == "preparation_cancel":
+            return {"cancelled": True}
+        report = reports[report_index]
+        report_index += 1
+        return report
 
     monkeypatch.setattr(
         "nro.bin.migrate.settings",
@@ -66,7 +72,11 @@ def test_migrate_dry_run_only_previews(monkeypatch) -> None:
 
     main(["-P", "demo", "--dry-run"])
 
-    assert [call["execute"] for call in calls] == [False]
+    assert [call["operation"] for call in calls] == [
+        "dataset_migration",
+        "preparation_cancel",
+    ]
+    assert calls[1]["preparation"] == "prepared-migration"
 
 
 def test_migrate_cancel_leaves_preview_unapplied(monkeypatch, capsys) -> None:
@@ -76,7 +86,10 @@ def test_migrate_cancel_leaves_preview_unapplied(monkeypatch, capsys) -> None:
 
     main(["-P", "demo"])
 
-    assert [call["execute"] for call in calls] == [False]
+    assert [call["operation"] for call in calls] == [
+        "dataset_migration",
+        "preparation_cancel",
+    ]
     assert "Project migration cancelled." in capsys.readouterr().out
 
 

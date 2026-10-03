@@ -109,6 +109,64 @@ class DatasetMigrationPreparation:
     source_symlinks: Mapping[Path, str]
 
 
+def encode_preparation(prepared: DatasetMigrationPreparation) -> dict:
+    """Encode a retained migration preparation as uncompressed JSON data."""
+    report = prepared.report
+    return {
+        "report": {
+            "scanned": report.scanned,
+            "changed": [str(path) for path in report.changed],
+            "contracts": report.contracts,
+            "errors": list(report.errors),
+            "recovery": [str(path) for path in report.recovery],
+            "templates": [str(path) for path in report.templates],
+            "source_links": [str(path) for path in report.source_links],
+        },
+        "replacements": [[str(path), value] for path, value in prepared.replacements.items()],
+        "source_replacements": [str(path) for path in prepared.source_replacements],
+        "projects": list(prepared.projects),
+        "bids_roots": [str(path) for path in prepared.bids_roots],
+        "source_digests": [[str(path), digest] for path, digest in prepared.source_digests.items()],
+        "template_symlinks": [
+            [str(path), target] for path, target in prepared.template_symlinks.items()
+        ],
+        "source_symlinks": [
+            [str(path), target] for path, target in prepared.source_symlinks.items()
+        ],
+    }
+
+
+def decode_preparation(value: object) -> DatasetMigrationPreparation:
+    """Decode one validated migration preparation from private control state."""
+    if not isinstance(value, dict):
+        raise ValueError("Invalid retained project migration")
+    report = value.get("report")
+    if not isinstance(report, dict):
+        raise ValueError("Invalid retained project migration report")
+    try:
+        decoded_report = DatasetMigrationReport(
+            int(report["scanned"]),
+            tuple(Path(path) for path in report["changed"]),
+            int(report["contracts"]),
+            tuple(str(error) for error in report["errors"]),
+            tuple(Path(path) for path in report["recovery"]),
+            tuple(Path(path) for path in report["templates"]),
+            tuple(Path(path) for path in report["source_links"]),
+        )
+        return DatasetMigrationPreparation(
+            decoded_report,
+            {Path(path): str(rendered) for path, rendered in value["replacements"]},
+            frozenset(Path(path) for path in value["source_replacements"]),
+            tuple(str(project) for project in value["projects"]),
+            tuple(Path(path) for path in value["bids_roots"]),
+            {Path(path): digest for path, digest in value["source_digests"]},
+            {Path(path): str(target) for path, target in value["template_symlinks"]},
+            {Path(path): str(target) for path, target in value["source_symlinks"]},
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Invalid retained project migration") from error
+
+
 def _copy_or_link(source: str | Path, destination: str | Path) -> str:
     """Hard-link one file when possible, otherwise preserve its metadata."""
     try:
@@ -747,11 +805,12 @@ def _unfinished_journals(registry) -> tuple[Path, ...]:
     return tuple(unfinished)
 
 
-def _document(path: Path) -> tuple[object, str]:
-    text = path.read_text(encoding="utf-8")
+def _document(path: Path) -> tuple[object, str, str]:
+    data = path.read_bytes()
+    text = data.decode("utf-8")
     if path.suffix == ".json":
-        return json.loads(text), "json"
-    return yaml.safe_load(text), "yaml"
+        return json.loads(text), "json", hashlib.sha256(data).hexdigest()
+    return yaml.safe_load(text), "yaml", hashlib.sha256(data).hexdigest()
 
 
 def _serialized(value: object, kind: str) -> str:
@@ -774,26 +833,30 @@ def _parallel_map(function: Callable[[_T], _R], values: Iterable[_T]) -> Iterato
             yield from executor.map(function, batch)
 
 
-def _source_document_update(path: Path) -> tuple[Path, str | None, str | None]:
+def _source_document_update(
+    path: Path,
+) -> tuple[Path, str | None, str | None, str | None]:
     """Return a normalized raw sidecar update without writing the file."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return path, None, f"{path}: {error}"
+        data = path.read_bytes()
+        value = json.loads(data.decode("utf-8"))
+        digest = hashlib.sha256(data).hexdigest()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return path, None, None, f"{path}: {error}"
     if not isinstance(value, dict) or "EventsFile" not in value:
-        return path, None, None
+        return path, None, digest, None
     converted = dict(value)
     converted.pop("EventsFile")
-    return path, _serialized(converted, "json"), None
+    return path, _serialized(converted, "json"), digest, None
 
 
 def _derivative_document_update(
     request: tuple[Path, Path, ReferenceRoots],
-) -> tuple[Path, str | None, str | None]:
+) -> tuple[Path, str | None, str | None, str | None]:
     """Return a portable derivative-metadata update without writing the file."""
     path, source_project_root, roots = request
     try:
-        value, kind = _document(path)
+        value, kind, digest = _document(path)
         converted = _portable_document(path, value, roots=roots)
         converted = _ownership_dataset_view(
             path,
@@ -802,10 +865,10 @@ def _derivative_document_update(
             roots=roots,
         )
     except (OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
-        return path, None, f"{path}: {error}"
+        return path, None, None, f"{path}: {error}"
     if converted == value:
-        return path, None, None
-    return path, _serialized(converted, kind), None
+        return path, None, digest, None
+    return path, _serialized(converted, kind), digest, None
 
 
 def _portable_document(path: Path, value: object, *, roots: ReferenceRoots | None = None) -> object:
@@ -1120,6 +1183,7 @@ def migrate_dataset(
             registry, prepared, site_values=site_values, progress=progress
         )
     replacements: dict[Path, str] = {}
+    source_digests: dict[Path, str | None] = {}
     source_replacements: set[Path] = set()
     errors: list[str] = []
     source_symlinks: dict[Path, str] = {}
@@ -1168,7 +1232,7 @@ def migrate_dataset(
         found_links, link_errors = _source_symlinks(source_project_root)
         source_symlinks.update(found_links)
         errors.extend(link_errors)
-        for path, rendered, error in _parallel_map(
+        for path, rendered, digest, error in _parallel_map(
             _source_document_update,
             _source_candidates(source_project_root),
         ):
@@ -1181,6 +1245,7 @@ def migrate_dataset(
             if rendered is None:
                 continue
             replacements[path] = rendered
+            source_digests[path] = digest
             source_replacements.add(path)
     report("Scanning source metadata", source_scanned, force=True)
     derivative_scanned = 0
@@ -1200,7 +1265,7 @@ def migrate_dataset(
             derivative_root=derivative_root,
         )
         requests = ((path, source_project_root, roots) for path in _candidates(project_root))
-        for path, rendered, error in _parallel_map(
+        for path, rendered, digest, error in _parallel_map(
             _derivative_document_update,
             requests,
         ):
@@ -1212,6 +1277,7 @@ def migrate_dataset(
                 continue
             if rendered is not None:
                 replacements[path] = rendered
+                source_digests[path] = digest
         description = project_root / "derivatives/nro/dataset_description.json"
         try:
             expected_description = derivative_dataset_description(project_root, version=version)
@@ -1221,13 +1287,17 @@ def migrate_dataset(
                 errors.append(message)
             continue
         current_description = None
+        description_digest = None
         if description.is_file():
             try:
-                current_description = json.loads(description.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as error:
+                description_bytes = description.read_bytes()
+                current_description = json.loads(description_bytes.decode("utf-8"))
+                description_digest = hashlib.sha256(description_bytes).hexdigest()
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
                 errors.append(f"{description}: {error}")
         if current_description != expected_description:
             replacements[description] = _serialized(expected_description, "json")
+            source_digests[description] = description_digest
     report("Scanning derivative metadata", derivative_scanned, force=True)
     report("Checking work-item contracts", force=True)
     errors.extend(_verify_recorded_source_metadata(registry, source_replacements))
@@ -1251,10 +1321,7 @@ def migrate_dataset(
         frozenset(source_replacements),
         selected,
         bids_roots,
-        {
-            path: hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-            for path in replacements
-        },
+        source_digests,
         dict(template_symlinks),
         dict(source_symlinks),
     )

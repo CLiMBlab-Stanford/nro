@@ -883,6 +883,7 @@ def maintenance(
         "installation_progress",
         "project_rename",
         "dataset_migration",
+        "preparation_cancel",
     }:
         raise ValueError("Unsupported maintenance operation")
     timeout = (
@@ -898,7 +899,11 @@ def maintenance(
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
     )
-    require_service = operation in {"dataset_migration", "project_rename"}
+    require_service = operation in {
+        "dataset_migration",
+        "project_rename",
+        "preparation_cancel",
+    }
     return exchange(
         _endpoint(
             control,

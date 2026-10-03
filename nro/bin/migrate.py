@@ -78,6 +78,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     )
     page_text(_render(preview))
     if preview["errors"]:
+        maintenance(
+            Path(values["registry"]),
+            bids,
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="dataset_migration",
+            preparation=preview["preparation"],
+        )
         raise SystemExit(f"Migration blocked by {len(preview['errors'])} error(s)")
     pending = (
         len(preview["changed"])
@@ -87,8 +95,24 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         + len(preview.get("recovery", ()))
     )
     if args.dry_run or not pending:
+        maintenance(
+            Path(values["registry"]),
+            bids,
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="dataset_migration",
+            preparation=preview["preparation"],
+        )
         return
     if not args.force and not _confirm():
+        maintenance(
+            Path(values["registry"]),
+            bids,
+            checkout=CHECKOUT,
+            operation="preparation_cancel",
+            kind="dataset_migration",
+            preparation=preview["preparation"],
+        )
         print("Project migration cancelled.")
         return
     report = maintenance(
