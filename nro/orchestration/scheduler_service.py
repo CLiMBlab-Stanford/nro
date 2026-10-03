@@ -1384,8 +1384,7 @@ def _registry_busy(registry) -> bool:
 def _background_ready(coordinator, *, last_request_activity: float, now: float) -> bool:
     """Return whether low-priority registry work may run without delaying a request."""
     return (
-        not coordinator.has_inflight()
-        and now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+        not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS
     )
 
 

@@ -85,9 +85,7 @@ def _coalesce_active_requests(database: sqlite3.Connection) -> int:
     if not superseded:
         return 0
     database.execute("DROP TABLE IF EXISTS temp.compaction_superseded")
-    database.execute(
-        "CREATE TEMP TABLE compaction_superseded(id TEXT PRIMARY KEY) WITHOUT ROWID"
-    )
+    database.execute("CREATE TEMP TABLE compaction_superseded(id TEXT PRIMARY KEY) WITHOUT ROWID")
     database.executemany(
         "INSERT INTO compaction_superseded VALUES (?)",
         ((request_id,) for request_id in superseded),
@@ -144,9 +142,7 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
         terminals = []
         for row in rows:
             payload = {} if row["payload_json"] is None else decode_plan(row["payload_json"])
-            terminals.extend(
-                (str(row["id"]), str(key)) for key in payload.get("terminals", ())
-            )
+            terminals.extend((str(row["id"]), str(key)) for key in payload.get("terminals", ()))
         database.executemany("INSERT INTO compaction_terminals VALUES (?,?)", terminals)
     cursor = database.execute(
         """DELETE FROM request_artifacts AS artifact
@@ -165,9 +161,7 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
     database.execute("DROP TABLE compaction_terminals")
 
     database.execute("DROP TABLE IF EXISTS temp.compaction_requests")
-    database.execute(
-        """CREATE TEMP TABLE compaction_requests(id TEXT PRIMARY KEY) WITHOUT ROWID"""
-    )
+    database.execute("""CREATE TEMP TABLE compaction_requests(id TEXT PRIMARY KEY) WITHOUT ROWID""")
     database.execute(
         """INSERT INTO compaction_requests
            SELECT request.id FROM requests request
@@ -177,9 +171,7 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
                  WHERE submission.request_id=request.id
              )"""
     )
-    removable = int(
-        database.execute("SELECT COUNT(*) FROM compaction_requests").fetchone()[0]
-    )
+    removable = int(database.execute("SELECT COUNT(*) FROM compaction_requests").fetchone()[0])
     if not removable:
         database.execute("DROP TABLE compaction_requests")
         return removed_links, 0
@@ -261,9 +253,7 @@ def _remove_unused_work_items(database: sqlite3.Connection) -> int:
            INSERT INTO compaction_work_items
            SELECT id FROM work_items WHERE id NOT IN (SELECT id FROM retained)"""
     )
-    removed = int(
-        database.execute("SELECT COUNT(*) FROM compaction_work_items").fetchone()[0]
-    )
+    removed = int(database.execute("SELECT COUNT(*) FROM compaction_work_items").fetchone()[0])
     if not removed:
         database.execute("DROP TABLE compaction_work_items")
         return 0

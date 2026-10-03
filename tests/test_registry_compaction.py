@@ -247,8 +247,7 @@ def test_compaction_removes_large_attempt_history_with_set_based_sql(tmp_path: P
     assert report.removed_attempts == 2_000
     with registry.connection() as database:
         assert [
-            tuple(row)
-            for row in database.execute("SELECT state,error_message FROM attempts")
+            tuple(row) for row in database.execute("SELECT state,error_message FROM attempts")
         ] == [("error", "latest")]
 
 
