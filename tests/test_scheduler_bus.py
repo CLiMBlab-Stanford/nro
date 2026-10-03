@@ -1,5 +1,7 @@
 """Test scheduler transport, recovery records, and launch election."""
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,6 +126,30 @@ def test_scheduler_session_serializes_transactions_from_service_threads(tmp_path
     }
 
 
+def test_scheduler_session_can_bound_transport_waits(tmp_path) -> None:
+    from nro.orchestration.registry import RegistryLockTimeout
+
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_connection() -> None:
+        with registry.connection():
+            entered.set()
+            release.wait()
+
+    with registry.scheduler_session():
+        thread = threading.Thread(target=hold_connection)
+        thread.start()
+        assert entered.wait(timeout=2)
+        with pytest.raises(RegistryLockTimeout, match="connection is busy"):
+            with registry.connection(session_timeout=0.01):
+                pass
+        release.set()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+
 def test_durable_request_response_is_replayed_from_registry(tmp_path):
     from nro.orchestration.scheduler_requests import RequestCoordinator
 
@@ -224,6 +250,51 @@ def test_concurrent_durable_retries_share_one_execution(tmp_path):
         assert first.result() == {"result": "done"}
         assert second.result() == {"result": "done"}
     assert calls == [record["id"]]
+
+
+def test_request_coordinator_reports_inflight_work(tmp_path) -> None:
+    from nro.orchestration.scheduler_requests import RequestCoordinator
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "example"})
+    entered = threading.Event()
+    release = threading.Event()
+
+    def operation(_record):
+        entered.set()
+        release.wait()
+        return {"result": "done"}
+
+    coordinator = RequestCoordinator(registry, operation)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = coordinator.submit(record, pool)
+        assert entered.wait(timeout=2)
+        assert coordinator.has_inflight()
+        release.set()
+        assert future.result(timeout=2) == {"result": "done"}
+    assert not coordinator.has_inflight()
+
+
+def test_scheduler_background_work_yields_to_requests() -> None:
+    coordinator = SimpleNamespace(has_inflight=lambda: True)
+    assert not scheduler_service._background_ready(
+        coordinator,
+        last_request_activity=0.0,
+        now=scheduler_service.BACKGROUND_QUIET_SECONDS + 1.0,
+    )
+
+    coordinator.has_inflight = lambda: False
+    assert not scheduler_service._background_ready(
+        coordinator,
+        last_request_activity=time.monotonic(),
+        now=time.monotonic(),
+    )
+    assert scheduler_service._background_ready(
+        coordinator,
+        last_request_activity=0.0,
+        now=scheduler_service.BACKGROUND_QUIET_SECONDS,
+    )
 
 
 def test_scheduler_separates_polling_from_maintenance_execution() -> None:
@@ -377,6 +448,31 @@ def test_direct_rpc_round_trip() -> None:
     response = scheduler_rpc.receive(connection)
 
     assert response == record
+
+
+def test_scheduler_client_rpc_attempt_does_not_block_wait_reporting(monkeypatch) -> None:
+    release = threading.Event()
+
+    def request(_active, _record, **_options):
+        release.wait()
+        return {"result": "done"}
+
+    monkeypatch.setattr(scheduler_rpc, "request", request)
+    attempt = scheduler_client._start_direct_attempt(
+        {"token": "scheduler", "port": 1234},
+        {"id": "request"},
+        timeout=60.0,
+        durable=True,
+    )
+
+    assert attempt.outcome() is None
+    release.set()
+    for _ in range(100):
+        outcome = attempt.outcome()
+        if outcome is not None:
+            break
+        time.sleep(0.01)
+    assert outcome == ({"result": "done"}, None)
 
 
 def test_direct_rpc_rejects_an_obsolete_scheduler_token() -> None:

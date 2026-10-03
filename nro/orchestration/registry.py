@@ -819,11 +819,18 @@ class Registry(WorkflowRegistry):
             fence.release()
 
     @contextlib.contextmanager
-    def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def connection(
+        self,
+        *,
+        write: bool = False,
+        session_timeout: float | None = None,
+    ) -> Iterator[sqlite3.Connection]:
         """Open a locked database context, optionally for a write transaction.
 
         Schema incompatibility raises RuntimeError. Writes commit on success and
-        roll back on failure; the context releases its connection and lock.
+        roll back on failure; the context releases its connection and lock. A
+        scheduler-internal caller may bound its wait for the shared connection
+        so transport threads can report contention instead of hanging.
         """
         if os.environ.get("NRO_PROCESS_ROLE") == "worker":
             raise RuntimeError(
@@ -831,7 +838,14 @@ class Registry(WorkflowRegistry):
             )
         session = self._process_session()
         if session is not None:
-            with session.mutex:
+            acquired = (
+                session.mutex.acquire()
+                if session_timeout is None
+                else session.mutex.acquire(timeout=session_timeout)
+            )
+            if not acquired:
+                raise RegistryLockTimeout("Scheduler registry connection is busy")
+            try:
                 savepoint = None
                 try:
                     if write:
@@ -854,6 +868,8 @@ class Registry(WorkflowRegistry):
                             session.connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                             session.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
                     raise
+            finally:
+                session.mutex.release()
             return
         self._prepare_directories()
         with self._lock():

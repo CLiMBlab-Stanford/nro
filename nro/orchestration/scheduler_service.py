@@ -51,6 +51,7 @@ from nro.orchestration.source_snapshots import SourceSnapshot
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
+BACKGROUND_QUIET_SECONDS = 2.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
 _PREPARATION_LOCK = threading.Lock()
 _PREPARATIONS: dict[str, tuple[str, object, float]] = {}
@@ -1380,6 +1381,13 @@ def _registry_busy(registry) -> bool:
         return any(db.execute(query).fetchone() for query in queries)
 
 
+def _background_ready(coordinator, *, last_request_activity: float, now: float) -> bool:
+    """Return whether low-priority registry work may run without delaying a request."""
+    return (
+        not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+    )
+
+
 def serve(
     *,
     launch_token: str,
@@ -1551,26 +1559,32 @@ def serve(
     capacity_future = None
     maintenance_future = None
     capacity_pending = False
-    snapshot_pending = False
+    snapshot_pending = True
     last_cleanup = 0.0
-    last_maintenance = 0.0
+    last_maintenance = time.monotonic() - MAINTENANCE_INTERVAL_SECONDS
+    last_request_activity = time.monotonic()
+    last_snapshot = time.monotonic()
     try:
-        maintenance_future = executors["maintenance"].submit(refresh_scheduler_state, registry)
-        maintenance_future.add_done_callback(note_maintenance_completion)
-        last_maintenance = time.monotonic()
-        publish_status_snapshot(registry, generation=generation, active=True)
-        last_snapshot = time.monotonic()
         capacity_event.set()
         while not _STOP:
             now = time.monotonic()
             changed = False
+            handled_direct = request_activity.consume()
+            if handled_direct:
+                last_request_activity = now
             if now - last_cleanup >= 3600.0:
                 collect_transport_garbage(control)
                 last_cleanup = now
+            background_ready = _background_ready(
+                coordinator,
+                last_request_activity=last_request_activity,
+                now=now,
+            )
             if (
-                now - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS
-                and _registry_busy(registry)
+                background_ready
+                and now - last_maintenance >= MAINTENANCE_INTERVAL_SECONDS
                 and (maintenance_future is None or maintenance_future.done())
+                and _registry_busy(registry)
             ):
                 maintenance_future = executors["maintenance"].submit(
                     refresh_scheduler_state, registry
@@ -1583,12 +1597,17 @@ def serve(
                 capacity_pending = False
                 capacity_future = executors["capacity"].submit(_drain_pool_expansions, registry)
                 capacity_future.add_done_callback(note_capacity_completion)
-            handled_direct = request_activity.consume()
             if changed_event.consume():
                 changed = True
             if changed:
                 snapshot_pending = True
-            if snapshot_pending and now - last_snapshot >= STATUS_PUBLISH_INTERVAL_SECONDS:
+            maintenance_idle = maintenance_future is None or maintenance_future.done()
+            if (
+                snapshot_pending
+                and now - last_snapshot >= STATUS_PUBLISH_INTERVAL_SECONDS
+                and background_ready
+                and maintenance_idle
+            ):
                 generation += 1
                 with registry.connection(write=True) as db:
                     db.execute(

@@ -11,6 +11,8 @@ from nro.configuration.store import fingerprint
 from nro.orchestration.registry import RegistryLockTimeout, utcnow
 from nro.orchestration.scheduler_bus import validate_message
 
+REQUEST_REGISTRATION_TIMEOUT_SECONDS = 0.25
+
 
 def _encoded(record: dict) -> tuple[str, str]:
     payload = json.dumps(record, separators=(",", ":"), sort_keys=True)
@@ -20,9 +22,6 @@ def _encoded(record: dict) -> tuple[str, str]:
 def prepare(registry) -> tuple[dict, ...]:
     """Recover interrupted requests and return records awaiting execution."""
     with registry.connection(write=True) as db:
-        from nro.orchestration.request_plans import compact_terminal_plans
-
-        compact_terminal_plans(db)
         db.execute(
             "UPDATE scheduler_requests SET state='pending',updated_at=? WHERE state='running'",
             (utcnow(),),
@@ -41,13 +40,16 @@ def register(registry, record: dict) -> dict | None:
     """Register one request or return its previously committed response."""
     encoded, digest = _encoded(record)
     now = utcnow()
-    with registry.connection() as db:
+    with registry.connection(session_timeout=REQUEST_REGISTRATION_TIMEOUT_SECONDS) as db:
         row = db.execute(
             "SELECT record_fingerprint,state,response_json FROM scheduler_requests WHERE id=?",
             (record["id"],),
         ).fetchone()
     if row is None:
-        with registry.connection(write=True) as db:
+        with registry.connection(
+            write=True,
+            session_timeout=REQUEST_REGISTRATION_TIMEOUT_SECONDS,
+        ) as db:
             row = db.execute(
                 "SELECT record_fingerprint,state,response_json FROM scheduler_requests WHERE id=?",
                 (record["id"],),
@@ -148,6 +150,11 @@ class RequestCoordinator:
 
             future.add_done_callback(release)
             return future
+
+    def has_inflight(self) -> bool:
+        """Return whether any durable request is still executing."""
+        with self._lock:
+            return bool(self._inflight)
 
     def run(self, record: dict) -> dict:
         """Execute one request synchronously for a fenced one-shot coordinator."""
