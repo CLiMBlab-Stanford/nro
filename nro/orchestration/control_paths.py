@@ -102,6 +102,11 @@ class ControlPaths:
         """Return journals for transfers between branch output namespaces."""
         return self.shared / "promotions"
 
+    @property
+    def maintenance_preparations(self) -> Path:
+        """Return retained migration and project-rename preparations."""
+        return self.shared / "maintenance-preparations"
+
     def branch(self, name: str) -> Path:
         """Return private state for a validated, collision-free branch ID."""
         encoded = name if name in ("main", "dev") else branch_id(name)
@@ -133,6 +138,7 @@ class ControlPaths:
             self.planner,
             self.ingestion,
             self.promotions,
+            self.maintenance_preparations,
             self.root / "branches",
         ):
             if path.resolve() != path:

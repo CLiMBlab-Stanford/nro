@@ -18,6 +18,8 @@ from nro.orchestration.project_rename import (
     _rewrite_markup,
     _rewrite_receipts,
     _translate,
+    decode_preparation,
+    encode_preparation,
     execute,
 )
 from nro.orchestration.registry import Registry, utcnow
@@ -222,6 +224,48 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
     assert calls[1]["preparation"] == "prepared-rename"
     assert pages and "Project rename: old -> new" in pages[0]
     assert "Renamed project old to new." in capsys.readouterr().out
+
+
+def test_project_cli_discards_cancelled_preparation(tmp_path, monkeypatch, capsys):
+    from nro.bin import project as project_cli
+
+    preview = {
+        "old": "old",
+        "new": "new",
+        "work_items": 0,
+        "inventory_entries": 0,
+        "ownership_receipts": 0,
+        "scene_files": 0,
+        "metadata_files": 0,
+        "derivative_symlinks": 0,
+        "ingestion_records": 0,
+        "definition_files": [],
+        "moves": [],
+        "blockers": [],
+        "preparation": "prepared-rename",
+    }
+    calls = []
+    monkeypatch.setattr(
+        "nro.configuration.site.settings",
+        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+    )
+    monkeypatch.setattr(project_cli, "page_text", lambda _text: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+
+    def maintenance(*_args, **fields):
+        calls.append(fields)
+        return preview if fields["operation"] == "project_rename" else {"cancelled": True}
+
+    monkeypatch.setattr("nro.orchestration.scheduler_client.maintenance", maintenance)
+
+    project_cli.main(["rename", "old", "new"])
+
+    assert [call["operation"] for call in calls] == [
+        "project_rename",
+        "preparation_cancel",
+    ]
+    assert calls[1]["preparation"] == "prepared-rename"
+    assert "Project rename cancelled." in capsys.readouterr().out
 
 
 def test_markup_rename_preserves_comments_and_rejects_collisions(tmp_path):
@@ -436,6 +480,7 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     }
 
     prepared = _prepare_rename(registry, checkout=checkout, values=values, old="old", new="new")
+    prepared = decode_preparation(encode_preparation(prepared))
     monkeypatch.setattr(
         "nro.orchestration.project_rename._project_inventory",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(

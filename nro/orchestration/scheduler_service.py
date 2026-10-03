@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -53,35 +52,6 @@ MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
 BACKGROUND_QUIET_SECONDS = 2.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
-_PREPARATION_LOCK = threading.Lock()
-_PREPARATIONS: dict[str, tuple[str, object, float]] = {}
-
-
-def _retain_preparation(kind: str, value: object) -> str:
-    """Retain one scheduler-local maintenance preview for confirmed execution."""
-    token = uuid.uuid4().hex
-    now = time.monotonic()
-    with _PREPARATION_LOCK:
-        expired = [
-            candidate
-            for candidate, (_kind, _value, created) in _PREPARATIONS.items()
-            if now - created > 3600
-        ]
-        for candidate in expired:
-            _PREPARATIONS.pop(candidate, None)
-        while len(_PREPARATIONS) >= 8:
-            _PREPARATIONS.pop(next(iter(_PREPARATIONS)))
-        _PREPARATIONS[token] = (kind, value, now)
-    return token
-
-
-def _consume_preparation(kind: str, token: str) -> object:
-    """Consume an exact maintenance preview or fail without recomputing it."""
-    with _PREPARATION_LOCK:
-        record = _PREPARATIONS.pop(token, None)
-    if record is None or record[0] != kind or time.monotonic() - record[2] > 3600:
-        raise ValueError("Prepared maintenance preview expired; run the preview again")
-    return record[1]
 
 
 class _ActivitySignal:
@@ -1072,7 +1042,13 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             parent=message.get("parent"),
         )
     elif message["operation"] == "project_rename":
-        from nro.orchestration.project_rename import _prepare_rename, execute
+        from nro.orchestration.maintenance_preparations import discard, load, retain
+        from nro.orchestration.project_rename import (
+            _prepare_rename,
+            decode_preparation,
+            encode_preparation,
+            execute,
+        )
         from nro.orchestration.scheduler_bus import publish_progress
 
         def rename_progress(phase: str) -> None:
@@ -1085,7 +1061,10 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             )
 
         if message["execute"]:
-            prepared = _consume_preparation("project_rename", message["preparation"])
+            token = message["preparation"]
+            prepared = decode_preparation(
+                load(registry.paths.control, kind="project_rename", token=token)
+            )
             result = execute(
                 registry,
                 checkout=Path(message["checkout"]),
@@ -1095,6 +1074,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 prepared=prepared,
                 progress=rename_progress,
             )
+            discard(registry.paths.control, kind="project_rename", token=token)
         else:
             prepared = _prepare_rename(
                 registry,
@@ -1105,10 +1085,21 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 progress=rename_progress,
             )
             result = dict(prepared.report)
-            result["preparation"] = _retain_preparation("project_rename", prepared)
+            scope = fingerprint({"old": message["old"], "new": message["new"]})
+            result["preparation"] = retain(
+                registry.paths.control,
+                kind="project_rename",
+                scope=scope,
+                payload=encode_preparation(prepared),
+            )
             result["executed"] = False
     elif message["operation"] == "dataset_migration":
-        from nro.orchestration.provenance_migration import migrate_dataset
+        from nro.orchestration.maintenance_preparations import discard, load, retain
+        from nro.orchestration.provenance_migration import (
+            decode_preparation,
+            encode_preparation,
+            migrate_dataset,
+        )
         from nro.orchestration.scheduler_bus import publish_progress
 
         def migration_progress(phase: str) -> None:
@@ -1121,7 +1112,10 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             )
 
         if message["execute"]:
-            prepared = _consume_preparation("dataset_migration", message["preparation"])
+            token = message["preparation"]
+            prepared = decode_preparation(
+                load(registry.paths.control, kind="dataset_migration", token=token)
+            )
             report = migrate_dataset(
                 registry,
                 projects=message["projects"],
@@ -1131,6 +1125,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 prepared=prepared,
                 progress=migration_progress,
             )
+            discard(registry.paths.control, kind="dataset_migration", token=token)
             preparation_token = None
         else:
             prepared = migrate_dataset(
@@ -1143,7 +1138,18 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 progress=migration_progress,
             )
             report = prepared.report
-            preparation_token = _retain_preparation("dataset_migration", prepared)
+            scope = fingerprint(
+                {
+                    "projects": sorted(set(message["projects"])),
+                    "version": str(message["version"]),
+                }
+            )
+            preparation_token = retain(
+                registry.paths.control,
+                kind="dataset_migration",
+                scope=scope,
+                payload=encode_preparation(prepared),
+            )
         result = {
             "scanned": report.scanned,
             "changed": [str(path) for path in report.changed],
@@ -1155,6 +1161,15 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
         }
         if preparation_token is not None:
             result["preparation"] = preparation_token
+    elif message["operation"] == "preparation_cancel":
+        from nro.orchestration.maintenance_preparations import discard
+
+        discard(
+            registry.paths.control,
+            kind=message["kind"],
+            token=message["preparation"],
+        )
+        result = {"cancelled": True}
     else:
         raise ValueError("Unsupported scheduler operation")
     return result
@@ -1203,6 +1218,7 @@ _MAINTENANCE_OPERATIONS = {
     "purge",
     "project_rename",
     "dataset_migration",
+    "preparation_cancel",
     "repair_finish",
     "repair_prepare",
     "status",

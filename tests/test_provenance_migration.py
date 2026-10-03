@@ -20,6 +20,7 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contract_migrations import current_contract_schema
 from nro.orchestration.contracts import WorkItemSpec
+from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.provenance_migration import (
     _candidates,
@@ -847,6 +848,8 @@ def test_scheduler_routes_dataset_migration(tmp_path: Path, monkeypatch) -> None
         values=values,
         message_id="migration-preview",
     )
+    retained = ControlPaths(control).maintenance_preparations / f"{preview['preparation']}.json"
+    assert retained.is_file()
     before = registry.work_item_rows()
     monkeypatch.setattr(
         provenance_migration,
@@ -876,3 +879,4 @@ def test_scheduler_routes_dataset_migration(tmp_path: Path, monkeypatch) -> None
         "bids::anat/main/sub-01/sub-01_T1w.nii.gz"
     )
     assert registry.work_item_rows() == before
+    assert not retained.exists()

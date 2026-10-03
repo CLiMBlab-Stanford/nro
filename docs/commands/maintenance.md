@@ -218,11 +218,12 @@ identities and current control contracts are translated so that existing
 artifacts retain their state under the new project name. Definition changes use
 the managed definitions transaction and update its integrity manifest.
 
-The scheduler retains the validated preview until confirmation. Execution checks
-that branch topology, definitions, managed roots, work-item count, and active-work
-barriers still match, then applies that preparation without repeating discovery.
-If the scheduler exits or relevant state changes, execution fails closed and asks
-for a new preview.
+The command writes the validated preview to uncompressed private control state until
+confirmation. It survives a scheduler restart and has no time-based expiry. Execution
+checks that branch topology, definitions, managed roots, work-item count, guarded files
+and links, and active-work barriers still match, then applies the preparation without
+repeating discovery. A relevant change fails closed and requires a new preview;
+successful execution or interactive cancellation deletes the preparation.
 
 Execution creates a recovery journal under the shared private control store and
 backs up the scheduler registry, branch registries, and edited metadata. A
@@ -259,9 +260,13 @@ filesystem and metadata-preserving copies otherwise. Directory links become
 metadata-preserving directory copies. A durable journal rolls back incomplete file conversion and
 resumes an interrupted registry update. See [portable derivative
 provenance](../portable-provenance.md) for the reference model and migration boundary.
-The scheduler retains the prepared file rewrites through confirmation and verifies
-their source digests before applying them. It does not rescan the dataset after the
-preview; an expired preparation or intervening metadata change requires a new preview.
+The scheduler writes the prepared file rewrites to uncompressed private control state
+before displaying the preview. The preparation has no time-based expiry and survives a
+scheduler restart. Execution verifies each file or link that it will modify without
+rescanning or reparsing the project. A changed target requires a new preview; unrelated
+files added after the preview remain for a later migration. Successful execution or an
+interactive cancellation deletes the preparation. A newer preview for the same projects
+and nro version supersedes the older one.
 
 ## `nro publish`
 

@@ -67,8 +67,66 @@ class RenamePreparation:
     inventory: ProjectInventory
     ingestion: tuple[Path, ...]
     definition_updates: dict[Path, dict[Path, bytes]]
-    topology: Any
+    topology_revision: str
     source_digests: dict[Path, str]
+
+
+def encode_preparation(prepared: RenamePreparation) -> dict:
+    """Encode a retained project-rename preparation as uncompressed JSON data."""
+    inventory = prepared.inventory
+    return {
+        "report": prepared.report,
+        "inventory": {
+            "receipts": [str(path) for path in inventory.receipts],
+            "scenes": [str(path) for path in inventory.scenes],
+            "metadata": [str(path) for path in inventory.metadata],
+            "derivative_symlinks": [
+                [str(path), target] for path, target in inventory.derivative_symlinks.items()
+            ],
+            "scanned": inventory.scanned,
+        },
+        "ingestion": [str(path) for path in prepared.ingestion],
+        "definition_updates": [
+            [
+                str(root),
+                [[str(relative), content.decode("utf-8")] for relative, content in changes.items()],
+            ]
+            for root, changes in prepared.definition_updates.items()
+        ],
+        "topology_revision": prepared.topology_revision,
+        "source_digests": [[str(path), digest] for path, digest in prepared.source_digests.items()],
+    }
+
+
+def decode_preparation(value: object) -> RenamePreparation:
+    """Decode one validated project-rename preparation from private control state."""
+    if not isinstance(value, dict) or not isinstance(value.get("report"), dict):
+        raise ValueError("Invalid retained project rename")
+    try:
+        inventory = value["inventory"]
+        if not isinstance(inventory, dict):
+            raise TypeError
+        return RenamePreparation(
+            dict(value["report"]),
+            ProjectInventory(
+                tuple(Path(path) for path in inventory["receipts"]),
+                tuple(Path(path) for path in inventory["scenes"]),
+                tuple(Path(path) for path in inventory["metadata"]),
+                {Path(path): str(target) for path, target in inventory["derivative_symlinks"]},
+                int(inventory["scanned"]),
+            ),
+            tuple(Path(path) for path in value["ingestion"]),
+            {
+                Path(root): {
+                    Path(relative): content.encode("utf-8") for relative, content in changes
+                }
+                for root, changes in value["definition_updates"]
+            },
+            str(value["topology_revision"]),
+            {Path(path): str(digest) for path, digest in value["source_digests"]},
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Invalid retained project rename") from error
 
 
 def _project(value: str) -> str:
@@ -700,7 +758,8 @@ def _prepare_rename(
     if old == new:
         raise ValueError("Old and new project identifiers are identical")
     store = BranchStore(registry.paths.control)
-    topology = store.read().topology
+    branch_snapshot = store.read()
+    topology = branch_snapshot.topology
     if topology.registered_checkout(checkout) != "main":
         raise ValueError("Project renames require the registered main checkout")
     candidates = _move_candidates(values, topology, old, new)
@@ -779,7 +838,7 @@ def _prepare_rename(
         inventory,
         ingestion,
         definition_updates,
-        topology,
+        branch_snapshot.revision,
         source_digests,
     )
 
@@ -1094,8 +1153,9 @@ def execute(
         raise ValueError("Project rename is blocked: " + "; ".join(report["blockers"]))
     old, new = report["old"], report["new"]
     current_store = BranchStore(registry.paths.control)
-    current_topology = current_store.read().topology
-    if dict(current_topology.records) != dict(prepared.topology.records):
+    current_snapshot = current_store.read()
+    current_topology = current_snapshot.topology
+    if current_snapshot.revision != prepared.topology_revision:
         raise ValueError("Branch topology changed after the project rename preview")
     if current_topology.registered_checkout(checkout) != "main":
         raise ValueError("Project renames require the registered main checkout")
@@ -1128,7 +1188,7 @@ def execute(
 
     shutdown_planner(registry.paths.control)
     store = current_store
-    topology = prepared.topology
+    topology = current_topology
     moves = tuple(
         ProjectMove(Path(item["source"]), Path(item["destination"])) for item in report["moves"]
     )
