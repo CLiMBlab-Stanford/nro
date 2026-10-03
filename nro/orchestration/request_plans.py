@@ -44,21 +44,29 @@ def compact_terminal_plans(database: sqlite3.Connection) -> int:
     an inherited artifact that may have to be replaced locally.
     """
     changed = 0
-    rows = database.execute(
+    cursor = database.execute(
         """SELECT plan.request_id,plan.payload_json,request.state
-           FROM request_plans plan JOIN requests request ON request.id=plan.request_id"""
-    ).fetchall()
-    for row in rows:
-        payload = decode_plan(row["payload_json"])
-        if row["state"] == "active" and payload.get("inherited"):
-            encoded = encode_plan(payload)
-        else:
-            encoded = terminal_plan(payload)
-        if encoded == row["payload_json"]:
-            continue
-        database.execute(
+           FROM request_plans plan JOIN requests request ON request.id=plan.request_id
+           WHERE request.state='active'
+              OR CASE WHEN typeof(plan.payload_json)='text' THEN NOT (
+                     json_valid(plan.payload_json)
+                     AND json_type(plan.payload_json,'$.terminals')='array'
+                     AND json_remove(plan.payload_json,'$.terminals')='{}'
+                 ) ELSE 1 END"""
+    )
+    while rows := cursor.fetchmany(64):
+        updates = []
+        for row in rows:
+            payload = decode_plan(row["payload_json"])
+            if row["state"] == "active" and payload.get("inherited"):
+                encoded = encode_plan(payload)
+            else:
+                encoded = terminal_plan(payload)
+            if encoded != row["payload_json"]:
+                updates.append((encoded, row["request_id"]))
+        database.executemany(
             "UPDATE request_plans SET payload_json=? WHERE request_id=?",
-            (encoded, row["request_id"]),
+            updates,
         )
-        changed += 1
+        changed += len(updates)
     return changed

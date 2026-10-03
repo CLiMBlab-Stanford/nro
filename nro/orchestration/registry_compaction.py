@@ -6,7 +6,6 @@ import sqlite3
 import time
 from dataclasses import dataclass
 
-from nro.orchestration.registry_work_items import forget_purged_work_items_detailed
 from nro.orchestration.request_plans import compact_terminal_plans, decode_plan
 
 _ACTIVE_SUBMISSIONS = ("prepared", "submitted", "running", "cancel_requested")
@@ -57,6 +56,16 @@ def _coalesce_active_requests(database: sqlite3.Connection) -> int:
            WHERE request.state='active'
            ORDER BY request.created_at DESC,request.id DESC"""
     ).fetchall()
+    targets_by_request: dict[str, set[int]] = {}
+    for target in database.execute(
+        """SELECT link.request_id,link.work_item_id FROM request_work_items link
+           JOIN requests request ON request.id=link.request_id
+           WHERE request.state='active' AND link.role='target'
+             AND link.demand_state='active'"""
+    ):
+        targets_by_request.setdefault(str(target["request_id"]), set()).add(
+            int(target["work_item_id"])
+        )
     selected: dict[tuple[object, ...], tuple[frozenset[int], str]] = {}
     superseded = []
     for row in rows:
@@ -67,14 +76,7 @@ def _coalesce_active_requests(database: sqlite3.Connection) -> int:
             row["target_module"],
             row["selectors_json"],
         )
-        targets = frozenset(
-            int(item[0])
-            for item in database.execute(
-                """SELECT work_item_id FROM request_work_items
-                   WHERE request_id=? AND role='target' AND demand_state='active'""",
-                (row["id"],),
-            )
-        )
+        targets = frozenset(targets_by_request.get(str(row["id"]), ()))
         current = selected.get(key)
         if current is None or current[0] != targets:
             selected[key] = (targets, str(row["id"]))
@@ -82,16 +84,22 @@ def _coalesce_active_requests(database: sqlite3.Connection) -> int:
         superseded.append(str(row["id"]))
     if not superseded:
         return 0
-    placeholders = ",".join("?" for _ in superseded)
+    database.execute("DROP TABLE IF EXISTS temp.compaction_superseded")
     database.execute(
-        f"UPDATE requests SET state='superseded' WHERE id IN ({placeholders})",
-        superseded,
+        "CREATE TEMP TABLE compaction_superseded(id TEXT PRIMARY KEY) WITHOUT ROWID"
+    )
+    database.executemany(
+        "INSERT INTO compaction_superseded VALUES (?)",
+        ((request_id,) for request_id in superseded),
     )
     database.execute(
-        f"""UPDATE request_work_items SET demand_state='cancelled'
-            WHERE request_id IN ({placeholders})""",
-        superseded,
+        "UPDATE requests SET state='superseded' WHERE id IN (SELECT id FROM compaction_superseded)"
     )
+    database.execute(
+        """UPDATE request_work_items SET demand_state='cancelled'
+           WHERE request_id IN (SELECT id FROM compaction_superseded)"""
+    )
+    database.execute("DROP TABLE compaction_superseded")
     return len(superseded)
 
 
@@ -111,17 +119,6 @@ def _remove_terminal_submissions(database: sqlite3.Connection) -> int:
     return int(cursor.rowcount)
 
 
-def _terminal_keys(database: sqlite3.Connection, request_id: str) -> set[str]:
-    """Return logical terminal identities from a compact or complete request plan."""
-    row = database.execute(
-        "SELECT payload_json FROM request_plans WHERE request_id=?", (request_id,)
-    ).fetchone()
-    if row is None:
-        return set()
-    payload = decode_plan(row[0])
-    return {str(value) for value in payload.get("terminals", ())}
-
-
 def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
     """Keep publication handles but discard their execution-demand histories."""
     removed_links = int(
@@ -130,55 +127,71 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
                WHERE request_id IN (SELECT id FROM requests WHERE state!='active')"""
         ).rowcount
     )
-    for row in database.execute(
-        "SELECT id FROM requests WHERE state IN ('satisfied','registered')"
-    ).fetchall():
-        request_id = str(row["id"])
-        terminals = _terminal_keys(database, request_id)
-        artifacts = database.execute(
-            """SELECT artifact.work_item_id,
-                      COALESCE(execution.logical_key,item.work_item_key) AS logical_key
-               FROM request_artifacts artifact
+    database.execute("DROP TABLE IF EXISTS temp.compaction_terminals")
+    database.execute(
+        """CREATE TEMP TABLE compaction_terminals(
+               request_id TEXT NOT NULL,
+               logical_key TEXT NOT NULL,
+               PRIMARY KEY(request_id,logical_key)
+           ) WITHOUT ROWID"""
+    )
+    cursor = database.execute(
+        """SELECT request.id,plan.payload_json FROM requests request
+           LEFT JOIN request_plans plan ON plan.request_id=request.id
+           WHERE request.state IN ('satisfied','registered')"""
+    )
+    while rows := cursor.fetchmany(64):
+        terminals = []
+        for row in rows:
+            payload = {} if row["payload_json"] is None else decode_plan(row["payload_json"])
+            terminals.extend(
+                (str(row["id"]), str(key)) for key in payload.get("terminals", ())
+            )
+        database.executemany("INSERT INTO compaction_terminals VALUES (?,?)", terminals)
+    cursor = database.execute(
+        """DELETE FROM request_artifacts AS artifact
+           WHERE artifact.request_id IN (
+               SELECT id FROM requests WHERE state IN ('satisfied','registered')
+           ) AND NOT EXISTS (
+               SELECT 1 FROM compaction_terminals terminal
                JOIN work_items item ON item.id=artifact.work_item_id
                LEFT JOIN work_item_execution execution
                  ON execution.work_item_id=artifact.work_item_id
-               WHERE artifact.request_id=?""",
-            (request_id,),
-        ).fetchall()
-        discard = [
-            int(item["work_item_id"]) for item in artifacts if item["logical_key"] not in terminals
-        ]
-        if discard:
-            placeholders = ",".join("?" for _ in discard)
-            cursor = database.execute(
-                f"""DELETE FROM request_artifacts
-                    WHERE request_id=? AND work_item_id IN ({placeholders})""",
-                (request_id, *discard),
-            )
-            removed_links += int(cursor.rowcount)
+               WHERE terminal.request_id=artifact.request_id
+                 AND terminal.logical_key=COALESCE(execution.logical_key,item.work_item_key)
+           )"""
+    )
+    removed_links += int(cursor.rowcount)
+    database.execute("DROP TABLE compaction_terminals")
 
-    removable = [
-        str(row[0])
-        for row in database.execute(
-            """SELECT request.id FROM requests request
-               WHERE request.state IN ('cancelled','superseded')
-                 AND NOT EXISTS (
-                     SELECT 1 FROM scheduler_submissions submission
-                     WHERE submission.request_id=request.id
-                 )"""
-        )
-    ]
+    database.execute("DROP TABLE IF EXISTS temp.compaction_requests")
+    database.execute(
+        """CREATE TEMP TABLE compaction_requests(id TEXT PRIMARY KEY) WITHOUT ROWID"""
+    )
+    database.execute(
+        """INSERT INTO compaction_requests
+           SELECT request.id FROM requests request
+           WHERE request.state IN ('cancelled','superseded')
+             AND NOT EXISTS (
+                 SELECT 1 FROM scheduler_submissions submission
+                 WHERE submission.request_id=request.id
+             )"""
+    )
+    removable = int(
+        database.execute("SELECT COUNT(*) FROM compaction_requests").fetchone()[0]
+    )
     if not removable:
+        database.execute("DROP TABLE compaction_requests")
         return removed_links, 0
-    placeholders = ",".join("?" for _ in removable)
     for table in ("request_work_items", "request_artifacts", "request_plans", "request_owners"):
         cursor = database.execute(
-            f"DELETE FROM {table} WHERE request_id IN ({placeholders})", removable
+            f"DELETE FROM {table} WHERE request_id IN (SELECT id FROM compaction_requests)"
         )
         if table in {"request_work_items", "request_artifacts"}:
             removed_links += int(cursor.rowcount)
-    database.execute(f"DELETE FROM requests WHERE id IN ({placeholders})", removable)
-    return removed_links, len(removable)
+    database.execute("DELETE FROM requests WHERE id IN (SELECT id FROM compaction_requests)")
+    database.execute("DROP TABLE compaction_requests")
+    return removed_links, removable
 
 
 def _remove_attempt_history(database: sqlite3.Connection) -> int:
@@ -199,42 +212,39 @@ def _remove_attempt_history(database: sqlite3.Connection) -> int:
         """UPDATE resource_step_tasks SET worker_id=NULL,attempt_id=NULL
            WHERE state NOT IN ('queued','running','cancel_requested')"""
     )
-    retained = {
-        int(row[0])
-        for row in database.execute(
-            """SELECT id FROM attempts WHERE state IN ('queued','running','cancel_requested')
-               UNION SELECT attempt_id FROM completions WHERE attempt_id IS NOT NULL
-               UNION SELECT attempt_id FROM artifacts WHERE attempt_id IS NOT NULL
-               UNION SELECT attempt_id FROM resource_step_tasks WHERE attempt_id IS NOT NULL
-               UNION SELECT id FROM (
-                   SELECT id,state,ROW_NUMBER() OVER (
-                       PARTITION BY work_item_id ORDER BY id DESC
-                   ) AS history_rank FROM attempts
-               ) WHERE history_rank=1 AND state IN ('error','cancelled')"""
-        )
-    }
-    discard = [
-        int(row[0])
-        for row in database.execute("SELECT id FROM attempts")
-        if int(row[0]) not in retained
-    ]
-    if not discard:
-        return 0
-    placeholders = ",".join("?" for _ in discard)
-    database.execute(
-        f"DELETE FROM attempt_dependencies WHERE attempt_id IN ({placeholders})", discard
+    cursor = database.execute(
+        """DELETE FROM attempts AS candidate
+           WHERE candidate.state NOT IN ('queued','running','cancel_requested')
+             AND NOT EXISTS (
+                 SELECT 1 FROM completions WHERE completions.attempt_id=candidate.id
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM artifacts WHERE artifacts.attempt_id=candidate.id
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM resource_step_tasks
+                 WHERE resource_step_tasks.attempt_id=candidate.id
+             )
+             AND NOT (
+                 candidate.state IN ('error','cancelled')
+                 AND candidate.id=(
+                     SELECT MAX(latest.id) FROM attempts latest
+                     WHERE latest.work_item_id=candidate.work_item_id
+                 )
+             )"""
     )
-    database.execute(f"DELETE FROM attempt_execution WHERE attempt_id IN ({placeholders})", discard)
-    database.execute(f"DELETE FROM attempts WHERE id IN ({placeholders})", discard)
-    return len(discard)
+    return int(cursor.rowcount)
 
 
-def _retained_work_items(database: sqlite3.Connection) -> set[int]:
-    """Return current-state roots and their complete dependency closure."""
-    retained = {
-        int(row[0])
-        for row in database.execute(
-            """SELECT id FROM work_items WHERE artifact_state!='missing'
+def _remove_unused_work_items(database: sqlite3.Connection) -> int:
+    """Remove missing, undemanded work and records that only describe it."""
+    database.execute("DROP TABLE IF EXISTS temp.compaction_work_items")
+    database.execute(
+        """CREATE TEMP TABLE compaction_work_items(id INTEGER PRIMARY KEY) WITHOUT ROWID"""
+    )
+    database.execute(
+        """WITH RECURSIVE retained(id) AS (
+               SELECT id FROM work_items WHERE artifact_state!='missing'
                UNION SELECT work_item_id FROM completions
                UNION SELECT work_item_id FROM artifacts
                UNION SELECT work_item_id FROM artifact_mutations
@@ -243,37 +253,65 @@ def _retained_work_items(database: sqlite3.Connection) -> set[int]:
                     WHERE state IN ('queued','running','cancel_requested')
                UNION SELECT link.work_item_id FROM request_work_items link
                     JOIN requests request ON request.id=link.request_id
-                    WHERE request.state='active' AND link.demand_state='active'"""
-        )
-    }
-    parents: dict[int, set[int]] = {}
-    for row in database.execute(
-        "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
-    ):
-        parents.setdefault(int(row[0]), set()).add(int(row[1]))
-    pending = list(retained)
-    while pending:
-        for parent in parents.get(pending.pop(), ()):
-            if parent not in retained:
-                retained.add(parent)
-                pending.append(parent)
-    return retained
-
-
-def _remove_unused_work_items(database: sqlite3.Connection) -> int:
-    """Remove missing, undemanded work and records that only describe it."""
-    retained = _retained_work_items(database)
-    discard = [
-        int(row[0])
-        for row in database.execute("SELECT id FROM work_items")
-        if int(row[0]) not in retained
-    ]
-    if not discard:
+                    WHERE request.state='active' AND link.demand_state='active'
+               UNION SELECT edge.upstream_work_item_id
+                    FROM work_item_dependencies edge
+                    JOIN retained child ON child.id=edge.work_item_id
+           )
+           INSERT INTO compaction_work_items
+           SELECT id FROM work_items WHERE id NOT IN (SELECT id FROM retained)"""
+    )
+    removed = int(
+        database.execute("SELECT COUNT(*) FROM compaction_work_items").fetchone()[0]
+    )
+    if not removed:
+        database.execute("DROP TABLE compaction_work_items")
         return 0
-    deleted, protected = forget_purged_work_items_detailed(database, discard)
-    if protected:
-        raise RuntimeError("Current-state roots did not include the complete dependency closure")
-    return len(deleted)
+    database.execute(
+        """DELETE FROM attempt_dependencies WHERE attempt_id IN (
+               SELECT attempt.id FROM attempts attempt
+               JOIN compaction_work_items item ON item.id=attempt.work_item_id
+           ) OR upstream_work_item_id IN (SELECT id FROM compaction_work_items)"""
+    )
+    database.execute(
+        """DELETE FROM attempt_execution WHERE attempt_id IN (
+               SELECT attempt.id FROM attempts attempt
+               JOIN compaction_work_items item ON item.id=attempt.work_item_id
+           )"""
+    )
+    for table in (
+        "artifacts",
+        "completions",
+        "attempts",
+        "request_work_items",
+        "request_artifacts",
+        "artifact_mutations",
+    ):
+        database.execute(
+            f"DELETE FROM {table} WHERE work_item_id IN (SELECT id FROM compaction_work_items)"
+        )
+    database.execute(
+        """DELETE FROM compiled_revisions WHERE EXISTS (
+               SELECT 1 FROM branch_work_items binding
+               JOIN compaction_work_items item ON item.id=binding.work_item_id
+               WHERE binding.registry_id=compiled_revisions.registry_id
+                 AND binding.logical_key=compiled_revisions.logical_key
+           )"""
+    )
+    database.execute(
+        "DELETE FROM branch_work_items WHERE work_item_id IN (SELECT id FROM compaction_work_items)"
+    )
+    database.execute(
+        "DELETE FROM work_item_execution WHERE work_item_id IN (SELECT id FROM compaction_work_items)"
+    )
+    database.execute(
+        """DELETE FROM work_item_dependencies
+           WHERE work_item_id IN (SELECT id FROM compaction_work_items)
+              OR upstream_work_item_id IN (SELECT id FROM compaction_work_items)"""
+    )
+    database.execute("DELETE FROM work_items WHERE id IN (SELECT id FROM compaction_work_items)")
+    database.execute("DROP TABLE compaction_work_items")
+    return removed
 
 
 def _remove_terminal_workers(database: sqlite3.Connection) -> int:
@@ -312,7 +350,7 @@ def compact_registry(
 ) -> CompactionReport:
     """Apply current-state retention through the scheduler's registry transaction."""
     timestamp = time.time() if now is None else now
-    with registry.connection(write=True) as database:
+    with registry.connection() as database:
         previous = database.execute(
             "SELECT value FROM metadata WHERE key='last_current_state_compaction'"
         ).fetchone()
@@ -323,11 +361,18 @@ def compact_registry(
         ):
             return CompactionReport(skipped=True)
 
+    with registry.connection(write=True) as database:
         coalesced = _coalesce_active_requests(database)
-        compacted_plans = compact_terminal_plans(database)
         removed_submissions = _remove_terminal_submissions(database)
         removed_links, removed_requests = _compact_terminal_requests(database)
+
+    with registry.connection(write=True) as database:
+        compacted_plans = compact_terminal_plans(database)
+
+    with registry.connection(write=True) as database:
         removed_attempts = _remove_attempt_history(database)
+
+    with registry.connection(write=True) as database:
         removed_work_items = _remove_unused_work_items(database)
         removed_workers = _remove_terminal_workers(database)
         expired = _expire_scheduler_requests(database)

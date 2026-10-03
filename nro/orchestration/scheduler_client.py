@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import random
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -91,6 +93,48 @@ class SchedulerEndpoint:
     site: Path
     python: Path
     maintenance: bool = False
+
+
+@dataclass(frozen=True)
+class _DirectAttempt:
+    """Retain one in-progress RPC without blocking terminal progress updates."""
+
+    identity: tuple[str, int]
+    results: queue.SimpleQueue
+
+    def outcome(self) -> tuple[dict | None, BaseException | None] | None:
+        """Return the completed response or error, if available."""
+        try:
+            return self.results.get_nowait()
+        except queue.Empty:
+            return None
+
+
+def _start_direct_attempt(
+    active: dict,
+    record: dict,
+    *,
+    timeout: float,
+    durable: bool,
+) -> _DirectAttempt:
+    """Start one daemon RPC so the caller can continue rendering wait state."""
+    from nro.orchestration.scheduler_rpc import request
+
+    identity = (str(active["token"]), int(active["port"]))
+    results = queue.SimpleQueue()
+
+    def send_request() -> None:
+        try:
+            results.put((request(active, record, timeout=timeout, durable=durable), None))
+        except BaseException as error:
+            results.put((None, error))
+
+    threading.Thread(
+        target=send_request,
+        name="scheduler-client-rpc",
+        daemon=True,
+    ).start()
+    return _DirectAttempt(identity, results)
 
 
 def command(
@@ -417,6 +461,7 @@ def exchange(
     frame = 0
     notice = False
     attempted_endpoint: tuple[str, int] | None = None
+    direct_attempt: _DirectAttempt | None = None
     pending_poll_seconds = PENDING_REQUEST_INITIAL_POLL_SECONDS
     acknowledged = False
     while True:
@@ -446,20 +491,22 @@ def exchange(
                 int(active["port"]),
             )
             if endpoint_identity != attempted_endpoint:
-                from nro.orchestration.scheduler_rpc import request
-
                 attempted_endpoint = endpoint_identity
-                response = None
-                try:
-                    direct_timeout = 3600.0 if timeout is None else max(1.0, timeout)
-                    response = request(
-                        active,
-                        record,
-                        timeout=direct_timeout,
-                        durable=durable,
-                    )
-                except (ConnectionError, OSError, TimeoutError, ValueError):
-                    response = None
+                direct_attempt = _start_direct_attempt(
+                    active,
+                    record,
+                    timeout=3600.0 if timeout is None else max(1.0, timeout),
+                    durable=durable,
+                )
+            outcome = direct_attempt.outcome() if direct_attempt is not None else None
+            if outcome is not None:
+                response, direct_error = outcome
+                direct_attempt = None
+                if direct_error is not None and not isinstance(
+                    direct_error,
+                    (ConnectionError, OSError, TimeoutError, ValueError),
+                ):
+                    raise direct_error
                 if response is not None:
                     if response.get("error") == "Scheduler endpoint is obsolete":
                         response = None
@@ -526,6 +573,7 @@ def exchange(
                     return _response_result(response)
             last_recovery_check = now
             attempted_endpoint = None
+            direct_attempt = None
         elapsed = now - started
         if elapsed >= 0.75:
             progress = read_progress(endpoint.control, message_id) if durable else None

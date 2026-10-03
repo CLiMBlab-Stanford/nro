@@ -169,7 +169,7 @@ def test_compaction_retains_current_state_and_removes_execution_history(tmp_path
     report = compact_registry(registry, minimum_interval_seconds=0)
 
     assert report.coalesced_requests == 1
-    assert report.compacted_plans == 2
+    assert report.compacted_plans == 1
     assert report.removed_requests == 1
     assert report.removed_attempts == 1
     assert report.removed_submissions == 1
@@ -210,6 +210,46 @@ def test_compaction_interval_skips_repeated_pass(tmp_path: Path) -> None:
 
     assert not first.skipped
     assert second.skipped
+
+
+def test_compaction_removes_large_attempt_history_with_set_based_sql(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    item = _spec(
+        registry,
+        registered,
+        workflow,
+        key="anat:" + "e" * 64,
+        module="anat",
+    )
+    work_item_id = registry.register_work_items((item,))[item.key]
+    now = utcnow()
+    with registry.connection(write=True) as database:
+        database.executemany(
+            """INSERT INTO attempts(
+                   work_item_id,state,revision_fingerprint,memory_gb,
+                   completed_at,log_path,created_at
+               ) VALUES (?,'success',?,32,?,'/old.log',?)""",
+            ((work_item_id, item.revision_fingerprint, now, now) for _ in range(2_000)),
+        )
+        database.execute(
+            """INSERT INTO attempts(
+                   work_item_id,state,revision_fingerprint,memory_gb,
+                   completed_at,error_type,error_message,log_path,created_at
+               ) VALUES (?,'error',?,32,?,'ScientificFailure','latest',
+                         '/latest.log',?)""",
+            (work_item_id, item.revision_fingerprint, now, now),
+        )
+
+    report = compact_registry(registry, minimum_interval_seconds=0)
+
+    assert report.removed_attempts == 2_000
+    with registry.connection() as database:
+        assert [
+            tuple(row)
+            for row in database.execute("SELECT state,error_message FROM attempts")
+        ] == [("error", "latest")]
 
 
 def test_existing_derivative_retains_missing_dependency_and_publication_handle(
