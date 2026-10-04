@@ -1047,12 +1047,15 @@ def _rewrite_central(
             "UPDATE work_items SET work_item_key=?,project=? WHERE id=?", (key, new, item_id)
         )
     for table in ("work_item_execution", "compiled_revisions", "branch_work_items"):
-        rows = db.execute(f"SELECT rowid,logical_key FROM {table}").fetchall()
+        primary = "_nro_rowid"
+        rows = db.execute(
+            f"SELECT rowid AS {primary},logical_key FROM {table}"
+        ).fetchall()
         for row in rows:
             if row["logical_key"] in mapping:
                 db.execute(
                     f"UPDATE {table} SET logical_key=? WHERE rowid=?",
-                    (mapping[row["logical_key"]], row["rowid"]),
+                    (mapping[row["logical_key"]], row[primary]),
                 )
     for row in db.execute(
         "SELECT registry_id,logical_key,scientific_contract_json FROM branch_work_items"

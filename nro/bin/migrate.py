@@ -76,7 +76,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
         execute=False,
         version=package_version(),
     )
-    page_text(_render(preview))
+    rendered = _render(preview)
+    if args.force:
+        print(rendered, end="")
+    else:
+        page_text(rendered)
     if preview["errors"]:
         maintenance(
             Path(values["registry"]),
