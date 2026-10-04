@@ -1048,9 +1048,7 @@ def _rewrite_central(
         )
     for table in ("work_item_execution", "compiled_revisions", "branch_work_items"):
         primary = "_nro_rowid"
-        rows = db.execute(
-            f"SELECT rowid AS {primary},logical_key FROM {table}"
-        ).fetchall()
+        rows = db.execute(f"SELECT rowid AS {primary},logical_key FROM {table}").fetchall()
         for row in rows:
             if row["logical_key"] in mapping:
                 db.execute(
