@@ -268,6 +268,50 @@ def test_project_cli_discards_cancelled_preparation(tmp_path, monkeypatch, capsy
     assert "Project rename cancelled." in capsys.readouterr().out
 
 
+def test_project_cli_force_prints_preview_without_pager_or_prompt(tmp_path, monkeypatch, capsys):
+    from nro.bin import project as project_cli
+
+    preview = {
+        "old": "old",
+        "new": "new",
+        "work_items": 0,
+        "inventory_entries": 0,
+        "ownership_receipts": 0,
+        "scene_files": 0,
+        "metadata_files": 0,
+        "derivative_symlinks": 0,
+        "ingestion_records": 0,
+        "definition_files": [],
+        "moves": [],
+        "blockers": [],
+        "preparation": "prepared-rename",
+    }
+    calls = []
+    monkeypatch.setattr(
+        "nro.configuration.site.settings",
+        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+    )
+    monkeypatch.setattr(
+        project_cli,
+        "page_text",
+        lambda _text: (_ for _ in ()).throw(AssertionError("unexpected pager")),
+    )
+    monkeypatch.setattr(
+        "builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt"))
+    )
+
+    def maintenance(*_args, **fields):
+        calls.append(fields)
+        return preview if not fields["execute"] else {**preview, "executed": True}
+
+    monkeypatch.setattr("nro.orchestration.scheduler_client.maintenance", maintenance)
+
+    project_cli.main(["rename", "old", "new", "-f"])
+
+    assert [call["execute"] for call in calls] == [False, True]
+    assert "Project rename: old -> new" in capsys.readouterr().out
+
+
 def test_markup_rename_preserves_comments_and_rejects_collisions(tmp_path):
     path = tmp_path / "main_markup.yml"
     path.write_text("# managed definition\nold:\n  sub-01:\n    lesion: false\n")
@@ -388,6 +432,13 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
         )
         item_id = db.execute("SELECT id FROM work_items").fetchone()[0]
         db.execute(
+            """INSERT INTO work_item_execution
+               (work_item_id,branch,registry_id,logical_key,context_json,
+                binding_sources_json,provenance_json,scientific_contract_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (item_id, "main", "main-registry", old_key, "{}", "{}", "{}", "{}"),
+        )
+        db.execute(
             """INSERT INTO artifacts
                (work_item_id,attempt_id,direction,path,size,mtime_ns,
                 digest_algorithm,digest,metadata_json)
@@ -428,6 +479,7 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
         assert artifact["path"] == str(changed_metadata)
         assert artifact["digest"] == hashlib.sha256(changed_metadata.read_bytes()).hexdigest()
         assert artifact["mtime_ns"] == changed_metadata.stat().st_mtime_ns
+        assert db.execute("SELECT logical_key FROM work_item_execution").fetchone()[0] == new_key
 
 
 def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, monkeypatch):

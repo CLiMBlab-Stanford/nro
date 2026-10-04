@@ -85,6 +85,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
     if args.json:
         if args.dry_run:
             print(json.dumps(preview, indent=2, sort_keys=True))
+    elif args.force:
+        print(_render(preview))
     else:
         page_text(_render(preview) + "\n")
     if preview["blockers"]:

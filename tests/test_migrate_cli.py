@@ -79,6 +79,25 @@ def test_migrate_dry_run_only_previews(monkeypatch) -> None:
     assert calls[1]["preparation"] == "prepared-migration"
 
 
+def test_migrate_force_prints_preview_without_pager_or_prompt(monkeypatch, capsys) -> None:
+    path = Path("/bids/demo/manifest.json")
+    calls = _configure(monkeypatch, [_report(changed=(path,)), _report(changed=(path,))])
+    monkeypatch.setattr(
+        "nro.bin.migrate.page_text",
+        lambda _text: (_ for _ in ()).throw(AssertionError("unexpected pager")),
+    )
+    monkeypatch.setattr(
+        "builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt"))
+    )
+
+    main(["-P", "demo", "-f"])
+
+    assert [call["execute"] for call in calls] == [False, True]
+    output = capsys.readouterr().out
+    assert "Planned project migration" in output
+    assert str(path) in output
+
+
 def test_migrate_cancel_leaves_preview_unapplied(monkeypatch, capsys) -> None:
     calls = _configure(monkeypatch, [_report(changed=(Path("/one"),))])
     monkeypatch.setattr("nro.bin.migrate.page_text", lambda _text: None)
