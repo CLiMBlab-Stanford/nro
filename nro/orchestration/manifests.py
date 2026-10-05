@@ -772,7 +772,7 @@ def evaluate_assessment(
     for lineage_id, record in config_records.items():
         values = yaml.safe_load(record["resolved_yaml"]) or {}
         representative = rows_by_lineage.get(lineage_id)
-        if representative is not None:
+        if representative is not None and not uses_registered_contract(representative):
             from nro.orchestration.contract_migrations import migrate_contract
 
             _, migrated = migrate_contract(
