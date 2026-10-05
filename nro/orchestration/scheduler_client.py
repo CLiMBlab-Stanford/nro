@@ -47,6 +47,7 @@ _OPERATION_NOTICES = {
     "server_shutdown": "Stopping scheduler services...",
     "purge_snapshot": "Preparing purge...",
     "gc": "Scanning derivative namespaces...",
+    "hotfix": "Inspecting historical repair candidates...",
     "cache": "Cleaning execution cache...",
     "repair_prepare": "Preparing registry repair...",
     "repair_finish": "Finalizing registry repair...",
@@ -870,6 +871,7 @@ def maintenance(
         "purge_snapshot",
         "purge",
         "gc",
+        "hotfix",
         "cache",
         "repair_prepare",
         "repair_finish",
@@ -895,6 +897,7 @@ def maintenance(
             "promotion_publish",
             "publish",
             "project_rename",
+            "hotfix",
             "dataset_migration",
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS
@@ -902,6 +905,7 @@ def maintenance(
     require_service = operation in {
         "dataset_migration",
         "project_rename",
+        "hotfix",
         "preparation_cancel",
     }
     return exchange(

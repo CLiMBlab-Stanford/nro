@@ -943,6 +943,23 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 total=total,
             ),
         )
+    elif message["operation"] == "hotfix":
+        from nro.orchestration.hotfixes import apply
+
+        report = apply(
+            registry,
+            identifier=str(message["identifier"]),
+            projects=tuple(map(str, message["projects"])),
+            execute=bool(message["execute"]),
+        )
+        result = {
+            "identifier": report.identifier,
+            "summary": report.summary,
+            "projects": list(report.projects),
+            "paths": list(map(str, report.paths)),
+            "records": report.records,
+            "applied": report.applied,
+        }
     elif message["operation"] == "cache":
         BranchStore(registry.paths.control).read().topology.registered_checkout(
             Path(message["checkout"])
@@ -1213,6 +1230,7 @@ def _quiet_message(record: dict) -> bool:
 _MAINTENANCE_OPERATIONS = {
     "cache",
     "gc",
+    "hotfix",
     "promotion_publish",
     "publish",
     "purge",
