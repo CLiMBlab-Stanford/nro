@@ -37,11 +37,10 @@ def build_parser(*, prog: str = "nro project") -> argparse.ArgumentParser:
 def _render(result: dict) -> str:
     lines = [f"Project rename: {result['old']} -> {result['new']}", ""]
     lines.append(f"Registered work items: {result['work_items']}")
-    lines.append(f"Managed filesystem entries inspected: {result['inventory_entries']}")
+    lines.append(f"Indexed metadata files inspected: {result['inventory_entries']}")
     lines.append(f"Ownership receipts: {result['ownership_receipts']}")
     lines.append(f"Workbench scenes: {result['scene_files']}")
     lines.append(f"Structured metadata files: {result['metadata_files']}")
-    lines.append(f"Portable nro derivative links validated: {result['derivative_symlinks']}")
     lines.append(f"BIDSification records: {result['ingestion_records']}")
     lines.append(f"Definition files: {len(result['definition_files'])}")
     lines.extend(("", "Managed directory moves:"))

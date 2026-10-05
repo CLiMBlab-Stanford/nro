@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import sqlite3
@@ -20,9 +19,6 @@ from nro.configuration.branch_definitions import read_selection
 from nro.configuration.definition_migrations import MANIFEST, update_store
 from nro.configuration.site import make_site_document, read_site_definition, site_definition_path
 from nro.configuration.store import fingerprint
-from nro.engine.freesurfer_templates import (
-    LEGACY_FSAVERAGE_SOURCES,
-)
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
@@ -33,7 +29,6 @@ from nro.orchestration.ownership import (
     work_item_record_path,
 )
 from nro.orchestration.planning_context import work_item_key
-from nro.orchestration.project_scope import source_bids_walk
 from nro.orchestration.registry import ensure_shared_directory
 
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -55,7 +50,6 @@ class ProjectInventory:
     receipts: tuple[Path, ...]
     scenes: tuple[Path, ...]
     metadata: tuple[Path, ...]
-    derivative_symlinks: dict[Path, str]
     scanned: int
 
 
@@ -80,9 +74,6 @@ def encode_preparation(prepared: RenamePreparation) -> dict:
             "receipts": [str(path) for path in inventory.receipts],
             "scenes": [str(path) for path in inventory.scenes],
             "metadata": [str(path) for path in inventory.metadata],
-            "derivative_symlinks": [
-                [str(path), target] for path, target in inventory.derivative_symlinks.items()
-            ],
             "scanned": inventory.scanned,
         },
         "ingestion": [str(path) for path in prepared.ingestion],
@@ -112,7 +103,6 @@ def decode_preparation(value: object) -> RenamePreparation:
                 tuple(Path(path) for path in inventory["receipts"]),
                 tuple(Path(path) for path in inventory["scenes"]),
                 tuple(Path(path) for path in inventory["metadata"]),
-                {Path(path): str(target) for path, target in inventory["derivative_symlinks"]},
                 int(inventory["scanned"]),
             ),
             tuple(Path(path) for path in value["ingestion"]),
@@ -290,14 +280,6 @@ def _ingestion_files(control: ControlPaths, topology, old: str) -> tuple[Path, .
     return tuple(matched)
 
 
-def _restore_source_symlink(path: Path, target: str) -> None:
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
-    path.symlink_to(target)
-
-
 def _restore_recorded_symlink(path: Path, target: str) -> None:
     """Restore a link only when its parent survived an interrupted transaction."""
     if not path.parent.is_dir():
@@ -309,16 +291,6 @@ def _restore_recorded_symlink(path: Path, target: str) -> None:
     path.symlink_to(target)
 
 
-def _fail_walk(error: OSError) -> None:
-    """Convert an incomplete filesystem inventory into a closed failure."""
-    raise OSError(f"Cannot inventory project directory: {error.filename}: {error.strerror}")
-
-
-def _strict_walk(root: Path):
-    """Walk a managed root and fail when any directory cannot be inspected."""
-    return os.walk(root, topdown=True, followlinks=False, onerror=_fail_walk)
-
-
 def _metadata_reference(request: tuple[Path, str]) -> Path | None:
     """Return a structured file when it embeds the old absolute project path."""
     path, old = request
@@ -327,37 +299,6 @@ def _metadata_reference(request: tuple[Path, str]) -> Path | None:
     except (OSError, UnicodeDecodeError) as error:
         raise ValueError(f"Cannot inspect project metadata {path}: {error}") from error
     return path if f"/{old}/" in text or text.rstrip().endswith(f"/{old}") else None
-
-
-def _raw_source_symlinks(
-    source_root: Path,
-    *,
-    progress: Callable[[str], None] | None = None,
-) -> tuple[dict[Path, str], int]:
-    """Find links only in source BIDS namespaces owned by nro migration."""
-    links: dict[Path, str] = {}
-    scanned = 0
-    for parent, directories, files in source_bids_walk(source_root, onerror=_fail_walk):
-        directory = Path(parent)
-        for name in tuple(directories):
-            path = directory / name
-            scanned += 1
-            if path.is_symlink():
-                directories.remove(name)
-                links[path] = os.readlink(path)
-        for name in files:
-            path = directory / name
-            scanned += 1
-            if path.is_symlink():
-                links[path] = os.readlink(path)
-        if progress is not None and scanned and scanned % 1000 == 0:
-            progress(f"Inspecting raw BIDS links ({scanned:,} entries)")
-    if links:
-        path, target = next(iter(sorted(links.items())))
-        raise ValueError(
-            f"Raw BIDS link requires `nro migrate -P PROJECT` before rename: {path} -> {target}"
-        )
-    return links, scanned
 
 
 def _public_control_files(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
@@ -390,76 +331,15 @@ def _registered_project_files(registry, old: str) -> tuple[Path, ...]:
         return tuple(Path(str(row[0])) for row in rows)
 
 
-def _nro_derivative_symlinks(
-    project_roots: Iterable[Path],
-    *,
-    progress: Callable[[str], None] | None = None,
-) -> tuple[dict[Path, str], int]:
-    """Validate portable links without traversing third-party derivatives."""
-    links: dict[Path, str] = {}
-    scanned = 0
-    for project_root in dict.fromkeys(project_roots):
-        derivative_root = project_root / "derivatives" / "nro"
-        if not derivative_root.is_dir():
-            continue
-        resolved_project = project_root.resolve()
-        for parent, directories, files in _strict_walk(derivative_root):
-            directory = Path(parent)
-            for name in tuple(directories):
-                path = directory / name
-                scanned += 1
-                if path.is_symlink():
-                    directories.remove(name)
-                    links[path] = os.readlink(path)
-            for name in files:
-                path = directory / name
-                scanned += 1
-                if path.is_symlink():
-                    links[path] = os.readlink(path)
-            if progress is not None and scanned and scanned % 1000 == 0:
-                progress(f"Validating nro derivative links ({scanned:,} entries)")
-        for path, target in tuple(links.items()):
-            if not path.is_relative_to(derivative_root):
-                continue
-            if Path(target).is_absolute():
-                relative = path.relative_to(derivative_root).parts
-                if (
-                    len(relative) == 5
-                    and relative[0] == "anat"
-                    and relative[2:5] == ("code", "freesurfer", "fsaverage")
-                    and target in LEGACY_FSAVERAGE_SOURCES
-                ):
-                    raise ValueError(
-                        "nro derivative requires `nro migrate -P PROJECT` before rename: "
-                        f"{path} -> {target}"
-                    )
-                raise ValueError(f"nro derivative link must be relative: {path} -> {target}")
-            try:
-                resolved_target = (path.parent / target).resolve(strict=False)
-            except RuntimeError as error:
-                raise ValueError(
-                    f"Cannot resolve nro derivative link: {path} -> {target}"
-                ) from error
-            if not resolved_target.is_relative_to(resolved_project):
-                raise ValueError(
-                    f"nro derivative link escapes its BIDS project: {path} -> {target}"
-                )
-    return links, scanned
-
-
 def _project_inventory(
     moves: Iterable[ProjectMove],
     *,
-    bids_root: Path,
     old: str,
-    new: str,
     registry=None,
     progress: Callable[[str], None] | None = None,
 ) -> ProjectInventory:
-    """Inventory indexed metadata and raw links without walking scientific outputs."""
+    """Inventory indexed metadata without walking project data trees."""
     moves = tuple(moves)
-    source_root = bids_root / old
-    _source_symlinks, scanned = _raw_source_symlinks(source_root, progress=progress)
     receipts: set[Path] = set()
     scenes: set[Path] = set()
     for move in moves:
@@ -474,7 +354,7 @@ def _project_inventory(
     candidates.update(
         path for path in registered if path.suffix.lower() in {".json", ".yaml", ".yml", ".scene"}
     )
-    scanned += len(candidates) + len(registered)
+    scanned = len(candidates)
     if progress is not None:
         progress(f"Inspecting indexed project metadata ({len(candidates):,} files)")
 
@@ -497,31 +377,12 @@ def _project_inventory(
         matched = executor.map(_metadata_reference, ((path, old) for path in ordered))
         metadata.extend(path for path in matched if path is not None)
 
-    if progress is not None:
-        progress("Validating nro derivative symbolic links")
-    public_projects = tuple(
-        move.source for move in moves if move.source.parent.name.lower() == "bids"
-    )
-    derivative_symlinks, derivative_scanned = _nro_derivative_symlinks(
-        public_projects, progress=progress
-    )
-    scanned += derivative_scanned
     return ProjectInventory(
         tuple(valid_receipts),
         tuple(sorted(scenes)),
         tuple(sorted(metadata)),
-        derivative_symlinks,
         scanned,
     )
-
-
-def _replace_symlink(path: Path, target: str) -> None:
-    temporary = path.with_name(f".{path.name}.project-rename-{uuid.uuid4().hex}")
-    try:
-        os.symlink(target, temporary)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _incomplete_journal(control: ControlPaths, old: str, new: str) -> tuple[Path, dict] | None:
@@ -795,9 +656,7 @@ def _prepare_rename(
     blockers = list(_rename_blockers(registry, old=old, ingestion=ingestion))
     inventory = _project_inventory(
         moves,
-        bids_root=Path(values["bids"]),
         old=old,
-        new=new,
         registry=registry,
         progress=progress,
     )
@@ -821,7 +680,6 @@ def _prepare_rename(
         "scene_files": len(inventory.scenes),
         "metadata_files": len(inventory.metadata),
         "inventory_entries": inventory.scanned,
-        "derivative_symlinks": len(inventory.derivative_symlinks),
         "ingestion_records": len(ingestion),
         "definition_files": [
             str(root / relative)
@@ -1182,9 +1040,6 @@ def execute(
         current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if current != expected:
             raise ValueError(f"Project metadata changed after the rename preview: {path}")
-    for path, expected in prepared.inventory.derivative_symlinks.items():
-        if not path.is_symlink() or os.readlink(path) != expected:
-            raise ValueError(f"nro derivative link changed after the rename preview: {path}")
     from nro.orchestration.planner_client import shutdown as shutdown_planner
 
     shutdown_planner(registry.paths.control)
