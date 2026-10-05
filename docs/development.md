@@ -174,6 +174,10 @@ you changed. The pull-request checks run the complete suite before a release can
 .nro-env/bin/python -m pytest -q -m "integration or not integration"
 ```
 
+`nro dev test` and its sphere-specific variants run repository formatting and lint
+checks before pytest, so the inexpensive style gates fail locally before a pull request
+is opened.
+
 Run only the integration tier with `-m integration`.
 
 Run the maintenance rehearsal locally when installation, orchestration schemas,
