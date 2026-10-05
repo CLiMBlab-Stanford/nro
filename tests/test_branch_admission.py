@@ -230,6 +230,10 @@ def test_admission_repairs_namespaced_project_rename_identity(setup):
             "UPDATE branch_work_items SET logical_key=? WHERE registry_id=? AND logical_key=?",
             (wrong_logical, owner, spec.key),
         )
+        db.execute(
+            "INSERT INTO compiled_revisions VALUES (?,?,?,?)",
+            (owner, spec.key, 2, "canonical-fingerprint"),
+        )
 
     admit_plan(
         registry,
@@ -255,6 +259,20 @@ def test_admission_repairs_namespaced_project_rename_identity(setup):
                 "SELECT logical_key FROM work_item_execution WHERE work_item_id=?", (item_id,)
             ).fetchone()[0]
             == spec.key
+        )
+        assert (
+            db.execute(
+                "SELECT revision FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                (owner, spec.key),
+            ).fetchone()[0]
+            == 2
+        )
+        assert (
+            db.execute(
+                "SELECT 1 FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                (owner, wrong_logical),
+            ).fetchone()
+            is None
         )
 
 

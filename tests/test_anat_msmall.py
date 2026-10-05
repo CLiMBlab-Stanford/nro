@@ -7,6 +7,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pytest
+import yaml
 
 from nro.configuration.markup import SubjectMarkup
 from nro.configuration.store import ConfigStore
@@ -250,13 +251,25 @@ def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> N
 
     work_item_id = registry.register_work_items((work_item,))[work_item.key]
     before = next(row for row in registry.work_item_rows() if row["id"] == work_item_id)
+    with registry.connection(write=True) as db:
+        stored = db.execute(
+            "SELECT resolved_yaml FROM module_lineages WHERE id=?",
+            (before["module_lineage_id"],),
+        ).fetchone()[0]
+        historical = yaml.safe_load(stored)
+        historical.pop("msmall")
+        db.execute(
+            "UPDATE module_lineages SET resolved_yaml=? WHERE id=?",
+            (yaml.safe_dump(historical), before["module_lineage_id"]),
+        )
     monkeypatch.setattr(
         "nro.configuration.markup.MarkupStore.subject",
         lambda _store, _markup_id, _project, _subject_dir: markup,
     )
     from nro.orchestration.manifests import assess_registry
 
-    assess_registry(registry, work_item_ids=(work_item_id,))
+    assessment = assess_registry(registry, work_item_ids=(work_item_id,))[work_item_id]
+    assert "Could not reassess selected anatomical inputs" not in assessment[1]
     after = next(row for row in registry.work_item_rows() if row["id"] == work_item_id)
     assert after["input_paths_json"] == before["input_paths_json"]
     assert after["artifact_fingerprint"] == before["artifact_fingerprint"]
