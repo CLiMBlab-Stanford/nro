@@ -1,5 +1,6 @@
 """Test scheduler transport, recovery records, and launch election."""
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -208,6 +209,94 @@ def test_interrupted_durable_request_is_recovered(tmp_path):
             ).fetchone()[0]
             == "pending"
         )
+
+
+def test_installation_cancels_requests_from_a_dead_scheduler(tmp_path):
+    from nro.orchestration.scheduler_requests import (
+        RequestCoordinator,
+        cancel_orphaned_for_maintenance,
+        register,
+    )
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    pending = scheduler_bus.create_message({"operation": "pending"})
+    running = scheduler_bus.create_message({"operation": "running"})
+    completed = scheduler_bus.create_message({"operation": "completed"})
+    assert register(registry, pending) is None
+    assert register(registry, running) is None
+    RequestCoordinator(registry, lambda _record: {"result": "done"}).run(completed)
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE scheduler_requests SET state='running' WHERE id=?", (running["id"],))
+
+    assert cancel_orphaned_for_maintenance(registry) == 2
+
+    with registry.connection() as db:
+        rows = {
+            row["id"]: (row["state"], row["response_json"])
+            for row in db.execute(
+                "SELECT id,state,response_json FROM scheduler_requests ORDER BY id"
+            )
+        }
+    assert rows[completed["id"]] == ("completed", '{"result":"done"}')
+    for identifier in (pending["id"], running["id"]):
+        state, encoded = rows[identifier]
+        assert state == "completed"
+        assert json.loads(encoded) == {
+            "error": "Scheduler request was cancelled for shared installation maintenance",
+            "error_type": "SchedulerError",
+        }
+
+
+def test_installation_preserves_requests_during_a_scheduler_launch(tmp_path, monkeypatch):
+    from nro.orchestration.scheduler_requests import cancel_orphaned_for_maintenance, register
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "pending"})
+    assert register(registry, record) is None
+    monkeypatch.setattr(scheduler_bus, "read_launch", lambda _control: {"job_id": "101"})
+    monkeypatch.setattr(scheduler_bus, "_launch_abandoned", lambda _record: False)
+
+    assert cancel_orphaned_for_maintenance(registry) == 0
+
+    with registry.connection() as db:
+        state = db.execute(
+            "SELECT state FROM scheduler_requests WHERE id=?", (record["id"],)
+        ).fetchone()[0]
+    assert state == "pending"
+
+
+def test_one_shot_installation_replaces_requests_from_a_dead_epoch(tmp_path, monkeypatch):
+    from nro.orchestration.scheduler_requests import cancel_orphaned_for_maintenance, register
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    current = scheduler_bus.create_message({"operation": "installation_activity"})
+    orphaned = scheduler_bus.create_message({"operation": "project_rename"})
+    assert register(registry, current) is None
+    assert register(registry, orphaned) is None
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda _control: {"token": "dead-scheduler"})
+    monkeypatch.setattr(
+        scheduler_bus,
+        "read_launch",
+        lambda _control: {"token": "maintenance", "job_id": "local-101"},
+    )
+
+    assert (
+        cancel_orphaned_for_maintenance(
+            registry,
+            launch_token="maintenance",
+            preserve_ids=(current["id"],),
+        )
+        == 1
+    )
+
+    with registry.connection() as db:
+        states = {
+            row["id"]: row["state"] for row in db.execute("SELECT id,state FROM scheduler_requests")
+        }
+    assert states == {current["id"]: "pending", orphaned["id"]: "completed"}
 
 
 def test_prepare_prunes_only_expired_completed_requests(tmp_path):

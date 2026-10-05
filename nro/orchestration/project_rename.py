@@ -152,9 +152,15 @@ def _translate(value: Any, old: str, new: str, key_map: dict[str, str]) -> Any:
     return value
 
 
-def _json(value: str | None, old: str, new: str, key_map: dict[str, str]) -> str | None:
+def _json(
+    value: str | bytes | None, old: str, new: str, key_map: dict[str, str]
+) -> str | bytes | None:
     if value is None:
         return None
+    if isinstance(value, bytes) and value.startswith(b"NROZ1\0"):
+        from nro.orchestration.request_plans import decode_plan, encode_plan
+
+        return encode_plan(_translate(decode_plan(value), old, new, key_map))
     return json.dumps(
         _translate(json.loads(value), old, new, key_map),
         sort_keys=True,
@@ -520,9 +526,37 @@ def _recover_interrupted(registry, old: str, new: str) -> dict | None:
     return None
 
 
-def _key_maps(db: sqlite3.Connection, old: str, new: str) -> tuple[dict[int, str], dict[str, str]]:
+def _branch_lineage_fingerprints(store: BranchStore) -> dict[tuple[str, str, str], str]:
+    """Index canonical branch lineages by registry, module, and directory."""
+    result = {}
+    snapshot = store.read()
+    for name, record in snapshot.topology.records.items():
+        scientific = store.registry(name)
+        with scientific.connection() as db:
+            for row in db.execute(
+                """SELECT configuration_class,directory_label,lineage_fingerprint
+                   FROM module_lineages"""
+            ):
+                result[
+                    (
+                        record.registry_id,
+                        str(row["configuration_class"]),
+                        str(row["directory_label"]),
+                    )
+                ] = str(row["lineage_fingerprint"])
+    return result
+
+
+def _key_maps(
+    db: sqlite3.Connection,
+    old: str,
+    new: str,
+    *,
+    branch_lineages: dict[tuple[str, str, str], str] | None = None,
+) -> tuple[dict[int, str], dict[str, str]]:
     rows = db.execute(
         """SELECT item.id,item.work_item_key,item.module,item.participant,item.entities_json,
+                  lineage.configuration_class,lineage.directory_label,
                   lineage.lineage_fingerprint,execution.branch,execution.registry_id,
                   execution.logical_key
            FROM work_items item
@@ -534,10 +568,24 @@ def _key_maps(db: sqlite3.Connection, old: str, new: str) -> tuple[dict[int, str
     stored: dict[int, str] = {}
     mapping: dict[str, str] = {}
     for row in rows:
+        lineage = str(row["lineage_fingerprint"])
+        if row["registry_id"] and branch_lineages is not None:
+            identity = (
+                str(row["registry_id"]),
+                str(row["configuration_class"]),
+                str(row["directory_label"]),
+            )
+            try:
+                lineage = branch_lineages[identity]
+            except KeyError as error:
+                raise ValueError(
+                    "Cannot recover canonical module lineage for project rename: "
+                    + "/".join(identity)
+                ) from error
         logical = work_item_key(
             new,
             str(row["module"]),
-            str(row["lineage_fingerprint"]),
+            lineage,
             str(row["participant"]),
             json.loads(row["entities_json"]),
         )
@@ -807,8 +855,9 @@ def _rewrite_central(
     new: str,
     *,
     changed_metadata: Iterable[Path] = (),
+    branch_lineages: dict[tuple[str, str, str], str] | None = None,
 ) -> tuple[int, dict[str, str]]:
-    stored, mapping = _key_maps(db, old, new)
+    stored, mapping = _key_maps(db, old, new, branch_lineages=branch_lineages)
     if db.execute("SELECT 1 FROM bids_projects WHERE project=?", (new,)).fetchone():
         raise ValueError(f"Destination project is already registered: {new}")
     project = db.execute("SELECT * FROM bids_projects WHERE project=?", (old,)).fetchone()
@@ -1045,6 +1094,7 @@ def execute(
     shutdown_planner(registry.paths.control)
     store = current_store
     topology = current_topology
+    branch_lineages = _branch_lineage_fingerprints(store)
     moves = tuple(
         ProjectMove(Path(item["source"]), Path(item["destination"])) for item in report["moves"]
     )
@@ -1131,7 +1181,7 @@ def execute(
             raise ValueError("Project rename became blocked: " + "; ".join(final_blockers))
         report_phase("Rewriting project identities")
         with registry.connection() as db:
-            _stored, mapping = _key_maps(db, old, new)
+            _stored, mapping = _key_maps(db, old, new, branch_lineages=branch_lineages)
         mapping.update(_receipt_key_map(receipts, new))
         for name, record in topology.records.items():
             local_mapping = {
@@ -1168,7 +1218,11 @@ def execute(
         )
         with registry.connection(write=True) as db:
             changed, _committed_mapping = _rewrite_central(
-                db, old, new, changed_metadata=changed_metadata
+                db,
+                old,
+                new,
+                changed_metadata=changed_metadata,
+                branch_lineages=branch_lineages,
             )
             db.execute(
                 "INSERT OR REPLACE INTO metadata(key,value) VALUES ('project_rename_commit',?)",

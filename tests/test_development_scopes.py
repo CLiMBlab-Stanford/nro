@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from nro.bin.dev import build_parser
-from nro.engine.development import changed_paths, load_scopes, select_tests
+from nro.engine.development import TestSelection as Selection
+from nro.engine.development import (
+    changed_paths,
+    load_scopes,
+    run_selection,
+    select_tests,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,6 +96,33 @@ tests = ["tests/missing.py"]
 
     with pytest.raises(ValueError, match="missing test files"):
         load_scopes(path)
+
+
+def test_local_test_selection_checks_formatting_and_lint_first(tmp_path, monkeypatch) -> None:
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(tuple(command))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    selection = Selection(("example",), ("tests/test_example.py",), (), False)
+
+    assert run_selection(tmp_path, selection) == 0
+    assert commands == [
+        (
+            commands[0][0],
+            "-m",
+            "ruff",
+            "format",
+            "--check",
+            "nro",
+            "tests",
+            "docs/conf.py",
+        ),
+        (commands[0][0], "-m", "ruff", "check", "nro", "tests", "docs/conf.py"),
+        (commands[0][0], "-m", "pytest", "tests/test_example.py"),
+    ]
 
 
 def test_every_tracked_python_and_policy_file_has_a_scope() -> None:

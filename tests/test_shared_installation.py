@@ -94,6 +94,46 @@ def test_pool_drain_preserves_demand_and_stops_workers(tmp_path, monkeypatch):
     ]
 
 
+def test_offline_installation_cancels_orphaned_scheduler_requests(tmp_path, monkeypatch):
+    from nro.orchestration import scheduler_bus
+    from nro.orchestration.scheduler_requests import register
+
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "project_rename"})
+    assert register(registry, record) is None
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE scheduler_requests SET state='running' WHERE id=?", (record["id"],))
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 0, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "drain",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
+    )
+
+    shared_installation.prepare_pool(
+        registry, checkout=tmp_path / "main", confirm=lambda _activity: "stop"
+    )
+
+    with registry.connection() as db:
+        row = db.execute(
+            "SELECT state,response_json FROM scheduler_requests WHERE id=?", (record["id"],)
+        ).fetchone()
+    assert row["state"] == "completed"
+    assert "cancelled for shared installation maintenance" in row["response_json"]
+
+
 def test_installation_repairs_scientific_schema_when_scheduler_is_current(tmp_path, monkeypatch):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     registry.initialize()

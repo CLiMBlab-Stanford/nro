@@ -64,6 +64,13 @@ def _wait_for_scheduler_shutdown(control: Path, *, timeout: float = 60.0) -> Non
         time.sleep(0.1)
 
 
+def _cancel_orphaned_scheduler_requests(registry: Registry) -> int:
+    """Cancel durable requests only after their scheduler is definitively absent."""
+    from nro.orchestration.scheduler_requests import cancel_orphaned_for_maintenance
+
+    return cancel_orphaned_for_maintenance(registry)
+
+
 def _quiesce_service(
     registry: Registry,
     *,
@@ -123,6 +130,7 @@ def _quiesce_service(
         allow_changed_checkout=True,
     )
     _wait_for_scheduler_shutdown(control)
+    _cancel_orphaned_scheduler_requests(registry)
     return summary, progress
 
 
@@ -147,6 +155,7 @@ def prepare_pool(
         # Initial activation has no controller implementation to launch. This
         # is the one normal offline bootstrap of the scheduler database.
         registry.initialize()
+        _cancel_orphaned_scheduler_requests(registry)
         activity = registry.worker_pool_activity()
         if activity["workers"] or activity["submissions"]:
             raise RuntimeError(
@@ -190,6 +199,11 @@ def prepare_pool(
             poll_interval=poll_interval,
             report_interval=report_interval,
         )
+    else:
+        # A crashed or cancelled controller cannot finish its durable transport
+        # records. Reconcile them before a one-shot maintenance coordinator can
+        # mistake those records for work that should be resumed.
+        _cancel_orphaned_scheduler_requests(registry)
 
     stored_schema = registry.stored_schema_version()
     if stored_schema != SCHEMA_VERSION:

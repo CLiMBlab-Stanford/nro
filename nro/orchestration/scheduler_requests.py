@@ -14,6 +14,66 @@ from nro.orchestration.scheduler_bus import validate_message
 REQUEST_REGISTRATION_TIMEOUT_SECONDS = 0.25
 
 
+def cancel_orphaned_for_maintenance(
+    registry,
+    *,
+    launch_token: str | None = None,
+    preserve_ids: tuple[str, ...] = (),
+) -> int:
+    """Complete unfinished requests after their scheduler epoch has ended.
+
+    Installation maintenance calls this only while taking exclusive registry
+    ownership. A live scheduler or another viable launch claim leaves every
+    request untouched. A one-shot coordinator may supply its launch token and
+    preserve its own request while cancelling work from the dead epoch.
+    Terminal responses let surviving clients fail promptly instead of retrying
+    work across an installation cutover.
+    """
+    from nro.orchestration.scheduler_bus import (
+        _launch_abandoned,
+        clear_progress,
+        read_active,
+        read_launch,
+    )
+
+    response = json.dumps(
+        {
+            "error": "Scheduler request was cancelled for shared installation maintenance",
+            "error_type": "SchedulerError",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    identifiers: tuple[str, ...] = ()
+    preserved = frozenset(preserve_ids)
+    with registry.connection(write=True) as db:
+        launch = read_launch(registry.paths.control)
+        owns_launch = bool(
+            launch_token is not None and launch is not None and launch.get("token") == launch_token
+        )
+        if not owns_launch and (
+            read_active(registry.paths.control) is not None
+            or (launch is not None and not _launch_abandoned(launch))
+        ):
+            return 0
+        identifiers = tuple(
+            str(row[0])
+            for row in db.execute(
+                "SELECT id FROM scheduler_requests WHERE state IN ('pending','running')"
+            )
+            if str(row[0]) not in preserved
+        )
+        if identifiers:
+            db.executemany(
+                "UPDATE scheduler_requests SET state='completed',response_json=?,updated_at=? "
+                "WHERE id=? AND state IN ('pending','running')",
+                ((response, utcnow(), identifier) for identifier in identifiers),
+            )
+    for identifier in identifiers:
+        clear_progress(registry.paths.control, identifier)
+    return len(identifiers)
+
+
 def _encoded(record: dict) -> tuple[str, str]:
     payload = json.dumps(record, separators=(",", ":"), sort_keys=True)
     return payload, fingerprint(record)

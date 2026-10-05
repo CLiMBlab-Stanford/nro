@@ -206,6 +206,58 @@ def test_two_catalogs_share_capacity_and_complete_through_worker(setup):
     assert "nro.probe_one" not in sys.modules and "nro.probe_two" not in sys.modules
 
 
+def test_admission_repairs_namespaced_project_rename_identity(setup):
+    registry, branches, site, prepare = setup
+    checkout, _paths, spec, plan, registered, source, _request = prepare("one")
+    owner = branches.registry("one").record.registry_id
+    stored = owner + ":" + spec.key
+    wrong_logical = "wrong-logical-key"
+    wrong_stored = owner + ":" + wrong_logical
+    with registry.connection(write=True) as db:
+        item_id = db.execute(
+            "SELECT id FROM work_items WHERE work_item_key=?", (stored,)
+        ).fetchone()[0]
+        db.execute("UPDATE work_items SET work_item_key=? WHERE id=?", (wrong_stored, item_id))
+        db.execute(
+            "UPDATE work_item_execution SET logical_key=? WHERE work_item_id=?",
+            (wrong_logical, item_id),
+        )
+        db.execute(
+            "UPDATE compiled_revisions SET logical_key=? WHERE registry_id=? AND logical_key=?",
+            (wrong_logical, owner, spec.key),
+        )
+        db.execute(
+            "UPDATE branch_work_items SET logical_key=? WHERE registry_id=? AND logical_key=?",
+            (wrong_logical, owner, spec.key),
+        )
+
+    admit_plan(
+        registry,
+        branches,
+        checkout,
+        plan,
+        registered,
+        source=source,
+        site=site,
+        python=Path(sys.executable),
+        concurrency=1,
+        partition=None,
+        selectors={},
+    )
+
+    with registry.connection() as db:
+        assert (
+            db.execute("SELECT work_item_key FROM work_items WHERE id=?", (item_id,)).fetchone()[0]
+            == stored
+        )
+        assert (
+            db.execute(
+                "SELECT logical_key FROM work_item_execution WHERE work_item_id=?", (item_id,)
+            ).fetchone()[0]
+            == spec.key
+        )
+
+
 @pytest.mark.parametrize("discard_execution", (False, True))
 def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, discard_execution):
     from nro.orchestration.branch_purge import purge, snapshot

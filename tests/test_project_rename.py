@@ -239,6 +239,7 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
     registry.initialize()
     now = utcnow()
     lineage = "lineage-fingerprint"
+    central_lineage = fingerprint({"owner": "main-registry", "lineage": lineage})
     old_key = work_item_key("old", "anat", lineage, "01", {})
     contract = {
         "configuration_fingerprint": "config",
@@ -265,7 +266,7 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
             """INSERT INTO module_lineages
                (configuration_class,config_id,config_fingerprint,lineage_fingerprint,
                 resolved_yaml,directory_label,created_at) VALUES (?,?,?,?,?,?,?)""",
-            ("anat", "main", "config", lineage, "{}\n", "main", now),
+            ("anat", "main", "config", central_lineage, "{}\n", "main", now),
         )
         db.execute(
             """INSERT INTO work_items
@@ -333,7 +334,13 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
     changed_metadata.write_text('{"project":"new"}\n')
 
     with registry.connection(write=True) as db:
-        changed, mapping = _rewrite_central(db, "old", "new", changed_metadata=(changed_metadata,))
+        changed, mapping = _rewrite_central(
+            db,
+            "old",
+            "new",
+            changed_metadata=(changed_metadata,),
+            branch_lineages={("main-registry", "anat", "main"): lineage},
+        )
 
     assert changed == 1
     new_key = work_item_key("new", "anat", lineage, "01", {})

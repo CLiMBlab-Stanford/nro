@@ -162,7 +162,15 @@ def changed_paths(root: Path) -> tuple[str, ...]:
 
 
 def run_selection(root: Path, selection: TestSelection, *, full: bool = False) -> int:
-    """Run the selected pytest targets, or the complete suite when required."""
+    """Run repository formatting, lint, and the selected pytest targets."""
+    quality_commands = (
+        (sys.executable, "-m", "ruff", "format", "--check", "nro", "tests", "docs/conf.py"),
+        (sys.executable, "-m", "ruff", "check", "nro", "tests", "docs/conf.py"),
+    )
+    for command in quality_commands:
+        result = subprocess.run(command, cwd=root, check=False)
+        if result.returncode:
+            return result.returncode
     targets = () if full or selection.full else selection.tests
     command = [sys.executable, "-m", "pytest", *(targets or ("tests",))]
     return subprocess.run(command, cwd=root, check=False).returncode
