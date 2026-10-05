@@ -1708,6 +1708,20 @@ def run_once(*, launch_token: str, bids_root: Path) -> int:
         if not isinstance(durable, bool):
             raise ValueError("Invalid one-shot scheduler durability flag")
         record = validate_message(envelope["record"])
+        if record["payload"].get("operation") in {
+            "installation_activity",
+            "installation_prepare",
+            "installation_progress",
+        }:
+            from nro.orchestration.scheduler_requests import (
+                cancel_orphaned_for_maintenance,
+            )
+
+            cancel_orphaned_for_maintenance(
+                registry,
+                launch_token=launch_token,
+                preserve_ids=(str(record["id"]),),
+            )
         coordinator = RequestCoordinator(
             registry,
             lambda item: _message_response(registry, item, values=values),

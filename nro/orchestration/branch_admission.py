@@ -13,6 +13,103 @@ from nro.orchestration.branch_planning import BranchPlan
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.execution_cache import cache_publication
 from nro.orchestration.registry import utcnow
+from nro.orchestration.request_plans import decode_plan, encode_plan
+
+
+def _replace_identities(value, mapping: dict[str, str]):
+    """Replace exact work-item identities inside retained request data."""
+    if isinstance(value, dict):
+        return {key: _replace_identities(item, mapping) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_identities(item, mapping) for item in value]
+    return mapping.get(value, value) if isinstance(value, str) else value
+
+
+def _repair_renamed_work_item_identities(db, *, items, registry_id: str) -> int:
+    """Repair central keys produced from namespaced rename lineages.
+
+    The stable branch, lineage, participant, entities, and output namespace
+    must identify exactly one existing row. The batch repair reads retained
+    request plans only once even when a large project graph needs correction.
+    """
+    existing_keys = {
+        str(row[0]) for row in db.execute("SELECT work_item_key FROM work_items")
+    }
+    candidates = {}
+    for row in db.execute(
+        """SELECT item.id,item.work_item_key,item.module,item.module_lineage_id,
+                  item.project,item.participant,item.entities_json,item.output_root,
+                  item.output_prefix,execution.logical_key
+           FROM work_items item JOIN work_item_execution execution
+             ON execution.work_item_id=item.id
+           WHERE execution.registry_id=?""",
+        (registry_id,),
+    ):
+        identity = (
+            str(row["module"]),
+            int(row["module_lineage_id"]),
+            str(row["project"]),
+            str(row["participant"]),
+            json.dumps(json.loads(row["entities_json"]), separators=(",", ":"), sort_keys=True),
+            str(row["output_root"]),
+            row["output_prefix"],
+        )
+        candidates.setdefault(identity, []).append(row)
+    repairs = []
+    replacements = {}
+    for spec, logical_key in items:
+        if spec.key in existing_keys:
+            continue
+        identity = (
+            spec.module,
+            spec.module_lineage_id,
+            spec.project,
+            spec.participant,
+            json.dumps(dict(spec.entities), separators=(",", ":"), sort_keys=True),
+            str(spec.output_root),
+            spec.output_prefix,
+        )
+        rows = candidates.get(identity, ())
+        if not rows:
+            continue
+        if len(rows) != 1:
+            raise ValueError(
+                f"Multiple registered work items match the stable identity of {logical_key}"
+            )
+        row = rows[0]
+        old_stored = str(row["work_item_key"])
+        old_logical = str(row["logical_key"])
+        repairs.append((int(row["id"]), old_stored, spec.key, old_logical, logical_key))
+        replacements[old_stored] = spec.key
+        replacements[old_logical] = logical_key
+    for work_item_id, old_stored, stored, old_logical, logical in repairs:
+        for table in ("compiled_revisions", "branch_work_items"):
+            conflict = db.execute(
+                f"SELECT 1 FROM {table} WHERE registry_id=? AND logical_key=?",
+                (registry_id, logical),
+            ).fetchone()
+            if conflict is not None:
+                raise ValueError(f"Cannot repair duplicate {table} identity for {logical}")
+            db.execute(
+                f"UPDATE {table} SET logical_key=? WHERE registry_id=? AND logical_key=?",
+                (logical, registry_id, old_logical),
+            )
+        db.execute(
+            "UPDATE work_item_execution SET logical_key=? WHERE work_item_id=?",
+            (logical, work_item_id),
+        )
+        db.execute("UPDATE work_items SET work_item_key=? WHERE id=?", (stored, work_item_id))
+    if not repairs:
+        return 0
+    for request in db.execute("SELECT request_id,payload_json FROM request_plans").fetchall():
+        payload = decode_plan(request["payload_json"])
+        translated = _replace_identities(payload, replacements)
+        if translated != payload:
+            db.execute(
+                "UPDATE request_plans SET payload_json=? WHERE request_id=?",
+                (encode_plan(translated), request["request_id"]),
+            )
+    return len(repairs)
 
 
 def _workflow(
@@ -263,6 +360,13 @@ def _admit_resolved(
                 command=source.command((str(python), *spec.command[1:]), site=site),
             )
         )
+    _repair_renamed_work_item_identities(
+        db,
+        items=tuple(
+            (spec, item.spec.key) for item, spec in zip(plan.work, specs, strict=True)
+        ),
+        registry_id=owner,
+    )
     now = utcnow()
     ids = registry._upsert_work_item_graph_locked(
         db,
