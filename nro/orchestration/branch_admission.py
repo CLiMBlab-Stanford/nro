@@ -32,9 +32,7 @@ def _repair_renamed_work_item_identities(db, *, items, registry_id: str) -> int:
     must identify exactly one existing row. The batch repair reads retained
     request plans only once even when a large project graph needs correction.
     """
-    existing_keys = {
-        str(row[0]) for row in db.execute("SELECT work_item_key FROM work_items")
-    }
+    existing_keys = {str(row[0]) for row in db.execute("SELECT work_item_key FROM work_items")}
     candidates = {}
     for row in db.execute(
         """SELECT item.id,item.work_item_key,item.module,item.module_lineage_id,
@@ -362,9 +360,7 @@ def _admit_resolved(
         )
     _repair_renamed_work_item_identities(
         db,
-        items=tuple(
-            (spec, item.spec.key) for item, spec in zip(plan.work, specs, strict=True)
-        ),
+        items=tuple((spec, item.spec.key) for item, spec in zip(plan.work, specs, strict=True)),
         registry_id=owner,
     )
     now = utcnow()

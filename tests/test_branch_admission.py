@@ -246,12 +246,16 @@ def test_admission_repairs_namespaced_project_rename_identity(setup):
     )
 
     with registry.connection() as db:
-        assert db.execute(
-            "SELECT work_item_key FROM work_items WHERE id=?", (item_id,)
-        ).fetchone()[0] == stored
-        assert db.execute(
-            "SELECT logical_key FROM work_item_execution WHERE work_item_id=?", (item_id,)
-        ).fetchone()[0] == spec.key
+        assert (
+            db.execute("SELECT work_item_key FROM work_items WHERE id=?", (item_id,)).fetchone()[0]
+            == stored
+        )
+        assert (
+            db.execute(
+                "SELECT logical_key FROM work_item_execution WHERE work_item_id=?", (item_id,)
+            ).fetchone()[0]
+            == spec.key
+        )
 
 
 @pytest.mark.parametrize("discard_execution", (False, True))

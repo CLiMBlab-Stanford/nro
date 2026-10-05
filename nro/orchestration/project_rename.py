@@ -1181,9 +1181,7 @@ def execute(
             raise ValueError("Project rename became blocked: " + "; ".join(final_blockers))
         report_phase("Rewriting project identities")
         with registry.connection() as db:
-            _stored, mapping = _key_maps(
-                db, old, new, branch_lineages=branch_lineages
-            )
+            _stored, mapping = _key_maps(db, old, new, branch_lineages=branch_lineages)
         mapping.update(_receipt_key_map(receipts, new))
         for name, record in topology.records.items():
             local_mapping = {
