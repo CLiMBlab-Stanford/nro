@@ -767,10 +767,20 @@ def evaluate_assessment(
                 )
                 command_updates[work_item_id] = row["command_json"]
     config_records = {int(row["id"]): dict(row) for row in snapshot.configurations}
-    config_values = {
-        lineage_id: yaml.safe_load(record["resolved_yaml"]) or {}
-        for lineage_id, record in config_records.items()
-    }
+    rows_by_lineage = {int(row["module_lineage_id"]): row for row in by_id.values()}
+    config_values = {}
+    for lineage_id, record in config_records.items():
+        values = yaml.safe_load(record["resolved_yaml"]) or {}
+        representative = rows_by_lineage.get(lineage_id)
+        if representative is not None:
+            from nro.orchestration.contract_migrations import migrate_contract
+
+            _, migrated = migrate_contract(
+                json.loads(representative["artifact_contract_json"]), values
+            )
+            if migrated is not None:
+                values = migrated
+        config_values[lineage_id] = values
     upstream: dict[int, list[int]] = {}
     for work_item_id, upstream_id in dependencies:
         upstream.setdefault(work_item_id, []).append(upstream_id)

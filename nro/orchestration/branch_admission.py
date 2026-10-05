@@ -83,10 +83,27 @@ def _repair_renamed_work_item_identities(db, *, items, registry_id: str) -> int:
     for work_item_id, old_stored, stored, old_logical, logical in repairs:
         for table in ("compiled_revisions", "branch_work_items"):
             conflict = db.execute(
-                f"SELECT 1 FROM {table} WHERE registry_id=? AND logical_key=?",
+                f"SELECT * FROM {table} WHERE registry_id=? AND logical_key=?",
                 (registry_id, logical),
             ).fetchone()
             if conflict is not None:
+                if table == "compiled_revisions":
+                    # Request publication records the canonical revision before
+                    # admission repairs an identity retained from a project
+                    # rename.  Keep that newly compiled record and retire the
+                    # superseded key instead of treating the expected overlap
+                    # as conflicting work.
+                    db.execute(
+                        "DELETE FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                        (registry_id, old_logical),
+                    )
+                    continue
+                if int(conflict["work_item_id"]) == work_item_id:
+                    db.execute(
+                        "DELETE FROM branch_work_items WHERE registry_id=? AND logical_key=?",
+                        (registry_id, old_logical),
+                    )
+                    continue
                 raise ValueError(f"Cannot repair duplicate {table} identity for {logical}")
             db.execute(
                 f"UPDATE {table} SET logical_key=? WHERE registry_id=? AND logical_key=?",
