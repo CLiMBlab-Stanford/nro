@@ -22,6 +22,7 @@ COMMAND_HELP = {
     "find": "List source BIDS images that match entity selectors.",
     "fw": "Manage private Flywheel credentials for configured servers.",
     "get": "Read live planner settings.",
+    "hotfix": "Apply a release-scoped repair for an identified historical defect.",
     "gc": "Remove unclaimed files from nro derivative namespaces.",
     "models": "Inspect, validate, register, and compile task models.",
     "migrate": "Preview or apply explicit metadata representation migrations.",
@@ -45,7 +46,7 @@ COMMAND_HELP = {
     "render": "Render selected Workbench maps as image files.",
 }
 
-CENTRAL_ONLY_COMMANDS = frozenset({"migrate", "project", "release"})
+CENTRAL_ONLY_COMMANDS = frozenset({"hotfix", "migrate", "project", "release"})
 
 
 def package_version() -> str:

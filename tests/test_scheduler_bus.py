@@ -596,7 +596,7 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][1]["timeout"] == 60.0
 
 
-@pytest.mark.parametrize("operation", ("dataset_migration", "project_rename"))
+@pytest.mark.parametrize("operation", ("dataset_migration", "hotfix", "project_rename"))
 def test_long_running_maintenance_requires_scheduler_service(
     tmp_path: Path, monkeypatch, operation: str
 ) -> None:
