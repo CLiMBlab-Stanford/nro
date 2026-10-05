@@ -27,7 +27,9 @@ class Hotfix(Protocol):
     HOTFIX_ID: str
     SUMMARY: str
 
-    def run(self, registry, *, projects: tuple[str, ...], execute: bool) -> HotfixReport: ...
+    def run(self, registry, *, projects: tuple[str, ...], execute: bool) -> HotfixReport:
+        """Preview or apply the repair to the selected projects."""
+        ...
 
 
 def available() -> dict[str, Hotfix]:
