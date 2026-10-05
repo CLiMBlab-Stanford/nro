@@ -181,7 +181,7 @@ nro project rename climblab_multisession climb --dry-run
 The default command opens a read-only preview in the pager and then asks for
 confirmation. It reports every managed directory move and the affected work
 items, ownership receipts, Workbench scenes, BIDSification records, structured
-metadata, raw-data links, validated nro-derivative links, and definition files.
+metadata, and definition files.
 Use `--dry-run` to stop after the preview or `-f`/`--force` to skip confirmation.
 The command is available only from the registered main checkout.
 
@@ -196,20 +196,12 @@ metadata, markup, and BIDSification project routing. Directory moves must be
 atomic on their filesystem. The command refuses symbolic-link roots, an existing
 destination, active demand, active attempts or resource steps, and active
 BIDSification for the source project.
-The inventory uses SQL artifact records and the fixed ownership and scene
-namespaces rather than walking scientific outputs. It traverses the raw BIDS tree
-only to find symbolic links, with `derivatives/` pruned, and separately traverses
-only `derivatives/nro` to validate its links. Third-party derivative trees and
-private WORK trees are not inspected for symbolic links. An unreadable inspected
-path blocks execution; an incomplete inventory is never treated as complete.
-
-Raw BIDS must not contain symbolic links; run `nro migrate -P PROJECT`
-first when it does. Symbolic links inside `derivatives/nro` must be relative and resolve
-within their BIDS project. They remain unchanged because the project tree moves
-as a unit. Invalid nro-owned links block the rename; links in third-party
-derivatives are outside nro's scope. Run `nro migrate -P PROJECT` first
-when an older project still contains a container-internal FreeSurfer `fsaverage`
-link.
+Run `nro migrate -P PROJECT` before renaming a project. Migration materializes
+raw-data links and repairs nonportable links in nro derivatives. Rename treats that
+validation as a prerequisite. It inventories SQL artifact records and the fixed
+ownership and scene namespaces, but it does not repeat migration's traversal of raw
+data or scientific derivatives. Relative links remain valid because each project tree
+moves as a unit.
 
 Numerical scientific outputs are not rewritten. Indexed structured derivative and
 WORK metadata containing absolute project paths is translated, and the registry

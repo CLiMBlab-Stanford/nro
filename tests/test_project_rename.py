@@ -2,15 +2,12 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
-
 from nro.configuration.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchTopology
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.project_rename import (
     ProjectMove,
-    _nro_derivative_symlinks,
     _prepare_rename,
     _project_inventory,
     _replace_project,
@@ -43,145 +40,23 @@ def test_translation_changes_identities_and_paths_without_rewriting_prose():
     assert _replace_project("/data/old", "old", "new", {}) == "/data/new"
 
 
-def test_project_inventory_fails_closed_on_unreadable_directory(tmp_path, monkeypatch):
-    source = tmp_path / "BIDS/old"
-    source.mkdir(parents=True)
-
-    def unreadable(_root, *, topdown, followlinks, onerror):
-        assert topdown is True and followlinks is False
-        onerror(PermissionError(13, "Permission denied", str(source / "private")))
-        yield  # pragma: no cover
-
-    monkeypatch.setattr("nro.orchestration.project_scope.os.walk", unreadable)
-
-    with pytest.raises(OSError, match="Cannot inventory project directory.*private"):
-        _project_inventory(
-            (ProjectMove(source, tmp_path / "BIDS/new"),),
-            bids_root=tmp_path / "BIDS",
-            old="old",
-            new="new",
-        )
-
-
-def test_project_inventory_requires_raw_link_migration(tmp_path):
+def test_project_inventory_does_not_walk_project_data_trees(tmp_path):
     source = tmp_path / "BIDS/old"
     target = tmp_path / "shared.nii.gz"
     target.write_bytes(b"image")
-    link = source / "sub-01/anat/sub-01_T1w.nii.gz"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(target)
-
-    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
-        _project_inventory(
-            (ProjectMove(source, tmp_path / "BIDS/new"),),
-            bids_root=tmp_path / "BIDS",
-            old="old",
-            new="new",
-        )
-
-
-def test_project_inventory_ignores_links_in_bids_code_directory(tmp_path):
-    source = tmp_path / "BIDS/old"
-    target = tmp_path / "shared.yml"
-    target.write_text("configuration")
-    link = source / "code/containers/.build/tool/assets/config.yml"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(target)
+    raw_link = source / "sourcedata/sub-01/ses-01/image.nii.gz"
+    raw_link.parent.mkdir(parents=True)
+    raw_link.symlink_to(target)
+    derivative_link = source / "derivatives/nro/anat/main/sub-01/anat/source.nii.gz"
+    derivative_link.parent.mkdir(parents=True)
+    derivative_link.symlink_to(target)
 
     inventory = _project_inventory(
         (ProjectMove(source, tmp_path / "BIDS/new"),),
-        bids_root=tmp_path / "BIDS",
         old="old",
-        new="new",
     )
 
     assert inventory.scanned == 0
-
-
-def test_project_inventory_ignores_unmanaged_project_namespaces(tmp_path):
-    source = tmp_path / "BIDS/old"
-    target = tmp_path / "shared.json"
-    target.write_text("metadata")
-    links = (
-        source / "misc/linked.json",
-        source / "derivatives/other/linked.json",
-        source / "sub-01/notes/linked.json",
-    )
-    for link in links:
-        link.parent.mkdir(parents=True)
-        link.symlink_to(target)
-
-    inventory = _project_inventory(
-        (ProjectMove(source, tmp_path / "BIDS/new"),),
-        bids_root=tmp_path / "BIDS",
-        old="old",
-        new="new",
-    )
-
-    assert inventory.scanned == 1  # The BIDS participant directory itself.
-
-
-def test_project_inventory_requires_sourcedata_link_migration(tmp_path):
-    source = tmp_path / "BIDS/old"
-    target = tmp_path / "source-session"
-    target.mkdir()
-    link = source / "sourcedata/sub-01/ses-01"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(target, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
-        _project_inventory(
-            (ProjectMove(source, tmp_path / "BIDS/new"),),
-            bids_root=tmp_path / "BIDS",
-            old="old",
-            new="new",
-        )
-
-
-def test_nro_derivative_links_are_validated_without_scanning_other_derivatives(tmp_path):
-    project = tmp_path / "BIDS/old"
-    target = project / "sub-01/anat/sub-01_T1w.nii.gz"
-    target.parent.mkdir(parents=True)
-    target.write_text("image")
-    owned = project / "derivatives/nro/anat/main/sub-01/source.nii.gz"
-    owned.parent.mkdir(parents=True)
-    owned.symlink_to("../../../../../sub-01/anat/sub-01_T1w.nii.gz")
-    unmanaged = project / "derivatives/other/absolute-link"
-    unmanaged.parent.mkdir(parents=True)
-    unmanaged.symlink_to(tmp_path / "outside")
-
-    links, scanned = _nro_derivative_symlinks((project,))
-
-    assert links == {owned: "../../../../../sub-01/anat/sub-01_T1w.nii.gz"}
-    assert scanned > 0
-
-
-@pytest.mark.parametrize("target", ("/outside/project", "../../../../outside"))
-def test_nro_derivative_links_reject_absolute_or_external_targets(tmp_path, target):
-    project = tmp_path / "BIDS/old"
-    link = project / "derivatives/nro/anat/source"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(target)
-
-    with pytest.raises(ValueError, match="must be relative|escapes its BIDS project"):
-        _nro_derivative_symlinks((project,))
-
-
-@pytest.mark.parametrize(
-    "target",
-    (
-        "/usr/local/freesurfer/subjects/fsaverage",
-        "/opt/freesurfer/freesurfer/subjects/fsaverage",
-    ),
-)
-def test_legacy_freesurfer_template_link_requires_dataset_migration(tmp_path, target):
-    project = tmp_path / "BIDS/old"
-    link = project / "derivatives/nro/anat/main/code/freesurfer/fsaverage"
-    link.parent.mkdir(parents=True)
-    link.symlink_to(target)
-
-    with pytest.raises(ValueError, match="nro migrate -P PROJECT"):
-        _nro_derivative_symlinks((project,))
 
 
 def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch, capsys):
@@ -195,7 +70,6 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
         "ownership_receipts": 1,
         "scene_files": 0,
         "metadata_files": 1,
-        "derivative_symlinks": 0,
         "ingestion_records": 0,
         "definition_files": [],
         "moves": [{"source": "/bids/old", "destination": "/bids/new"}],
@@ -237,7 +111,6 @@ def test_project_cli_discards_cancelled_preparation(tmp_path, monkeypatch, capsy
         "ownership_receipts": 0,
         "scene_files": 0,
         "metadata_files": 0,
-        "derivative_symlinks": 0,
         "ingestion_records": 0,
         "definition_files": [],
         "moves": [],
@@ -279,7 +152,6 @@ def test_project_cli_force_prints_preview_without_pager_or_prompt(tmp_path, monk
         "ownership_receipts": 0,
         "scene_files": 0,
         "metadata_files": 0,
-        "derivative_symlinks": 0,
         "ingestion_records": 0,
         "definition_files": [],
         "moves": [],
