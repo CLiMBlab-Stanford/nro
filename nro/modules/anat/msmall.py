@@ -24,6 +24,8 @@ from nro.engine.manifests import create_json_step
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 
+from .contract import msmall_structural_input_contract
+
 
 @dataclass(frozen=True)
 class MsmAllRun:
@@ -88,6 +90,7 @@ class MsmAllCalibration:
         """Return the scientific contract attached only to the MSMAll branch."""
         return {
             "anatomical_selection_strategy": self.selection_strategy,
+            "structural_inputs": msmall_structural_input_contract(),
             "calibration_runs": [run.contract(subject_dir) for run in self.runs],
             "parameters": dict(self.parameters),
             "atlas_registration": {
