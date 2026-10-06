@@ -575,7 +575,9 @@ def build_module(
                 if gm_mask is not None
                 else {}
             ),
-            "SmoothedInput": str(clean_input) if clean_input != source else None,
+            # The smoothed input is a private WORK intermediate. Record its
+            # stable filename without publishing a host-specific private path.
+            "SmoothedInput": clean_input.name if clean_input != source else None,
             "SmoothingFWHMMM": float(args.smoothing),
             "ConfoundsRegex": str(args.confounds_regex),
             **projection_metadata,

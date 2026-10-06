@@ -1,6 +1,7 @@
 """Clean selected ancestor data without writing into either producer's tree."""
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -145,9 +146,21 @@ def test_clean_graph_keeps_selected_inputs_and_owned_outputs(cleaning_case, spac
     assert any(events in step.inputs for step in graph.steps)
     assert count == (2 if space == "fsnative" else 1)
     assert not context.paths.output_project("demo").exists()
-    if space == "fsnative" and smoothing == 0:
+    if space == "fsnative":
         with job.run_context():
-            job.execute()
+            if smoothing == 0:
+                job.execute()
+            else:
+                for step in graph.steps:
+                    if step.name.startswith("Smooth Surface:"):
+                        source = next(
+                            path for path in step.inputs if path.name.endswith(".func.gii")
+                        )
+                        shutil.copy2(source, step.outputs[0])
+                    elif step.action is not None:
+                        step.action()
+                    else:
+                        pytest.fail(f"Unexpected external step in clean test: {step.name}")
         final = next(step for step in graph.steps if step.completion_boundary)
         assert final.outputs[0].is_file()
         for path in context.paths.output_project("demo").rglob("*.func.gii"):
@@ -157,6 +170,12 @@ def test_clean_graph_keeps_selected_inputs_and_owned_outputs(cleaning_case, spac
             sidecar = json.loads(sidecar_json_path(path).read_text())
             assert sidecar["Cleaning"]["RetainedFrames"] == 59
             assert sidecar["Cleaning"]["CleaningDefined"]
+            smoothed_input = sidecar["Cleaning"]["SmoothedInput"]
+            if smoothing:
+                assert smoothed_input.endswith("_desc-smoothedPreClean_bold.func.gii")
+                assert not Path(smoothed_input).is_absolute()
+            else:
+                assert smoothed_input is None
     else:
         graph.steps[0].action()
     assert {p: p.read_bytes() for root in sources for p in root.rglob("*") if p.is_file()} == before
