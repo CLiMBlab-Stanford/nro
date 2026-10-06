@@ -20,6 +20,7 @@ from nro.orchestration.project_rename import (
     execute,
 )
 from nro.orchestration.registry import Registry, utcnow
+from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
 def test_translation_changes_identities_and_paths_without_rewriting_prose():
@@ -81,7 +82,10 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
 
     monkeypatch.setattr(
         "nro.configuration.site.settings",
-        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+        lambda: (
+            {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
+            None,
+        ),
     )
     monkeypatch.setattr(project_cli, "page_text", pages.append)
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
@@ -120,7 +124,10 @@ def test_project_cli_discards_cancelled_preparation(tmp_path, monkeypatch, capsy
     calls = []
     monkeypatch.setattr(
         "nro.configuration.site.settings",
-        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+        lambda: (
+            {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
+            None,
+        ),
     )
     monkeypatch.setattr(project_cli, "page_text", lambda _text: None)
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
@@ -161,7 +168,10 @@ def test_project_cli_force_prints_preview_without_pager_or_prompt(tmp_path, monk
     calls = []
     monkeypatch.setattr(
         "nro.configuration.site.settings",
-        lambda: ({"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")}, None),
+        lambda: (
+            {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
+            None,
+        ),
     )
     monkeypatch.setattr(
         project_cli,
@@ -169,7 +179,8 @@ def test_project_cli_force_prints_preview_without_pager_or_prompt(tmp_path, monk
         lambda _text: (_ for _ in ()).throw(AssertionError("unexpected pager")),
     )
     monkeypatch.setattr(
-        "builtins.input", lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt"))
+        "builtins.input",
+        lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt")),
     )
 
     def maintenance(*_args, **fields):
@@ -328,6 +339,31 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
                 "{}",
             ),
         )
+        old_digest = old_key.split(":", 1)[-1][:16]
+        old_log = (
+            control / f"branches/main/events/old/anat/sub-01/sub-01/{old_digest}/work-item.log"
+        )
+        db.execute(
+            """INSERT INTO attempts
+               (work_item_id,worker_id,state,revision_fingerprint,memory_gb,oom_detected,
+                process_group_id,started_at,completed_at,error_type,error_message,log_path,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                item_id,
+                None,
+                "success",
+                "revision",
+                32,
+                0,
+                0,
+                now,
+                now,
+                None,
+                None,
+                str(old_log),
+                now,
+            ),
+        )
 
     changed_metadata = bids / "new/derivatives/nro/anat/main/sub-01/manifest.json"
     changed_metadata.parent.mkdir(parents=True)
@@ -359,6 +395,11 @@ def test_central_registry_translation_preserves_work_item_state(tmp_path):
         assert artifact["digest"] == hashlib.sha256(changed_metadata.read_bytes()).hexdigest()
         assert artifact["mtime_ns"] == changed_metadata.stat().st_mtime_ns
         assert db.execute("SELECT logical_key FROM work_item_execution").fetchone()[0] == new_key
+        attempt_log = db.execute("SELECT log_path FROM attempts").fetchone()[0]
+        new_digest = new_key.split(":", 1)[-1][:16]
+        assert attempt_log == str(
+            control / f"branches/main/events/new/anat/sub-01/sub-01/{new_digest}/work-item.log"
+        )
 
 
 def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, monkeypatch):
@@ -394,6 +435,53 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     derivative_link.symlink_to("../../../../../marker.txt")
     manifest = derivative / "sub-01_manifest.json"
     manifest.write_text(json.dumps({"input": str(bids / "old/marker.txt")}))
+    surface = derivative / "sub-01_hemi-L_white.surf.gii"
+    surface.write_text("surface")
+    lineage = "lineage-fingerprint"
+    old_key = work_item_key("old", "anat", lineage, "01", {})
+    now = utcnow()
+    with registry.connection(write=True) as db:
+        cursor = db.execute(
+            """INSERT INTO module_lineages
+               (configuration_class,config_id,config_fingerprint,lineage_fingerprint,
+                resolved_yaml,directory_label,created_at) VALUES (?,?,?,?,?,?,?)""",
+            ("anat", "main", "config", lineage, "{}\n", "main", now),
+        )
+        db.execute(
+            """INSERT INTO work_items
+               (work_item_key,module,module_lineage_id,project,participant,entities_json,
+                scope,artifact_state,artifact_reason,current_generation,resource_class,
+                memory_gb,max_memory_gb,revision_fingerprint,artifact_contract_json,
+                artifact_fingerprint,command_json,runtime_config_path,input_paths_json,
+                output_root,output_prefix,expected_outputs_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                old_key,
+                "anat",
+                cursor.lastrowid,
+                "old",
+                "01",
+                "{}",
+                "participant",
+                "fresh",
+                None,
+                1,
+                "cpu",
+                32,
+                256,
+                "revision",
+                "{}",
+                fingerprint({}),
+                "[]",
+                str(tmp_path / "runtime.yml"),
+                json.dumps([str(bids / "old/marker.txt")]),
+                str(derivative),
+                "sub-01",
+                json.dumps([str(manifest)]),
+                now,
+                now,
+            ),
+        )
     monkeypatch.setattr(
         "nro.orchestration.project_rename._registered_project_files",
         lambda _registry, _project: (derivative_link, manifest),
@@ -402,6 +490,35 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
         events = control / "branches" / name / "events/old"
         events.mkdir(parents=True)
         (events / "instance.log").write_text("log")
+    old_digest = old_key.split(":", 1)[-1][:16]
+    old_event = control / f"branches/main/events/old/anat/sub-01/sub-01/{old_digest}"
+    old_event.mkdir(parents=True)
+    old_graph = RunnerGraph("Anatomical Module")
+    old_graph.add(
+        Step.command_step(
+            (
+                "tool",
+                "--input",
+                str(bids / "old/marker.txt"),
+                "--output",
+                str(manifest),
+            ),
+            name="Existing anatomical step",
+            inputs=(bids / "old/marker.txt",),
+            outputs=(manifest,),
+            parameters={"reference": str(bids / "old/marker.txt")},
+        )
+    )
+    old_graph.add(
+        Step.command_step(
+            ("tool", "--input", str(manifest), "--output", str(surface)),
+            name="Dependent surface step",
+            inputs=(manifest,),
+            outputs=(surface,),
+        )
+    )
+    old_graph.freeze()
+    old_graph.reconcile_contract(old_event / "runner-contract.json", signature=old_key)
     values = {
         "bids": str(bids),
         "work": str(work),
@@ -440,6 +557,40 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
     assert json.loads(
         (bids / "new/derivatives/nro/anat/main/sub-01/sub-01_manifest.json").read_text()
     )["input"] == str(bids / "new/marker.txt")
+    new_key = work_item_key("new", "anat", lineage, "01", {})
+    new_digest = new_key.split(":", 1)[-1][:16]
+    new_contract = (
+        control / f"branches/main/events/new/anat/sub-01/sub-01/{new_digest}/runner-contract.json"
+    )
+    assert new_contract.is_file()
+    new_graph = RunnerGraph("Anatomical Module")
+    new_graph.add(
+        Step.command_step(
+            (
+                "tool",
+                "--input",
+                str(bids / "new/marker.txt"),
+                "--output",
+                str(bids / "new/derivatives/nro/anat/main/sub-01/sub-01_manifest.json"),
+            ),
+            name="Existing anatomical step",
+            inputs=(bids / "new/marker.txt",),
+            outputs=(bids / "new/derivatives/nro/anat/main/sub-01/sub-01_manifest.json",),
+            parameters={"reference": str(bids / "new/marker.txt")},
+        )
+    )
+    new_manifest = bids / "new/derivatives/nro/anat/main/sub-01/sub-01_manifest.json"
+    new_surface = bids / "new/derivatives/nro/anat/main/sub-01/sub-01_hemi-L_white.surf.gii"
+    new_graph.add(
+        Step.command_step(
+            ("tool", "--input", str(new_manifest), "--output", str(new_surface)),
+            name="Dependent surface step",
+            inputs=(new_manifest,),
+            outputs=(new_surface,),
+        )
+    )
+    new_graph.freeze()
+    assert new_graph.step_contract_changes(new_contract, signature=new_key) == {}
     for name in topology.records:
         assert not (control / "branches" / name / "events/old").exists()
         assert (control / "branches" / name / "events/new/instance.log").is_file()

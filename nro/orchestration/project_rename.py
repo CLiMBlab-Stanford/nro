@@ -17,7 +17,11 @@ import yaml
 
 from nro.configuration.branch_definitions import read_selection
 from nro.configuration.definition_migrations import MANIFEST, update_store
-from nro.configuration.site import make_site_document, read_site_definition, site_definition_path
+from nro.configuration.site import (
+    make_site_document,
+    read_site_definition,
+    site_definition_path,
+)
 from nro.configuration.store import fingerprint
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
@@ -30,6 +34,8 @@ from nro.orchestration.ownership import (
 )
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.registry import ensure_shared_directory
+from nro.orchestration.registry_work_items import work_item_relative_directory
+from nro.orchestration.runner_graph import relocate_runner_contract
 
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _ACTIVE = ("queued", "running", "cancel_requested")
@@ -61,6 +67,7 @@ class RenamePreparation:
     inventory: ProjectInventory
     ingestion: tuple[Path, ...]
     definition_updates: dict[Path, dict[Path, bytes]]
+    event_moves: tuple[ProjectMove, ...]
     topology_revision: str
     source_digests: dict[Path, str]
 
@@ -83,6 +90,10 @@ def encode_preparation(prepared: RenamePreparation) -> dict:
                 [[str(relative), content.decode("utf-8")] for relative, content in changes.items()],
             ]
             for root, changes in prepared.definition_updates.items()
+        ],
+        "event_moves": [
+            {"source": str(move.source), "destination": str(move.destination)}
+            for move in prepared.event_moves
         ],
         "topology_revision": prepared.topology_revision,
         "source_digests": [[str(path), digest] for path, digest in prepared.source_digests.items()],
@@ -112,6 +123,10 @@ def decode_preparation(value: object) -> RenamePreparation:
                 }
                 for root, changes in value["definition_updates"]
             },
+            tuple(
+                ProjectMove(Path(item["source"]), Path(item["destination"]))
+                for item in value.get("event_moves", ())
+            ),
             str(value["topology_revision"]),
             {Path(path): str(digest) for path, digest in value["source_digests"]},
         )
@@ -181,7 +196,10 @@ def _move_candidates(values: dict, topology, old: str, new: str) -> tuple[Projec
             roots.extend(
                 (
                     (paths.output_bids, paths.output_bids),
-                    (paths.private_project(old).parent, paths.private_project(new).parent),
+                    (
+                        paths.private_project(old).parent,
+                        paths.private_project(new).parent,
+                    ),
                 )
             )
         events = control.branch(name) / "events"
@@ -307,7 +325,9 @@ def _metadata_reference(request: tuple[Path, str]) -> Path | None:
     return path if f"/{old}/" in text or text.rstrip().endswith(f"/{old}") else None
 
 
-def _public_control_files(project_root: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+def _public_control_files(
+    project_root: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     """Return ownership receipts and scenes from their fixed public namespaces."""
     derivative_root = project_root / "derivatives" / "nro"
     receipts = tuple(
@@ -342,6 +362,7 @@ def _project_inventory(
     *,
     old: str,
     registry=None,
+    runner_contracts: Iterable[Path] = (),
     progress: Callable[[str], None] | None = None,
 ) -> ProjectInventory:
     """Inventory indexed metadata without walking project data trees."""
@@ -356,7 +377,7 @@ def _project_inventory(
         scenes.update(found_scenes)
 
     registered = _registered_project_files(registry, old) if registry is not None else ()
-    candidates = set(receipts) | set(scenes)
+    candidates = set(receipts) | set(scenes) | set(runner_contracts)
     candidates.update(
         path for path in registered if path.suffix.lower() in {".json", ".yaml", ".yml", ".scene"}
     )
@@ -420,11 +441,9 @@ def _rename_commit_journal(registry) -> Path | None:
 
 def _clear_rename_markers(registry) -> None:
     with registry.connection(write=True) as db:
-        db.execute(
-            """DELETE FROM metadata
+        db.execute("""DELETE FROM metadata
                WHERE key='project_rename_commit'
-                  OR (key='maintenance_mode' AND value='project rename')"""
-        )
+                  OR (key='maintenance_mode' AND value='project rename')""")
 
 
 def _recover_interrupted(registry, old: str, new: str) -> dict | None:
@@ -461,17 +480,25 @@ def _recover_interrupted(registry, old: str, new: str) -> dict | None:
         ProjectMove(Path(item["source"]), Path(item["destination"]))
         for item in record.get("moves", ())
     )
+    event_moves = tuple(
+        ProjectMove(Path(item["source"]), Path(item["destination"]))
+        for item in record.get("event_moves", ())
+    )
     source_missing = moves and all(
         not move.source.exists() and not move.source.is_symlink() for move in moves
     )
     destinations_present = moves and all(
         move.destination.exists() or move.destination.is_symlink() for move in moves
     )
+    events_moved = all(
+        move.destination.exists() or move.destination.is_symlink() for move in event_moves
+    )
     centrally_committed = committed_journal == journal_path
     if (
         (centrally_committed or (new_registered and not old_registered))
         and source_missing
         and destinations_present
+        and events_moved
     ):
         completed = {**record, "state": "complete", "recovered": True}
         atomic_write_json(journal_path, completed, sort_keys=True, mode=0o664, durable=True)
@@ -489,6 +516,10 @@ def _recover_interrupted(registry, old: str, new: str) -> dict | None:
         raise RuntimeError(
             f"Interrupted project rename has ambiguous registry identities; inspect {journal_path}"
         )
+    for move in reversed(event_moves):
+        source = _moved_event_source(move, old, new)
+        if move.destination.exists() and not source.exists():
+            move.destination.rename(source)
     for move in reversed(moves):
         if move.destination.exists() and not move.source.exists():
             move.destination.rename(move.source)
@@ -599,6 +630,49 @@ def _key_maps(
     return stored, mapping
 
 
+def _event_moves(
+    db: sqlite3.Connection,
+    control: ControlPaths,
+    old: str,
+    new: str,
+    stored_keys: dict[int, str],
+) -> tuple[ProjectMove, ...]:
+    """Return exact private event-directory moves for rekeyed work items."""
+    rows = db.execute(
+        """SELECT item.id,item.work_item_key,item.module,item.project,item.participant,
+                  item.entities_json,execution.branch
+             FROM work_items item
+             LEFT JOIN work_item_execution execution ON execution.work_item_id=item.id
+             WHERE item.project=? ORDER BY item.id""",
+        (old,),
+    ).fetchall()
+    moves: dict[Path, ProjectMove] = {}
+    destinations: dict[Path, Path] = {}
+    for row in rows:
+        old_record = dict(row)
+        new_record = {
+            **old_record,
+            "project": new,
+            "work_item_key": stored_keys[int(row["id"])],
+        }
+        branch = str(row["branch"] or "main")
+        event_root = control.branch(branch) / "events"
+        source = event_root / work_item_relative_directory(old_record)
+        destination = event_root / work_item_relative_directory(new_record)
+        if source == destination or not source.exists():
+            continue
+        if destination in destinations and destinations[destination] != source:
+            raise ValueError(f"Project rename event-directory collision: {destination}")
+        moves[source] = ProjectMove(source, destination)
+        destinations[destination] = source
+    return tuple(moves.values())
+
+
+def _moved_event_source(move: ProjectMove, old: str, new: str) -> Path:
+    """Return an event source after its enclosing project directory was renamed."""
+    return Path(_replace_project(str(move.source), old, new, {}))
+
+
 def _receipt_key_map(paths: Iterable[Path], new: str) -> dict[str, str]:
     """Derive logical identities for owned artifacts absent from live scheduler state."""
     mapping = {}
@@ -635,7 +709,8 @@ def _rename_blockers(registry, *, old: str, ingestion: Iterable[Path]) -> tuple[
         )
         active_requests = int(
             db.execute(
-                "SELECT COUNT(*) FROM requests WHERE project=? AND state='active'", (old,)
+                "SELECT COUNT(*) FROM requests WHERE project=? AND state='active'",
+                (old,),
             ).fetchone()[0]
         )
     active_ingestion = 0
@@ -696,16 +771,26 @@ def _prepare_rename(
 
     if progress is not None:
         progress("Checking project registry state")
+    branch_lineages = _branch_lineage_fingerprints(store)
+    control = ControlPaths(registry.paths.control)
     with registry.connection() as db:
         work_items = int(
             db.execute("SELECT COUNT(*) FROM work_items WHERE project=?", (old,)).fetchone()[0]
         )
-    ingestion = _ingestion_files(ControlPaths(registry.paths.control), topology, old)
+        stored_keys, _mapping = _key_maps(db, old, new, branch_lineages=branch_lineages)
+        event_moves = _event_moves(db, control, old, new, stored_keys)
+    runner_contracts = tuple(
+        move.source / "runner-contract.json"
+        for move in event_moves
+        if (move.source / "runner-contract.json").is_file()
+    )
+    ingestion = _ingestion_files(control, topology, old)
     blockers = list(_rename_blockers(registry, old=old, ingestion=ingestion))
     inventory = _project_inventory(
         moves,
         old=old,
         registry=registry,
+        runner_contracts=runner_contracts,
         progress=progress,
     )
     if progress is not None:
@@ -727,6 +812,7 @@ def _prepare_rename(
         "ownership_receipts": len(inventory.receipts),
         "scene_files": len(inventory.scenes),
         "metadata_files": len(inventory.metadata),
+        "event_directories": len(event_moves),
         "inventory_entries": inventory.scanned,
         "ingestion_records": len(ingestion),
         "definition_files": [
@@ -744,6 +830,7 @@ def _prepare_rename(
         inventory,
         ingestion,
         definition_updates,
+        event_moves,
         branch_snapshot.revision,
         source_digests,
     )
@@ -828,7 +915,10 @@ def _rewrite_branch_registry(scientific, mapping: dict[str, str], old: str, new:
                 # A branch registry may retain planning history after both its
                 # scheduler record and artifact were purged. It has no durable
                 # identity to migrate and should not survive the rename.
-                db.execute("DELETE FROM work_items WHERE work_item_key=?", (row["work_item_key"],))
+                db.execute(
+                    "DELETE FROM work_items WHERE work_item_key=?",
+                    (row["work_item_key"],),
+                )
                 changed += 1
                 continue
             translated = _translate(contract, old, new, mapping)
@@ -837,7 +927,13 @@ def _rewrite_branch_registry(scientific, mapping: dict[str, str], old: str, new:
             db.execute(
                 """UPDATE work_items SET work_item_key=?,contract_json=?,
                           contract_fingerprint=?,observation_json=? WHERE work_item_key=?""",
-                (key, encoded, fingerprint(translated), observation, row["work_item_key"]),
+                (
+                    key,
+                    encoded,
+                    fingerprint(translated),
+                    observation,
+                    row["work_item_key"],
+                ),
             )
             changed += 1
         # Planning caches are performance data keyed by source paths and project identity.
@@ -858,6 +954,10 @@ def _rewrite_central(
     branch_lineages: dict[tuple[str, str, str], str] | None = None,
 ) -> tuple[int, dict[str, str]]:
     stored, mapping = _key_maps(db, old, new, branch_lineages=branch_lineages)
+    old_keys = {
+        int(row["id"]): str(row["work_item_key"])
+        for row in db.execute("SELECT id,work_item_key FROM work_items WHERE project=?", (old,))
+    }
     if db.execute("SELECT 1 FROM bids_projects WHERE project=?", (new,)).fetchone():
         raise ValueError(f"Destination project is already registered: {new}")
     project = db.execute("SELECT * FROM bids_projects WHERE project=?", (old,)).fetchone()
@@ -935,8 +1035,14 @@ def _rewrite_central(
                 (*updates.values(), row[primary]),
             )
     path_columns = {
-        "work_items": (("runtime_config_path", "output_root", "artifact_reason"), "project=?"),
-        "artifacts": (("path",), "work_item_id IN (SELECT id FROM work_items WHERE project=?)"),
+        "work_items": (
+            ("runtime_config_path", "output_root", "artifact_reason"),
+            "project=?",
+        ),
+        "artifacts": (
+            ("path",),
+            "work_item_id IN (SELECT id FROM work_items WHERE project=?)",
+        ),
         "attempts": (
             ("log_path", "error_message"),
             "work_item_id IN (SELECT id FROM work_items WHERE project=?)",
@@ -950,8 +1056,17 @@ def _rewrite_central(
                 (f"/{old}/", f"/{new}/", old, f"%/{old}/%"),
             )
     for item_id, key in stored.items():
+        old_digest = old_keys[item_id].rsplit(":", 1)[-1][:16]
+        new_digest = key.rsplit(":", 1)[-1][:16]
+        if old_digest != new_digest:
+            db.execute(
+                """UPDATE attempts SET log_path=replace(log_path,?,?)
+                   WHERE work_item_id=? AND log_path LIKE ?""",
+                (f"/{old_digest}/", f"/{new_digest}/", item_id, f"%/{old_digest}/%"),
+            )
         db.execute(
-            "UPDATE work_items SET work_item_key=?,project=? WHERE id=?", (key, new, item_id)
+            "UPDATE work_items SET work_item_key=?,project=? WHERE id=?",
+            (key, new, item_id),
         )
     for table in ("work_item_execution", "compiled_revisions", "branch_work_items"):
         primary = "_nro_rowid"
@@ -1083,8 +1198,23 @@ def execute(
                 0
             ]
         )
+        current_stored_keys, _mapping = _key_maps(
+            database,
+            old,
+            new,
+            branch_lineages=_branch_lineage_fingerprints(current_store),
+        )
+        current_event_moves = _event_moves(
+            database,
+            ControlPaths(registry.paths.control),
+            old,
+            new,
+            current_stored_keys,
+        )
     if current_work_items != int(report["work_items"]):
         raise ValueError("Project work items changed after the project rename preview")
+    if current_event_moves != prepared.event_moves:
+        raise ValueError("Project work-item event directories changed after the rename preview")
     for path, expected in prepared.source_digests.items():
         current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if current != expected:
@@ -1102,6 +1232,7 @@ def execute(
     metadata = prepared.inventory.metadata
     ingestion = prepared.ingestion
     definition_updates = prepared.definition_updates
+    event_moves = prepared.event_moves
     report_phase("Preparing project rename recovery journal")
     journal = ControlPaths(registry.paths.control).shared / "project-renames" / uuid.uuid4().hex
     ensure_shared_directory(journal)
@@ -1154,6 +1285,10 @@ def execute(
         ],
         "scheduler_backup": str(journal / "scheduler.sqlite3"),
         "branch_backups": {name: str(path) for name, path in branch_backups.items()},
+        "event_moves": [
+            {"source": str(move.source), "destination": str(move.destination)}
+            for move in event_moves
+        ],
     }
     atomic_write_json(
         journal / "journal.json",
@@ -1164,6 +1299,7 @@ def execute(
     )
 
     moved: list[ProjectMove] = []
+    moved_events: list[ProjectMove] = []
     created_receipts: tuple[Path, ...] = ()
     with registry.connection(write=True) as db:
         existing = db.execute("SELECT value FROM metadata WHERE key='maintenance_mode'").fetchone()
@@ -1185,9 +1321,9 @@ def execute(
         mapping.update(_receipt_key_map(receipts, new))
         for name, record in topology.records.items():
             local_mapping = {
-                key: value.split(":", 1)[-1]
-                if value.startswith(record.registry_id + ":")
-                else value
+                key: (
+                    value.split(":", 1)[-1] if value.startswith(record.registry_id + ":") else value
+                )
                 for key, value in mapping.items()
             }
             _rewrite_branch_registry(store.registry(name), local_mapping, old, new)
@@ -1197,22 +1333,44 @@ def execute(
             value = _translate(json.loads(path.read_text(encoding="utf-8")), old, new, mapping)
             atomic_write_json(path, value, sort_keys=True, mode=0o660, durable=True)
         for path in metadata:
-            text = path.read_text(encoding="utf-8")
-            translated = _replace_project(text, old, new, mapping)
-            if translated != text:
-                from nro.engine.io import atomic_write_text
-
-                atomic_write_text(
+            if path.name == "runner-contract.json":
+                contract = json.loads(path.read_text(encoding="utf-8"))
+                translated = relocate_runner_contract(
+                    contract,
+                    lambda value: _replace_project(value, old, new, mapping),
+                )
+                atomic_write_json(
                     path,
                     translated,
+                    sort_keys=True,
                     mode=path.stat().st_mode & 0o777,
                     durable=True,
                 )
+            else:
+                text = path.read_text(encoding="utf-8")
+                translated = _replace_project(text, old, new, mapping)
+                if translated != text:
+                    from nro.engine.io import atomic_write_text
+
+                    atomic_write_text(
+                        path,
+                        translated,
+                        mode=path.stat().st_mode & 0o777,
+                        durable=True,
+                    )
         _receipt_count, created_receipts = _rewrite_receipts(receipts, old, new, mapping)
         report_phase(f"Moving managed project directories ({len(moves):,} directories)")
         for move in moves:
             move.source.rename(move.destination)
             moved.append(move)
+        report_phase(f"Rekeying private work-item histories ({len(event_moves):,} directories)")
+        for move in event_moves:
+            source = _moved_event_source(move, old, new)
+            if move.destination.exists() or move.destination.is_symlink():
+                raise ValueError(f"Renamed event directory already exists: {move.destination}")
+            move.destination.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(move.destination)
+            moved_events.append(ProjectMove(source, move.destination))
         changed_metadata = tuple(
             Path(_replace_project(str(path), old, new, {})) for path in metadata
         )
@@ -1234,6 +1392,9 @@ def execute(
         if _rename_commit_journal(registry) == journal / "journal.json":
             completed = True
         else:
+            for move in reversed(moved_events):
+                if move.destination.exists() and not move.source.exists():
+                    move.destination.rename(move.source)
             for move in reversed(moved):
                 if move.destination.exists() and not move.source.exists():
                     move.destination.rename(move.source)

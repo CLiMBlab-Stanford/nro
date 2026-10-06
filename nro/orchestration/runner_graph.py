@@ -105,6 +105,59 @@ def _normalized_command(command: Sequence[str]) -> list[str]:
     ]
 
 
+def relocate_runner_contract(
+    contract: Mapping[str, object], rewrite_path: Callable[[str], str]
+) -> dict[str, object]:
+    """Relocate declared paths and path-derived node identities without losing success."""
+    relocated = dict(contract)
+    id_map: dict[str, str] = {}
+    collections: dict[str, list[dict[str, object]]] = {}
+    for collection in ("topology", "nodes"):
+        raw_nodes = contract.get(collection)
+        nodes = (
+            [dict(node) for node in raw_nodes if isinstance(node, Mapping)]
+            if isinstance(raw_nodes, list)
+            else []
+        )
+        for node in nodes:
+            path_changed = False
+            old_outputs = node.get("outputs")
+            old_paths = (
+                [Path(value) for value in old_outputs if isinstance(value, str)]
+                if isinstance(old_outputs, list)
+                else []
+            )
+            for field_name in ("inputs", "outputs"):
+                values = node.get(field_name)
+                if isinstance(values, list):
+                    translated = [
+                        rewrite_path(value) if isinstance(value, str) else value for value in values
+                    ]
+                    path_changed = path_changed or translated != values
+                    node[field_name] = translated
+            old_id = node.get("id")
+            if isinstance(old_id, str) and old_paths and old_id == RunnerGraph._node_id(old_paths):
+                new_outputs = node.get("outputs")
+                if isinstance(new_outputs, list):
+                    new_id = RunnerGraph._node_id(
+                        [Path(value) for value in new_outputs if isinstance(value, str)]
+                    )
+                    id_map[old_id] = new_id
+                    node["id"] = new_id
+            if path_changed:
+                node["accept_relocated_signatures"] = True
+        collections[collection] = nodes
+    for nodes in collections.values():
+        for node in nodes:
+            dependencies = node.get("dependencies")
+            if isinstance(dependencies, list):
+                node["dependencies"] = [
+                    id_map.get(str(value), str(value)) for value in dependencies
+                ]
+    relocated.update(collections)
+    return relocated
+
+
 def path_mtime(path: Path) -> float:
     """Return the latest mtime beneath an artifact without failing on absence."""
     if not path.exists():
@@ -768,6 +821,12 @@ class RunnerGraph:
                 for key, value in _canonical_contract_node(current).items()
                 if key != "name"
             }
+            if comparable_old.pop("accept_relocated_signatures", False):
+                for field_name in ("command_signature", "scientific_signature"):
+                    if field_name in comparable_current:
+                        comparable_old[field_name] = comparable_current[field_name]
+                    else:
+                        comparable_old.pop(field_name, None)
             if comparable_old != comparable_current:
                 changed[step.id] = "declaration_changed"
         return changed

@@ -27,7 +27,10 @@ def build_parser(*, prog: str = "nro project") -> argparse.ArgumentParser:
     mode = rename.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without renaming")
     mode.add_argument(
-        "-f", "--force", action="store_true", help="Rename without interactive confirmation"
+        "-f",
+        "--force",
+        action="store_true",
+        help="Rename without interactive confirmation",
     )
     mode.add_argument("--execute", dest="force", action="store_true", help=argparse.SUPPRESS)
     rename.add_argument("--json", action="store_true", help="Print machine-readable output")
@@ -41,6 +44,7 @@ def _render(result: dict) -> str:
     lines.append(f"Ownership receipts: {result['ownership_receipts']}")
     lines.append(f"Workbench scenes: {result['scene_files']}")
     lines.append(f"Structured metadata files: {result['metadata_files']}")
+    lines.append(f"Private work-item histories: {result.get('event_directories', 0)}")
     lines.append(f"BIDSification records: {result['ingestion_records']}")
     lines.append(f"Definition files: {len(result['definition_files'])}")
     lines.extend(("", "Managed directory moves:"))
