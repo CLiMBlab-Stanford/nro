@@ -309,12 +309,16 @@ repair_atlas_registration() {
 }
 
 run_freesurfer() {
+    # A failed recon-all tree is not a trustworthy checkpoint. The enclosing
+    # stage marker, rather than FreeSurfer's partial directory, governs reuse.
+    rm -rf "$session_root/T1w/$session"
     "$HCPPIPEDIR/FreeSurfer/FreeSurferPipeline.sh" \
         --session="$session" --session-dir="$session_root/T1w" \
         --t1w-image="$session_root/T1w/T1w_acpc_dc_restore.nii.gz" \
         --t1w-brain="$session_root/T1w/T1w_acpc_dc_restore_brain.nii.gz" \
         --t2w-image="$session_root/T1w/T2w_acpc_dc_restore.nii.gz" \
-        --seed=1234 --processing-mode=HCPStyleData
+        --seed=1234 --processing-mode=HCPStyleData \
+        --extra-reconall-arg=-notal-check
 }
 
 run_postfreesurfer() {

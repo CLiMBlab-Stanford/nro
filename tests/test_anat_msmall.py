@@ -353,3 +353,10 @@ def test_msmall_atlas_validation_rejects_folded_transform(tmp_path: Path) -> Non
 
     assert report["valid"] is False
     assert report["jacobian_nonpositive_fraction"] > 0
+
+
+def test_msmall_freesurfer_restarts_cleanly_and_bypasses_legacy_talairach_gate() -> None:
+    driver = (Path(__file__).parents[1] / "nro/modules/anat/msmall_driver.sh").read_text()
+
+    assert 'rm -rf "$session_root/T1w/$session"' in driver
+    assert "--extra-reconall-arg=-notal-check" in driver
