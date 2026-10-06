@@ -122,7 +122,9 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
     removed_links = int(
         database.execute(
             """DELETE FROM request_work_items
-               WHERE request_id IN (SELECT id FROM requests WHERE state!='active')"""
+               WHERE request_id IN (
+                   SELECT id FROM requests WHERE state NOT IN ('active','stopped')
+               )"""
         ).rowcount
     )
     database.execute("DROP TABLE IF EXISTS temp.compaction_terminals")
@@ -245,7 +247,8 @@ def _remove_unused_work_items(database: sqlite3.Connection) -> int:
                     WHERE state IN ('queued','running','cancel_requested')
                UNION SELECT link.work_item_id FROM request_work_items link
                     JOIN requests request ON request.id=link.request_id
-                    WHERE request.state='active' AND link.demand_state='active'
+                    WHERE request.state IN ('active','stopped')
+                      AND link.demand_state IN ('active','stopped')
                UNION SELECT edge.upstream_work_item_id
                     FROM work_item_dependencies edge
                     JOIN retained child ON child.id=edge.work_item_id

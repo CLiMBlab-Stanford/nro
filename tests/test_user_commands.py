@@ -1552,12 +1552,16 @@ def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) ->
             "demo",
         ]
     )
-    assert "Cancelled" in capsys.readouterr().out
+    assert "Stopped" in capsys.readouterr().out
     for mode in ([], ["--update"], []):
         status_main(["-p", "01", "-P", "demo", "--json", *mode])
         rows = json.loads(capsys.readouterr().out)["work_items"]
-        assert {row["status"] for row in rows} == {"Missing", "Stale"}
+        assert {row["status"] for row in rows} == {"Stopped"}
         assert all(row["reason"] for row in rows)
+
+    run_main(["--resume", "-p", "01", "-P", "demo", "-m", "func", "--no-submit", "--json"])
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed["resumed"] == 1
 
 
 def test_set_updates_active_concurrency_without_creating_new_demand(

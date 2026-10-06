@@ -313,13 +313,11 @@ def status(
 
 
 def stop(registry, *, checkout: Path, selection: dict) -> dict:
-    """Cancel selected branch demand without cancelling another branch's requests."""
+    """Stop selected branch demand without discarding its execution intent."""
     branches = BranchStore(registry.paths.control)
     topology = branches.read().topology
     name = topology.registered_checkout(checkout)
-    return registry.request_cancellation(
-        **selection, branch_registry_id=topology.records[name].registry_id
-    )
+    return registry.request_stop(**selection, branch_registry_id=topology.records[name].registry_id)
 
 
 def logs(

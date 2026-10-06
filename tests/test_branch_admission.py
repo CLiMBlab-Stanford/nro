@@ -891,7 +891,7 @@ def test_central_status_and_stop_are_branch_scoped(setup, monkeypatch):
     with registry.connection() as db:
         assert (
             db.execute("SELECT state FROM requests WHERE id=?", (one[-1],)).fetchone()[0]
-            == "cancelled"
+            == "stopped"
         )
         assert (
             db.execute("SELECT state FROM requests WHERE id=?", (two[-1],)).fetchone()[0]
