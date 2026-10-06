@@ -2541,7 +2541,7 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             return self._record_oom_locked(db, attempt_id, message=message)
 
-    def request_cancellation(
+    def _change_request_demand(
         self,
         *,
         participants: Sequence[str] = (),
@@ -2554,11 +2554,15 @@ class Registry(WorkflowRegistry):
         force: bool = False,
         branch_registry_id: str | None = None,
         request_ids: Sequence[str] = (),
+        demand_state: str,
+        request_state: str,
+        reason: str,
+        resource_reason: str,
     ) -> dict[str, int]:
-        """Cancel matching demand and signal attempts no longer needed by any request.
+        """Change matching demand and signal attempts no longer needed by any request.
 
         Normally only requests owned by ``user_name`` are affected. ``force``
-        deliberately removes matching demand from every user's active request.
+        deliberately changes matching demand from every user's active request.
         """
         from nro.engine.cli import matches_module_lineage
 
@@ -2657,14 +2661,14 @@ class Registry(WorkflowRegistry):
             if not affected_requests:
                 return {"work_items": 0, "requests": 0, "attempts": 0}
             cursor = db.execute(
-                f"""UPDATE request_work_items SET demand_state='cancelled'
+                f"""UPDATE request_work_items SET demand_state=?
                     WHERE work_item_id IN ({work_item_placeholders})
                       AND request_id IN ({request_placeholders})
                       AND demand_state='active'""",
-                values,
+                (demand_state, *values),
             )
             demand_count = cursor.rowcount
-            cancelled_requests: list[str] = []
+            terminal_requests: list[str] = []
             edges = [
                 (int(row["work_item_id"]), int(row["upstream_work_item_id"]))
                 for row in db.execute(
@@ -2682,15 +2686,15 @@ class Registry(WorkflowRegistry):
                 }
                 if not active_targets:
                     pruned = db.execute(
-                        "UPDATE request_work_items SET demand_state='cancelled' WHERE request_id=? AND demand_state='active'",
-                        (request_id,),
+                        "UPDATE request_work_items SET demand_state=? WHERE request_id=? AND demand_state='active'",
+                        (demand_state, request_id),
                     ).rowcount
                     demand_count += pruned
                     db.execute(
-                        "UPDATE requests SET state='cancelled', updated_at=? WHERE id=?",
-                        (utcnow(), request_id),
+                        "UPDATE requests SET state=?, updated_at=? WHERE id=?",
+                        (request_state, utcnow(), request_id),
                     )
-                    cancelled_requests.append(request_id)
+                    terminal_requests.append(request_id)
                     continue
                 required = set(active_targets)
                 changed = True
@@ -2711,42 +2715,107 @@ class Registry(WorkflowRegistry):
                 if orphaned:
                     orphan_placeholders = ",".join("?" for _ in orphaned)
                     demand_count += db.execute(
-                        f"""UPDATE request_work_items SET demand_state='cancelled'
+                        f"""UPDATE request_work_items SET demand_state=?
                             WHERE request_id=? AND work_item_id IN ({orphan_placeholders})
                               AND demand_state='active'""",
-                        (request_id, *tuple(orphaned)),
+                        (demand_state, request_id, *tuple(orphaned)),
                     ).rowcount
             cursor = db.execute(
                 """
                 UPDATE attempts SET state='cancel_requested',
                     error_type='UserCancelled',
-                    error_message='Cancellation requested directly by a user'
+                    error_message=?
                 WHERE state IN ('queued', 'running')
                   AND NOT EXISTS (
                       SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
                       WHERE rt.work_item_id=attempts.work_item_id AND rt.demand_state='active' AND r.state='active'
                   )
-                """
+                """,
+                (reason,),
             )
             db.execute(
                 """UPDATE resource_step_tasks SET state='cancelled',completed_at=?,updated_at=?,
                            error_type='UserCancelled',
-                           error_message='Demand was cancelled before the resource step ran'
+                           error_message=?
                     WHERE state='pending' AND NOT EXISTS (
                         SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
                         WHERE rt.work_item_id=resource_step_tasks.work_item_id
                           AND rt.demand_state='active' AND r.state='active'
                     )""",
-                (utcnow(), utcnow()),
+                (utcnow(), utcnow(), resource_reason),
             )
             from nro.orchestration.request_plans import compact_terminal_plans
 
             compact_terminal_plans(db)
             return {
                 "work_items": demand_count,
-                "requests": len(cancelled_requests),
+                "requests": len(terminal_requests),
                 "attempts": cursor.rowcount,
             }
+
+    def request_cancellation(
+        self,
+        *,
+        participants: Sequence[str] = (),
+        modules: Sequence[str] = (),
+        workflows: Sequence[str] = (),
+        lineages: Sequence[str] = (),
+        selectors: dict[str, Sequence[str] | str | None] | None = None,
+        include_dependents: bool = True,
+        user_name: str | None = None,
+        force: bool = False,
+        branch_registry_id: str | None = None,
+        request_ids: Sequence[str] = (),
+    ) -> dict[str, int]:
+        """Cancel matching demand and discard its future execution intent."""
+        return self._change_request_demand(
+            participants=participants,
+            modules=modules,
+            workflows=workflows,
+            lineages=lineages,
+            selectors=selectors,
+            include_dependents=include_dependents,
+            user_name=user_name,
+            force=force,
+            branch_registry_id=branch_registry_id,
+            request_ids=request_ids,
+            demand_state="cancelled",
+            request_state="cancelled",
+            reason="Cancellation requested directly by a user",
+            resource_reason="Demand was cancelled before the resource step ran",
+        )
+
+    def request_stop(
+        self,
+        *,
+        participants: Sequence[str] = (),
+        modules: Sequence[str] = (),
+        workflows: Sequence[str] = (),
+        lineages: Sequence[str] = (),
+        selectors: dict[str, Sequence[str] | str | None] | None = None,
+        include_dependents: bool = True,
+        user_name: str | None = None,
+        force: bool = False,
+        branch_registry_id: str | None = None,
+        request_ids: Sequence[str] = (),
+    ) -> dict[str, int]:
+        """Stop matching work while retaining its demand for later resumption."""
+        return self._change_request_demand(
+            participants=participants,
+            modules=modules,
+            workflows=workflows,
+            lineages=lineages,
+            selectors=selectors,
+            include_dependents=include_dependents,
+            user_name=user_name,
+            force=force,
+            branch_registry_id=branch_registry_id,
+            request_ids=request_ids,
+            demand_state="stopped",
+            request_state="stopped",
+            reason="Work was stopped directly by a user",
+            resource_reason="Work was stopped before the resource step ran",
+        )
 
     def reconcile_requests(self) -> None:
         """Update request states from their demanded work items' current outcomes."""

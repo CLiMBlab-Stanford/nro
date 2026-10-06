@@ -1829,6 +1829,42 @@ def test_targeted_cancellation_prunes_orphaned_dependencies(tmp_path: Path) -> N
     assert demands[("02", "networks")] == "active"
 
 
+def test_stop_preserves_demand_as_resumable_state(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "7" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "result.txt",
+    )
+    request_id = registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+
+    result = registry.request_stop(modules=("networks",))
+
+    assert result == {"work_items": 1, "requests": 1, "attempts": 0}
+    with registry.connection() as db:
+        request = db.execute("SELECT state FROM requests WHERE id=?", (request_id,)).fetchone()
+        demand = db.execute(
+            "SELECT demand_state FROM request_work_items WHERE request_id=?", (request_id,)
+        ).fetchone()
+    assert request is not None and request["state"] == "stopped"
+    assert demand is not None and demand["demand_state"] == "stopped"
+    assert registry.work_item_status_snapshot()[0]["status"] == "Stopped"
+
+
 def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)

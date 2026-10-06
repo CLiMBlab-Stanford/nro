@@ -1,4 +1,4 @@
-"""Cancel selected nro derivative demand and its downstream dependents."""
+"""Stop selected nro work and its downstream dependents without removing demand."""
 
 from __future__ import annotations
 
@@ -34,20 +34,20 @@ def build_parser(*, prog: str = "nro.bin.stop") -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help=(
-            "Cancel matching demand from every user and stop the shared attempt; "
+            "Stop matching demand from every user and stop the shared attempt; "
             "does not delete completed derivatives or registry history"
         ),
     )
     parser.add_argument(
         "--only",
         action="store_true",
-        help="Cancel only the selected derivative rather than its downstream dependents",
+        help="Stop only the selected derivative rather than its downstream dependents",
     )
     return parser
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
-    """Cancel selected demand or shut down workers without deleting artifacts.
+    """Stop selected work or shut down workers without deleting artifacts or demand.
 
     argv excludes the executable name; None reads the process arguments.
     prog controls help/error labels. Invalid arguments raise SystemExit.
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             for key, value in result.items():
                 total[key] += value
         print(
-            f"Cancelled {total['work_items']} work-item demand(s) across {total['requests']} request(s); "
+            f"Stopped {total['work_items']} work-item demand(s) across {total['requests']} request(s); "
             f"signalled {total['attempts']} running attempt(s)."
         )
         return
@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
     central_registry = Registry.for_project(projects[0], bids_root=bids_root)
     for project in projects:
         registry = Registry.for_project(project, bids_root=bids_root)
-        result = registry.request_cancellation(
+        result = registry.request_stop(
             participants=selection.participants,
             modules=modules,
             workflows=selection.workflows,
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
             submission_id, state="cancelled" if result.returncode == 0 else "error"
         )
     print(
-        f"{'Force-cancelled' if args.force else 'Cancelled'} {total['work_items']} work-item demand(s) "
+        f"Stopped {total['work_items']} work-item demand(s) "
         f"across {total['requests']} request(s); "
         f"signalled {total['attempts']} running attempt(s)."
     )

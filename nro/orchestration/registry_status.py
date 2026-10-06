@@ -54,6 +54,8 @@ def work_item_rows(database: sqlite3.Connection, *, status_only: bool = False) -
             SELECT link.work_item_id,
                    MAX(CASE WHEN link.demand_state='active' AND request.state='active'
                             THEN 1 ELSE 0 END) AS demanded,
+                   MAX(CASE WHEN link.demand_state='stopped'
+                            THEN 1 ELSE 0 END) AS stopped,
                    MAX(CASE WHEN link.demand_state='active' AND request.state='active'
                                   AND request.updated_at > COALESCE(
                                       CASE WHEN attempt.state='cancelled'
@@ -75,6 +77,7 @@ def work_item_rows(database: sqlite3.Connection, *, status_only: bool = False) -
                    WHERE binding.module_lineage_id=t.module_lineage_id
                ) AS recomputable,
                COALESCE(requests.demanded, 0) AS demanded,
+               COALESCE(requests.stopped, 0) AS stopped,
                attempt.state AS attempt_state,
                attempt.error_type,
                attempt.error_message,
@@ -250,6 +253,8 @@ def project_work_item_status(
             and not item.get("demanded")
         ):
             state = "Missing"
+        elif item.get("stopped"):
+            state = "Stopped"
         elif attempt == "error":
             state = "Timeout" if item.get("error_type") == "Timeout" else "Error"
         elif item.get("demanded"):

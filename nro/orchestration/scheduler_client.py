@@ -708,7 +708,7 @@ def status(control: Path, bids_root: Path, *, checkout: Path, mode: str) -> dict
 
 
 def stop(control: Path, bids_root: Path, *, checkout: Path, project: str, selection: dict) -> dict:
-    """Cancel matching demand through the branch-scoped service operation."""
+    """Stop matching work through the branch-scoped service operation."""
     return exchange(
         # Cancellation must remain available while a shared checkout is ahead
         # of its active release.  The endpoint still uses the pinned active
