@@ -40,17 +40,38 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 10
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 11
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert migrated["processing"]["source_markup"]["msmall"] == {"rest": []}
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=10), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=11), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
+
+
+def test_msmall_structural_input_migration_invalidates_only_msmall_anatomy() -> None:
+    historical = _anat_contract(version=10)
+    historical["processing"]["msmall"] = {"parameters": {}}
+    current = deepcopy(historical)
+    current["processing"]["msmall"]["structural_inputs"] = {
+        "t1w": "pose_normalized_participant_reference",
+        "t2w": "pose_normalized_registered_to_t1w",
+    }
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+    ordinary, _ = migrate_contract(_anat_contract(version=10))
+
+    assert migrated_historical != migrated_current
+    assert migrated_historical["processing"]["msmall"]["structural_inputs"] == {
+        "t1w": "selected_raw_source_images",
+        "t2w": "selected_raw_source_images",
+    }
+    assert "msmall" not in ordinary["processing"]
 
 
 def test_metric_structure_migration_invalidates_anatomy_without_metadata() -> None:

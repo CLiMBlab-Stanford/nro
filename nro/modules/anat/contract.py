@@ -97,6 +97,14 @@ def pose_normalization_contract() -> dict[str, object]:
     }
 
 
+def msmall_structural_input_contract() -> dict[str, str]:
+    """Describe the participant references supplied to HCP structural processing."""
+    return {
+        "t1w": "pose_normalized_participant_reference",
+        "t2w": "pose_normalized_registered_to_t1w",
+    }
+
+
 def anatomical_output_contract(*, lesion: bool = False, msmall: bool = False) -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     fields = dict(ANATOMICAL_MANIFEST_FIELDS)

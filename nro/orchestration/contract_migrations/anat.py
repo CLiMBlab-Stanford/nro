@@ -3,6 +3,7 @@
 from nro.modules.anat.contract import (
     FASTSURFER_RECONSTRUCTION_VOXEL_SIZE_MM,
     bias_correction_contract,
+    msmall_structural_input_contract,
     surface_reconstruction_contract,
 )
 
@@ -171,6 +172,20 @@ CHAIN = ContractMigrationChain(
                     "msmall",
                     default=_MSMALL_DEFAULT,
                     historical=_MSMALL_DEFAULT,
+                ),
+            ),
+        ),
+        ContractMigration(
+            destination=11,
+            summary="Use pose-normalized participant references for MSMAll structure",
+            contract=(
+                AddField(
+                    "processing.msmall.structural_inputs",
+                    default=msmall_structural_input_contract(),
+                    historical={
+                        "t1w": "selected_raw_source_images",
+                        "t2w": "selected_raw_source_images",
+                    },
                 ),
             ),
         ),
