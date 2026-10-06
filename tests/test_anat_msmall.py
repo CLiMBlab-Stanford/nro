@@ -174,7 +174,7 @@ def test_msmall_rejects_lesion_and_fastsurfer_routes(tmp_path: Path) -> None:
         )
 
 
-def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path) -> None:
+def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path, monkeypatch) -> None:
     _, t1w, t2w, _, _, _, markup = _calibration_subject(tmp_path)
     calibration = resolve_msmall_calibration(
         markup=markup,
@@ -190,6 +190,10 @@ def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path) -
     spheres = {hemi: tmp_path / f"{hemi}.sphere.gii" for hemi in ("lh", "rh")}
     for sphere in spheres.values():
         sphere.write_text("sphere")
+    structural_t1w = tmp_path / "out/sub-01_desc-preproc_T1w.nii.gz"
+    structural_t2w = tmp_path / "out/sub-01_space-T1w_desc-preproc_T2w.nii.gz"
+    _image(structural_t1w, {})
+    _image(structural_t2w, {})
     runner = Runner(
         module_name="Anatomical Module",
         container=None,
@@ -204,6 +208,8 @@ def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path) -
         out_dir=tmp_path / "out",
         work_dir=tmp_path / "work",
         license_path=license_path,
+        structural_t1w=structural_t1w,
+        structural_t2w=structural_t2w,
         native_registration_spheres=spheres,
         env={},
         force=False,
@@ -214,6 +220,24 @@ def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path) -
     assert "Validate MSMAll Registration" in names
     assert outputs["manifest"].endswith("sub-01_desc-msmall_manifest.json")
     assert outputs["input_identities"].endswith("sub-01_desc-msmallInputs_provenance.json")
+
+    configuration_step = next(
+        step
+        for step in runner._graph.steps
+        if step.name == "Write MSMAll Calibration Configuration"
+    )
+    assert structural_t1w in configuration_step.inputs
+    assert structural_t2w in configuration_step.inputs
+    assert t1w in configuration_step.inputs
+    assert t2w in configuration_step.inputs
+    assert configuration_step.action is not None
+    monkeypatch.setattr("nro.modules.anat.msmall.write_public_json", lambda *_args, **_kwargs: None)
+    configuration_step.action()
+    configuration = (tmp_path / "work/msmall/configuration.sh").read_text()
+    assert f"t1w=({structural_t1w})" in configuration
+    assert f"t2w=({structural_t2w})" in configuration
+    assert f"t1w=({t1w})" not in configuration
+    assert f"t2w=({t2w})" not in configuration
 
 
 def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> None:

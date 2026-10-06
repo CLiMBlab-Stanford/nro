@@ -286,6 +286,8 @@ def _configuration_text(
     subject: str,
     work_dir: Path,
     license_path: Path,
+    structural_t1w: Path,
+    structural_t2w: Path,
     content_digests: Mapping[Path, str],
 ) -> str:
     p = calibration.parameters
@@ -294,12 +296,15 @@ def _configuration_text(
             "selection_strategy": calibration.selection_strategy,
             "T1w": [str(path) for path in calibration.t1w],
             "T2w": [str(path) for path in calibration.t2w],
+            "HCPStructuralT1w": str(structural_t1w),
+            "HCPStructuralT2w": str(structural_t2w),
         },
-        "content": [
+        "source_content": [
             content_digests[source_path]
             for image_path in (*calibration.t1w, *calibration.t2w)
             for source_path in image_source_paths(image_path)
         ],
+        "hcp_input_content": [content_digests[structural_t1w], content_digests[structural_t2w]],
     }
     calibration_identity = {
         "contract": calibration.contract(calibration.subject_dir),
@@ -311,8 +316,8 @@ def _configuration_text(
         f"fs_license={shlex.quote(str(license_path))}",
         f"structural_fingerprint={fingerprint(structural_identity)}",
         f"calibration_fingerprint={fingerprint(calibration_identity)}",
-        _shell_array("t1w", calibration.t1w),
-        _shell_array("t2w", calibration.t2w),
+        _shell_array("t1w", [structural_t1w]),
+        _shell_array("t2w", [structural_t2w]),
         _shell_array("run_names", [run.name for run in calibration.runs]),
         _shell_array("run_paths", [run.bold for run in calibration.runs]),
         _shell_array("run_echo_spacing", [run.echo_spacing for run in calibration.runs]),
@@ -354,6 +359,8 @@ def add_msmall_plan(
     out_dir: Path,
     work_dir: Path,
     license_path: Path,
+    structural_t1w: Path,
+    structural_t2w: Path,
     native_registration_spheres: Mapping[str, Path],
     env: Mapping[str, str],
     force: bool,
@@ -364,7 +371,7 @@ def add_msmall_plan(
     input_identities = out_dir / f"{subject}_desc-msmallInputs_provenance.json"
     driver = Path(__file__).with_name("msmall_driver.sh")
     atlas_validator = Path(__file__).with_name("msmall_validate_atlas.py")
-    hcp_inputs = calibration.input_paths
+    hcp_inputs = tuple(dict.fromkeys((*calibration.input_paths, structural_t1w, structural_t2w)))
 
     def write_configuration() -> None:
         content_digests = {path: _content_digest(path) for path in hcp_inputs}
@@ -373,6 +380,8 @@ def add_msmall_plan(
             subject=subject,
             work_dir=branch,
             license_path=license_path,
+            structural_t1w=structural_t1w,
+            structural_t2w=structural_t2w,
             content_digests=content_digests,
         )
         atomic_write_text(configuration, text)

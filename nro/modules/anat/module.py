@@ -1633,6 +1633,7 @@ def build_module(
 
     msmall_outputs: dict[str, object] | None = None
     if opts.msmall is not None:
+        assert subj_t1 is not None and subj_t2 is not None
         msmall_outputs = add_msmall_plan(
             runner,
             calibration=opts.msmall,
@@ -1640,6 +1641,8 @@ def build_module(
             out_dir=opts.out_dir,
             work_dir=opts.work_dir,
             license_path=Path(env["FS_LICENSE"]),
+            structural_t1w=subj_t1,
+            structural_t2w=subj_t2,
             native_registration_spheres={
                 hemi: Path(exported_surfaces[f"{hemi}.sphere.reg"]) for hemi in ("lh", "rh")
             },
