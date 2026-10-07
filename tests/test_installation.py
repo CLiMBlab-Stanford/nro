@@ -16,7 +16,14 @@ import yaml
 
 from nro.configuration import site
 from nro.configuration.store import ConfigStore
-from nro.engine import bootstrap, dependencies, installation_layers, shared_installation, site_setup
+from nro.engine import (
+    bootstrap,
+    bootstrap_dependencies,
+    dependencies,
+    installation_layers,
+    shared_installation,
+    site_setup,
+)
 from nro.engine.site_setup import edit_settings, save_settings
 
 
@@ -45,6 +52,55 @@ def isolated_site(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(site, "installation_record", lambda: {})
     return path
+
+
+def test_installer_enters_bootstrap_environment_before_importing_nro(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    script = root / "install"
+    script.write_text("")
+    commands = []
+
+    def run(command, **options):
+        commands.append((command, options))
+        if command[1:3] == ["-m", "venv"]:
+            python = Path(command[3]) / "bin/python"
+            python.parent.mkdir(parents=True)
+            python.write_text("")
+        return SimpleNamespace(returncode=0)
+
+    class Executed(Exception):
+        pass
+
+    monkeypatch.setattr(bootstrap_dependencies.subprocess, "run", run)
+    monkeypatch.setattr(
+        bootstrap_dependencies.os,
+        "execv",
+        lambda executable, arguments: (_ for _ in ()).throw(Executed((executable, arguments))),
+    )
+    monkeypatch.setattr(bootstrap_dependencies.sys, "prefix", str(tmp_path / "system"))
+    monkeypatch.setattr(bootstrap_dependencies.sys, "executable", "/usr/bin/python3")
+
+    with pytest.raises(Executed) as executed:
+        bootstrap_dependencies.enter(root, script, ["--local"])
+
+    python = root / ".nro-bootstrap/bin/python"
+    assert commands[0][0] == ["/usr/bin/python3", "-m", "venv", str(root / ".nro-bootstrap")]
+    assert commands[1][0] == [
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        f"uv=={bootstrap_dependencies.UV_VERSION}",
+        f"PyYAML=={bootstrap_dependencies.PYYAML_VERSION}",
+    ]
+    assert executed.value.args[0] == (str(python), [str(python), str(script), "--local"])
+
+
+def test_offline_installer_requires_complete_bootstrap_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr(bootstrap_dependencies.sys, "prefix", str(tmp_path / "system"))
+    with pytest.raises(RuntimeError, match="Offline setup needs"):
+        bootstrap_dependencies.enter(tmp_path, tmp_path / "install", ["--offline"])
 
 
 def test_lab_defaults_select_medium_fsaverage_anatomy(isolated_site):
