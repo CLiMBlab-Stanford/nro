@@ -5,6 +5,8 @@ from __future__ import annotations
 from nro.engine.freesurfer_templates import FREESURFER_BUILD
 
 FREESURFER_VERSION = "7.4.1"
+FREESURFER_PRIMARY_SEED = 1234
+FREESURFER_TOPOLOGY_FALLBACK_SEEDS = (5678,)
 FASTSURFER_VERSION = "2.5.4"
 FASTSURFER_SOURCE_REVISION = "cdfccea"
 FASTSURFER_OCI_DIGEST = "sha256:8db4881c12961a7d6e2c8ed879f6207fbba82d1668c1d64bef281512cebbe1e5"
@@ -32,6 +34,10 @@ def surface_reconstruction_contract(engine: str = "freesurfer") -> dict[str, obj
             "recon_all_stages": ["autorecon1", "autorecon2", "autorecon3"],
             "external_mask_resampling": "nearest_neighbor",
             "brainmask_intensity_source": "FreeSurfer_normalized_T1",
+            "random_seed_policy": {
+                "primary": FREESURFER_PRIMARY_SEED,
+                "topology_failure_fallbacks": list(FREESURFER_TOPOLOGY_FALLBACK_SEEDS),
+            },
         }
     if engine != "fastsurfer":
         raise ValueError(f"Unsupported surface-reconstruction engine: {engine}")

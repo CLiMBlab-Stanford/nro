@@ -14,14 +14,17 @@ retained frames, too little residual design freedom, low effective rank, or
 excessive temporal concentration. It also enforces the configured minimum
 usable-run count and aggregate retained-frame count.
 
-The admitted runs must have one repetition time. Censored frames are omitted.
-Each run is centered and standardized independently. The default `weighting:
-precision` setting weights its covariance contribution in proportion to the
-algebraic temporal rank recorded by `clean`. Set `weighting: equal` to give
-every admitted run the same contribution.
+Low-rank outputs may combine admitted runs with different repetition times.
+Full time-series outputs require one common repetition time because their series
+axis represents acquisition time. Censored frames are omitted. Each run is
+centered and standardized independently. The default `weighting: precision`
+setting weights its covariance contribution in proportion to the algebraic
+temporal rank recorded by `clean`. Set `weighting: equal` to give every admitted
+run the same contribution.
 The manifest records each included run's half-open `start_frame` and
 `stop_frame` range, so the original run boundaries remain available. It also
-records excluded runs and their reasons.
+records each run's repetition time, the distinct source repetition times, and
+excluded runs with their reasons.
 
 ## Time-series representation
 

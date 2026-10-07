@@ -13,6 +13,7 @@ from nro.modules.anat.steps import (
     _create_recon_all_step,
     _freesurfer_progress,
     _FreeSurferProgressMonitor,
+    _recon_failed_during_topology,
 )
 
 
@@ -131,6 +132,14 @@ def test_freesurfer_progress_monitor_reads_native_status_log(tmp_path: Path, cap
         monitor._consume()
 
     assert "FreeSurfer 3/7: Tessellate rh, right hemisphere" in caplog.messages
+
+
+def test_freesurfer_retry_classification_rejects_other_failures(tmp_path: Path) -> None:
+    log = tmp_path / "scripts" / "recon-all.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("#@# Talairach\nrecon-all -s sub-1 exited with ERRORS\n")
+
+    assert not _recon_failed_during_topology(tmp_path)
 
 
 def test_metric_conversion_normalizes_freesurfer_prefixed_output(tmp_path: Path) -> None:

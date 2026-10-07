@@ -62,9 +62,9 @@ Workbench, Octave, the HCP dedrifting assets, and the
 `HCP_Style_Single_Multirun_Dedrift` FIX model bundled in the pinned QuNex image.
 The selected resting-state calibration runs are fixed in source markup. nro
 adapts the HCP route to its skull-stripped source contract with explicit FNIRT
-masks, retains the HCP route as private checkpointed work, and publishes only
-the surface registrations, atlas geometry, QC, and version records required to
-use the resulting space.
+masks, expresses each major HCP operation as an ordinary anatomical runner step,
+and publishes only the surface registrations, atlas geometry, QC, and version
+records required to use the resulting space.
 
 Lesion inpainting uses NeuroLIT 0.6.1 from the FastSurfer 2.5.4 image at source
 revision `cdfccea`. The configured FreeSurfer or FastSurfer backend then

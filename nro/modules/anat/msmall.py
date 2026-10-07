@@ -5,12 +5,12 @@ from __future__ import annotations
 import hashlib
 import math
 import shlex
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from nro.configuration.markup import SubjectMarkup
-from nro.configuration.store import fingerprint
 from nro.engine.execution import create_copy_file_step
 from nro.engine.functional_references import (
     load_rec,
@@ -283,7 +283,7 @@ def _content_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _configuration_text(
+def _structural_configuration_text(
     calibration: MsmAllCalibration,
     *,
     subject: str,
@@ -291,36 +291,37 @@ def _configuration_text(
     license_path: Path,
     structural_t1w: Path,
     structural_t2w: Path,
-    content_digests: Mapping[Path, str],
 ) -> str:
-    p = calibration.parameters
-    structural_identity = {
-        "contract": {
-            "selection_strategy": calibration.selection_strategy,
-            "T1w": [str(path) for path in calibration.t1w],
-            "T2w": [str(path) for path in calibration.t2w],
-            "HCPStructuralT1w": str(structural_t1w),
-            "HCPStructuralT2w": str(structural_t2w),
-        },
-        "source_content": [
-            content_digests[source_path]
-            for image_path in (*calibration.t1w, *calibration.t2w)
-            for source_path in image_source_paths(image_path)
-        ],
-        "hcp_input_content": [content_digests[structural_t1w], content_digests[structural_t2w]],
-    }
-    calibration_identity = {
-        "contract": calibration.contract(calibration.subject_dir),
-        "content": [content_digests[path] for path in calibration.run_input_paths],
-    }
-    lines = [
+    structural_lines = [
         f"subject={shlex.quote(subject)}",
         f"work_root={shlex.quote(str(work_dir))}",
         f"fs_license={shlex.quote(str(license_path))}",
-        f"structural_fingerprint={fingerprint(structural_identity)}",
-        f"calibration_fingerprint={fingerprint(calibration_identity)}",
         _shell_array("t1w", [structural_t1w]),
         _shell_array("t2w", [structural_t2w]),
+    ]
+    return "\n".join(structural_lines) + "\n"
+
+
+def _surface_configuration_text(calibration: MsmAllCalibration) -> str:
+    p = calibration.parameters
+    lines = []
+    for key in (
+        "high_resolution_mesh",
+        "low_resolution_mesh",
+        "grayordinates_resolution_mm",
+        "input_registration",
+    ):
+        value = p[key]
+        rendered = format(value, ".15g") if isinstance(value, float) else str(value)
+        lines.append(f"{key}={shlex.quote(rendered)}")
+    return "\n".join(lines) + "\n"
+
+
+def _calibration_configuration_text(
+    calibration: MsmAllCalibration,
+) -> str:
+    p = calibration.parameters
+    lines = [
         _shell_array("run_names", [run.name for run in calibration.runs]),
         _shell_array("run_paths", [run.bold for run in calibration.runs]),
         _shell_array("run_echo_spacing", [run.echo_spacing for run in calibration.runs]),
@@ -333,12 +334,8 @@ def _configuration_text(
         _shell_array("se_positive", [run.se_positive for run in calibration.runs]),
     ]
     for key in (
-        "high_resolution_mesh",
-        "low_resolution_mesh",
-        "grayordinates_resolution_mm",
         "functional_resolution_mm",
         "surface_smoothing_fwhm_mm",
-        "input_registration",
         "output_registration",
         "iteration_modes",
         "method",
@@ -352,6 +349,21 @@ def _configuration_text(
         rendered = format(value, ".15g") if isinstance(value, float) else str(value)
         lines.append(f"{key}={shlex.quote(rendered)}")
     return "\n".join(lines) + "\n"
+
+
+def _write_text_if_changed(path: Path, text: str) -> None:
+    """Publish generated configuration without changing an identical file's timestamp."""
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return
+    atomic_write_text(path, text)
+
+
+def _remove_path(path: Path) -> None:
+    """Remove one private stage-owned path without following symbolic links."""
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
 
 
 def add_msmall_plan(
@@ -368,26 +380,57 @@ def add_msmall_plan(
     env: Mapping[str, str],
     force: bool,
 ) -> dict[str, object]:
-    """Append the checkpointed HCP route and publish canonical sphere transforms."""
+    """Append the staged HCP route and publish canonical sphere transforms."""
     branch = work_dir / "msmall"
-    configuration = branch / "configuration.sh"
+    structural_configuration = branch / "structural_configuration.sh"
+    surface_configuration = branch / "surface_configuration.sh"
+    calibration_configuration = branch / "calibration_configuration.sh"
     input_identities = out_dir / f"{subject}_desc-msmallInputs_provenance.json"
     driver = Path(__file__).with_name("msmall_driver.sh")
     atlas_validator = Path(__file__).with_name("msmall_validate_atlas.py")
     hcp_inputs = tuple(dict.fromkeys((*calibration.input_paths, structural_t1w, structural_t2w)))
+    structural_parameters = {
+        "selection_strategy": calibration.selection_strategy,
+        "structural_inputs": msmall_structural_input_contract(),
+    }
+    surface_parameters = {
+        "high_resolution_mesh": calibration.parameters["high_resolution_mesh"],
+        "low_resolution_mesh": calibration.parameters["low_resolution_mesh"],
+        "grayordinates_resolution_mm": calibration.parameters["grayordinates_resolution_mm"],
+        "input_registration": calibration.parameters["input_registration"],
+    }
 
-    def write_configuration() -> None:
-        content_digests = {path: _content_digest(path) for path in hcp_inputs}
-        text = _configuration_text(
+    structural_inputs = tuple(
+        dict.fromkeys(
+            path
+            for image in (*calibration.t1w, *calibration.t2w)
+            for path in image_source_paths(image)
+        )
+    ) + (structural_t1w, structural_t2w)
+
+    def write_structural_configuration() -> None:
+        text = _structural_configuration_text(
             calibration,
             subject=subject,
             work_dir=branch,
             license_path=license_path,
             structural_t1w=structural_t1w,
             structural_t2w=structural_t2w,
-            content_digests=content_digests,
         )
-        atomic_write_text(configuration, text)
+        _write_text_if_changed(structural_configuration, text)
+
+    def write_calibration_configuration() -> None:
+        text = _calibration_configuration_text(calibration)
+        _write_text_if_changed(calibration_configuration, text)
+
+    def write_surface_configuration() -> None:
+        _write_text_if_changed(
+            surface_configuration,
+            _surface_configuration_text(calibration),
+        )
+
+    def write_input_identities() -> None:
+        content_digests = {path: _content_digest(path) for path in hcp_inputs}
         write_public_json(
             input_identities,
             {
@@ -397,14 +440,44 @@ def add_msmall_plan(
             },
         )
 
-    runner.add_step(
+    structural_configuration_step = runner.add_step(
+        Step.python(
+            name="Write MSMAll Structural Configuration",
+            outputs=(structural_configuration,),
+            inputs=structural_inputs,
+            action=write_structural_configuration,
+            force=force,
+            parameters=structural_parameters,
+        )
+    )
+    calibration_configuration_step = runner.add_step(
         Step.python(
             name="Write MSMAll Calibration Configuration",
-            outputs=(configuration, input_identities),
-            inputs=hcp_inputs,
-            action=write_configuration,
+            outputs=(calibration_configuration,),
+            inputs=calibration.run_input_paths,
+            action=write_calibration_configuration,
             force=force,
             parameters=calibration.contract(calibration.subject_dir),
+        )
+    )
+    surface_configuration_step = runner.add_step(
+        Step.python(
+            name="Write MSMAll Surface Configuration",
+            outputs=(surface_configuration,),
+            inputs=(),
+            action=write_surface_configuration,
+            force=force,
+            parameters=surface_parameters,
+        )
+    )
+    runner.add_step(
+        Step.python(
+            name="Write MSMAll Input Identities",
+            outputs=(input_identities,),
+            inputs=hcp_inputs,
+            action=write_input_identities,
+            force=force,
+            parameters={"digest": "sha256"},
         )
     )
     hcp_subject = f"{subject.removeprefix('sub-')}_msmall"
@@ -437,24 +510,268 @@ def add_msmall_plan(
         for hemi in ("L", "R")
         for surface in ("white", "midthickness", "pial", "inflated")
     }
-    runner.add_step(
-        Step.command_step(
-            ["bash", str(driver), str(configuration)],
-            name="Estimate MSMAll Registration",
-            inputs=(*hcp_inputs, configuration, driver, atlas_validator),
-            outputs=(
-                complete,
-                *hcp_native.values(),
-                *hcp_baseline.values(),
-                *hcp_fsaverage.values(),
-                *atlas_spheres.values(),
-                *hcp_atlas_surfaces.values(),
-                branch / "software_versions.txt",
-            ),
-            env=env,
-            force=force,
-            parameters=calibration.contract(calibration.subject_dir),
+    stages = branch / "stages"
+
+    def marker(name: str) -> Path:
+        return stages / f"{name}.complete"
+
+    def finalize(name: str):
+        def write_marker() -> None:
+            atomic_write_text(marker(name), "complete\n")
+
+        return write_marker
+
+    def prepare(name: str, *paths: Path, globs: tuple[tuple[Path, str], ...] = ()):
+        def clean() -> None:
+            marker(name).unlink(missing_ok=True)
+            for path in paths:
+                _remove_path(path)
+            for root, pattern in globs:
+                if root.is_dir():
+                    for path in root.glob(pattern):
+                        _remove_path(path)
+
+        return clean
+
+    def add_stage(
+        stage: str,
+        title: str,
+        *,
+        inputs: Sequence[Path],
+        outputs: Sequence[Path],
+        surface_stage: bool = False,
+        calibration_stage: bool = False,
+        index: int | None = None,
+        cleanup: Sequence[Path] = (),
+        cleanup_globs: tuple[tuple[Path, str], ...] = (),
+        parameters: object | None = None,
+        implementation_files: Sequence[Path] = (),
+    ) -> None:
+        if calibration_stage and not surface_stage:
+            raise ValueError("An MSMAll calibration stage must include surface configuration")
+        command = ["bash", str(driver), stage, str(structural_configuration)]
+        dependencies = [structural_configuration_step.id]
+        if surface_stage:
+            command.append(str(surface_configuration))
+            dependencies.append(surface_configuration_step.id)
+        if calibration_stage:
+            command.append(str(calibration_configuration))
+            dependencies.append(calibration_configuration_step.id)
+        if index is not None:
+            command.append(str(index))
+        implementations = (driver, *implementation_files)
+        runner.add_step(
+            Step.command_step(
+                command,
+                name=title,
+                inputs=tuple(inputs),
+                outputs=(*outputs, marker(stage)),
+                after=tuple(dependencies),
+                env=env,
+                force=force,
+                prepare=prepare(stage, *cleanup, globs=cleanup_globs),
+                finalize=finalize(stage),
+                parameters={
+                    "scientific": parameters,
+                    "implementation_sha256": {
+                        path.name: _content_digest(path) for path in implementations
+                    },
+                },
+            )
         )
+
+    manifest = branch / "input_manifest.tsv"
+    software = branch / "software_versions.txt"
+    add_stage(
+        "inventory",
+        "Inventory MSMAll Inputs and Software",
+        inputs=hcp_inputs,
+        outputs=(manifest, software),
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=(manifest, software),
+        parameters={
+            "structural": structural_parameters,
+            "surface": surface_parameters,
+            "calibration": calibration.contract(calibration.subject_dir),
+        },
+    )
+    t1_dir = session / "T1w"
+    add_stage(
+        "prefreesurfer",
+        "MSMAll PreFreeSurfer",
+        inputs=(structural_t1w, structural_t2w),
+        outputs=(t1_dir / "T1w_acpc_dc_restore.nii.gz", t1_dir / "T2w_acpc_dc_restore.nii.gz"),
+        cleanup=(session,),
+        parameters=structural_parameters,
+    )
+    add_stage(
+        "masked_atlas",
+        "MSMAll Mask-Aware Atlas Registration",
+        inputs=(
+            marker("prefreesurfer"),
+            t1_dir / "T1w_acpc_dc_restore.nii.gz",
+        ),
+        outputs=(
+            session / "MNINonLinear/registration_qc.json",
+            session / "MNINonLinear/xfms/acpc_dc2standard.nii.gz",
+        ),
+        cleanup=(session / ".MNINonLinear.masked.tmp",),
+        parameters=calibration.contract(calibration.subject_dir)["atlas_registration"],
+        implementation_files=(atlas_validator,),
+    )
+    freesurfer_dir = t1_dir / hcp_subject
+    add_stage(
+        "freesurfer",
+        "MSMAll FreeSurfer Reconstruction",
+        inputs=(
+            marker("masked_atlas"),
+            t1_dir / "T1w_acpc_dc_restore.nii.gz",
+            t1_dir / "T2w_acpc_dc_restore.nii.gz",
+        ),
+        outputs=(freesurfer_dir / "surf/lh.white", freesurfer_dir / "surf/rh.white"),
+        cleanup=(freesurfer_dir,),
+        parameters={"seed": 1234, "processing_mode": "HCPStyleData"},
+    )
+    add_stage(
+        "postfreesurfer",
+        "MSMAll PostFreeSurfer",
+        inputs=(
+            marker("freesurfer"),
+            freesurfer_dir / "surf/lh.white",
+            freesurfer_dir / "surf/rh.white",
+        ),
+        outputs=(*hcp_baseline.values(), *hcp_fsaverage.values()),
+        surface_stage=True,
+        cleanup=(native, atlas),
+        parameters=surface_parameters,
+    )
+    results = session / "MNINonLinear/Results"
+    surface_markers: list[Path] = []
+    for index, run in enumerate(calibration.runs):
+        run_dir = results / run.name
+        volume_stage = f"fmri_volume_{run.name}"
+        add_stage(
+            volume_stage,
+            f"MSMAll fMRI Volume {run.name}",
+            inputs=(marker("postfreesurfer"), *run.input_paths),
+            outputs=(run_dir / f"{run.name}.nii.gz",),
+            surface_stage=True,
+            calibration_stage=True,
+            index=index,
+            cleanup=(run_dir, session / run.name),
+            parameters=run.contract(calibration.subject_dir),
+        )
+        surface_stage = f"fmri_surface_{run.name}"
+        add_stage(
+            surface_stage,
+            f"MSMAll fMRI Surface {run.name}",
+            inputs=(marker(volume_stage), run_dir / f"{run.name}.nii.gz", marker("postfreesurfer")),
+            outputs=(run_dir / f"{run.name}_Atlas.dtseries.nii",),
+            surface_stage=True,
+            calibration_stage=True,
+            index=index,
+            cleanup_globs=((run_dir, f"{run.name}_Atlas*"),),
+            parameters={
+                "low_resolution_mesh": calibration.parameters["low_resolution_mesh"],
+                "surface_smoothing_fwhm_mm": calibration.parameters["surface_smoothing_fwhm_mm"],
+                "input_registration": calibration.parameters["input_registration"],
+            },
+        )
+        surface_markers.append(marker(surface_stage))
+    concat_dir = results / "rfMRI_REST_CONCAT"
+    high_pass = calibration.parameters["high_pass_seconds"]
+    hp = format(high_pass, ".15g") if isinstance(high_pass, float) else str(high_pass)
+    concat = concat_dir / f"rfMRI_REST_CONCAT_Atlas_hp{hp}_clean.dtseries.nii"
+    variance = concat_dir / f"rfMRI_REST_CONCAT_Atlas_hp{hp}_clean_vn.dscalar.nii"
+    original_variance = (
+        concat_dir / f"rfMRI_REST_CONCAT_Atlas_hp{hp}_clean_vn_before_floor.dscalar.nii"
+    )
+    add_stage(
+        "multirun_fix",
+        "MSMAll Multi-Run ICA-FIX",
+        inputs=tuple(surface_markers),
+        outputs=(concat, original_variance),
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=(concat_dir,),
+        parameters={
+            key: calibration.parameters[key]
+            for key in (
+                "high_pass_seconds",
+                "fix_threshold",
+                "fix_training_model",
+                "matlab_run_mode",
+            )
+        },
+    )
+    add_stage(
+        "prepare_msmall",
+        "Prepare MSMAll Functional Inputs",
+        inputs=(marker("multirun_fix"), original_variance),
+        outputs=(variance,),
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=(variance,),
+        parameters=calibration.contract(calibration.subject_dir)["missing_variance_policy"],
+    )
+    initial_registration = (
+        f"{calibration.parameters['output_registration']}_InitialReg_2_"
+        f"d{calibration.parameters['ica_dimension']}_{calibration.parameters['method']}"
+    )
+    initial_spheres = tuple(
+        native / f"{hcp_subject}.{hemi}.sphere.{initial_registration}.native.surf.gii"
+        for hemi in ("L", "R")
+    )
+    add_stage(
+        "msmall",
+        "Estimate MSMAll Registration",
+        inputs=(marker("prepare_msmall"), variance, *hcp_baseline.values()),
+        outputs=initial_spheres,
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=initial_spheres,
+        cleanup_globs=((native, f"*{calibration.parameters['output_registration']}_InitialReg*"),),
+        parameters={
+            key: calibration.parameters[key]
+            for key in (
+                "output_registration",
+                "iteration_modes",
+                "method",
+                "ica_dimension",
+                "matlab_run_mode",
+            )
+        },
+    )
+    final_outputs = (*hcp_native.values(), *atlas_spheres.values(), *hcp_atlas_surfaces.values())
+    add_stage(
+        "dedrift",
+        "MSMAll Dedrift and Resample",
+        inputs=(marker("msmall"), *initial_spheres),
+        outputs=final_outputs,
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=final_outputs,
+        parameters={
+            key: calibration.parameters[key]
+            for key in (
+                "output_registration",
+                "ica_dimension",
+                "method",
+                "surface_smoothing_fwhm_mm",
+                "high_pass_seconds",
+            )
+        },
+    )
+    add_stage(
+        "validate",
+        "Validate MSMAll Calibration Outputs",
+        inputs=(marker("dedrift"), *final_outputs),
+        outputs=(complete,),
+        surface_stage=True,
+        calibration_stage=True,
+        cleanup=(complete,),
+        parameters={"output_signature": "MSMAll-fsLR-surfaces-v1"},
     )
 
     outputs: dict[str, Any] = {

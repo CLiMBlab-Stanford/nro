@@ -9,6 +9,7 @@ from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.contract_migrations import (
     INDETERMINATE,
     AddField,
+    AddFieldWhen,
     ContractMigration,
     ContractMigrationChain,
     MapValues,
@@ -40,17 +41,35 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert configuration["lesion"]["masker_command"] is None
     assert configuration["lesion"]["fastsurfer_image"] is None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 11
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 12
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert migrated["processing"]["source_markup"]["msmall"] == {"rest": []}
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=11), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=12), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
+
+
+def test_freesurfer_seed_fallback_is_compatible_with_prior_success() -> None:
+    historical = _anat_contract(version=11)
+    historical["processing"]["surface_reconstruction"] = {
+        "backend": "FreeSurfer",
+    }
+    current = deepcopy(historical)
+    current["contract_schema"] = 12
+    current["processing"]["surface_reconstruction"]["random_seed_policy"] = {
+        "primary": 1234,
+        "topology_failure_fallbacks": [5678],
+    }
+
+    migrated_historical, _ = migrate_contract(historical)
+    migrated_current, _ = migrate_contract(current)
+
+    assert migrated_historical == migrated_current
 
 
 def test_msmall_structural_input_migration_invalidates_only_msmall_anatomy() -> None:
@@ -397,6 +416,33 @@ def test_indeterminate_historical_value_cannot_equal_current_default() -> None:
     assert old["method"] == INDETERMINATE
     assert current["method"] == "new"
     assert old != current
+
+
+def test_add_field_when_limits_migration_to_selected_contracts() -> None:
+    chain = ContractMigrationChain(
+        module="example",
+        migrations=(
+            ContractMigration(
+                destination=2,
+                summary="Add backend-specific policy",
+                contract=(
+                    AddFieldWhen(
+                        "processing.policy",
+                        discriminator="processing.backend",
+                        value="selected",
+                        default="current",
+                        historical="current",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    selected, _ = chain.normalize({"module": "example", "processing": {"backend": "selected"}})
+    other, _ = chain.normalize({"module": "example", "processing": {"backend": "other"}})
+
+    assert selected["processing"]["policy"] == "current"
+    assert "policy" not in other["processing"]
 
 
 def test_restricted_contract_operations_transform_historical_syntax() -> None:

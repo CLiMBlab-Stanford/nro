@@ -39,7 +39,11 @@ from .constants import (
     _FREESURFER_ASEG_LABELS,
     _FS_GIFTI_VOLGEOM_META_PREFIXES,
 )
-from .policy import FREESURFER_VERSION
+from .policy import (
+    FREESURFER_PRIMARY_SEED,
+    FREESURFER_TOPOLOGY_FALLBACK_SEEDS,
+    FREESURFER_VERSION,
+)
 
 _FREESURFER_STATUS_TIMESTAMP = re.compile(
     r"\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+"
@@ -902,6 +906,24 @@ def _recon_invalid_reason(subject_dir: Path) -> str:
     )
 
 
+def _recon_failed_during_topology(subject_dir: Path) -> bool:
+    """Return whether the latest recon-all failure occurred during topology correction."""
+    log = subject_dir / "scripts" / "recon-all.log"
+    try:
+        with log.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 131_072))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    if not any("exited with ERRORS" in line for line in lines[-20:]):
+        return False
+    for line in reversed(lines):
+        if line.startswith("#@# "):
+            return "fix topology" in line.lower()
+    return False
+
+
 def _create_recon_all_step(
     *,
     run_child: Callable[..., Optional[str]],
@@ -991,68 +1013,103 @@ def _create_recon_all_step(
         )
         primary = t1w or t2w
         assert primary is not None
-        primary_arg = f"NRO:{primary}"
-        first = [
-            "recon-all",
-            "-sd",
-            "/subjects",
-            "-subjid",
-            fs_subject,
-            "-i",
-            primary_arg,
-            "-autorecon1",
-            "-noskullstrip",
-        ]
-        with _FreeSurferProgressMonitor(subject_dir) as progress:
-            run_child(container_command(first), direct=True, env=env, discard_stdout=True)
-            progress.report(2, "applying external brain mask")
-            mask_arg = f"NRO:{brain_mask}"
-            conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
-            brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
-            conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
-            run_child(
-                container_command(
-                    [
-                        "mri_vol2vol",
-                        "--mov",
-                        mask_arg,
-                        "--targ",
-                        conformed_t1,
-                        "--regheader",
-                        "--interp",
-                        "nearest",
-                        "--o",
-                        conformed_mask,
-                        "--no-save-reg",
-                    ]
-                ),
-                direct=True,
-                env=env,
-                discard_stdout=True,
-            )
-            run_child(
-                container_command(["mri_mask", conformed_t1, conformed_mask, brainmask_auto]),
-                direct=True,
-                env=env,
-                discard_stdout=True,
-            )
-            shutil.copy2(
-                subject_dir / "mri" / "brainmask.auto.mgz",
-                subject_dir / "mri" / "brainmask.mgz",
-            )
-            second = [
+
+        def reconstruct(seed: int) -> None:
+            first = [
                 "recon-all",
                 "-sd",
                 "/subjects",
                 "-subjid",
                 fs_subject,
+                "-rng-seed",
+                str(seed),
+                "-i",
+                f"NRO:{primary}",
+                "-autorecon1",
+                "-noskullstrip",
             ]
-            if t2w is not None and t1w is not None:
-                second += ["-T2", f"NRO:{t2w}", "-T2pial"]
-            second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
-            run_child(container_command(second), direct=True, env=env, discard_stdout=True)
+            with _FreeSurferProgressMonitor(subject_dir) as progress:
+                run_child(container_command(first), direct=True, env=env, discard_stdout=True)
+                progress.report(2, "applying external brain mask")
+                mask_arg = f"NRO:{brain_mask}"
+                conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
+                brainmask_auto = f"/subjects/{fs_subject}/mri/brainmask.auto.mgz"
+                conformed_t1 = f"/subjects/{fs_subject}/mri/T1.mgz"
+                run_child(
+                    container_command(
+                        [
+                            "mri_vol2vol",
+                            "--mov",
+                            mask_arg,
+                            "--targ",
+                            conformed_t1,
+                            "--regheader",
+                            "--interp",
+                            "nearest",
+                            "--o",
+                            conformed_mask,
+                            "--no-save-reg",
+                        ]
+                    ),
+                    direct=True,
+                    env=env,
+                    discard_stdout=True,
+                )
+                run_child(
+                    container_command(["mri_mask", conformed_t1, conformed_mask, brainmask_auto]),
+                    direct=True,
+                    env=env,
+                    discard_stdout=True,
+                )
+                shutil.copy2(
+                    subject_dir / "mri" / "brainmask.auto.mgz",
+                    subject_dir / "mri" / "brainmask.mgz",
+                )
+                second = [
+                    "recon-all",
+                    "-sd",
+                    "/subjects",
+                    "-subjid",
+                    fs_subject,
+                    "-rng-seed",
+                    str(seed),
+                ]
+                if t2w is not None and t1w is not None:
+                    second += ["-T2", f"NRO:{t2w}", "-T2pial"]
+                second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
+                run_child(container_command(second), direct=True, env=env, discard_stdout=True)
+
+        seeds = (FREESURFER_PRIMARY_SEED, *FREESURFER_TOPOLOGY_FALLBACK_SEEDS)
+        successful_seed: int | None = None
+        for attempt, seed in enumerate(seeds):
+            try:
+                reconstruct(seed)
+            except SystemExit:
+                if attempt == len(seeds) - 1 or not _recon_failed_during_topology(subject_dir):
+                    raise
+                next_seed = seeds[attempt + 1]
+                logging.getLogger("anat").warning(
+                    "FreeSurfer topology correction failed with seed %d; "
+                    "restarting reconstruction with fallback seed %d",
+                    seed,
+                    next_seed,
+                )
+                shutil.rmtree(subject_dir)
+                continue
+            successful_seed = seed
+            break
+        assert successful_seed is not None
         if not _recon_valid(subject_dir):
             raise SystemExit(f"recon-all completed without a valid output set under: {subject_dir}")
+        write_json(
+            subject_dir / "scripts" / "nro-reconstruction-seed.json",
+            {
+                "PrimarySeed": FREESURFER_PRIMARY_SEED,
+                "TopologyFailureFallbackSeeds": list(FREESURFER_TOPOLOGY_FALLBACK_SEEDS),
+                "SuccessfulSeed": successful_seed,
+            },
+            sort_keys=True,
+        )
 
     return Step.directory_step(
         name="FreeSurfer Recon-All",
