@@ -63,12 +63,16 @@ subject-level artifact without changing the work item's identity.
    and is not copied.
 3. Compile the task YAML and module configuration into Stats Models. Select
    continuous nuisance columns from confounds using `confounds_regex`. Event convolution uses Nilearn's SPM or Glover canonical
-   HRF. Exclude the union of frames marked by `temporal_mask_regex` columns;
-   outlier columns do not enter the continuous design.
-4. Select nuisance PCs within the residual-rank budget of the retained frames,
+   HRF, normalized to discrete unit sum. Positive-duration events retain their
+   source-scale height and duration; zero-duration events are unit-area
+   impulses. Exclude the union of frames marked by `temporal_mask_regex`
+   columns; outlier columns do not enter the continuous design.
+4. At each fitted location, divide the response by its temporal mean over the
+   retained frames, multiply by 100, and center it at zero. Select nuisance PCs
+   within the residual-rank budget of those frames,
    then fit task and nuisance jointly. Scientific contrasts remain in the
-   original task parameterization. No temporal filtering, response
-   standardization, or percent signal conversion is applied.
+   original task parameterization. No temporal filtering or unit-variance
+   standardization is applied.
 5. Fit OLS or grouped AR(1) GLS. AR covariance respects the original gaps
    between retained frames. Save compact run coefficients and covariance
    information, requested maps, a labeled design SVG, a numerical design, and
@@ -89,6 +93,14 @@ If the post-task rank is below the absolute nuisance-protection floor, nuisance
 regression is skipped. This alone does not exclude the run. Lower-rank fits
 retain their actual residual degrees of freedom. Locations with zero variance
 have NaN t/DOF values and must be excluded from inference.
+
+Effect maps are percentage-point BOLD changes per unit increase in the source-scale
+predictor. Standard errors are in the same units and variances are in squared
+percentage points. The retained-frame temporal mean supplies the run- and
+location-specific baseline; censored frames do not affect it. Canonical HRF
+normalization preserves the predictor's declared amplitude scale. For a unit-height
+block, increasing duration prolongs the convolved response and increases its area;
+it does not redefine one predictor unit.
 
 See [estimation and inference](../methods/firstlevels.md) for equations,
 assumptions, weighting, and the limitations of conditional AR inference.
@@ -190,8 +202,6 @@ validity alone does not imply identical results from another engine.
 
 Dataset nodes, cross-subject aggregation, summary-level GLMs, formulas, F tests,
 random effects, HRF derivatives, and temporal filtering are not supported.
-Effect units must be comparable across runs; no automatic acquisition-gain
-normalization is applied.
 
 Implementation: [compiler](../autoapi/nro/modules/firstlevels/compiler/index.rst),
 [design](../autoapi/nro/modules/firstlevels/design/index.rst),

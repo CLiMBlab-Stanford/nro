@@ -194,7 +194,7 @@ def test_viewer_broker_survives_a_disconnected_client() -> None:
 def test_surface_base_scene_references_existing_geometry(tmp_path: Path) -> None:
     surfaces = _surfaces(tmp_path)
     text = base_scene(scene_id="test", surfaces=surfaces)
-    assert str(tmp_path / "sub-01_hemi-L_midthickness.surf.gii") in text
+    assert str(tmp_path / "sub-01_hemi-L_inflated.surf.gii") in text
     assert "{{" not in text
 
 
@@ -384,10 +384,7 @@ def test_scene_loads_each_surface_topology_before_metrics(tmp_path: Path, monkey
 
     command = commands[0]
     first_metric = command.index(str(metrics[0].path))
-    second_topology = [
-        source.path for source in surface_sources if source.directory_label == "fast"
-    ]
-    assert all(command.index(str(path)) < first_metric for path in second_topology)
+    assert all(command.index(str(source.path)) < first_metric for source in surface_sources)
 
 
 def test_scene_restores_hemisphere_structures_dropped_by_workbench(tmp_path: Path) -> None:

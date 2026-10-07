@@ -222,7 +222,7 @@ def test_markup_edit_does_not_revalidate_unrelated_event_catalog(store, tmp_path
     )
     draft = tmp_path / "markup.yml"
     draft.write_text("demo:\n  sub-01:\n    lesion: true\n")
-    edit(["markup", "main", "--file", str(draft)])
+    edit(["markup", "--file", str(draft)])
     assert definition_target(store, "markup", "main").path.read_text().endswith(draft.read_text())
 
     from nro.configuration.definitions import validate_store
@@ -329,6 +329,23 @@ def test_exiting_editor_without_write_does_not_publish_or_retain_fresh_draft(
     assert target.read_bytes() == original
     assert not definition_editor.definition_draft_path(target, store.root).exists()
     assert "No editor write detected" in capsys.readouterr().out
+
+
+def test_exiting_editor_without_write_skips_store_integrity_scan(store, monkeypatch):
+    target = store.workflow_path("main")[1]
+
+    def unexpected_integrity_scan(*_args, **_kwargs):
+        raise AssertionError("read-only draft preparation must not scan the store")
+
+    monkeypatch.setattr(
+        "nro.configuration.definition_migrations.validate_store_integrity",
+        unexpected_integrity_scan,
+    )
+    _interactive(monkeypatch, lambda command, **kwargs: None, [])
+
+    edit(["workflow", "main"])
+
+    assert target.is_file()
 
 
 def test_editor_write_publishes_an_unchanged_new_draft(store, monkeypatch):

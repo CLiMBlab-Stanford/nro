@@ -257,11 +257,18 @@ def event_design(
         if name in values:
             raise ValueError(f"Event/confound variable collision: {name}")
         if name in convolutions:
+            # Canonical kernels have a discrete sum of one. Scale an impulse
+            # by the inverse oversampling interval so its area, like a block's
+            # height and duration, retains the source predictor's units.
+            oversampling = 50
+            convolution_amplitudes = np.asarray(amplitudes, dtype=float).copy()
+            convolution_amplitudes[events.duration.to_numpy(float) == 0] *= oversampling / tr
             sampled, _ = compute_regressor(
-                np.array([events.onset, events.duration, amplitudes]),
+                np.array([events.onset, events.duration, convolution_amplitudes]),
                 convolutions[name],
                 times,
                 con_id=name,
+                oversampling=oversampling,
             )
             values[name] = sampled[:, 0]
         else:

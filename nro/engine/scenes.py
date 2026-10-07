@@ -311,7 +311,7 @@ def _remove_placeholder_elements(scene: str) -> str:
 
 
 def _restore_spec_file_hemisphere_structures(scene: Path) -> None:
-    """Restore hemisphere structures that Workbench drops while updating scenes."""
+    """Restore and validate hemisphere structures in a Workbench scene."""
 
     root = ElementTree.parse(scene).getroot()
     changed = False
@@ -338,6 +338,26 @@ def _restore_spec_file_hemisphere_structures(scene: Path) -> None:
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             + ElementTree.tostring(root, encoding="unicode"),
         )
+    invalid = []
+    for record in root.iter("Object"):
+        if record.get("Class") != "SpecFileDataFile":
+            continue
+        fields = {child.get("Name"): child for child in record}
+        file_name = fields.get("fileName")
+        structure = fields.get("structure")
+        if file_name is None or structure is None:
+            continue
+        name = Path(file_name.text or "").name
+        hemisphere = next((value for value in structures if f"_hemi-{value}_" in name), None)
+        if hemisphere is not None and name.endswith(
+            (".func.gii", ".shape.gii", ".label.gii", ".surf.gii")
+        ):
+            if structure.text != structures[hemisphere]:
+                invalid.append(name)
+    if invalid:
+        raise RuntimeError(
+            "Workbench scene has invalid hemisphere structures: " + ", ".join(invalid)
+        )
 
 
 def base_scene(
@@ -350,8 +370,8 @@ def base_scene(
 
     if surfaces:
         inventory = surface_inventory(surfaces)
-        left = inventory[("L", "midthickness")]
-        right = inventory[("R", "midthickness")]
+        left = inventory[("L", "inflated")]
+        right = inventory[("R", "inflated")]
         replacements = {
             "{{LEFT_SURFACE}}": str(left),
             "{{LEFT_SURFACE_NAME}}": left.name,
@@ -497,10 +517,12 @@ def build_scene_bundle(
                 "1",
                 "-error",
             ]
-            # Load every additional topology before its metric files. A scene
-            # may combine module lineages whose native meshes have different
-            # vertex counts.
-            for source in additional_surfaces:
+            # Load every topology before its metric files. A scene may combine
+            # module lineages whose native meshes have different vertex counts.
+            # The primary family also appears in the base scene, but explicitly
+            # loading it here prevents Workbench from treating later metrics as
+            # structure ALL while updating that scene.
+            for source in (*primary_surfaces, *additional_surfaces):
                 command.extend(("-data-file-add", str(rendered[source])))
             for source in sources:
                 command.extend(("-data-file-add", str(rendered[source])))

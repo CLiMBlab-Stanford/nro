@@ -31,14 +31,19 @@ from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
 
 from .compiler import compile_model, realize_run_node
-from .contract import definition_fingerprint, firstlevels_output_contract, validate_completion
+from .contract import (
+    definition_fingerprint,
+    firstlevels_output_contract,
+    response_scaling_metadata,
+    validate_completion,
+)
 from .design import build_design
 from .estimation import evaluate_maps, meta_records, run_records
 from .io import read_timeseries, save_fit, write_statmaps
 from .models import validate_run_groups
 from .paths import artifact_root, completion_path, node_prefix, work_item_prefix
 from .report import write_design
-from .statistics import RunFit, UnidentifiableDesignError, fit_glm
+from .statistics import RunFit, UnidentifiableDesignError, fit_glm, percent_signal_change
 from .task_models import scientific_model
 
 LOG = logging.getLogger(__name__)
@@ -167,7 +172,7 @@ def _publish_records(
             "DegreesOfFreedomMethod": "conditional-GLS; independent-run Satterthwaite",
             "NoiseModel": config["noise_model"],
             "AggregationWeighting": base["aggregation_weighting"],
-            "ResponseScaling": "none",
+            **response_scaling_metadata(),
             "InvalidLocations": "NaN t/DOF where variance is zero",
             "InputDenoising": base["input_denoising"],
             "InferenceLimitations": "Conditional on estimated AR groups and, if selected, precision weights; approximate t reference",
@@ -250,6 +255,8 @@ def create_fit_step(
         data, geometry = read_timeseries(images)
         if len(data) != len(confounds):
             raise ValueError("Functional frame count differs from confounds")
+        data, invalid_locations = percent_signal_change(data, design.retained)
+        design.metadata["ResponseScalingInvalidLocations"] = invalid_locations
         grid = np.array([0.0]) if config["noise_model"] == "ols" else np.asarray(config["ar_grid"])
         LOG.info(
             "Fitting %s: %d retained frames, %d observation dimensions, %d predictors, %d locations",

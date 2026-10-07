@@ -26,6 +26,7 @@ from nro.modules.firstlevels.statistics import (
     aggregate,
     fit_glm,
     linear_combination,
+    percent_signal_change,
 )
 from nro.modules.firstlevels.task_models import load_task_model, register_model
 
@@ -164,6 +165,29 @@ def test_gls_preserves_unfiltered_observations_and_counts_retained_frames():
     assert_allclose(fitted.residual_variance, (residual**2).sum(axis=0) / fitted.dof, rtol=1e-6)
 
 
+def test_percent_signal_change_uses_only_retained_frames_and_preserves_slopes():
+    retained = np.array([True, True, False, True])
+    data = np.array(
+        [
+            [90.0, 0.0, -2.0],
+            [100.0, 0.0, -1.0],
+            [900.0, 0.0, 100.0],
+            [110.0, 0.0, -3.0],
+        ]
+    )
+
+    scaled, invalid = percent_signal_change(data, retained)
+
+    assert invalid == 2
+    assert_allclose(scaled[:, 0], [-10.0, 0.0, 800.0, 10.0])
+    assert_allclose(scaled[:, 1:], 0.0)
+    design = np.column_stack((np.ones(3), [-1.0, 0.0, 1.0]))
+    raw_fit = fit_glm(data, design, retained=retained, ar_grid=np.array([0.0]))
+    scaled_fit = fit_glm(scaled, design, retained=retained, ar_grid=np.array([0.0]))
+    assert_allclose(scaled_fit.beta[1, 0], raw_fit.beta[1, 0])
+    assert_allclose(scaled_fit.residual_variance[0], raw_fit.residual_variance[0], atol=1e-20)
+
+
 def test_nested_summaries_keep_original_run_variance_contributions():
     fits = _fits()
     effects = [Estimate({key: np.array([0, 1, 0, 0])}) for key in fits]
@@ -297,7 +321,30 @@ def test_filter_configuration_is_removed_and_rejected(option):
 def test_contract_declares_unfiltered_fit():
     from nro.modules.firstlevels.contract import firstlevels_output_contract
 
-    assert firstlevels_output_contract()["temporal_filtering"] == "none"
+    contract = firstlevels_output_contract()
+    assert contract["temporal_filtering"] == "none"
+    assert contract["response_scaling"] == ("retained-frame-temporal-mean-percent-signal-change")
+
+
+def test_zero_duration_hrf_events_have_tr_independent_unit_area():
+    from nro.modules.firstlevels.models import event_design
+
+    node = {
+        "Model": {
+            "X": ["stimulus", 1],
+            "HRF": {"Variables": ["stimulus"], "Model": "spm"},
+        }
+    }
+    events = pd.DataFrame({"onset": [20.0], "duration": [0.0], "stimulus": [1.0]})
+    peaks = []
+    areas = []
+    for tr in (0.5, 1.0, 2.0):
+        confounds = pd.DataFrame(index=np.arange(int(80 / tr)))
+        regressor = event_design(node, events, confounds, tr)["stimulus"].to_numpy()
+        peaks.append(regressor.max())
+        areas.append(regressor.sum() * tr)
+    assert_allclose(peaks[0], peaks[1], rtol=0.04)
+    assert_allclose(areas, [1.0, 1.0, 1.0], rtol=0.04)
 
 
 def test_registration_unique_task_variant(tmp_path):

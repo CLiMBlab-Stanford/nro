@@ -10,6 +10,27 @@ class UnidentifiableDesignError(ValueError):
     """The selected frames cannot identify the temporal model with residual DOF."""
 
 
+def percent_signal_change(data: np.ndarray, retained: np.ndarray) -> tuple[np.ndarray, int]:
+    """Scale each spatial series to percent of its retained-frame temporal mean.
+
+    Finite locations with a positive mean are centered at zero. Locations
+    outside the acquired signal mask receive an all-zero series so their
+    published effect and variance remain invalid rather than infinite.
+    """
+    values = np.asarray(data)
+    retained = np.asarray(retained, dtype=bool)
+    if values.ndim != 2 or values.shape[0] != len(retained) or not retained.any():
+        raise ValueError("Response scaling requires aligned data and retained frames")
+    if not np.all(np.isfinite(values[retained])):
+        raise ValueError("Response scaling requires finite retained data")
+    means = np.mean(values[retained], axis=0, dtype=np.float64)
+    scales = np.divide(100.0, means, out=np.zeros_like(means), where=means > 0)
+    valid = np.isfinite(scales) & (scales > 0)
+    scaled = np.zeros(values.shape, dtype=np.float32)
+    scaled[:, valid] = values[:, valid] * scales[valid] - 100.0
+    return scaled, int((~valid).sum())
+
+
 @dataclass
 class RunFit:
     """Coefficient estimates with shared/grouped normalized covariance.

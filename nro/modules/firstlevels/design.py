@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from scipy import linalg
 
+from .contract import response_scaling_metadata
 from .models import event_design
 from .statistics import UnidentifiableDesignError, nuisance_components
 
@@ -97,7 +98,7 @@ def build_design(
             "ResidualDegreesOfFreedom": matrix.shape[0] - matrix.shape[1],
             "TemporalFiltering": "none",
             "RepetitionTime": tr,
-            "ResponseScaling": "none",
+            **response_scaling_metadata(),
             "CoefficientEstimability": projector.tolist(),
             "StatsModelNode": node,
             "PredictorSources": {
