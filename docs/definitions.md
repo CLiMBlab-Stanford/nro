@@ -229,7 +229,7 @@ DAG represents one consistent view of source BIDS.
 Use the typed definition editor to manage markup:
 
 ```bash
-nro def edit markup main
+nro def edit markup
 nro def rm markup alternative
 ```
 

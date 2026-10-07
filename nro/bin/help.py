@@ -59,6 +59,7 @@ TASK_GUIDES = {
 
           nro def edit config MODULE ID
           nro def edit workflow ID
+          nro def edit markup
           nro def ls config MODULE
           nro def rm markup ID
 

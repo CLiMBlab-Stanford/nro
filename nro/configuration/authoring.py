@@ -170,6 +170,8 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
         elif kind == "model":
             command.add_argument("task", metavar="TASK")
             command.add_argument("variant", nargs="?", default="main", metavar="VARIANT")
+        elif kind == "markup" and action == "edit":
+            command.add_argument("identifier", nargs="?", default="main", metavar="ID")
         else:
             command.add_argument("identifier", metavar="ID")
         if action == "edit":
@@ -320,7 +322,9 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
     try:
         if getattr(args, "file", None):
             args.file = args.file.expanduser()
-        store = ConfigStore()
+        # Publication validates the complete store under its write lock. Avoid
+        # hashing every definition merely to prepare a private editor draft.
+        store = ConfigStore(verify_integrity=False)
         target = definition_target(store, args.kind, _parsed_identifier(args))
         if not target.path.resolve().is_relative_to(store.root):
             raise ValueError("Definition path escapes the selected store through a symbolic link")

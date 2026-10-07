@@ -13,13 +13,13 @@ nro def edit model newtask
 nro def edit model newtask alternative
 nro def edit config clean alternative
 nro def edit workflow experiment
-nro def edit markup main
+nro def edit markup
 ```
 
 Model arguments are `TASK [VARIANT]`; an omitted variant means `main`. Config
-arguments are `CLASS ID`. Workflow and markup definitions take one ID. The
-configuration classes are `anat`, `func`, `clean`, `microparcellation`,
-`dynconn`, `networks`, and `firstlevels`.
+arguments are `CLASS ID`. Workflow definitions take one ID. Markup accepts an
+optional ID and defaults to `main`. The configuration classes are `anat`,
+`func`, `clean`, `microparcellation`, `dynconn`, `networks`, and `firstlevels`.
 
 The command opens a private draft with `$VISUAL`, then `$EDITOR`. If neither is
 set, it tries `nano` and then `vi`. Editor commands may contain options without

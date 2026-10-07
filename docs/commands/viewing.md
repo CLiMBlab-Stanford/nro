@@ -41,7 +41,7 @@ Regenerating a scene replaces only a directory carrying an nro scene manifest;
 the command refuses to replace an unmanaged directory.
 
 Surface scenes provide white, pial, midthickness, and inflated geometry.
-Midthickness is the default view. The cerebral montage places the left lateral,
+Inflated is the default view. The cerebral montage places the left lateral,
 left medial, right medial, and right lateral views in one row.
 For lesion-aware anatomy, `nro scene -m anat` also loads the lesion mask, the
 synthetic inpainted T1w image, and a surface family labeled as the intact

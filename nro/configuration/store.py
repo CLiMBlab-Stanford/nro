@@ -201,8 +201,13 @@ class ConfigStore:
         *,
         roots: tuple[Path, ...] | None = None,
         site_values: Mapping[str, object] | None = None,
+        verify_integrity: bool = True,
     ) -> None:
-        """Use active stores and site values, or explicit ones for staged validation."""
+        """Use active stores and site values, or explicit ones for staged validation.
+
+        Authoring commands may defer the full integrity scan until their locked
+        publication transaction by setting ``verify_integrity`` to false.
+        """
         if root is not None and roots is not None:
             raise ValueError("Specify either root or roots, not both")
         self.roots = (
@@ -223,7 +228,8 @@ class ConfigStore:
                 )
             if (candidate / ".nro-incomplete").exists():
                 raise WorkflowError(f"Definitions publication is incomplete: {candidate}")
-            validate_store_integrity(candidate)
+            if verify_integrity:
+                validate_store_integrity(candidate)
 
     @property
     def configs(self) -> Path:

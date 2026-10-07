@@ -23,6 +23,25 @@ def definition_fingerprint(definition: dict) -> str:
     return result
 
 
+def response_scaling_metadata() -> dict:
+    """Describe response and HRF scaling used by every first-level fit."""
+
+    return {
+        "ResponseScaling": {
+            "Method": "temporal-mean-percent-signal-change",
+            "ReferenceFrames": "retained",
+            "TargetMean": 100,
+            "Centered": True,
+            "EffectAndStandardErrorUnits": "percentage points per source-predictor unit",
+            "VarianceUnits": "squared percentage points per squared source-predictor unit",
+        },
+        "HRFNormalization": {
+            "CanonicalKernel": "discrete-unit-sum",
+            "ZeroDurationEvents": "unit-area impulse",
+        },
+    }
+
+
 def _matches_definition(manifest: dict, expected: dict) -> bool:
     from .compiler import canonical_model_document
 
@@ -45,8 +64,10 @@ def _matches_definition(manifest: dict, expected: dict) -> bool:
 def firstlevels_output_contract() -> dict:
     """Describe the substantive estimator, covariance and omission contracts."""
     return {
-        "layout": "subject-task-level-model-target-v4",
+        "layout": "subject-task-level-model-target-v5",
         "temporal_filtering": "none",
+        "response_scaling": "retained-frame-temporal-mean-percent-signal-change",
+        "hrf_normalization": "discrete-unit-sum-with-unit-area-impulses",
         "design_export": "compiled-task-model-and-retained-acquisition-rows",
         "statistics": ["effect", "variance", "t", "dof"],
         "statistic_files": "one-indexed-dscalar-per-statistic",

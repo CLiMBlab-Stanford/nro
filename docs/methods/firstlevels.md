@@ -15,7 +15,20 @@ introduced.
 ## Retained observations and temporal noise
 
 For one run, let `Y` be the full time-by-location response and `X` the full
-declared design. Subscript `R` selects uncensored frames. Fit `Y_R` using the
+declared design. Subscript `R` selects uncensored frames. Before fitting, define
+the response at location `v` as:
+
+```text
+Y_PSC[:, v] = 100 * (Y[:, v] / mean(Y_R[:, v]) - 1)
+```
+
+Locations without a finite positive retained-frame mean are invalid. Scaling is
+linear apart from the constant offset, so it scales a run's coefficients and
+standard errors together without changing t statistics. The resulting effect is
+the estimated percentage-point BOLD change per unit increase in the source-scale
+predictor. Variance is in squared percentage points.
+
+Fit `Y_PSC,R` using the
 independent task columns and nuisance PCs constructed from `X_R`. No temporal
 filter or frequency-basis projection is applied. The number of observations
 for residual-rank accounting is the number of retained frames. A run with no
@@ -47,6 +60,11 @@ nuisance PCs may enter. PCs redundant with task columns are excluded. The PCs
 are fitted jointly with the task predictors; they are not first made
 task-orthogonal. Making nuisance predictors task-orthogonal would change the
 meaning of adjusted task coefficients.
+
+SPM and Glover canonical HRFs have discrete unit sum. Positive-duration events
+retain their declared height and duration before convolution. A zero-duration
+event is represented as a unit-area impulse at the oversampled resolution, so
+its scale does not depend on TR or the internal oversampling factor.
 
 For joint independent design `D`, the conditional residual DOF and covariance
 are:
