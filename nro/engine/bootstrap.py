@@ -1,4 +1,4 @@
-"""Bootstrap an isolated Python environment using only the standard library."""
+"""Build an nro application environment from the isolated installer environment."""
 
 import argparse
 import fcntl
@@ -15,9 +15,9 @@ from pathlib import Path
 
 from nro.configuration.site import settings
 from nro.engine import user_launcher
+from nro.engine.bootstrap_dependencies import UV_VERSION
 from nro.orchestration.control_paths import ControlPaths
 
-UV_VERSION = "0.8.22"
 ROOT = Path(__file__).resolve().parents[2]
 RECORD = ".nro-installation.json"
 
