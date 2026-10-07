@@ -35,8 +35,8 @@ tests = ["tests/test_bidsify.py", "tests/test_bidsify_discovery.py", "tests/test
 boundaries = ["tests/test_scheduler_service.py"]
 
 [scope.anat]
-paths = ["nro/modules/anat/**", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_synthstroke_adapter.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
-tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_anat_fastsurfer.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_pose.py"]
+paths = ["nro/modules/anat/**", "nro/orchestration/hotfixes/*msmall*", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_synthstroke_adapter.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
+tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_anat_fastsurfer.py", "tests/test_anat_msmall.py", "tests/test_anat_reconstruction.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_hotfixes.py", "tests/test_pose.py"]
 boundaries = ["tests/test_branch_functional_execution.py", "tests/test_scene.py"]
 downstream = ["func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
 

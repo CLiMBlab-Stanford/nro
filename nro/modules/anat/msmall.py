@@ -97,8 +97,11 @@ class MsmAllCalibration:
                 "moving_input": "skull_stripped_T1w",
                 "moving_mask": "explicit_binary_brain_mask",
                 "reference_mask": "HCP_MNI152_2mm_brain_mask_dil",
+                "affine_degrees_of_freedom": 7,
                 "fnirt_intensity_model": "disabled_for_binary_masks",
                 "validation": {
+                    "affine_singular_value_range": [0.8, 1.2],
+                    "maximum_affine_anisotropy_ratio": 1.01,
                     "minimum_mask_dice": 0.75,
                     "minimum_masked_intensity_correlation": 0.3,
                     "maximum_jacobian_nonpositive_fraction": 0.0,
@@ -388,6 +391,7 @@ def add_msmall_plan(
     input_identities = out_dir / f"{subject}_desc-msmallInputs_provenance.json"
     driver = Path(__file__).with_name("msmall_driver.sh")
     atlas_validator = Path(__file__).with_name("msmall_validate_atlas.py")
+    subcortical_validator = Path(__file__).with_name("msmall_validate_subcortical.py")
     hcp_inputs = tuple(dict.fromkeys((*calibration.input_paths, structural_t1w, structural_t2w)))
     structural_parameters = {
         "selection_strategy": calibration.selection_strategy,
@@ -399,6 +403,12 @@ def add_msmall_plan(
         "grayordinates_resolution_mm": calibration.parameters["grayordinates_resolution_mm"],
         "input_registration": calibration.parameters["input_registration"],
     }
+    grayordinates_resolution_value = calibration.parameters["grayordinates_resolution_mm"]
+    grayordinates_resolution = (
+        format(grayordinates_resolution_value, ".15g")
+        if isinstance(grayordinates_resolution_value, float)
+        else str(grayordinates_resolution_value)
+    )
 
     structural_inputs = tuple(
         dict.fromkeys(
@@ -483,6 +493,7 @@ def add_msmall_plan(
     hcp_subject = f"{subject.removeprefix('sub-')}_msmall"
     session = branch / "study" / hcp_subject
     native = session / "MNINonLinear" / "Native"
+    rois = session / "MNINonLinear" / "ROIs"
     atlas = (
         session / "MNINonLinear" / f"fsaverage_LR{calibration.parameters['low_resolution_mesh']}k"
     )
@@ -614,6 +625,7 @@ def add_msmall_plan(
         ),
         outputs=(
             session / "MNINonLinear/registration_qc.json",
+            session / "MNINonLinear/xfms/acpc2MNILinear.mat",
             session / "MNINonLinear/xfms/acpc_dc2standard.nii.gz",
         ),
         cleanup=(session / ".MNINonLinear.masked.tmp",),
@@ -625,7 +637,7 @@ def add_msmall_plan(
         "freesurfer",
         "MSMAll FreeSurfer Reconstruction",
         inputs=(
-            marker("masked_atlas"),
+            marker("prefreesurfer"),
             t1_dir / "T1w_acpc_dc_restore.nii.gz",
             t1_dir / "T2w_acpc_dc_restore.nii.gz",
         ),
@@ -638,13 +650,33 @@ def add_msmall_plan(
         "MSMAll PostFreeSurfer",
         inputs=(
             marker("freesurfer"),
+            marker("masked_atlas"),
             freesurfer_dir / "surf/lh.white",
             freesurfer_dir / "surf/rh.white",
         ),
-        outputs=(*hcp_baseline.values(), *hcp_fsaverage.values()),
+        outputs=(
+            *hcp_baseline.values(),
+            *hcp_fsaverage.values(),
+            rois / f"ROIs.{grayordinates_resolution}.nii.gz",
+            rois / f"Atlas_ROIs.{grayordinates_resolution}.nii.gz",
+        ),
         surface_stage=True,
-        cleanup=(native, atlas),
+        cleanup=(native, atlas, rois),
         parameters=surface_parameters,
+    )
+    add_stage(
+        "validate_subcortical",
+        "Validate MSMAll Subcortical Models",
+        inputs=(
+            marker("postfreesurfer"),
+            rois / f"ROIs.{grayordinates_resolution}.nii.gz",
+            rois / f"Atlas_ROIs.{grayordinates_resolution}.nii.gz",
+        ),
+        outputs=(rois / "subcortical_qc.json",),
+        surface_stage=True,
+        cleanup=(rois / "subcortical_qc.json",),
+        parameters={"required_labels": "HCP_FreeSurferSubcorticalLabelTableLut"},
+        implementation_files=(subcortical_validator,),
     )
     results = session / "MNINonLinear/Results"
     surface_markers: list[Path] = []
@@ -654,7 +686,7 @@ def add_msmall_plan(
         add_stage(
             volume_stage,
             f"MSMAll fMRI Volume {run.name}",
-            inputs=(marker("postfreesurfer"), *run.input_paths),
+            inputs=(marker("validate_subcortical"), *run.input_paths),
             outputs=(run_dir / f"{run.name}.nii.gz",),
             surface_stage=True,
             calibration_stage=True,
@@ -666,7 +698,11 @@ def add_msmall_plan(
         add_stage(
             surface_stage,
             f"MSMAll fMRI Surface {run.name}",
-            inputs=(marker(volume_stage), run_dir / f"{run.name}.nii.gz", marker("postfreesurfer")),
+            inputs=(
+                marker(volume_stage),
+                run_dir / f"{run.name}.nii.gz",
+                marker("validate_subcortical"),
+            ),
             outputs=(run_dir / f"{run.name}_Atlas.dtseries.nii",),
             surface_stage=True,
             calibration_stage=True,

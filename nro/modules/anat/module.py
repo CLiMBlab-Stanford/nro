@@ -315,6 +315,9 @@ def build_module(
             Path(__file__).with_name("msmall_validate_atlas.py")
             if opts.msmall is not None
             else None,
+            Path(__file__).with_name("msmall_validate_subcortical.py")
+            if opts.msmall is not None
+            else None,
         ]
     )
     runner = Runner(
