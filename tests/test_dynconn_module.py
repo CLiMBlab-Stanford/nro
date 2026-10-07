@@ -4,15 +4,18 @@ import json
 import logging
 import os
 import time
+from copy import deepcopy
 from dataclasses import replace
 from itertools import count
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 import yaml
 from nibabel.gifti import GiftiDataArray, GiftiImage
 
+from nro.engine.artifact_metadata import metadata_contract_compatible
 from nro.engine.image_paths import sidecar_json_path
 from nro.modules.dynconn.config import (
     InclusionConfig,
@@ -21,8 +24,9 @@ from nro.modules.dynconn.config import (
     ModuleConfig,
     OutputConfig,
 )
+from nro.modules.dynconn.contract import dynconn_output_contract
 from nro.modules.dynconn.low_rank import fit_low_rank_correlation, pseudo_timeseries_block
-from nro.modules.dynconn.module import build_module
+from nro.modules.dynconn.module import _eligibility_comparison_payload, build_module
 from nro.orchestration.runner import Runner
 
 
@@ -78,6 +82,32 @@ def _execute(cfg: ModuleConfig):
     return result
 
 
+def test_source_repetition_times_are_a_backward_compatible_metadata_addition() -> None:
+    current = dynconn_output_contract()
+    recorded = deepcopy(current)
+    recorded["publication_manifest_fields"].pop("source_repetition_times_seconds")
+
+    assert metadata_contract_compatible(recorded, current)
+
+
+def test_single_tr_eligibility_compares_equal_to_historical_metadata() -> None:
+    historical = {
+        "included": [{"run_index": 0, "retained_frames": 4}],
+        "skipped": [],
+        "concatenated_frames": 4,
+        "repetition_time_seconds": 1.08,
+    }
+    current = {
+        "included": [{"run_index": 0, "retained_frames": 4, "repetition_time_seconds": 1.08}],
+        "skipped": [],
+        "concatenated_frames": 4,
+        "source_repetition_times_seconds": [1.08],
+        "series_step_seconds": 1.0,
+    }
+
+    assert _eligibility_comparison_payload(current) == historical
+
+
 def test_surface_module_concatenates_retained_frames(tmp_path: Path) -> None:
     runs, masks = [], []
     for run_index in range(2):
@@ -127,6 +157,8 @@ def test_surface_module_concatenates_retained_frames(tmp_path: Path) -> None:
     ]
     assert manifest["published_frames"] == 6
     assert manifest["low_rank"] is None
+    assert manifest["repetition_time_seconds"] == 2.0
+    assert manifest["source_repetition_times_seconds"] == [2.0]
 
     compressed_cfg = replace(
         cfg,
@@ -150,6 +182,8 @@ def test_surface_module_concatenates_retained_frames(tmp_path: Path) -> None:
     assert compressed_manifest["low_rank"]["requested_dimensions"] == 2
     assert compressed_manifest["low_rank"]["synthetic_frames"] == 3
     assert isinstance(compressed_manifest["low_rank"]["random_seed"], int)
+    assert compressed_manifest["repetition_time_seconds"] == 1.0
+    assert compressed_manifest["source_repetition_times_seconds"] == [2.0]
 
     for mask, run in zip(masks, runs):
         mask.write_text("motion_outlier00\n0\n0\n0\n0\n")
@@ -210,6 +244,86 @@ def test_volume_module_writes_uncompressed_four_dimensional_nifti(tmp_path: Path
     compressed_image = nib.load(str(compressed["timeseries"]))
     assert compressed_image.shape == (2, 2, 2, 3)
     assert compressed_image.header.get_zooms()[3] == 1.0
+
+
+def test_low_rank_module_accepts_mixed_repetition_times(tmp_path: Path) -> None:
+    runs, masks = [], []
+    for run_index, repetition_time in enumerate((1.08, 1.186)):
+        mask = tmp_path / f"run-{run_index}_desc-confounds_timeseries.tsv"
+        mask.write_text("motion_outlier00\n0\n0\n0\n0\n")
+        masks.append(mask)
+        pair = []
+        for hemi in ("L", "R"):
+            path = tmp_path / f"run-{run_index}_hemi-{hemi}_desc-clean_bold.func.gii"
+            nib.save(
+                GiftiImage(
+                    darrays=[
+                        GiftiDataArray(
+                            np.asarray(
+                                [frame, frame + run_index + 1, frame * 2 + 1],
+                                dtype=np.float32,
+                            )
+                        )
+                        for frame in range(4)
+                    ]
+                ),
+                path,
+            )
+            _sidecar(path, mask, frames=4, retained=4, tr=repetition_time)
+            pair.append(path)
+        runs.append(tuple(pair))
+    cfg = ModuleConfig(
+        InputsConfig(tuple(runs), tuple(masks), "surface", "fsnative", 2),
+        OutputConfig(
+            tmp_path / "out", tmp_path / "work", "sub-01_space-fsnative_smoothing-2mm", False
+        ),
+        _inclusion(),
+        low_rank=True,
+        low_rank_options=LowRankConfig(2, 2, 0),
+    )
+
+    result = _execute(cfg)
+
+    image = nib.load(str(result["timeseries"]))
+    manifest = yaml.safe_load(result["manifest"].read_text())
+    assert image.header.get_axis(0).step == 1.0
+    assert manifest["source_repetition_times_seconds"] == [1.08, 1.186]
+    assert [
+        record["repetition_time_seconds"] for record in manifest["functional_runs"]["included"]
+    ] == [1.08, 1.186]
+
+
+def test_full_module_rejects_mixed_repetition_times(tmp_path: Path) -> None:
+    runs, masks = [], []
+    for run_index, repetition_time in enumerate((1.08, 1.186)):
+        mask = tmp_path / f"run-{run_index}_desc-confounds_timeseries.tsv"
+        mask.write_text("motion_outlier00\n0\n0\n0\n0\n")
+        masks.append(mask)
+        pair = []
+        for hemi in ("L", "R"):
+            path = tmp_path / f"run-{run_index}_hemi-{hemi}_desc-clean_bold.func.gii"
+            nib.save(
+                GiftiImage(
+                    darrays=[
+                        GiftiDataArray(np.arange(3, dtype=np.float32) + frame) for frame in range(4)
+                    ]
+                ),
+                path,
+            )
+            _sidecar(path, mask, frames=4, retained=4, tr=repetition_time)
+            pair.append(path)
+        runs.append(tuple(pair))
+    cfg = ModuleConfig(
+        InputsConfig(tuple(runs), tuple(masks), "surface", "fsnative", 2),
+        OutputConfig(
+            tmp_path / "out", tmp_path / "work", "sub-01_space-fsnative_smoothing-2mm", False
+        ),
+        _inclusion(),
+        low_rank=False,
+    )
+
+    with pytest.raises(ValueError, match="requires one common RepetitionTime"):
+        _execute(cfg)
 
 
 def test_pseudo_timeseries_reconstitutes_truncated_correlation() -> None:

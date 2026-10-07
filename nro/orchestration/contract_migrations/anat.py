@@ -10,6 +10,7 @@ from nro.modules.anat.contract import (
 from .core import (
     INDETERMINATE,
     AddField,
+    AddFieldWhen,
     ContractMigration,
     ContractMigrationChain,
     RemoveField,
@@ -186,6 +187,19 @@ CHAIN = ContractMigrationChain(
                         "t1w": "selected_raw_source_images",
                         "t2w": "selected_raw_source_images",
                     },
+                ),
+            ),
+        ),
+        ContractMigration(
+            destination=12,
+            summary="Add deterministic fallback for FreeSurfer topology failures",
+            contract=(
+                AddFieldWhen(
+                    "processing.surface_reconstruction.random_seed_policy",
+                    discriminator="processing.surface_reconstruction.backend",
+                    value="FreeSurfer",
+                    default=surface_reconstruction_contract()["random_seed_policy"],
+                    historical=surface_reconstruction_contract()["random_seed_policy"],
                 ),
             ),
         ),

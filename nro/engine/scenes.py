@@ -310,6 +310,36 @@ def _remove_placeholder_elements(scene: str) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + result
 
 
+def _restore_spec_file_hemisphere_structures(scene: Path) -> None:
+    """Restore hemisphere structures that Workbench drops while updating scenes."""
+
+    root = ElementTree.parse(scene).getroot()
+    changed = False
+    structures = {"L": "CORTEX_LEFT", "R": "CORTEX_RIGHT"}
+    for record in root.iter("Object"):
+        if record.get("Class") != "SpecFileDataFile":
+            continue
+        fields = {child.get("Name"): child for child in record}
+        file_name = fields.get("fileName")
+        structure = fields.get("structure")
+        if file_name is None or structure is None:
+            continue
+        name = Path(file_name.text or "").name
+        if not name.endswith((".func.gii", ".shape.gii", ".label.gii", ".surf.gii")):
+            continue
+        hemisphere = next((value for value in structures if f"_hemi-{value}_" in name), None)
+        if hemisphere is None or structure.text == structures[hemisphere]:
+            continue
+        structure.text = structures[hemisphere]
+        changed = True
+    if changed:
+        atomic_write_text(
+            scene,
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + ElementTree.tostring(root, encoding="unicode"),
+        )
+
+
 def base_scene(
     *,
     scene_id: str,
@@ -484,6 +514,7 @@ def build_scene_bundle(
             if result.returncode:
                 message = (result.stderr or result.stdout or "unknown Workbench error").strip()
                 raise RuntimeError(f"Workbench could not build the scene: {message}")
+            _restore_spec_file_hemisphere_structures(scene)
             base.unlink(missing_ok=True)
             records = []
             for source in all_sources:

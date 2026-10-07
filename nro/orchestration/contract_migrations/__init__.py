@@ -11,6 +11,7 @@ from .anat import CHAIN as ANAT_CHAIN
 from .core import (
     INDETERMINATE,
     AddField,
+    AddFieldWhen,
     ContractMigration,
     ContractMigrationChain,
     MapValues,
@@ -62,6 +63,7 @@ def migrate_contract(
 __all__ = [
     "INDETERMINATE",
     "AddField",
+    "AddFieldWhen",
     "ContractMigration",
     "ContractMigrationChain",
     "MapValues",

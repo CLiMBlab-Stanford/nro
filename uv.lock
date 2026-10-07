@@ -2518,7 +2518,7 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.28.5"
+version = "0.28.6"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },

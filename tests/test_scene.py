@@ -14,6 +14,7 @@ from nro.engine.cli import core_selection
 from nro.engine.io import write_public_json
 from nro.engine.scenes import (
     SceneSource,
+    _restore_spec_file_hemisphere_structures,
     base_scene,
     build_scene_bundle,
     manifest_lesion_qc_paths,
@@ -387,3 +388,39 @@ def test_scene_loads_each_surface_topology_before_metrics(tmp_path: Path, monkey
         source.path for source in surface_sources if source.directory_label == "fast"
     ]
     assert all(command.index(str(path)) < first_metric for path in second_topology)
+
+
+def test_scene_restores_hemisphere_structures_dropped_by_workbench(tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    scene.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<SceneFile>
+  <Object Class="SpecFileDataFile">
+    <Object Name="dataFileType">METRIC</Object>
+    <Object Name="structure">ALL</Object>
+    <Object Name="fileName">sub-01_hemi-L_thickness.shape.gii</Object>
+  </Object>
+  <Object Class="SpecFileDataFile">
+    <Object Name="dataFileType">METRIC</Object>
+    <Object Name="structure">ALL</Object>
+    <Object Name="fileName">sub-01_hemi-R_sulc.shape.gii</Object>
+  </Object>
+  <Object Class="SpecFileDataFile">
+    <Object Name="dataFileType">VOLUME</Object>
+    <Object Name="structure">ALL</Object>
+    <Object Name="fileName">sub-01_T1w.nii.gz</Object>
+  </Object>
+</SceneFile>
+""",
+        encoding="utf-8",
+    )
+
+    _restore_spec_file_hemisphere_structures(scene)
+
+    root = ElementTree.parse(scene).getroot()
+    structures = [
+        next(field.text for field in record if field.get("Name") == "structure")
+        for record in root.iter("Object")
+        if record.get("Class") == "SpecFileDataFile"
+    ]
+    assert structures == ["CORTEX_LEFT", "CORTEX_RIGHT", "ALL"]

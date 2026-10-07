@@ -12,6 +12,7 @@ DYNCONN_MANIFEST_FIELDS = {
     "representation": "string",
     "weighting": "string",
     "repetition_time_seconds": "number",
+    "source_repetition_times_seconds": {"kind": "list", "default": []},
     "series_axis_interpretation": "string",
     "spatial_shape": "list",
     "concatenated_frames": "integer",

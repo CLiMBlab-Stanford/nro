@@ -26,7 +26,7 @@ def _parser(prog: str) -> argparse.ArgumentParser:
 def _render(report: dict) -> str:
     lines = [report["summary"], "", f"Hotfix: {report['identifier']}"]
     lines.append("Projects: " + ", ".join(report["projects"]))
-    lines.append(f"Artifact records to repair: {report['records']}")
+    lines.append(f"Records to repair: {report['records']}")
     if report["paths"]:
         lines.extend(("", "Files:"))
         lines.extend(f"  {path}" for path in report["paths"])
@@ -85,4 +85,4 @@ def main(argv: list[str] | None = None, *, prog: str = "nro hotfix") -> None:
         execute=True,
         **fields,
     )
-    print(f"Repaired {result['records']} artifact record(s) across {len(projects)} project(s).")
+    print(f"Repaired {result['records']} record(s) across {len(projects)} project(s).")

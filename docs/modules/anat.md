@@ -58,7 +58,11 @@ selected sources before comparing subjects with different acquisition schemes.
    SynthStrip mask to FreeSurfer's conformed grid with nearest-neighbor
    interpolation and applies it to FreeSurfer's normalized `T1.mgz`. The result
    becomes `brainmask.auto.mgz` and `brainmask.mgz` before `autorecon2` and
-   `autorecon3`. The alternative FastSurfer 2.5.4 path runs FastSurferVINN at
+   `autorecon3`. Reconstruction uses seed 1234. If FreeSurfer fails during
+   topology correction, nro discards the incomplete directory and retries once
+   from the beginning with seed 5678. Other failures are not retried. The
+   successful seed is recorded under the FreeSurfer subject's `scripts`
+   directory. The alternative FastSurfer 2.5.4 path runs FastSurferVINN at
    1 mm on a GPU, stores that stage in private work, and returns the work item
    to a CPU worker for surface reconstruction. The GPU stage publishes a
    complete private archive, and the CPU stage publishes a validated directory.
@@ -91,9 +95,10 @@ The branch uses the fixed marked runs and their opposite-PE fieldmaps to run the
 HCP structural, minimal functional, multi-run FIX, MSMAll, and dedrifting route.
 Because nro source anatomy is already skull-stripped, nonlinear atlas
 registration uses explicit moving and reference masks and disables FNIRT's
-whole-head intensity model. The branch preserves internal HCP checkpoints after
-preemption and runs on a long CPU worker. It does not publish the calibration
-time series as ordinary functional derivatives.
+whole-head intensity model. Each major HCP operation is a separate runner step,
+so preemption resumes through the ordinary anatomical DAG and freshness rules.
+The branch runs on a long CPU worker and does not publish the calibration time
+series as ordinary functional derivatives.
 
 nro transfers the resulting participant registration onto its canonical
 `fsnative` topology with Workbench spherical project/unproject operations. It

@@ -174,7 +174,7 @@ def test_msmall_rejects_lesion_and_fastsurfer_routes(tmp_path: Path) -> None:
         )
 
 
-def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path, monkeypatch) -> None:
+def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monkeypatch) -> None:
     _, t1w, t2w, _, _, _, markup = _calibration_subject(tmp_path)
     calibration = resolve_msmall_calibration(
         markup=markup,
@@ -217,27 +217,72 @@ def test_msmall_plan_declares_checkpoint_route_and_publication(tmp_path: Path, m
 
     names = [step.name for step in runner._graph.steps]
     assert "Estimate MSMAll Registration" in names
+    assert "MSMAll PreFreeSurfer" in names
+    assert "MSMAll FreeSurfer Reconstruction" in names
+    assert "MSMAll fMRI Volume rfMRI_REST001" in names
+    assert "MSMAll fMRI Surface rfMRI_REST001" in names
+    assert "MSMAll Multi-Run ICA-FIX" in names
+    assert "MSMAll Dedrift and Resample" in names
     assert "Validate MSMAll Registration" in names
     assert outputs["manifest"].endswith("sub-01_desc-msmall_manifest.json")
     assert outputs["input_identities"].endswith("sub-01_desc-msmallInputs_provenance.json")
 
-    configuration_step = next(
+    runner._graph.freeze()
+    by_name = {step.name: step for step in runner._graph.steps}
+    prefree_dependencies = runner._graph.dependencies(by_name["MSMAll PreFreeSurfer"])
+    assert by_name["Write MSMAll Structural Configuration"].id in prefree_dependencies
+    assert by_name["Write MSMAll Surface Configuration"].id not in prefree_dependencies
+    assert by_name["Write MSMAll Calibration Configuration"].id not in prefree_dependencies
+    post_dependencies = runner._graph.dependencies(by_name["MSMAll PostFreeSurfer"])
+    assert by_name["Write MSMAll Surface Configuration"].id in post_dependencies
+    assert by_name["Write MSMAll Calibration Configuration"].id not in post_dependencies
+    volume_dependencies = runner._graph.dependencies(by_name["MSMAll fMRI Volume rfMRI_REST001"])
+    assert by_name["Write MSMAll Calibration Configuration"].id in volume_dependencies
+    assert by_name["Write MSMAll Surface Configuration"].id in volume_dependencies
+    assert by_name["MSMAll PostFreeSurfer"].id in volume_dependencies
+    prefree = by_name["MSMAll PreFreeSurfer"]
+    assert all(path.name != "msmall_driver.sh" for path in prefree.inputs)
+    assert prefree.scientific_signature
+
+    structural_configuration_step = next(
+        step for step in runner._graph.steps if step.name == "Write MSMAll Structural Configuration"
+    )
+    calibration_configuration_step = next(
         step
         for step in runner._graph.steps
         if step.name == "Write MSMAll Calibration Configuration"
     )
-    assert structural_t1w in configuration_step.inputs
-    assert structural_t2w in configuration_step.inputs
-    assert t1w in configuration_step.inputs
-    assert t2w in configuration_step.inputs
-    assert configuration_step.action is not None
+    assert structural_t1w in structural_configuration_step.inputs
+    assert structural_t2w in structural_configuration_step.inputs
+    assert t1w in structural_configuration_step.inputs
+    assert t2w in structural_configuration_step.inputs
+    assert structural_configuration_step.action is not None
+    assert calibration_configuration_step.action is not None
     monkeypatch.setattr("nro.modules.anat.msmall.write_public_json", lambda *_args, **_kwargs: None)
-    configuration_step.action()
-    configuration = (tmp_path / "work/msmall/configuration.sh").read_text()
-    assert f"t1w=({structural_t1w})" in configuration
-    assert f"t2w=({structural_t2w})" in configuration
-    assert f"t1w=({t1w})" not in configuration
-    assert f"t2w=({t2w})" not in configuration
+    structural_configuration_step.action()
+    calibration_configuration_step.action()
+    structural_configuration = (tmp_path / "work/msmall/structural_configuration.sh").read_text()
+    calibration_configuration = (tmp_path / "work/msmall/calibration_configuration.sh").read_text()
+    assert f"t1w=({structural_t1w})" in structural_configuration
+    assert f"t2w=({structural_t2w})" in structural_configuration
+    assert f"t1w=({t1w})" not in structural_configuration
+    assert f"t2w=({t2w})" not in structural_configuration
+    assert "run_names=(rfMRI_REST001)" in calibration_configuration
+
+    structural_mtime = (tmp_path / "work/msmall/structural_configuration.sh").stat().st_mtime_ns
+    structural_configuration_step.action()
+    assert (
+        tmp_path / "work/msmall/structural_configuration.sh"
+    ).stat().st_mtime_ns == structural_mtime
+
+
+def test_msmall_driver_has_no_independent_checkpoint_graph() -> None:
+    driver = Path(anat_planning.__file__).with_name("msmall_driver.sh").read_text()
+
+    assert "run_stage" not in driver
+    assert "verify_checkpoint" not in driver
+    assert "clear_after" not in driver
+    assert 'case "$stage" in' in driver
 
 
 def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> None:

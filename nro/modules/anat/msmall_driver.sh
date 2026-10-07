@@ -1,13 +1,33 @@
 #!/usr/bin/env bash
 
-# Execute the HCP MSMAll calibration route with durable internal checkpoints.
-# The runner owns this script as one optional anatomical branch. Each named
-# stage remains resumable after worker timeout or preemption.
+# Execute exactly one runner-owned HCP MSMAll stage.
 
 set -euo pipefail
 
-configuration=${1:?usage: msmall_driver.sh CONFIGURATION}
-source "$configuration"
+stage=${1:?usage: msmall_driver.sh STAGE STRUCTURAL_CONFIGURATION [SURFACE_CONFIGURATION] [CALIBRATION_CONFIGURATION] [INDEX]}
+structural_configuration=${2:?usage: msmall_driver.sh STAGE STRUCTURAL_CONFIGURATION [SURFACE_CONFIGURATION] [CALIBRATION_CONFIGURATION] [INDEX]}
+source "$structural_configuration"
+case "$stage" in
+    inventory|fmri_volume_*|fmri_surface_*|multirun_fix|prepare_msmall|msmall|dedrift|validate)
+        surface_configuration=${3:?surface configuration is required for stage $stage}
+        calibration_configuration=${4:?calibration configuration is required for stage $stage}
+        source "$surface_configuration"
+        source "$calibration_configuration"
+        stage_index=${5:-}
+        ;;
+    postfreesurfer)
+        surface_configuration=${3:?surface configuration is required for stage $stage}
+        source "$surface_configuration"
+        stage_index=
+        ;;
+    prefreesurfer|masked_atlas|freesurfer)
+        stage_index=
+        ;;
+    *)
+        echo "Unsupported MSMAll stage: $stage" >&2
+        exit 2
+        ;;
+esac
 atlas_validator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/msmall_validate_atlas.py"
 
 set +e
@@ -24,14 +44,14 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-${NRO_CPUS_PER_TASK:-2}}"
 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="$OMP_NUM_THREADS"
 export FSLPARALLEL="$OMP_NUM_THREADS"
 
-case "$matlab_run_mode" in
+case "${matlab_run_mode:-octave}" in
     octave) hcp_matlab_run_mode=2 ;;
     *)
-        echo "Unsupported MSMAll MATLAB run mode: $matlab_run_mode" >&2
+        echo "Unsupported MSMAll MATLAB run mode: ${matlab_run_mode:-}" >&2
         exit 2
         ;;
 esac
-if [[ "$fix_training_model" != HCP_Style_Single_Multirun_Dedrift ]]; then
+if [[ "${fix_training_model:-HCP_Style_Single_Multirun_Dedrift}" != HCP_Style_Single_Multirun_Dedrift ]]; then
     echo "Unsupported MSMAll FIX model: $fix_training_model" >&2
     exit 2
 fi
@@ -44,128 +64,14 @@ fi
 study="$work_root/study"
 session="${subject#sub-}_msmall"
 session_root="$study/$session"
-markers="$work_root/markers"
-logs="$work_root/logs"
 runtime="$work_root/runtime"
-mkdir -p "$study" "$markers" "$logs" "$runtime"
-
-recorded_structural=$(cat "$work_root/structural.fingerprint" 2>/dev/null || true)
-recorded_calibration=$(cat "$work_root/calibration.fingerprint" 2>/dev/null || true)
-if [[ -n "$recorded_structural" && "$recorded_structural" != "$structural_fingerprint" ]]; then
-    echo "MSMAll structural inputs changed; clearing the private MSMAll branch"
-    rm -rf "$study" "$markers" "$runtime"
-    rm -f "$work_root/complete"
-    mkdir -p "$study" "$markers" "$runtime"
-elif [[ -n "$recorded_calibration" && "$recorded_calibration" != "$calibration_fingerprint" ]]; then
-    echo "MSMAll calibration changed; preserving completed structural reconstruction"
-    rm -f "$markers/inventory.complete" "$markers/postfreesurfer.complete"
-    rm -f "$markers"/fmri_*.complete "$markers/multirun_fix.complete"
-    rm -f "$markers/prepare_msmall.complete" "$markers/msmall.complete"
-    rm -f "$markers/dedrift.complete" "$markers/validate.complete" "$work_root/complete"
-    rm -rf "$runtime" "$session_root/MNINonLinear/Native"
-    rm -rf "$session_root/MNINonLinear"/fsaverage_LR*k
-    rm -rf "$session_root/MNINonLinear/Results" "$session_root"/rfMRI_REST*
-    mkdir -p "$runtime"
-fi
-printf '%s\n' "$structural_fingerprint" > "$work_root/structural.fingerprint"
-printf '%s\n' "$calibration_fingerprint" > "$work_root/calibration.fingerprint"
+mkdir -p "$study" "$runtime"
 
 require_file() {
     if [[ ! -s "$1" ]]; then
         echo "Missing required MSMAll input: $1" >&2
         exit 2
     fi
-}
-
-run_stage() {
-    local name=$1
-    shift
-    local marker="$markers/$name.complete"
-    if [[ -s "$marker" ]]; then
-        echo "Reuse completed MSMAll stage: $name"
-        return
-    fi
-    echo "Start MSMAll stage: $name"
-    if "$@" > "$logs/$name.log" 2>&1; then
-        :
-    else
-        local status=$?
-        echo "MSMAll stage failed: $name (last 200 log lines follow)" >&2
-        tail -n 200 "$logs/$name.log" >&2
-        return "$status"
-    fi
-    printf 'completed %s\n' "$(date --iso-8601=seconds)" > "$marker"
-    echo "Completed MSMAll stage: $name"
-}
-
-clear_calibration_checkpoints() {
-    rm -f "$markers"/fmri_*.complete "$markers/multirun_fix.complete"
-    rm -f "$markers/prepare_msmall.complete" "$markers/msmall.complete"
-    rm -f "$markers/dedrift.complete" "$markers/validate.complete"
-    rm -f "$work_root/complete"
-}
-
-clear_after() {
-    local stage=$1
-    case "$stage" in
-        prefreesurfer)
-            rm -f "$markers/masked_atlas.complete" "$markers/freesurfer.complete"
-            rm -f "$markers/postfreesurfer.complete"
-            clear_calibration_checkpoints
-            ;;
-        masked_atlas)
-            rm -f "$markers/freesurfer.complete" "$markers/postfreesurfer.complete"
-            clear_calibration_checkpoints
-            ;;
-        freesurfer)
-            rm -f "$markers/postfreesurfer.complete"
-            clear_calibration_checkpoints
-            ;;
-        postfreesurfer)
-            clear_calibration_checkpoints
-            ;;
-        fmri_volume_*)
-            rm -f "$markers/fmri_surface_${stage#fmri_volume_}.complete"
-            rm -f "$markers/multirun_fix.complete" "$markers/prepare_msmall.complete"
-            rm -f "$markers/msmall.complete" "$markers/dedrift.complete"
-            rm -f "$markers/validate.complete" "$work_root/complete"
-            ;;
-        fmri_surface_*|multirun_fix)
-            rm -f "$markers/multirun_fix.complete" "$markers/prepare_msmall.complete"
-            rm -f "$markers/msmall.complete" "$markers/dedrift.complete"
-            rm -f "$markers/validate.complete" "$work_root/complete"
-            ;;
-        prepare_msmall)
-            rm -f "$markers/msmall.complete" "$markers/dedrift.complete"
-            rm -f "$markers/validate.complete" "$work_root/complete"
-            ;;
-        msmall)
-            rm -f "$markers/dedrift.complete" "$markers/validate.complete"
-            rm -f "$work_root/complete"
-            ;;
-        dedrift)
-            rm -f "$markers/validate.complete" "$work_root/complete"
-            ;;
-        validate)
-            rm -f "$work_root/complete"
-            ;;
-    esac
-}
-
-verify_checkpoint() {
-    local name=$1
-    shift
-    local marker="$markers/$name.complete"
-    [[ -s "$marker" ]] || return 0
-    local path
-    for path in "$@"; do
-        if [[ ! -s "$path" ]]; then
-            echo "MSMAll checkpoint is incomplete; rebuilding stage: $name"
-            rm -f "$marker"
-            clear_after "$name"
-            return 0
-        fi
-    done
 }
 
 join_at() {
@@ -368,7 +274,6 @@ run_fmri_surface() {
 run_fix() {
     local results="$session_root/MNINonLinear/Results"
     local concat="$results/rfMRI_REST_CONCAT/rfMRI_REST_CONCAT"
-    local ica="${concat}_hp${high_pass_seconds}.ica"
     local fix_driver="$runtime/hcp_fix_multi_run"
     local inputs= names name
     names=$(join_at "${run_names[@]}")
@@ -377,27 +282,20 @@ run_fix() {
         inputs+="$results/$name/$name"
     done
     sed \
-        -e '/# run fix feature selection/i\
-if [[ ! -s "${concatfmrihp}.ica/.fix" ]]; then' \
-        -e '/grep -h Noise .*concatfmrihp.*\.ica\/\.fix/a\
-else\
-    log_Msg "Reusing existing pyFIX classification checkpoint"\
-fi' \
         -e 's|${this_script_dir}/scripts|${HCPPIPEDIR}/ICAFIX/scripts|' \
         -e "s| fix_3_clean('| addpath('/opt/HCP/HCPpipelines/ICAFIX/scripts'); rmpath('/opt/HCP/HCPpipelines/global/matlab/icasso122'); fix_3_clean('|" \
         "$HCPPIPEDIR/ICAFIX/hcp_fix_multi_run" > "$fix_driver"
     chmod +x "$fix_driver"
-    local -a reuse=()
-    if [[ -s "$ica/.fix" && -s "$ica/filtered_func_data.ica/melodic_mix" ]]; then
-        reuse+=(--reuse-existing-ica=TRUE)
-    fi
     "$fix_driver" \
         --fmri-names="$inputs" --high-pass="$high_pass_seconds" \
         --concat-fmri-name="$concat" --motion-regression=FALSE \
         --enable-legacy-fix=FALSE --fix-threshold="$fix_threshold" \
         --delete-intermediates=FALSE --processing-mode=HCPStyleData \
         --ica-method=MELODIC --parallel-limit="$OMP_NUM_THREADS" \
-        --matlab-run-mode="$hcp_matlab_run_mode" "${reuse[@]}"
+        --matlab-run-mode="$hcp_matlab_run_mode"
+    local variance="${concat}_Atlas_hp${high_pass_seconds}_clean_vn.dscalar.nii"
+    cp "$variance" "${variance%.dscalar.nii}_before_floor.dscalar.nii"
+    rm -f "$variance"
     printf '%s\n' "$names" > "$work_root/fix_run_names.txt"
 }
 
@@ -406,8 +304,7 @@ prepare_msmall() {
     local variance="$results/rfMRI_REST_CONCAT_Atlas_hp${high_pass_seconds}_clean_vn.dscalar.nii"
     local original="${variance%.dscalar.nii}_before_floor.dscalar.nii"
     local temporary="${variance}.tmp"
-    require_file "$variance"
-    [[ -s "$original" ]] || cp "$variance" "$original"
+    require_file "$original"
     "$CARET7DIR/wb_command" -cifti-math 'max(variance, 0.001)' "$temporary" \
         -var variance "$original"
     mv "$temporary" "$variance"
@@ -439,7 +336,6 @@ for argument in "$@"; do
     esac
 done
 [[ -n "$output_prefix" ]] || { echo "MSM invocation has no output prefix" >&2; exit 2; }
-[[ ! -s "${output_prefix}sphere.reg.surf.gii" ]] || exit 0
 for metric in "${metrics[@]}"; do
     statistics=$("$CARET7DIR/wb_command" -metric-stats "$metric" -reduce MEAN)
     if grep -Eqi '(^|[[:space:]])(nan|[-+]?inf)([[:space:]]|$)' <<<"$statistics"; then
@@ -524,53 +420,17 @@ finalize() {
 }
 
 for path in "${t1w[@]}" "${t2w[@]}" "$fs_license"; do require_file "$path"; done
-for index in "${!run_names[@]}"; do
-    require_file "${run_paths[$index]}"
-    require_file "${se_negative[$index]}"
-    require_file "${se_positive[$index]}"
-done
-
-verify_checkpoint inventory \
-    "$work_root/input_manifest.tsv" "$work_root/software_versions.txt"
-run_stage inventory record_inventory
-verify_checkpoint prefreesurfer \
-    "$session_root/T1w/T1w_acpc_dc_restore.nii.gz" \
-    "$session_root/T1w/T2w_acpc_dc_restore.nii.gz"
-run_stage prefreesurfer run_prefreesurfer
-verify_checkpoint masked_atlas \
-    "$session_root/MNINonLinear/registration_qc.json" \
-    "$session_root/MNINonLinear/xfms/acpc_dc2standard.nii.gz"
-run_stage masked_atlas repair_atlas_registration
-verify_checkpoint freesurfer \
-    "$session_root/T1w/$session/surf/lh.white" \
-    "$session_root/T1w/$session/surf/rh.white"
-run_stage freesurfer run_freesurfer
-verify_checkpoint postfreesurfer \
-    "$session_root/MNINonLinear/Native/$session.L.sphere.reg.native.surf.gii" \
-    "$session_root/MNINonLinear/Native/$session.R.sphere.reg.native.surf.gii"
-run_stage postfreesurfer run_postfreesurfer
-for index in "${!run_names[@]}"; do
-    verify_checkpoint "fmri_volume_${run_names[$index]}" \
-        "$session_root/MNINonLinear/Results/${run_names[$index]}/${run_names[$index]}.nii.gz"
-    run_stage "fmri_volume_${run_names[$index]}" run_fmri_volume "$index"
-    verify_checkpoint "fmri_surface_${run_names[$index]}" \
-        "$session_root/MNINonLinear/Results/${run_names[$index]}/${run_names[$index]}_Atlas.dtseries.nii"
-    run_stage "fmri_surface_${run_names[$index]}" run_fmri_surface "$index"
-done
-verify_checkpoint multirun_fix \
-    "$session_root/MNINonLinear/Results/rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp${high_pass_seconds}_clean.dtseries.nii" \
-    "$session_root/MNINonLinear/Results/rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp${high_pass_seconds}_clean_vn.dscalar.nii"
-run_stage multirun_fix run_fix
-verify_checkpoint prepare_msmall \
-    "$session_root/MNINonLinear/Results/rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp${high_pass_seconds}_clean_vn.dscalar.nii"
-run_stage prepare_msmall prepare_msmall
-verify_checkpoint msmall \
-    "$session_root/MNINonLinear/Native/$session.L.sphere.${output_registration}_InitialReg_2_d${ica_dimension}_${method}.native.surf.gii" \
-    "$session_root/MNINonLinear/Native/$session.R.sphere.${output_registration}_InitialReg_2_d${ica_dimension}_${method}.native.surf.gii"
-run_stage msmall run_msmall
-verify_checkpoint dedrift \
-    "$session_root/MNINonLinear/Native/$session.L.sphere.${output_registration}.native.surf.gii" \
-    "$session_root/MNINonLinear/Native/$session.R.sphere.${output_registration}.native.surf.gii"
-run_stage dedrift run_dedrift
-verify_checkpoint validate "$work_root/complete"
-run_stage validate finalize
+case "$stage" in
+    inventory) record_inventory ;;
+    prefreesurfer) run_prefreesurfer ;;
+    masked_atlas) repair_atlas_registration ;;
+    freesurfer) run_freesurfer ;;
+    postfreesurfer) run_postfreesurfer ;;
+    fmri_volume_*) run_fmri_volume "$stage_index" ;;
+    fmri_surface_*) run_fmri_surface "$stage_index" ;;
+    multirun_fix) run_fix ;;
+    prepare_msmall) prepare_msmall ;;
+    msmall) run_msmall ;;
+    dedrift) run_dedrift ;;
+    validate) finalize ;;
+esac

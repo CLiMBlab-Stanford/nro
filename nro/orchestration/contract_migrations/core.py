@@ -27,6 +27,15 @@ def _parent(document: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any] |
     return current
 
 
+def _value(document: dict[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = document
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
 @dataclass(frozen=True)
 class AddField:
     """Add one field with distinct current and historical meanings."""
@@ -49,6 +58,49 @@ class AddField:
 
     def apply_default(self, document: dict[str, Any]) -> None:
         """Impute the current default when its parent exists."""
+        parent = _parent(document, self.path)
+        if parent is not None and self.path[-1] not in parent:
+            parent[self.path[-1]] = deepcopy(self.default)
+
+
+@dataclass(frozen=True)
+class AddFieldWhen:
+    """Add one field only when a discriminator has the selected value."""
+
+    path: tuple[str, ...]
+    discriminator: tuple[str, ...]
+    value: Any
+    default: Any
+    historical: Any
+
+    def __init__(
+        self,
+        path: str | Sequence[str],
+        *,
+        discriminator: str | Sequence[str],
+        value: Any,
+        default: Any,
+        historical: Any,
+    ) -> None:
+        """Declare a conditional field addition and both meanings of absence."""
+        object.__setattr__(self, "path", _path(path))
+        object.__setattr__(self, "discriminator", _path(discriminator))
+        object.__setattr__(self, "value", deepcopy(value))
+        object.__setattr__(self, "default", deepcopy(default))
+        object.__setattr__(self, "historical", deepcopy(historical))
+
+    def apply_historical(self, document: dict[str, Any]) -> None:
+        """Impute historical meaning when the discriminator matches."""
+        if _value(document, self.discriminator) != self.value:
+            return
+        parent = _parent(document, self.path)
+        if parent is not None and self.path[-1] not in parent:
+            parent[self.path[-1]] = deepcopy(self.historical)
+
+    def apply_default(self, document: dict[str, Any]) -> None:
+        """Impute the current default when the discriminator matches."""
+        if _value(document, self.discriminator) != self.value:
+            return
         parent = _parent(document, self.path)
         if parent is not None and self.path[-1] not in parent:
             parent[self.path[-1]] = deepcopy(self.default)
@@ -138,7 +190,7 @@ class MapValues:
         """Leave current values unchanged."""
 
 
-Operation = AddField | RenameField | RemoveField | MapValues
+Operation = AddField | AddFieldWhen | RenameField | RemoveField | MapValues
 
 
 @dataclass(frozen=True)

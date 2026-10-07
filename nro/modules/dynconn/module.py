@@ -39,6 +39,42 @@ TEMPORAL_BLOCK_FRAMES = 32
 SPATIAL_BLOCK_LOCATIONS = 65_536
 
 
+def _source_repetition_times(eligibility: dict[str, object]) -> list[float]:
+    values = eligibility.get("source_repetition_times_seconds")
+    if isinstance(values, list):
+        return [float(value) for value in values]
+    return [float(eligibility["repetition_time_seconds"])]
+
+
+def _series_step_seconds(eligibility: dict[str, object], *, low_rank: bool) -> float:
+    value = eligibility.get("series_step_seconds")
+    if value is not None:
+        return float(value)
+    return 1.0 if low_rank else float(eligibility["repetition_time_seconds"])
+
+
+def _eligibility_comparison_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Normalize single-TR eligibility metadata to its historical representation."""
+
+    repetition_times = _source_repetition_times(payload)
+    if len(repetition_times) != 1 or "source_repetition_times_seconds" not in payload:
+        return payload
+    normalized = dict(payload)
+    normalized.pop("source_repetition_times_seconds", None)
+    normalized.pop("series_step_seconds", None)
+    normalized["repetition_time_seconds"] = repetition_times[0]
+    for key in ("included", "skipped"):
+        records = normalized.get(key)
+        if isinstance(records, list):
+            normalized[key] = [
+                {name: value for name, value in record.items() if name != "repetition_time_seconds"}
+                if isinstance(record, dict)
+                else record
+                for record in records
+            ]
+    return normalized
+
+
 def _flatten(groups: tuple[tuple[Path, ...], ...]) -> tuple[Path, ...]:
     return tuple(path for group in groups for path in group)
 
@@ -183,6 +219,7 @@ def build_module(
             zip(cfg.inputs.functional, cfg.inputs.temporal_masks)
         ):
             metadata = load_cleaned_run_metadata(run)
+            repetition_time = _repetition_time(metadata.sidecars[0])
             if metadata.temporal_mask_file.resolve() != expected_mask.resolve():
                 raise ValueError(
                     "Cleaned sidecar names an unexpected temporal mask: "
@@ -197,11 +234,12 @@ def build_module(
                 "total_frames": metadata.total_frames,
                 "retained_frames": metadata.retained_frames,
                 "algebraic_temporal_rank": metadata.algebraic_temporal_rank,
+                "repetition_time_seconds": repetition_time,
             }
             if reasons:
                 skipped.append({**record, "reasons": list(reasons)})
             else:
-                repetition_times.add(_repetition_time(metadata.sidecars[0]))
+                repetition_times.add(repetition_time)
                 included.append(record)
                 included_metadata.append(metadata)
         retained = sum(int(record["retained_frames"]) for record in included)
@@ -215,8 +253,11 @@ def build_module(
                 f"Usable runs contain {retained} retained frames; at least "
                 f"{cfg.inclusion.minimum_aggregate_retained_frames} are required"
             )
-        if len(repetition_times) != 1:
-            raise ValueError("Included runs must have one common RepetitionTime for concatenation")
+        if not cfg.low_rank and len(repetition_times) != 1:
+            raise ValueError(
+                "Full time-series concatenation requires one common RepetitionTime; "
+                "use low-rank dynconn for runs with mixed repetition times"
+            )
         weights = connectivity_run_weights(included_metadata, weighting=cfg.weighting)
         for record, weight in zip(included, weights):
             record["effective_dof"] = weight.effective_dof
@@ -231,7 +272,8 @@ def build_module(
             "included": included,
             "skipped": skipped,
             "concatenated_frames": retained,
-            "repetition_time_seconds": repetition_times.pop(),
+            "source_repetition_times_seconds": sorted(repetition_times),
+            "series_step_seconds": (1.0 if cfg.low_rank else next(iter(repetition_times))),
         }
 
     def assess_runs() -> None:
@@ -243,7 +285,9 @@ def build_module(
             current = eligibility_payload()
         except (OSError, TypeError, ValueError) as error:
             return False, f"Run eligibility is unreadable or invalid: {error}"
-        if cached != current:
+        if not isinstance(cached, dict) or _eligibility_comparison_payload(
+            cached
+        ) != _eligibility_comparison_payload(current):
             return False, "Run eligibility no longer matches cleaned-run metadata."
         return True, "Run eligibility matches cleaned-run metadata."
 
@@ -341,7 +385,7 @@ def build_module(
                         axis = part if axis is None else axis + part
                     series = nib.cifti2.SeriesAxis(
                         0.0,
-                        1.0,
+                        _series_step_seconds(eligibility, low_rank=True),
                         fit.synthetic_frames,
                         unit="SECOND",
                     )
@@ -414,7 +458,7 @@ def build_module(
                 axis = part if axis is None else axis + part
             series = nib.cifti2.SeriesAxis(
                 0.0,
-                float(eligibility["repetition_time_seconds"]),
+                _series_step_seconds(eligibility, low_rank=False),
                 n_frames,
                 unit="SECOND",
             )
@@ -456,7 +500,7 @@ def build_module(
             header.set_zooms(
                 (
                     *header.get_zooms()[:3],
-                    float(eligibility["repetition_time_seconds"]),
+                    _series_step_seconds(eligibility, low_rank=False),
                 )
             )
             header.set_xyzt_units(t="sec")
@@ -506,13 +550,21 @@ def build_module(
         image = nib.load(str(paths["timeseries"]))
         spatial_shape = list(image.shape[1:] if cfg.inputs.domain == "surface" else image.shape[:3])
         published_frames = int(image.shape[0] if cfg.inputs.domain == "surface" else image.shape[3])
+        included = [dict(record) for record in eligibility["included"]]
+        skipped = [dict(record) for record in eligibility["skipped"]]
+        for record in (*included, *skipped):
+            if "repetition_time_seconds" not in record:
+                run = cfg.inputs.functional[int(record["run_index"])]
+                metadata = load_cleaned_run_metadata(run)
+                record["repetition_time_seconds"] = _repetition_time(metadata.sidecars[0])
         payload = {
             "domain": cfg.inputs.domain,
             "space": cfg.inputs.space,
             "smoothing_fwhm_mm": cfg.inputs.smoothing_mm,
             "representation": "low_rank" if cfg.low_rank else "full",
             "weighting": cfg.weighting,
-            "repetition_time_seconds": eligibility["repetition_time_seconds"],
+            "repetition_time_seconds": _series_step_seconds(eligibility, low_rank=cfg.low_rank),
+            "source_repetition_times_seconds": _source_repetition_times(eligibility),
             "series_axis_interpretation": (
                 "synthetic low-rank coordinates"
                 if cfg.low_rank
@@ -526,8 +578,8 @@ def build_module(
                 "inclusion_policy": asdict(cfg.inclusion),
                 "minimum_usable_runs": cfg.inclusion.minimum_usable_runs,
                 "minimum_aggregate_retained_frames": cfg.inclusion.minimum_aggregate_retained_frames,
-                "included": eligibility["included"],
-                "skipped": eligibility["skipped"],
+                "included": included,
+                "skipped": skipped,
             },
             "outputs": {
                 "timeseries": str(paths["timeseries"]),

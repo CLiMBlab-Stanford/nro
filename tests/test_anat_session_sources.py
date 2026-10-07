@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from nro.configuration.runtime import configure
+from nro.engine.io import read_json
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
@@ -276,11 +277,74 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path, monke
     assert all(call[:3] == ["singularity", "exec", "--cleanenv"] for call in calls)
     assert all(any("export TMPDIR=/tmp" in item for item in call) for call in calls)
     assert "-autorecon1" in calls[0]
+    assert calls[0][calls[0].index("-rng-seed") + 1] == "1234"
     assert "-noskullstrip" in calls[0]
     assert "mri_vol2vol" in calls[1]
     assert "nearest" in calls[1]
     assert "mri_mask" in calls[2]
     assert "-autorecon2" in calls[3]
     assert "-autorecon3" in calls[3]
+    assert calls[3][calls[3].index("-rng-seed") + 1] == "1234"
     assert "-noskullstrip" in calls[3]
     assert step.scientific_signature
+
+
+def test_recon_all_retries_topology_failure_with_fallback_seed(tmp_path: Path, monkeypatch) -> None:
+    t1w = tmp_path / "input" / "sub-1_T1w.nii.gz"
+    t1w.parent.mkdir()
+    t1w.write_bytes(b"image")
+    brain_mask = tmp_path / "input" / "sub-1_mask.nii.gz"
+    brain_mask.write_bytes(b"mask")
+    image = tmp_path / "freesurfer.sif"
+    image.write_bytes(b"container")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    subjects_dir = tmp_path / "subjects"
+    subject_dir = subjects_dir / "sub-1"
+    seeds: list[str] = []
+    monkeypatch.setattr(anat_steps, "ensure_portable_fsaverage", lambda **_kwargs: None)
+
+    def run_child(command, **_kwargs):
+        command = list(command)
+        if "recon-all" in command:
+            seed = command[command.index("-rng-seed") + 1]
+            seeds.append(seed)
+        if "mri_vol2vol" in command:
+            path = subject_dir / "mri" / "brainmask.external.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "mri_mask" in command:
+            path = subject_dir / "mri" / "brainmask.auto.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "-autorecon3" not in command:
+            return
+        log = subject_dir / "scripts" / "recon-all.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        if seed == "1234":
+            log.write_text("#@# Fix Topology rh\nrecon-all -s sub-1 exited with ERRORS\n")
+            raise SystemExit("topology failed")
+        (subject_dir / "scripts" / "recon-all.done").write_text("done")
+        for path in anat_steps._recon_required_outputs(subject_dir):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"output")
+
+    step = anat_steps._create_recon_all_step(
+        run_child=run_child,
+        env={},
+        t1w=t1w,
+        t2w=None,
+        brain_mask=brain_mask,
+        subjects_dir=subjects_dir,
+        fs_subject="sub-1",
+        runtime="singularity",
+        image=image,
+        license_file=license_file,
+        force=False,
+    )
+    assert step.action is not None
+    step.action()
+
+    assert seeds == ["1234", "1234", "5678", "5678"]
+    record = read_json(subject_dir / "scripts" / "nro-reconstruction-seed.json")
+    assert record["SuccessfulSeed"] == 5678
