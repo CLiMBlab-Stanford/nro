@@ -14,6 +14,7 @@ from nro.orchestration.hotfixes import HotfixReport
 
 HOTFIX_ID = "v0286-msmall-runner-stages"
 SUMMARY = "Adopt validated legacy MSMAll checkpoints as runner-owned stage outputs."
+_INDEPENDENT_STAGES = frozenset({"inventory", "prefreesurfer", "freesurfer"})
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,7 @@ def _completed_stages(work_root: Path) -> tuple[str, ...]:
         if not path.is_file() or path.stat().st_size <= 0:
             continue
         stage = path.name.removesuffix(".complete")
-        if _stage_valid(work_root, stage):
+        if stage in _INDEPENDENT_STAGES and _stage_valid(work_root, stage):
             stages.append(stage)
     return tuple(stages)
 
@@ -84,8 +85,6 @@ def _stage_valid(work_root: Path, stage: str) -> bool:
     if len(sessions) != 1 and stage not in {"inventory"}:
         return False
     session = sessions[0] if sessions else work_root / "missing-session"
-    native = session / "MNINonLinear/Native"
-    results = session / "MNINonLinear/Results"
     evidence: list[Path] = []
     if stage == "inventory":
         evidence = [work_root / "input_manifest.tsv", work_root / "software_versions.txt"]
@@ -101,44 +100,6 @@ def _stage_valid(work_root: Path, stage: str) -> bool:
         ]
     elif stage == "freesurfer":
         evidence = [session / f"T1w/{session.name}/surf/{hemi}.white" for hemi in ("lh", "rh")]
-    elif stage == "postfreesurfer":
-        evidence = [
-            native / f"{session.name}.{hemi}.sphere.reg.native.surf.gii" for hemi in ("L", "R")
-        ]
-    elif stage.startswith("fmri_volume_"):
-        run = stage.removeprefix("fmri_volume_")
-        evidence = [results / run / f"{run}.nii.gz"]
-    elif stage.startswith("fmri_surface_"):
-        run = stage.removeprefix("fmri_surface_")
-        evidence = [results / run / f"{run}_Atlas.dtseries.nii"]
-    elif stage == "multirun_fix":
-        evidence = list(
-            results.glob("rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp*_clean.dtseries.nii")
-        ) + list(
-            results.glob(
-                "rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp*_clean_vn_before_floor.dscalar.nii"
-            )
-        )
-        return len(evidence) == 2 and all(_nonempty(path) for path in evidence)
-    elif stage == "prepare_msmall":
-        evidence = list(
-            results.glob("rfMRI_REST_CONCAT/rfMRI_REST_CONCAT_Atlas_hp*_clean_vn.dscalar.nii")
-        )
-        return len(evidence) == 1 and _nonempty(evidence[0])
-    elif stage == "msmall":
-        evidence = [
-            next(
-                iter(native.glob(f"{session.name}.{hemi}.sphere.*InitialReg*.native.surf.gii")),
-                Path(),
-            )
-            for hemi in ("L", "R")
-        ]
-    elif stage == "dedrift":
-        evidence = [
-            native / f"{session.name}.{hemi}.sphere.MSMAll.native.surf.gii" for hemi in ("L", "R")
-        ]
-    elif stage == "validate":
-        evidence = [work_root / "complete"]
     else:
         return False
     return bool(evidence) and all(_nonempty(path) for path in evidence)

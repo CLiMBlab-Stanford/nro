@@ -15,7 +15,7 @@ case "$stage" in
         source "$calibration_configuration"
         stage_index=${5:-}
         ;;
-    postfreesurfer)
+    postfreesurfer|validate_subcortical)
         surface_configuration=${3:?surface configuration is required for stage $stage}
         source "$surface_configuration"
         stage_index=
@@ -28,7 +28,9 @@ case "$stage" in
         exit 2
         ;;
 esac
-atlas_validator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/msmall_validate_atlas.py"
+implementation_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+atlas_validator="$implementation_dir/msmall_validate_atlas.py"
+subcortical_validator="$implementation_dir/msmall_validate_subcortical.py"
 
 set +e
 source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1
@@ -155,7 +157,7 @@ repair_atlas_registration() {
     rm -rf "$staging"
     mkdir -p "$staging/xfms"
     fslmaths "$t1_dir/T1w_acpc_dc_restore_brain.nii.gz" -bin "$staging/T1w_brain_mask"
-    flirt -interp spline -dof 12 \
+    flirt -interp spline -dof 7 \
         -in "$t1_dir/T1w_acpc_dc_restore_brain.nii.gz" \
         -ref "$templates/MNI152_T1_0.7mm_brain.nii.gz" \
         -omat "$staging/xfms/acpc2MNILinear.mat" \
@@ -204,6 +206,7 @@ repair_atlas_registration() {
     cp "$staging/T1w.nii.gz" "$staging/T1w_orig.nii.gz"
 
     /opt/fsl/fsl/bin/python "$atlas_validator" \
+        --affine "$staging/xfms/acpc2MNILinear.mat" \
         --subject "$staging/T1w_restore_brain.nii.gz" \
         --subject-mask "$staging/T1w_mask_mni.nii.gz" \
         --reference "$templates/MNI152_T1_0.7mm_brain.nii.gz" \
@@ -212,6 +215,14 @@ repair_atlas_registration() {
         --output "$staging/registration_qc.json"
     rm -rf "$atlas"
     mv "$staging" "$atlas"
+}
+
+validate_subcortical_models() {
+    local rois="$session_root/MNINonLinear/ROIs"
+    /opt/fsl/fsl/bin/python "$subcortical_validator" \
+        --subject "$rois/ROIs.${grayordinates_resolution_mm}.nii.gz" \
+        --reference "$rois/Atlas_ROIs.${grayordinates_resolution_mm}.nii.gz" \
+        --output "$rois/subcortical_qc.json"
 }
 
 run_freesurfer() {
@@ -426,6 +437,7 @@ case "$stage" in
     masked_atlas) repair_atlas_registration ;;
     freesurfer) run_freesurfer ;;
     postfreesurfer) run_postfreesurfer ;;
+    validate_subcortical) validate_subcortical_models ;;
     fmri_volume_*) run_fmri_volume "$stage_index" ;;
     fmri_surface_*) run_fmri_surface "$stage_index" ;;
     multirun_fix) run_fix ;;

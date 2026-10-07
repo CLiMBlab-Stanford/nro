@@ -27,6 +27,7 @@ def _geometry(image: nib.spatialimages.SpatialImage, mask: np.ndarray) -> dict[s
 
 def validate(
     *,
+    affine_path: Path,
     subject_path: Path,
     subject_mask_path: Path,
     reference_path: Path,
@@ -34,6 +35,11 @@ def validate(
     jacobian_path: Path,
 ) -> dict[str, object]:
     """Measure one transform and reject the gross failure modes seen in prototyping."""
+    affine = np.loadtxt(affine_path)
+    if affine.shape != (4, 4) or not np.isfinite(affine).all():
+        raise ValueError("Atlas-registration affine is not a finite 4-by-4 matrix")
+    singular_values = np.linalg.svd(affine[:3, :3], compute_uv=False)
+    affine_determinant = float(np.linalg.det(affine[:3, :3]))
     subject = nib.load(subject_path)
     subject_mask_image = nib.load(subject_mask_path)
     reference = nib.load(reference_path)
@@ -76,6 +82,14 @@ def validate(
     extent_ratio = subject_extent / reference_extent
 
     failures = []
+    affine_anisotropy_ratio = float(singular_values.max() / singular_values.min())
+    if np.any(singular_values < 0.8) or np.any(singular_values > 1.2):
+        failures.append(
+            "affine singular values "
+            f"{singular_values.tolist()} are outside the constrained range [0.8, 1.2]"
+        )
+    if affine_anisotropy_ratio > 1.01:
+        failures.append(f"affine anisotropy ratio {affine_anisotropy_ratio:.6g} exceeds 1.01")
     if not np.isfinite(correlation) or correlation < 0.3:
         failures.append(f"masked intensity correlation {correlation:.3f} is below 0.3")
     if dice < 0.75:
@@ -86,6 +100,9 @@ def validate(
         failures.append(f"transformed-brain extent ratios are {extent_ratio.tolist()}")
 
     return {
+        "affine_determinant": affine_determinant,
+        "affine_singular_values": singular_values.tolist(),
+        "affine_anisotropy_ratio": affine_anisotropy_ratio,
         "subject": subject_geometry,
         "reference": reference_geometry,
         "mask_dice": dice,
@@ -94,6 +111,8 @@ def validate(
         "jacobian_nonpositive_fraction": nonpositive,
         "extent_ratio": extent_ratio.tolist(),
         "criteria": {
+            "affine_singular_value_range": [0.8, 1.2],
+            "maximum_affine_anisotropy_ratio": 1.01,
             "minimum_mask_dice": 0.75,
             "minimum_masked_intensity_correlation": 0.3,
             "maximum_jacobian_nonpositive_fraction": 0.0,
@@ -107,6 +126,7 @@ def validate(
 def main() -> None:
     """Validate paths supplied by the checkpointed shell driver."""
     parser = argparse.ArgumentParser()
+    parser.add_argument("--affine", type=Path, required=True)
     parser.add_argument("--subject", type=Path, required=True)
     parser.add_argument("--subject-mask", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
@@ -115,6 +135,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = validate(
+        affine_path=args.affine,
         subject_path=args.subject,
         subject_mask_path=args.subject_mask,
         reference_path=args.reference,

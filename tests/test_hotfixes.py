@@ -13,6 +13,10 @@ from nro.orchestration.hotfixes.v0278_private_portable_metadata import HOTFIX_ID
 from nro.orchestration.hotfixes.v0286_msmall_runner_stages import (
     HOTFIX_ID as MSMALL_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0287_msmall_atlas_registration import (
+    HOTFIX_ID as MSMALL_ATLAS_HOTFIX_ID,
+)
+from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
 class _Registry:
@@ -136,6 +140,7 @@ def test_private_portable_metadata_hotfix_rejects_changed_timestamp(tmp_path: Pa
 def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert HOTFIX_ID in available()
     assert MSMALL_HOTFIX_ID in available()
+    assert MSMALL_ATLAS_HOTFIX_ID in available()
 
 
 def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Path) -> None:
@@ -211,7 +216,7 @@ def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Pa
     assert (work / "surface_configuration.sh").read_text() == "subject=sub-01\n"
     assert (work / "calibration_configuration.sh").read_text() == "subject=sub-01\n"
     assert (work / "stages/prefreesurfer.complete").is_file()
-    assert (work / "stages/multirun_fix.complete").is_file()
+    assert not (work / "stages/multirun_fix.complete").exists()
     assert json.loads(event.read_text())["version"] == 2
 
     repeated = apply(
@@ -219,5 +224,139 @@ def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Pa
         identifier=MSMALL_HOTFIX_ID,
         projects=("demo",),
         execute=True,
+    )
+    assert repeated.records == 0
+
+
+def test_msmall_atlas_hotfix_preserves_freesurfer_and_invalidates_descendants(
+    tmp_path: Path,
+) -> None:
+    registry, database = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+    event = (
+        registry.paths.control
+        / "branches/main/events/demo/anat/sub-01/sub-01/digest/runner-contract.json"
+    )
+    event.parent.mkdir(parents=True)
+    stages = tmp_path / "WORK/demo/derivatives/nro/anat/main/sub-01/msmall/stages"
+    prefree_marker = stages / "prefreesurfer.complete"
+    atlas_marker = stages / "masked_atlas.complete"
+    freesurfer_marker = stages / "freesurfer.complete"
+    post_marker = stages / "postfreesurfer.complete"
+    stages.mkdir(parents=True)
+    for marker in (prefree_marker, atlas_marker, freesurfer_marker, post_marker):
+        marker.write_text("complete\n")
+
+    def node(identifier: str, name: str, inputs: list[Path], outputs: list[Path], deps: list[str]):
+        return {
+            "id": identifier,
+            "name": name,
+            "kind": "command",
+            "inputs": [str(path) for path in inputs],
+            "outputs": [str(path) for path in outputs],
+            "dependencies": deps,
+            "scientific_signature": f"old-{identifier}",
+            "command_signature": f"command-{identifier}",
+        }
+
+    prefree = node("prefree", "MSMAll PreFreeSurfer", [], [prefree_marker], [])
+    atlas = node(
+        "atlas",
+        "MSMAll Mask-Aware Atlas Registration",
+        [prefree_marker],
+        [atlas_marker],
+        ["prefree"],
+    )
+    freesurfer = node(
+        "freesurfer",
+        "MSMAll FreeSurfer Reconstruction",
+        [atlas_marker],
+        [freesurfer_marker],
+        ["atlas"],
+    )
+    post = node(
+        "post",
+        "MSMAll PostFreeSurfer",
+        [atlas_marker, freesurfer_marker],
+        [post_marker],
+        ["atlas", "freesurfer"],
+    )
+    payload = {
+        "version": 4,
+        "module": "Anatomical Module",
+        "signature": "work-item",
+        "topology": [prefree, atlas, freesurfer, post],
+        "nodes": [prefree, atlas, freesurfer, post],
+    }
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = apply(
+        registry,
+        identifier=MSMALL_ATLAS_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+
+    assert report.records == 1
+    repaired = json.loads(event.read_text())
+    assert repaired["signature"] == f"hotfix:{MSMALL_ATLAS_HOTFIX_ID}"
+    by_id = {item["id"]: item for item in repaired["nodes"]}
+    assert set(by_id) == {"prefree", "freesurfer"}
+    assert by_id["prefree"]["accept_relocated_signatures"] is True
+    assert by_id["freesurfer"]["inputs"] == [str(prefree_marker)]
+    assert by_id["freesurfer"]["dependencies"] == ["prefree"]
+    assert by_id["freesurfer"]["accept_relocated_signatures"] is True
+
+    current = RunnerGraph("Anatomical Module")
+    current.add(
+        Step.command_step(
+            ("true",),
+            id="prefree",
+            name="MSMAll PreFreeSurfer",
+            outputs=(prefree_marker,),
+            parameters={"implementation": "current"},
+        )
+    )
+    current.add(
+        Step.command_step(
+            ("true",),
+            id="atlas",
+            name="MSMAll Mask-Aware Atlas Registration",
+            inputs=(prefree_marker,),
+            outputs=(atlas_marker,),
+            parameters={"affine_degrees_of_freedom": 7},
+        )
+    )
+    current.add(
+        Step.command_step(
+            ("true",),
+            id="freesurfer",
+            name="MSMAll FreeSurfer Reconstruction",
+            inputs=(prefree_marker,),
+            outputs=(freesurfer_marker,),
+            parameters={"implementation": "current"},
+        )
+    )
+    current.add(
+        Step.command_step(
+            ("true",),
+            id="post",
+            name="MSMAll PostFreeSurfer",
+            inputs=(atlas_marker, freesurfer_marker),
+            outputs=(post_marker,),
+            parameters={"implementation": "current"},
+        )
+    )
+    current.freeze()
+    assert current.step_contract_changes(event, signature="work-item") == {
+        "atlas": "unrecorded_step",
+        "post": "unrecorded_step",
+    }
+
+    repeated = apply(
+        registry,
+        identifier=MSMALL_ATLAS_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
     )
     assert repeated.records == 0

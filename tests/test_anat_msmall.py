@@ -14,6 +14,7 @@ from nro.configuration.store import ConfigStore
 from nro.modules.anat import planning as anat_planning
 from nro.modules.anat.msmall import add_msmall_plan, resolve_msmall_calibration
 from nro.modules.anat.msmall_validate_atlas import validate as validate_atlas
+from nro.modules.anat.msmall_validate_subcortical import validate as validate_subcortical
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.planning_context import SubjectPlanningContext
 from nro.orchestration.registry import Registry
@@ -219,6 +220,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     assert "Estimate MSMAll Registration" in names
     assert "MSMAll PreFreeSurfer" in names
     assert "MSMAll FreeSurfer Reconstruction" in names
+    assert "Validate MSMAll Subcortical Models" in names
     assert "MSMAll fMRI Volume rfMRI_REST001" in names
     assert "MSMAll fMRI Surface rfMRI_REST001" in names
     assert "MSMAll Multi-Run ICA-FIX" in names
@@ -236,10 +238,16 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     post_dependencies = runner._graph.dependencies(by_name["MSMAll PostFreeSurfer"])
     assert by_name["Write MSMAll Surface Configuration"].id in post_dependencies
     assert by_name["Write MSMAll Calibration Configuration"].id not in post_dependencies
+    assert by_name["MSMAll Mask-Aware Atlas Registration"].id in post_dependencies
+    freesurfer_dependencies = runner._graph.dependencies(
+        by_name["MSMAll FreeSurfer Reconstruction"]
+    )
+    assert by_name["MSMAll PreFreeSurfer"].id in freesurfer_dependencies
+    assert by_name["MSMAll Mask-Aware Atlas Registration"].id not in freesurfer_dependencies
     volume_dependencies = runner._graph.dependencies(by_name["MSMAll fMRI Volume rfMRI_REST001"])
     assert by_name["Write MSMAll Calibration Configuration"].id in volume_dependencies
     assert by_name["Write MSMAll Surface Configuration"].id in volume_dependencies
-    assert by_name["MSMAll PostFreeSurfer"].id in volume_dependencies
+    assert by_name["Validate MSMAll Subcortical Models"].id in volume_dependencies
     prefree = by_name["MSMAll PreFreeSurfer"]
     assert all(path.name != "msmall_driver.sh" for path in prefree.inputs)
     assert prefree.scientific_signature
@@ -358,8 +366,11 @@ def test_msmall_atlas_validation_accepts_plausible_registration(tmp_path: Path) 
     }.items():
         paths[name] = tmp_path / f"{name}.nii.gz"
         nib.save(nib.Nifti1Image(data, np.eye(4)), paths[name])
+    paths["affine"] = tmp_path / "affine.mat"
+    np.savetxt(paths["affine"], np.eye(4))
 
     report = validate_atlas(
+        affine_path=paths["affine"],
         subject_path=paths["subject"],
         subject_mask_path=paths["subject_mask"],
         reference_path=paths["reference"],
@@ -387,8 +398,11 @@ def test_msmall_atlas_validation_rejects_folded_transform(tmp_path: Path) -> Non
     }.items():
         paths[name] = tmp_path / f"{name}.nii.gz"
         nib.save(nib.Nifti1Image(data, np.eye(4)), paths[name])
+    paths["affine"] = tmp_path / "affine.mat"
+    np.savetxt(paths["affine"], np.eye(4))
 
     report = validate_atlas(
+        affine_path=paths["affine"],
         subject_path=paths["subject"],
         subject_mask_path=paths["subject_mask"],
         reference_path=paths["reference"],
@@ -400,8 +414,61 @@ def test_msmall_atlas_validation_rejects_folded_transform(tmp_path: Path) -> Non
     assert report["jacobian_nonpositive_fraction"] > 0
 
 
+def test_msmall_atlas_validation_rejects_scaled_affine(tmp_path: Path) -> None:
+    shape = (12, 13, 14)
+    values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    mask = np.ones(shape, dtype=np.uint8)
+    paths = {}
+    for name, data in {
+        "subject": values,
+        "reference": values,
+        "subject_mask": mask,
+        "reference_mask": mask,
+        "jacobian": np.ones(shape, dtype=np.float32),
+    }.items():
+        paths[name] = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data, np.eye(4)), paths[name])
+    affine = np.eye(4)
+    affine[0, 0] = 1.5
+    paths["affine"] = tmp_path / "affine.mat"
+    np.savetxt(paths["affine"], affine)
+
+    report = validate_atlas(
+        affine_path=paths["affine"],
+        subject_path=paths["subject"],
+        subject_mask_path=paths["subject_mask"],
+        reference_path=paths["reference"],
+        reference_mask_path=paths["reference_mask"],
+        jacobian_path=paths["jacobian"],
+    )
+
+    assert report["valid"] is False
+    assert report["affine_singular_values"][0] == 1.5
+
+
+def test_msmall_subcortical_validation_requires_all_hcp_labels(tmp_path: Path) -> None:
+    labels = np.array(
+        [26, 58, 18, 54, 16, 11, 50, 8, 47, 28, 60, 17, 53, 13, 52, 12, 51, 10, 49],
+        dtype=np.int16,
+    ).reshape(19, 1, 1)
+    subject = tmp_path / "subject.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    nib.save(nib.Nifti1Image(labels, np.eye(4)), subject)
+    nib.save(nib.Nifti1Image(labels, np.eye(4)), reference)
+
+    assert validate_subcortical(subject_path=subject, reference_path=reference)["valid"] is True
+
+    missing = labels.copy()
+    missing[0] = 0
+    nib.save(nib.Nifti1Image(missing, np.eye(4)), subject)
+    report = validate_subcortical(subject_path=subject, reference_path=reference)
+    assert report["valid"] is False
+    assert report["failures"] == ["subject labels are empty: ACCUMBENS_LEFT"]
+
+
 def test_msmall_freesurfer_restarts_cleanly_and_bypasses_legacy_talairach_gate() -> None:
     driver = (Path(__file__).parents[1] / "nro/modules/anat/msmall_driver.sh").read_text()
 
     assert 'rm -rf "$session_root/T1w/$session"' in driver
     assert "--extra-reconall-arg=-notal-check" in driver
+    assert "flirt -interp spline -dof 7" in driver
