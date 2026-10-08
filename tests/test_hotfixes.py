@@ -19,6 +19,9 @@ from nro.orchestration.hotfixes.v0287_msmall_atlas_registration import (
 from nro.orchestration.hotfixes.v0295_msmall_stage_isolation import (
     HOTFIX_ID as MSMALL_ISOLATION_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0301_msmall_source_masks import (
+    HOTFIX_ID as MSMALL_MASK_HOTFIX_ID,
+)
 from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
@@ -145,6 +148,7 @@ def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert MSMALL_HOTFIX_ID in available()
     assert MSMALL_ATLAS_HOTFIX_ID in available()
     assert MSMALL_ISOLATION_HOTFIX_ID in available()
+    assert MSMALL_MASK_HOTFIX_ID in available()
 
 
 def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Path) -> None:
@@ -445,6 +449,64 @@ def test_msmall_stage_isolation_hotfix_preserves_non_msmall_steps(tmp_path: Path
     repeated = apply(
         registry,
         identifier=MSMALL_ISOLATION_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert repeated.records == 0
+
+
+def test_msmall_source_mask_hotfix_preserves_only_prefreesurfer_branch(
+    tmp_path: Path,
+) -> None:
+    registry, _ = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+    event = (
+        registry.paths.control
+        / "branches/main/events/demo/anat/sub-01/sub-01/digest/runner-contract.json"
+    )
+    event.parent.mkdir(parents=True)
+    stages = tmp_path / "WORK/demo/derivatives/nro/anat/main/sub-01/msmall/stages"
+
+    def node(identifier: str, stage: str, dependencies: list[str]) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": stage,
+            "kind": "command",
+            "inputs": [],
+            "outputs": [str(stages / f"{stage}.complete")],
+            "dependencies": dependencies,
+        }
+
+    ordinary = node("ordinary", "ordinary", [])
+    prefreesurfer = node("prefree", "prefreesurfer", ["ordinary"])
+    atlas = node("atlas", "masked_atlas", ["prefree"])
+    freesurfer = node("freesurfer", "freesurfer", ["prefree"])
+    post = node("post", "postfreesurfer", ["atlas", "freesurfer"])
+    payload = {
+        "version": 4,
+        "module": "Anatomical Module",
+        "signature": "work-item",
+        "topology": [ordinary, prefreesurfer, atlas, freesurfer, post],
+        "nodes": [ordinary, prefreesurfer, atlas, freesurfer, post],
+    }
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = apply(
+        registry,
+        identifier=MSMALL_MASK_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+
+    assert report.records == 1
+    repaired = json.loads(event.read_text())
+    assert repaired["signature"] == f"hotfix:{MSMALL_MASK_HOTFIX_ID}"
+    assert [item["id"] for item in repaired["nodes"]] == ["ordinary", "prefree"]
+    assert repaired["nodes"][1]["accept_relocated_signatures"] is True
+
+    repeated = apply(
+        registry,
+        identifier=MSMALL_MASK_HOTFIX_ID,
         projects=("demo",),
         execute=False,
     )

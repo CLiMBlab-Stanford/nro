@@ -20,7 +20,7 @@ case "$stage" in
         source "$surface_configuration"
         stage_index=
         ;;
-    prefreesurfer|masked_atlas|freesurfer)
+    prefreesurfer|prefreesurfer_masks|masked_atlas|freesurfer)
         stage_index=
         ;;
     *)
@@ -149,6 +149,26 @@ run_prefreesurfer() {
         --seunwarpdir=NONE --t1samplespacing=NONE --t2samplespacing=NONE \
         --unwarpdir=NONE --gdcoeffs=NONE --avgrdcmethod=NONE --topupconfig=NONE \
         --processing-mode=HCPStyleData
+}
+
+repair_prefreesurfer_masks() {
+    local t1_dir="$structural_session_root/T1w"
+    local source_mask="$t1_dir/nro_input_brain_mask.nii.gz"
+    local acpc_mask="$t1_dir/T1w_acpc_brain_mask.nii.gz"
+
+    # nro inputs are already skull-stripped. HCP's template-derived brain
+    # extraction can contract around those inputs, so carry nro's mask through
+    # the rigid AC-PC transform instead of estimating it again.
+    fslmaths "${t1w[0]}" -bin "$source_mask"
+    applywarp --rel --interp=nn \
+        -i "$source_mask" \
+        -r "$t1_dir/T1w_acpc_dc_restore.nii.gz" \
+        --premat="$t1_dir/xfms/acpc.mat" \
+        -o "$acpc_mask"
+    fslmaths "$t1_dir/T1w_acpc_dc_restore.nii.gz" \
+        -mas "$acpc_mask" "$t1_dir/T1w_acpc_dc_restore_brain.nii.gz"
+    fslmaths "$t1_dir/T2w_acpc_dc_restore.nii.gz" \
+        -mas "$acpc_mask" "$t1_dir/T2w_acpc_dc_restore_brain.nii.gz"
 }
 
 repair_atlas_registration() {
@@ -440,6 +460,7 @@ for path in "${t1w[@]}" "${t2w[@]}" "$fs_license"; do require_file "$path"; done
 case "$stage" in
     inventory) record_inventory ;;
     prefreesurfer) run_prefreesurfer ;;
+    prefreesurfer_masks) repair_prefreesurfer_masks ;;
     masked_atlas) repair_atlas_registration ;;
     freesurfer) run_freesurfer ;;
     postfreesurfer) run_postfreesurfer ;;
