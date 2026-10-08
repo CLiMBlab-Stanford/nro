@@ -20,7 +20,7 @@ from nro.bin.run import (
 )
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
-from nro.bin.status import _format_elapsed, _render_report
+from nro.bin.status import _concise_error, _format_elapsed, _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
@@ -1769,6 +1769,19 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
         f"demo sub-01 anat/{directories['anat']}"
     ]
     assert failure_lookups == [claimed.work_item_id]
+
+
+def test_status_summarizes_captured_command_output() -> None:
+    message = """original arguments: --session=subject
+pipeline setup detail
+pipeline: ERROR: The existing output is incompatible with this invocation.
+pipeline: ERROR: Delete the old output and retry.
+trailing locale warning
+"""
+
+    assert _concise_error(message) == "The existing output is incompatible with this invocation."
+    assert _concise_error("first detail\nfinal diagnosis") == "final diagnosis"
+    assert _concise_error("x" * 500).endswith("…")
 
 
 def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:

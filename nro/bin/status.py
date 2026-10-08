@@ -208,6 +208,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
                     message = line.split("Error:", 1)[1].strip()
         except OSError:
             pass
+    message = _concise_error(message)
     entities = " ".join(
         f"{key}={value}" for key, value in sorted(json.loads(row["entities_json"]).items())
     )
@@ -222,6 +223,23 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         "message": message,
         "log": str(log) if log else None,
     }
+
+
+def _concise_error(message: str, *, limit: int = 400) -> str:
+    """Reduce captured command output to one useful status-line summary."""
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    marked = []
+    for line in lines:
+        position = line.upper().find("ERROR:")
+        if position >= 0:
+            marked.append(line[position + len("ERROR:") :].strip())
+    summary = (marked or lines[-1:])[0]
+    summary = " ".join(summary.split())
+    if len(summary) > limit:
+        summary = summary[: limit - 1].rstrip() + "…"
+    return summary
 
 
 def _matches_request(
