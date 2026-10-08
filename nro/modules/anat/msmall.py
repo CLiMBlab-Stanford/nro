@@ -617,12 +617,40 @@ def add_msmall_plan(
         cleanup=(structural_session,),
         parameters=structural_parameters,
     )
+    source_mask = t1_dir / "nro_input_brain_mask.nii.gz"
+    acpc_mask = t1_dir / "T1w_acpc_brain_mask.nii.gz"
+    t1w_brain = t1_dir / "T1w_acpc_dc_restore_brain.nii.gz"
+    t2w_brain = t1_dir / "T2w_acpc_dc_restore_brain.nii.gz"
+    add_stage(
+        "prefreesurfer_masks",
+        "Restore MSMAll Source Brain Masks",
+        inputs=(
+            marker("prefreesurfer"),
+            structural_t1w,
+            t1_dir / "xfms/acpc.mat",
+            t1_dir / "T1w_acpc_dc_restore.nii.gz",
+            t1_dir / "T2w_acpc_dc_restore.nii.gz",
+        ),
+        outputs=(source_mask, acpc_mask, t1w_brain, t2w_brain),
+        cleanup=(
+            source_mask,
+            acpc_mask,
+            t1w_brain,
+            t2w_brain,
+        ),
+        parameters={
+            "source_mask": "nonzero_structural_T1w",
+            "transform": "HCP_rigid_ACPC",
+            "interpolation": "nearest_neighbor",
+        },
+    )
     add_stage(
         "masked_atlas",
         "MSMAll Mask-Aware Atlas Registration",
         inputs=(
-            marker("prefreesurfer"),
+            marker("prefreesurfer_masks"),
             t1_dir / "T1w_acpc_dc_restore.nii.gz",
+            t1w_brain,
         ),
         outputs=(
             structural_session / "MNINonLinear/registration_qc.json",
@@ -638,9 +666,11 @@ def add_msmall_plan(
         "freesurfer",
         "MSMAll FreeSurfer Reconstruction",
         inputs=(
-            marker("prefreesurfer"),
+            marker("prefreesurfer_masks"),
             t1_dir / "T1w_acpc_dc_restore.nii.gz",
             t1_dir / "T2w_acpc_dc_restore.nii.gz",
+            t1w_brain,
+            t2w_brain,
         ),
         outputs=(freesurfer_dir / "surf/lh.white", freesurfer_dir / "surf/rh.white"),
         cleanup=(freesurfer_dir,),

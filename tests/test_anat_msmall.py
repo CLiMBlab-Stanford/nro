@@ -219,6 +219,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     names = [step.name for step in runner._graph.steps]
     assert "Estimate MSMAll Registration" in names
     assert "MSMAll PreFreeSurfer" in names
+    assert "Restore MSMAll Source Brain Masks" in names
     assert "MSMAll FreeSurfer Reconstruction" in names
     assert "Validate MSMAll Subcortical Models" in names
     assert "MSMAll fMRI Volume rfMRI_REST001" in names
@@ -242,8 +243,20 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     freesurfer_dependencies = runner._graph.dependencies(
         by_name["MSMAll FreeSurfer Reconstruction"]
     )
-    assert by_name["MSMAll PreFreeSurfer"].id in freesurfer_dependencies
+    assert by_name["Restore MSMAll Source Brain Masks"].id in freesurfer_dependencies
     assert by_name["MSMAll Mask-Aware Atlas Registration"].id not in freesurfer_dependencies
+    mask_dependencies = runner._graph.dependencies(by_name["Restore MSMAll Source Brain Masks"])
+    assert by_name["MSMAll PreFreeSurfer"].id in mask_dependencies
+    mask_step = by_name["Restore MSMAll Source Brain Masks"]
+    assert structural_t1w in mask_step.inputs
+    assert {path.name for path in mask_step.outputs} >= {
+        "nro_input_brain_mask.nii.gz",
+        "T1w_acpc_brain_mask.nii.gz",
+        "T1w_acpc_dc_restore_brain.nii.gz",
+        "T2w_acpc_dc_restore_brain.nii.gz",
+    }
+    atlas_dependencies = runner._graph.dependencies(by_name["MSMAll Mask-Aware Atlas Registration"])
+    assert by_name["Restore MSMAll Source Brain Masks"].id in atlas_dependencies
     volume_dependencies = runner._graph.dependencies(by_name["MSMAll fMRI Volume rfMRI_REST001"])
     assert by_name["Write MSMAll Calibration Configuration"].id in volume_dependencies
     assert by_name["Write MSMAll Surface Configuration"].id in volume_dependencies
@@ -479,3 +492,5 @@ def test_msmall_freesurfer_restarts_cleanly_and_bypasses_legacy_talairach_gate()
     assert 'cp -a --reflink=auto "$structural_session_root" "$session_root"' in driver
     assert "--extra-reconall-arg=-notal-check" in driver
     assert "flirt -interp spline -dof 7" in driver
+    assert 'fslmaths "${t1w[0]}" -bin "$source_mask"' in driver
+    assert '--premat="$t1_dir/xfms/acpc.mat"' in driver
