@@ -208,6 +208,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
                     message = line.split("Error:", 1)[1].strip()
         except OSError:
             pass
+    message = _concise_error(message)
     entities = " ".join(
         f"{key}={value}" for key, value in sorted(json.loads(row["entities_json"]).items())
     )
@@ -222,6 +223,23 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         "message": message,
         "log": str(log) if log else None,
     }
+
+
+def _concise_error(message: str, *, limit: int = 400) -> str:
+    """Reduce captured command output to one useful status-line summary."""
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    marked = []
+    for line in lines:
+        position = line.upper().find("ERROR:")
+        if position >= 0:
+            marked.append(line[position + len("ERROR:") :].strip())
+    summary = (marked or lines[-1:])[0]
+    summary = " ".join(summary.split())
+    if len(summary) > limit:
+        summary = summary[: limit - 1].rstrip() + "…"
+    return summary
 
 
 def _matches_request(
@@ -382,9 +400,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         entities = json.loads(row["entities_json"])
         root_ids = tuple(int(value) for value in row["root_failure_ids"])
         if row["status"] in {"Corrupt", "Timeout", "Error"}:
-            critical_errors[(project, int(row["id"]))] = _failure_detail(row, project=project)
+            key = (project, int(row["id"]))
+            if key not in critical_errors:
+                critical_errors[key] = _failure_detail(row, project=project)
         for root_id in root_ids:
-            critical_errors[(project, root_id)] = _failure_detail(by_id[root_id], project=project)
+            key = (project, root_id)
+            if key not in critical_errors:
+                critical_errors[key] = _failure_detail(by_id[root_id], project=project)
         output.append(
             {
                 "project": project,

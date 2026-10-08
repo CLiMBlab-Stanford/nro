@@ -20,7 +20,7 @@ from nro.bin.run import (
 )
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
-from nro.bin.status import _format_elapsed, _render_report
+from nro.bin.status import _concise_error, _format_elapsed, _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
@@ -1709,8 +1709,11 @@ def test_get_rejects_unknown_settings(capsys) -> None:
 
 def test_status_reports_blocked_work_items_and_their_root_errors(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
+    from nro.bin import status as status_command
+
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
@@ -1742,6 +1745,15 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
         error_message="anatomical failure",
     )
 
+    original_failure_detail = status_command._failure_detail
+    failure_lookups = []
+
+    def failure_detail(row, *, project):
+        failure_lookups.append(int(row["id"]))
+        return original_failure_detail(row, project=project)
+
+    monkeypatch.setattr(status_command, "_failure_detail", failure_detail)
+
     status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
     statuses = {row["module"]: row["status"] for row in report["work_items"]}
@@ -1756,6 +1768,20 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
     assert report["blocked_work_items"][0]["upstream_errors"] == [
         f"demo sub-01 anat/{directories['anat']}"
     ]
+    assert failure_lookups == [claimed.work_item_id]
+
+
+def test_status_summarizes_captured_command_output() -> None:
+    message = """original arguments: --session=subject
+pipeline setup detail
+pipeline: ERROR: The existing output is incompatible with this invocation.
+pipeline: ERROR: Delete the old output and retry.
+trailing locale warning
+"""
+
+    assert _concise_error(message) == "The existing output is incompatible with this invocation."
+    assert _concise_error("first detail\nfinal diagnosis") == "final diagnosis"
+    assert _concise_error("x" * 500).endswith("…")
 
 
 def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:

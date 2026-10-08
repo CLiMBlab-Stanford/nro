@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+import os
 import re
+import tomllib
+from pathlib import Path
+
+
+def application_version() -> str:
+    """Read the selected application version from its source or distribution."""
+    source = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
+    if source:
+        project = Path(source) / "pyproject.toml"
+        try:
+            value = tomllib.loads(project.read_text(encoding="utf-8"))["project"]["version"]
+        except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as error:
+            raise RuntimeError(f"Cannot read nro version from {project}") from error
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"Invalid nro version in {project}")
+        return value
+    return importlib.metadata.version("nro")
 
 
 def parse_release_version(value: object) -> tuple[int, int, int]:

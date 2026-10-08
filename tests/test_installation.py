@@ -1055,6 +1055,32 @@ def test_archive_escape_is_rejected(tmp_path):
     assert not (tmp_path / "escape").exists()
 
 
+def test_conda_library_extraction_selects_the_expected_regular_file(tmp_path):
+    import zstandard
+
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        content = b"portable library"
+        member = tarfile.TarInfo("lib/libOpenGL.so.0.0.0")
+        member.size = len(content)
+        archive.addfile(member, io.BytesIO(content))
+    package = tmp_path / "libopengl.conda"
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr(
+            "pkg-test.tar.zst",
+            zstandard.ZstdCompressor().compress(payload.getvalue()),
+        )
+
+    destination = tmp_path / "runtime/libOpenGL.so.0.0.0"
+    dependencies._extract_conda_library(
+        package,
+        "lib/libOpenGL.so.0.0.0",
+        destination,
+    )
+
+    assert destination.read_bytes() == b"portable library"
+
+
 def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monkeypatch):
     command = tmp_path / "workbench/bin_linux64/wb_command"
     save_settings(isolated_site, {"workbench": str(command)})
@@ -1079,7 +1105,7 @@ def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monke
     dependencies.install_workbench(offline=True)
 
 
-def test_workbench_falls_back_from_red_hat_archive_without_host_glu(
+def test_workbench_installs_portable_opengl_when_host_libraries_are_missing(
     isolated_site, tmp_path, monkeypatch
 ):
     command = tmp_path / "workbench/bin_linux64/wb_command"
@@ -1097,12 +1123,23 @@ def test_workbench_falls_back_from_red_hat_archive_without_host_glu(
                 zipped.writestr("workbench/libs_linux64/osmesa/libGLU.so.1", "bundled")
 
     def probe(arguments):
-        if "bin_rh_linux64" in arguments[0]:
+        executable = Path(arguments[0])
+        if "bin_rh_linux64" in str(executable):
             raise RuntimeError("libGLU.so.1: cannot open shared object file")
+        if not executable.with_name("wb_command.vendor").is_file():
+            raise RuntimeError("libOpenGL.so.0: cannot open shared object file")
         return "Connectome Workbench 2.2.1"
+
+    def install_gl_runtime(tree, temporary):
+        runtime = tree / "libs_linux64/glvnd"
+        runtime.mkdir(parents=True)
+        for library in dependencies.WORKBENCH_GL_MISSING:
+            (runtime / library).write_text("bundled")
+        return [{"source": "test", "sha256": "test"}]
 
     monkeypatch.setattr(dependencies, "download", archive_download)
     monkeypatch.setattr(dependencies, "run_probe", probe)
+    monkeypatch.setattr(dependencies, "_install_workbench_gl_runtime", install_gl_runtime)
     monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(
         dependencies.platform,
@@ -1114,9 +1151,12 @@ def test_workbench_falls_back_from_red_hat_archive_without_host_glu(
 
     viewer = command.with_name("wb_view")
     assert downloads == ["rh_linux64", "linux64"]
-    assert command.read_text() == "command"
+    assert command.with_name("wb_command.vendor").read_text() == "command"
+    assert "libs_linux64/glvnd" in command.read_text()
     assert viewer.with_name("wb_view.vendor").read_text() == "viewer"
     assert "libs_linux64/osmesa" in viewer.read_text()
+    receipt = json.loads((command.parent.parent / "nro-download.json").read_text())
+    assert receipt["opengl_runtime"] == [{"source": "test", "sha256": "test"}]
 
 
 def test_install_help_from_another_working_directory(tmp_path):
