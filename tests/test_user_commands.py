@@ -1709,8 +1709,11 @@ def test_get_rejects_unknown_settings(capsys) -> None:
 
 def test_status_reports_blocked_work_items_and_their_root_errors(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
+    from nro.bin import status as status_command
+
     bids = tmp_path / "bids"
     subject = bids / "demo" / "sub-01"
     _write(subject / "anat" / "sub-01_T1w.nii.gz")
@@ -1742,6 +1745,15 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
         error_message="anatomical failure",
     )
 
+    original_failure_detail = status_command._failure_detail
+    failure_lookups = []
+
+    def failure_detail(row, *, project):
+        failure_lookups.append(int(row["id"]))
+        return original_failure_detail(row, project=project)
+
+    monkeypatch.setattr(status_command, "_failure_detail", failure_detail)
+
     status_main(["-p", "01", "-P", "demo", "--json"])
     report = json.loads(capsys.readouterr().out)
     statuses = {row["module"]: row["status"] for row in report["work_items"]}
@@ -1756,6 +1768,7 @@ def test_status_reports_blocked_work_items_and_their_root_errors(
     assert report["blocked_work_items"][0]["upstream_errors"] == [
         f"demo sub-01 anat/{directories['anat']}"
     ]
+    assert failure_lookups == [claimed.work_item_id]
 
 
 def test_status_is_strictly_read_only(tmp_path: Path, capsys) -> None:
