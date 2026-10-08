@@ -399,6 +399,7 @@ def test_msmall_stage_isolation_hotfix_preserves_non_msmall_steps(tmp_path: Path
         [root / "T1w.nii.gz"],
         [
             root / "msmall/study/01_msmall/T1w/T1w_acpc_dc_restore.nii.gz",
+            root / "msmall/study/01_msmall/T1w/T2w_acpc_dc_restore.nii.gz",
             root / "msmall/stages/prefreesurfer.complete",
         ],
         ["ordinary"],
@@ -421,7 +422,10 @@ def test_msmall_stage_isolation_hotfix_preserves_non_msmall_steps(tmp_path: Path
         "version": 4,
         "module": "Anatomical Module",
         "signature": "work-item",
-        "topology": [ordinary, prefree, post, publication],
+        "topology": [
+            {key: item[key] for key in ("id", "kind", "inputs", "outputs", "dependencies")}
+            for item in (ordinary, prefree, post, publication)
+        ],
         "nodes": [ordinary, prefree, post, publication],
     }
     event.write_text(json.dumps(payload), encoding="utf-8")

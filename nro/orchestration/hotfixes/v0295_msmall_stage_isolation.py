@@ -38,6 +38,27 @@ def _paths(node: Mapping[str, object]) -> tuple[str, ...]:
     )
 
 
+def _legacy_msmall_root(topology: list[dict[str, object]]) -> str | None:
+    """Return the shared MSMAll root used before stage isolation."""
+    roots: set[str] = set()
+    for node in topology:
+        outputs = node.get("outputs")
+        if not isinstance(outputs, list):
+            continue
+        paths = tuple(path for path in outputs if isinstance(path, str))
+        if not any(path.endswith("/stages/prefreesurfer.complete") for path in paths):
+            continue
+        restore_paths = [
+            path
+            for path in paths
+            if "/msmall/study/" in path
+            and path.endswith(("/T1w_acpc_dc_restore.nii.gz", "/T2w_acpc_dc_restore.nii.gz"))
+        ]
+        if len(restore_paths) == 2:
+            roots.update(path.split("/study/", 1)[0] for path in restore_paths)
+    return next(iter(roots)) if len(roots) == 1 else None
+
+
 def _descendants(topology: list[dict[str, object]], roots: set[str]) -> set[str]:
     children: dict[str, set[str]] = {}
     for node in topology:
@@ -69,16 +90,9 @@ def _candidate(contract: Path) -> _Candidate | None:
     if payload.get("signature") == f"hotfix:{HOTFIX_ID}":
         return None
     topology = _nodes(payload, "topology")
-    legacy_roots = {
-        path.split("/study/", 1)[0]
-        for node in topology
-        if node.get("name") == "MSMAll PreFreeSurfer"
-        for path in _paths(node)
-        if "/msmall/study/" in path
-    }
-    if len(legacy_roots) != 1:
+    msmall_root = _legacy_msmall_root(topology)
+    if msmall_root is None:
         return None
-    msmall_root = next(iter(legacy_roots))
     roots = {
         node_id
         for node in topology
