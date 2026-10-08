@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import yaml
 
-from nro.configuration.hardware import GradientUnwarpingResolution
-from nro.configuration.runtime import configure
+from nro.definitions.hardware import GradientUnwarpingResolution
+from nro.definitions.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
@@ -99,9 +99,7 @@ def functional_case(tmp_path, monkeypatch):
     metadata.write_text(
         json.dumps({"RepetitionTime": 2.0, "PhaseEncodingDirection": "j", "TotalReadoutTime": 0.05})
     )
-    config_path = (
-        Path(func.__file__).parents[2] / "configuration/starters/configs/func/main_func.yml"
-    )
+    config_path = Path(func.__file__).parents[2] / "definitions/starters/configs/func/main_func.yml"
     cfg = yaml.safe_load(config_path.read_text())
     configure({"common": {"qunex_container": "/tmp/qunex.sif"}, "func_confounds": cfg["confounds"]})
     values = {field.name: cfg[field.name] for field in fields(func.Options) if field.name in cfg}

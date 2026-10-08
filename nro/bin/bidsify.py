@@ -22,9 +22,9 @@ from nro.bidsify.scanplans import (
     scanplan_files,
 )
 from nro.bidsify.store import IngestionStore, ReviewBusyError
-from nro.configuration.site import bids_root as configured_bids_root
-from nro.configuration.site import settings
 from nro.orchestration.registry import Registry
+from nro.site.configuration import bids_root as configured_bids_root
+from nro.site.configuration import settings
 
 
 def build_parser(*, prog="nro bidsify"):
@@ -340,8 +340,8 @@ def main(argv=None, *, prog="nro bidsify"):
     args = parser.parse_args(argv)
     try:
         from nro.bidsify.execution import launch_review, validate_execution
-        from nro.configuration.site import installation_record
         from nro.orchestration.scheduler_implementation import implementation_path
+        from nro.site.configuration import installation_record
 
         site_values, _ = settings()
         definitions = Path(site_values["definitions"]).expanduser().resolve()
@@ -545,8 +545,8 @@ def main(argv=None, *, prog="nro bidsify"):
         if queued and not args.no_submit:
             memory = max(r["config"]["memory_gb"] for r in queued)
             if central:
-                from nro.configuration.site import CHECKOUT
                 from nro.orchestration.scheduler_client import supply
+                from nro.site.configuration import CHECKOUT
 
                 result = supply(
                     Path(site_values["registry"]),

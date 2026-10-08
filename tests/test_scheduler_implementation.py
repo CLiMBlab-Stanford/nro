@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.site import settings
 from nro.orchestration import scheduler_implementation as implementation
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
@@ -19,6 +18,7 @@ from nro.orchestration.execution_pins import capture_site
 from nro.orchestration.registry import Registry
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.submission import _write_worker_script
+from nro.site.configuration import settings
 
 
 def test_cancellation_ignores_checkout_head_drift(monkeypatch, tmp_path):
@@ -76,10 +76,10 @@ def central(tmp_path):
     (support / "worker.py").write_text(
         'import json,sys\nprint(json.dumps({"worker": "central", "args": sys.argv[1:]}))\n'
     )
-    config = root / "nro/configuration"
-    config.mkdir()
-    (config / "__init__.py").write_text("")
-    (config / "site.py").write_text("ENVIRONMENT_KEYS = {}\n")
+    site = root / "nro/site"
+    site.mkdir()
+    (site / "__init__.py").write_text("")
+    (site / "configuration.py").write_text("ENVIRONMENT_KEYS = {}\n")
     (root / "pyproject.toml").write_text('[project]\nname="nro"\nversion="0.0.1"\n')
     (root / ".gitignore").write_text(".nro-installation.json\n")
     for args in [

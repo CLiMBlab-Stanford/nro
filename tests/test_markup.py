@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.definition_migrations import update_store
-from nro.configuration.definitions import create_store, validate_store
-from nro.configuration.markup import MarkupStore, SubjectMarkup, compile_markup
-from nro.configuration.parsing import DefinitionError
-from nro.configuration.store import ConfigStore, WorkflowError
+from nro.definitions.markup import MarkupStore, SubjectMarkup, compile_markup
+from nro.definitions.migrations import update_store
+from nro.definitions.parsing import DefinitionError
+from nro.definitions.repository import create_store, validate_store
+from nro.definitions.store import ConfigStore, WorkflowError
 from nro.engine.bids import discover_raw_runs
 from nro.modules.anat.inputs import load_anat_image
 from nro.modules.anat.planning import (

@@ -7,17 +7,17 @@ import sys
 from contextlib import ExitStack
 from pathlib import Path
 
-from nro.configuration.site import (
-    CHECKOUT,
-    installation_record,
-    protected_site_fingerprint,
-    settings,
-)
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_cache import cache_lock, service_lease
 from nro.orchestration.execution_pins import capture_execution
 from nro.orchestration.source_snapshots import SourceSnapshot
+from nro.site.configuration import (
+    CHECKOUT,
+    installation_record,
+    protected_site_fingerprint,
+    settings,
+)
 
 
 def launch_review(argv: list[str]) -> None:

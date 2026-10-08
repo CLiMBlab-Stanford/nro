@@ -12,8 +12,8 @@ tests = ["tests/test_orchestration_planner.py", "tests/test_orchestration_runner
 boundaries = ["tests/test_runner_contract.py", "tests/test_artifact_resolution.py", "tests/test_execution_invariance.py"]
 full = true
 
-[scope.configuration]
-paths = ["nro/configuration/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py"]
+[scope.definitions]
+paths = ["nro/definitions/**", "tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py", "tests/test_model_canonicalization.py", "tests/test_bids_run_selectors.py", "tests/test_definition_authoring.py"]
 tests = ["tests/test_configuration_compiler.py", "tests/test_definitions_store.py", "tests/test_definition_migrations.py", "tests/test_markup.py"]
 boundaries = ["tests/test_workflow_registry.py", "tests/test_execution_invariance.py"]
 downstream = ["anat", "func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"]
@@ -24,7 +24,7 @@ tests = ["tests/test_cli.py", "tests/test_user_commands.py", "tests/test_find.py
 boundaries = ["tests/test_orchestration_planner.py"]
 
 [scope.installation]
-paths = ["install", ".github/workflows/**", "nro/versioning.py", "nro/configuration/definition_migrations/**", "nro/engine/bootstrap.py", "nro/engine/maintenance.py", "nro/engine/shared_installation.py", "nro/engine/site_setup.py", "nro/engine/user_launcher.py", "nro/engine/upgrade_rehearsal.py", "tests/test_installation*.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_upgrade_rehearsal.py", "tests/test_releases.py", "tests/test_user_launcher.py", "pyproject.toml", "uv.lock"]
+paths = ["install", ".github/workflows/**", "nro/versioning.py", "nro/site/**", "tests/test_installation*.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_upgrade_rehearsal.py", "tests/test_releases.py", "tests/test_user_launcher.py", "pyproject.toml", "uv.lock"]
 tests = ["tests/test_installation.py", "tests/test_installation_transition.py", "tests/test_shared_installation.py", "tests/test_maintenance.py", "tests/test_user_launcher.py"]
 boundaries = ["tests/test_upgrade_rehearsal.py"]
 full = true
@@ -79,6 +79,6 @@ tests = ["tests/test_documentation.py", "tests/test_terminology.py"]
 boundaries = []
 
 [scope.development]
-paths = ["development/**", "nro/__init__.py", "nro/modules/__init__.py", "nro/modules/AGENTS.md", "nro/bin/dev.py", "nro/engine/development.py", "tests/conftest.py", "tests/test_architecture_boundaries.py", "tests/test_development_scopes.py", "tests/test_scientific_algorithms.py"]
+paths = ["development/**", "nro/__init__.py", "nro/development.py", "nro/modules/__init__.py", "nro/modules/AGENTS.md", "nro/bin/dev.py", "tests/conftest.py", "tests/test_architecture_boundaries.py", "tests/test_development_scopes.py", "tests/test_scientific_algorithms.py"]
 tests = ["tests/test_architecture_boundaries.py", "tests/test_development_scopes.py"]
 boundaries = ["tests/test_cli.py"]

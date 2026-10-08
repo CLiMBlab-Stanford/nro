@@ -36,8 +36,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.get") -> None:
     args = parser.parse_args(argv)
     keys = _selected_keys(parser, args.keys)
 
-    from nro.configuration import site
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site import configuration as site
 
     values = site.settings()[0]
     bids_root = site.bids_root()

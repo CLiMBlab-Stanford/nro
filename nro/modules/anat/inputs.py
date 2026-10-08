@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nro.configuration.markup import active_source_markup
-from nro.configuration.runtime import SETTINGS
+from nro.definitions.markup import active_source_markup
+from nro.definitions.runtime import SETTINGS
 from nro.engine.bids import acquisition_order_key, parse_bids_entities, resolve_bids_metadata
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import read_json

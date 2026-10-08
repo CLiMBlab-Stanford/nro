@@ -31,7 +31,7 @@ def ensure(endpoint) -> str | None:
     if claim is None:
         return None
     try:
-        from nro.configuration.site import settings
+        from nro.site.configuration import settings
 
         values = settings(path=endpoint.site)[0]
         if os.environ.get("NRO_SCHEDULER_LOCAL") == "1":

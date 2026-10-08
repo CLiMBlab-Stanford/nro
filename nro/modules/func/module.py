@@ -34,9 +34,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nro.configuration.hardware import resolve_gradient_unwarping
-from nro.configuration.runtime import SETTINGS
-from nro.configuration.site import settings as site_settings
+from nro.definitions.hardware import resolve_gradient_unwarping
+from nro.definitions.runtime import SETTINGS
 from nro.engine.anatomical_domain import load_anatomical_domain
 from nro.engine.bids import (
     bids_entity,
@@ -105,6 +104,7 @@ from nro.modules.func.synbold_disco import create_synthetic_reference_step, ensu
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
 from nro.orchestration.runner_graph import Step
+from nro.site.configuration import settings as site_settings
 
 from .config import Inputs, Options, normalize_output_spaces
 from .constants import (

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from nro.configuration.hardware import gradient_unwarping_records
+from nro.definitions.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.functional_references import (
     ReferenceInventory,

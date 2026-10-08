@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
 from nro.engine.paths import module_artifact_root
 from nro.orchestration.contracts import WorkItemSpec

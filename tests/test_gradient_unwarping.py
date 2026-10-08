@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration import site
-from nro.configuration.hardware import (
+from nro.definitions.hardware import (
     gradient_unwarping_configured,
     resolve_acquisition_metadata,
     resolve_gradient_unwarping,
     validate_gradient_unwarping_catalog,
 )
+from nro.site import configuration as site
 
 
 def write_catalog(root: Path, body: str) -> None:

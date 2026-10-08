@@ -64,7 +64,7 @@ def configured_reference_roots(
     project_root: Path, *, derivative_root: Path | None = None
 ) -> ReferenceRoots:
     """Build reference roots from the active immutable site configuration."""
-    from nro.configuration.site import CHECKOUT, PATH_KEYS, settings
+    from nro.site.configuration import CHECKOUT, PATH_KEYS, settings
 
     site, _ = settings()
     roots = {

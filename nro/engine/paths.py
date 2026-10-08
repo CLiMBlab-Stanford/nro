@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nro.configuration.paths import BIDS_PATH, WORK_PATH
 from nro.modules import MODULE_NAMES
+from nro.site.paths import BIDS_PATH, WORK_PATH
 
 
 def _directory_component(value: str, *, label: str) -> str:

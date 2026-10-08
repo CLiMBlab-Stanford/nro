@@ -11,12 +11,12 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from nro.configuration import site
-from nro.configuration.definition_migrations import refresh_manifest, update_store
-from nro.configuration.definitions import _publish, create_store, ensure_store, validate_store
-from nro.configuration.site import read_site_definition
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.definitions.migrations import refresh_manifest, update_store
+from nro.definitions.repository import _publish, create_store, ensure_store, validate_store
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.modules.firstlevels.task_models import load_task_model, scientific_model, select_models
+from nro.site import configuration as site
+from nro.site.configuration import read_site_definition
 
 main = importlib.import_module("nro.bin.def").main
 
@@ -192,13 +192,13 @@ def test_generic_path_without_lab(tmp_path, monkeypatch):
 
 def test_setup_creates_selected_store_and_preserves_edits(tmp_path, monkeypatch):
     from nro.bin import setup
-    from nro.engine.site_setup import save_settings
+    from nro.site.setup import save_settings
 
     root = tmp_path / "definitions"
     license_file = tmp_path / "license"
     license_file.write_text("test fixture")
     save_settings(site.site_file(), {"definitions": str(root), "license": str(license_file)})
-    monkeypatch.setattr("nro.engine.bootstrap.check_workers", lambda path: None)
+    monkeypatch.setattr("nro.site.bootstrap.check_workers", lambda path: None)
     for name in ("install_runtime", "install_images", "install_workbench", "install_templates"):
         monkeypatch.setattr(setup, name, lambda **kwargs: None)
     monkeypatch.setattr(setup, "check_installation", lambda **kwargs: [])

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration.runtime import (
     CONFIGURATION_FINGERPRINT_ENV,
     select_runtime_config,

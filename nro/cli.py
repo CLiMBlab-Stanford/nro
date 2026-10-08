@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
     command = values.pop(0)
     if command not in available_commands():
         parser.error(f"unknown command {command!r}; choose from " + ", ".join(available_commands()))
-    from nro.configuration.site import installation_record
+    from nro.site.configuration import installation_record
 
     if installation_record().get("mode") == "branch" and command in CENTRAL_ONLY_COMMANDS:
         if "-h" not in values and "--help" not in values:

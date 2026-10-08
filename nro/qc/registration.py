@@ -12,11 +12,11 @@ import nibabel as nib
 import numpy as np
 from nibabel.processing import resample_from_to
 
-from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import load_runtime_configuration
+from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import anat_subject_dir, module_derivatives_root
 from nro.orchestration.runtime import resolve_workflow_runtime
+from nro.site.paths import BIDS_PATH
 
 _SCENE_TEMPLATE = Path(__file__).with_name("registration_audit.scene.in")
 _TEMPLATE_VOLUME = "sub-c001_desc-firstvolsAcrossRuns_leftSagSlab_bold.nii.gz"
@@ -372,9 +372,9 @@ def main(
 
     rows = registered_rows(Path(BIDS_PATH))
     if rows is not None:
-        from nro.configuration.site import CHECKOUT, installation_record, settings
         from nro.orchestration.branch_store import BranchStore
         from nro.orchestration.branches import BranchPaths
+        from nro.site.configuration import CHECKOUT, installation_record, settings
 
         values = settings()[0]
         branches = BranchStore(Path(values["registry"]))

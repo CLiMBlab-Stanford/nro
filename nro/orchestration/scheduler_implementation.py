@@ -8,13 +8,13 @@ import sys
 from contextvars import ContextVar
 from pathlib import Path
 
-from nro.configuration.site import installation_record, settings
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.execution_pins import capture_site
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore, source_fingerprint
+from nro.site.configuration import installation_record, settings
 
 # The installed scheduler and worker shell need only this stable site protocol.
 # Scientific subprocesses receive a separate, complete execution-site snapshot

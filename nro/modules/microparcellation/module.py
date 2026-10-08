@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from nro.configuration.schema import scientific_values
+from nro.definitions.schema import scientific_values
 from nro.engine.bids import parse_bids_entities
 from nro.engine.cifti import load_dlabel
 from nro.engine.cleaned_timeseries import (

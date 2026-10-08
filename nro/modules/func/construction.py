@@ -6,8 +6,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from nro.configuration.hardware import GradientUnwarpingResolution
-from nro.configuration.schema import scientific_values
+from nro.definitions.hardware import GradientUnwarpingResolution
+from nro.definitions.schema import scientific_values
 from nro.engine.execution import ensure_directory
 from nro.engine.gradient_unwarping import create_gradient_unwarping_step
 from nro.engine.image_paths import nifti_stem

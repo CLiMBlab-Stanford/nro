@@ -7,9 +7,9 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.paths import BIDS_PATH
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration.registry import Registry
+from nro.site.paths import BIDS_PATH
 
 CONFIGURATION_FINGERPRINT_ENV = "NRO_CONFIGURATION_FINGERPRINT"
 
@@ -65,13 +65,13 @@ def select_runtime_config(
     execution_context=None,
 ) -> Path:
     """Select a public workflow, or validate an orchestrator-owned snapshot."""
-    from nro.configuration.site import require_execution_support
+    from nro.site.configuration import require_execution_support
 
     require_execution_support(scientific=execution_context is None)
     selected = os.environ.get("NRO_RUNTIME_CONFIG")
     if execution_context is not None:
-        from nro.configuration.site import settings
         from nro.orchestration.control_paths import ControlPaths
+        from nro.site.configuration import settings
 
         if execution_context.project != project:
             raise ValueError("Runtime configuration project differs from the attempt")

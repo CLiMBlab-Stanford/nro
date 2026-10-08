@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.store import (
+from nro.definitions.store import (
     CONFIGURATION_CLASSES,
     ResolvedWorkflow,
     fingerprint,

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.runtime import configure
+from nro.definitions.runtime import configure
 from nro.engine.io import read_json
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})

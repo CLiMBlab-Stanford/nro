@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nro.configuration.site import settings
+from nro.site.configuration import settings
 
 _SITE, _ = settings()
 BIDS_PATH = Path(_SITE["bids"])

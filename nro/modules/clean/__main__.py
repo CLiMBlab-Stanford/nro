@@ -5,9 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.configuration.markup import load_source_markup
-from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import configure_clean, load_runtime_configuration
+from nro.definitions.markup import load_source_markup
+from nro.definitions.runtime import configure_clean, load_runtime_configuration
 from nro.engine.bids import (
     discover_raw_runs,
     parse_selectors,
@@ -16,6 +15,7 @@ from nro.engine.bids import (
 )
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE, supported_output_spaces
 from nro.orchestration.runtime import load_runtime_workflow_snapshot, select_runtime_config
+from nro.site.paths import BIDS_PATH
 
 
 def build_parser() -> argparse.ArgumentParser:

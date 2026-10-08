@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nro.configuration.runtime import configure
+from nro.definitions.runtime import configure
 from nro.modules.func import ica_aroma
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})

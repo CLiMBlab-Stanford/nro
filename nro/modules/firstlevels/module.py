@@ -12,7 +12,7 @@ import pandas as pd
 import yaml
 from scipy.ndimage import gaussian_filter
 
-from nro.configuration.schema import scientific_values
+from nro.definitions.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
 from nro.engine.container import ContainerSettings, build_container
 from nro.engine.image_paths import sidecar_json_path

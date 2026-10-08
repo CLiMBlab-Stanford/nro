@@ -9,15 +9,15 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.events import EventStore, task_key
-from nro.configuration.site import (
+from nro.definitions.events import EventStore, task_key
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
+from nro.site.configuration import (
     DERIVED,
     definitions_root,
     read_site_definition,
     site_definition_path,
     write_site_definition,
 )
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 
 STARTERS = Path(__file__).parent / "starters"
 CATEGORIES = (
@@ -48,7 +48,7 @@ def validate_store(
     scientific suitability, credentials, or availability of external resources.
     """
     from nro.bidsify.config import load_config
-    from nro.configuration.definition_migrations import validate_store_integrity
+    from nro.definitions.migrations import validate_store_integrity
     from nro.modules.firstlevels.task_models import load_task_model, scientific_model
 
     root = Path(root).expanduser().resolve() if root is not None else definitions_root()
@@ -179,7 +179,7 @@ def validate_store(
         check(path, lambda: scientific_model(load_task_model(identifier, root / "models")))
         counts["models"] += 1
 
-    from nro.configuration.markup import MarkupStore
+    from nro.definitions.markup import MarkupStore
 
     markup_store = MarkupStore(root)
     for path in files["markup"]:
@@ -190,7 +190,7 @@ def validate_store(
         check(path, lambda identifier=identifier: markup_store.load(identifier))
         counts["markup"] += 1
 
-    from nro.configuration.hardware import validate_gradient_unwarping_catalog
+    from nro.definitions.hardware import validate_gradient_unwarping_catalog
 
     hardware_files = files["hardware"]
     expected_hardware = root / "hardware" / "gradient_unwarping.yml"
@@ -285,7 +285,7 @@ def create_store(
     Create parent directories as needed. Leave existing stores and site settings
     unchanged. Models and events start empty. Do not run Git or access the network.
     """
-    from nro.configuration.site import require_definition_write
+    from nro.site.configuration import require_definition_write
 
     destination = Path(root).expanduser().absolute() if root is not None else definitions_root()
     require_definition_write(destination, creating_store=True)
@@ -325,11 +325,11 @@ def create_store(
                     (directory / ".gitkeep").touch()
         if include_site:
             if site_values is None:
-                from nro.configuration import site
+                from nro.site import configuration as site
 
                 site_values = site.settings()[0]
             write_site_definition(staged, site_values, bidsify=site_bidsify)
-        from nro.configuration.definition_migrations import migrate_store
+        from nro.definitions.migrations import migrate_store
 
         inherited = (inherited_site,) if inherited_site is not None else ()
         migrate_store(
@@ -341,7 +341,7 @@ def create_store(
                 inherited_roots=inherited,
             ),
         )
-        from nro.configuration.definition_migrations import ensure_group_maintainable
+        from nro.definitions.migrations import ensure_group_maintainable
 
         ensure_group_maintainable(staged)
         _publish(staged, destination)
@@ -353,7 +353,7 @@ def ensure_store(root: Path | None = None) -> Path:
     root = Path(root).expanduser().absolute() if root is not None else definitions_root()
     if not root.exists():
         return create_store(root)
-    from nro.configuration.definition_migrations import migrate_store
+    from nro.definitions.migrations import migrate_store
 
     migrate_store(root, validate=lambda candidate: validate_store(candidate, require_site=True))
     validate_store(root, require_site=True)

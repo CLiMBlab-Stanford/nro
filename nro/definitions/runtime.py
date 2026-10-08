@@ -65,7 +65,7 @@ def load_runtime_configuration(
     path: str | Path, configuration_class: str
 ) -> tuple[str, dict[str, Any]]:
     """Read a fully resolved private configuration without applying defaults."""
-    from nro.configuration.site import require_execution_support
+    from nro.site.configuration import require_execution_support
 
     require_execution_support()
     try:

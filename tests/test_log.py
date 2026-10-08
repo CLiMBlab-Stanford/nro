@@ -5,7 +5,7 @@ from pathlib import Path
 
 import nro.bin.log as log_cli
 from nro.bidsify.store import IngestionStore
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import core_selection
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.planner import build_subject_work_items

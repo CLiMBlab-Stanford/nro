@@ -42,7 +42,7 @@ def _disjoint(left: Path, right: Path) -> bool:
 
 def require_protected_site(shared: Path, selected: Path) -> None:
     """Reject a branch store that attempts to define protected site settings."""
-    from nro.configuration.site import site_definition_path
+    from nro.site.configuration import site_definition_path
 
     # Installation migrates the authoritative store before declaring the new
     # layout active. This guard lets that maintenance operation begin from the
@@ -160,7 +160,7 @@ def select_definitions(store, checkout: Path, shared: Path, destination: Path | 
     copied, Git operations performed, or scientific observations changed.
     Cooperating selection updates are serialized with branch registration edits.
     """
-    from nro.configuration.definitions import validate_store
+    from nro.definitions.repository import validate_store
     from nro.engine.io import atomic_write_json
 
     with store._lock():

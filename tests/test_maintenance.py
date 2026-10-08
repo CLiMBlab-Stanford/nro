@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from nro.engine.maintenance import MaintenanceJournal, audit_shared_state
 from nro.orchestration.branch_registry import BranchRegistry
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
 from nro.orchestration.scheduler_repair import _rebuild
+from nro.site.maintenance import MaintenanceJournal, audit_shared_state
 
 
 def test_audit_is_read_only_and_reports_all_registry_schemas(tmp_path: Path) -> None:

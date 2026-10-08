@@ -7,11 +7,11 @@ from copy import deepcopy
 import pytest
 import yaml
 
-from nro.configuration.authoring import definition_target, validate_definition
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.runtime import load_runtime_configuration
-from nro.configuration.schema import SCHEMAS, compile_configuration, scientific_values
-from nro.configuration.store import ConfigStore, configuration_fingerprint, fingerprint
+from nro.definitions.authoring import definition_target, validate_definition
+from nro.definitions.parsing import parse_mapping
+from nro.definitions.runtime import load_runtime_configuration
+from nro.definitions.schema import SCHEMAS, compile_configuration, scientific_values
+from nro.definitions.store import ConfigStore, configuration_fingerprint, fingerprint
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def store(tmp_path):
 
 @pytest.mark.parametrize("kind", SCHEMAS)
 def test_defaults_compile_completely_and_cached_results_are_independent(store, kind):
-    from nro.configuration import schema
+    from nro.definitions import schema
 
     config = store.load_configuration(kind, "main")
     source = deepcopy(config.values)

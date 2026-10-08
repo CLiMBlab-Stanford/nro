@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext

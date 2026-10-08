@@ -95,7 +95,7 @@ reduces each run's connectivity DOF by one.
 frames (default 128, capped at half the run length). This scientific setting
 is independent of the execution-only streaming chunk sizes.
 
-```{literalinclude} ../../nro/configuration/starters/configs/microparcellation/main_microparcellation.yml
+```{literalinclude} ../../nro/definitions/starters/configs/microparcellation/main_microparcellation.yml
 :language: yaml
 ```
 

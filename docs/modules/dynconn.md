@@ -95,7 +95,7 @@ from the host system and is recorded in the manifest so the randomized fit can
 be reproduced. It is not a shared dynconn configuration value. Low-rank options
 do not affect scientific freshness while `low_rank` is false.
 
-```{literalinclude} ../../nro/configuration/starters/configs/dynconn/main_dynconn.yml
+```{literalinclude} ../../nro/definitions/starters/configs/dynconn/main_dynconn.yml
 :language: yaml
 ```
 

@@ -7,8 +7,8 @@ from pathlib import Path
 import yaml
 
 from nro.bin.purge import _purge_work_items
-from nro.configuration.definition_migrations import refresh_manifest
-from nro.configuration.store import ConfigStore
+from nro.definitions.migrations import refresh_manifest
+from nro.definitions.store import ConfigStore
 from nro.orchestration.discovery import register_existing_artifacts
 from nro.orchestration.ownership import (
     complete_ownership_records,

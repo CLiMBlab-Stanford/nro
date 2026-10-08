@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from nro.bin.purge import main as purge_main
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration import execution_cache
 from nro.orchestration.execution_cache import cache_lock, collect_cache
 from nro.orchestration.registry import Registry

@@ -96,7 +96,7 @@ class Runner:
         adding steps; the runner does not rewrite commands or Python closures.
         These checks do not sandbox undeclared writes by external software.
         """
-        from nro.configuration.site import require_execution_support
+        from nro.site.configuration import require_execution_support
 
         require_execution_support()
         self._execution_context = execution_context

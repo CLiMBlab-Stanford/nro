@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json
 from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_planning import BranchPlan, resolve_branch_plan

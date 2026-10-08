@@ -97,8 +97,8 @@ def test_symlinked_transport_is_rejected(tmp_path):
 
 
 def test_branch_runtime_does_not_open_production_registry(tmp_path, monkeypatch):
-    import nro.configuration.site as site
     import nro.orchestration.runtime as runtime
+    import nro.site.configuration as site
     from nro.orchestration.control_paths import ControlPaths
 
     _, _, context = payload(tmp_path)

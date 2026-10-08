@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from nro.configuration.markup import SubjectMarkup
-from nro.configuration.store import ResolvedWorkflow, fingerprint
+from nro.definitions.markup import SubjectMarkup
+from nro.definitions.store import ResolvedWorkflow, fingerprint
 from nro.engine.bids import BidsRun
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 

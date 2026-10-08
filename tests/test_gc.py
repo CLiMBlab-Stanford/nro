@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration.artifact_ownership import rows_with_public_receipts
 from nro.orchestration.garbage_collection import garbage_paths
 from nro.orchestration.planner import build_subject_work_items

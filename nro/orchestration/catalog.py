@@ -205,7 +205,7 @@ MODULES = MODULE_NAMES
 
 def canonical_contract(contract: dict, configuration: dict | None = None) -> dict:
     """Normalize recorded scientific syntax without consulting mutable definitions."""
-    from nro.configuration.store import configuration_fingerprint
+    from nro.definitions.store import configuration_fingerprint
     from nro.engine.artifact_metadata import metadata_contract_compatible
     from nro.orchestration.contract_migrations import migrate_contract
 

@@ -197,7 +197,7 @@ def build_parser(*, prog: str = "nro.bin.find") -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.find") -> None:
     """Discover matching source images and print their absolute paths."""
     args = build_parser(prog=prog).parse_args(argv)
-    from nro.configuration.site import bids_root
+    from nro.site.configuration import bids_root
 
     try:
         matches = find_images(

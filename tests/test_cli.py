@@ -8,7 +8,7 @@ import pytest
 
 import nro.cli as cli
 from nro.bin.run import build_parser as run_parser
-from nro.configuration.site import ENVIRONMENT_KEYS
+from nro.site.configuration import ENVIRONMENT_KEYS
 
 ROOT = Path(__file__).parents[1]
 
@@ -42,7 +42,7 @@ def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -
 
 
 def test_version_reports_installed_distribution_without_site_loading(monkeypatch, capsys) -> None:
-    import nro.configuration.site as site
+    import nro.site.configuration as site
 
     monkeypatch.setattr(
         site,
@@ -104,7 +104,7 @@ def test_help_delegates_command_reference(monkeypatch) -> None:
 
 
 def test_development_installation_restricts_only_central_maintenance(monkeypatch, capsys) -> None:
-    import nro.configuration.site as site
+    import nro.site.configuration as site
 
     calls = []
 
@@ -164,7 +164,7 @@ def test_pyproject_defines_only_the_single_nro_console_script() -> None:
 
 def test_public_commands_cannot_override_the_site_bids_root() -> None:
     sources = list((ROOT / "nro" / "bin").glob("*.py"))
-    sources.append(ROOT / "nro" / "configuration" / "authoring.py")
+    sources.append(ROOT / "nro" / "definitions" / "authoring.py")
 
     assert all("--bids-root" not in path.read_text() for path in sources)
     assert "NRO_BIDS_PATH" not in ENVIRONMENT_KEYS

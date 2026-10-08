@@ -71,8 +71,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.gc") -> None:
     if args.json and not args.force and not args.dry_run:
         raise SystemExit("--json requires --force when garbage collection is not a dry run")
 
-    from nro.configuration.site import CHECKOUT, settings
     from nro.orchestration.scheduler_client import maintenance
+    from nro.site.configuration import CHECKOUT, settings
 
     values = settings()[0]
     control = Path(values["registry"])

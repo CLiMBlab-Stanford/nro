@@ -9,7 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.site import (
+from nro.engine.io import atomic_write_text
+from nro.site.configuration import (
     DERIVED,
     LAB,
     PATH_KEYS,
@@ -24,7 +25,6 @@ from nro.configuration.site import (
     validate_setting,
     write_site_definition,
 )
-from nro.engine.io import atomic_write_text
 
 DESCRIPTIONS = {
     "definitions": "Configurations, workflows, models, source markup, events, and ingestion profiles",
@@ -111,7 +111,7 @@ def migrate_site_configuration(path: Path) -> Path:
         # site-document reader can interpret the protected settings. This runs
         # before the application environment exists, so validate the protected
         # site document here and defer full catalog validation to nro.bin.setup.
-        from nro.configuration.definition_migrations import migrate_store
+        from nro.definitions.migrations import migrate_store
 
         migrate_store(
             definitions,
@@ -191,7 +191,7 @@ def migrate_site_configuration(path: Path) -> Path:
             migrated_profiles[profile_path] = profile
     write_site_definition(definitions, protected, bidsify=bidsify)
     if migrated_profiles:
-        from nro.configuration.definition_migrations import (
+        from nro.definitions.migrations import (
             MANIFEST,
             normalize_managed_text,
             update_store,
@@ -231,7 +231,7 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
         raise ValueError("Shared settings require --maintain and maintainer write access.")
     path = site_file() if path is None else path
     if installation_record().get("mode") == "shared":
-        from nro.engine.bootstrap import check_workers
+        from nro.site.bootstrap import check_workers
 
         check_workers(path)
     overrides = read_overrides(path)

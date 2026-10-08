@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from nro.configuration.runtime import SETTINGS
+from nro.definitions.runtime import SETTINGS
 from nro.engine.bids import (
     bids_readout_time,
 )

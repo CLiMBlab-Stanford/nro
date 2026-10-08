@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.runtime import configure
-from nro.configuration.store import ConfigStore
+from nro.definitions.runtime import configure
+from nro.definitions.store import ConfigStore
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 

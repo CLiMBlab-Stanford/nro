@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import definitions_roots
-from nro.configuration.store import validate_config_id
+from nro.definitions.parsing import parse_mapping
+from nro.definitions.store import validate_config_id
 from nro.engine.events import validate_events
+from nro.site.configuration import definitions_roots
 
 
 def task_key(value: str) -> str:

@@ -19,8 +19,8 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from nro.configuration.markup import active_source_markup
-from nro.configuration.runtime import SETTINGS
+from nro.definitions.markup import active_source_markup
+from nro.definitions.runtime import SETTINGS
 from nro.engine.bids import replace_bids_entity_token
 from nro.engine.container import (
     ContainerSettings,

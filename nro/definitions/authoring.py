@@ -9,18 +9,18 @@ from typing import Callable
 
 import yaml
 
-from nro.configuration.markup import compile_markup
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import bids_root as _configured_bids_root
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
-from nro.engine.definition_editor import (
+from nro.definitions.editor import (
     delete_definition,
     read_definition,
     review_definition,
     save_definition,
 )
+from nro.definitions.markup import compile_markup
+from nro.definitions.parsing import parse_mapping
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 from nro.modules.firstlevels.authoring import discover_event_files, model_draft
 from nro.modules.firstlevels.task_models import model_path, validate_task_model
+from nro.site.configuration import bids_root as _configured_bids_root
 
 
 @dataclass(frozen=True)
@@ -240,7 +240,7 @@ def _store_validator(
                 active.resolve("main")
             return
         if target.kind == "markup":
-            from nro.configuration.markup import MarkupStore
+            from nro.definitions.markup import MarkupStore
 
             markup = MarkupStore(roots=active.roots)
             if not deleting or any(

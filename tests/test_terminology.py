@@ -11,9 +11,7 @@ from nro.bin.purge import build_parser as purge_parser
 from nro.bin.run import build_parser as run_parser
 from nro.bin.status import build_parser as status_parser
 from nro.bin.stop import build_parser as stop_parser
-from nro.configuration import site
-from nro.configuration.paths import REGISTRY_PATH
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.engine.paths import module_artifact_root
 from nro.modules import MODULE_NAMES
 from nro.orchestration.catalog import BUILTIN_MODULES, MODULES
@@ -26,6 +24,8 @@ from nro.orchestration.contracts import (
     WorkItemSpec,
 )
 from nro.orchestration.registry import Registry
+from nro.site import configuration as site
+from nro.site.paths import REGISTRY_PATH
 
 ROOT = Path(__file__).parents[1]
 

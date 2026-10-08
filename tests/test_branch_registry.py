@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.orchestration import branches
 from nro.orchestration.branch_registry import SCHEMA_VERSION, BranchRegistry
 from nro.orchestration.branch_repair import (
@@ -222,7 +222,7 @@ def test_repair_catalog_drops_purged_records_but_keeps_artifact_dependencies(tmp
 
 
 def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     site_values = settings()[0]
     bids = tmp_path / "BIDS"
@@ -330,7 +330,7 @@ def test_branch_repair_recovers_current_public_ownership(tmp_path, monkeypatch):
     receipt_path.parent.mkdir(parents=True)
     receipt_path.write_text(json.dumps(receipt))
     monkeypatch.setattr(
-        "nro.configuration.site.settings",
+        "nro.site.configuration.settings",
         lambda: (
             {
                 **site_values,

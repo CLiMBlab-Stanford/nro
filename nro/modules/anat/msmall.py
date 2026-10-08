@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from nro.configuration.markup import SubjectMarkup
+from nro.definitions.markup import SubjectMarkup
 from nro.engine.execution import create_copy_file_step
 from nro.engine.functional_references import (
     load_rec,

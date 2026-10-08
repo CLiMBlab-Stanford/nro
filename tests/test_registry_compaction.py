@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.registry import Registry, utcnow

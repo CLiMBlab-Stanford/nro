@@ -2,7 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchTopology
 from nro.orchestration.planning_context import work_item_key
@@ -81,7 +81,7 @@ def test_project_cli_pages_preview_and_confirms_execution(tmp_path, monkeypatch,
     pages = []
 
     monkeypatch.setattr(
-        "nro.configuration.site.settings",
+        "nro.site.configuration.settings",
         lambda: (
             {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
             None,
@@ -123,7 +123,7 @@ def test_project_cli_discards_cancelled_preparation(tmp_path, monkeypatch, capsy
     }
     calls = []
     monkeypatch.setattr(
-        "nro.configuration.site.settings",
+        "nro.site.configuration.settings",
         lambda: (
             {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
             None,
@@ -167,7 +167,7 @@ def test_project_cli_force_prints_preview_without_pager_or_prompt(tmp_path, monk
     }
     calls = []
     monkeypatch.setattr(
-        "nro.configuration.site.settings",
+        "nro.site.configuration.settings",
         lambda: (
             {"registry": str(tmp_path / "control"), "bids": str(tmp_path / "BIDS")},
             None,

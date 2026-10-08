@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cifti import load_dlabel, load_pconn
 from nro.engine.surface_geometry import load_surfaces
 from nro.modules.func.synbold_disco import ensure_image

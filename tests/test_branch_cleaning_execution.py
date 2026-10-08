@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from nro.configuration.runtime import configure
+from nro.definitions.runtime import configure
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.images import load_gifti_timeseries
 from nro.modules.clean import module as clean
@@ -99,7 +99,7 @@ def cleaning_case(tmp_path, request):
     )
     cfg = yaml.safe_load(
         (
-            Path(clean.__file__).parents[2] / "configuration/starters/configs/clean/main_clean.yml"
+            Path(clean.__file__).parents[2] / "definitions/starters/configs/clean/main_clean.yml"
         ).read_text()
     )
     container_image = tmp_path / "qunex.sif"

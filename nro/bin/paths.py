@@ -3,8 +3,8 @@
 import argparse
 from pathlib import Path
 
-from nro.configuration.site import settings, site_definition_path, site_file
-from nro.engine.site_setup import edit_settings
+from nro.site.configuration import settings, site_definition_path, site_file
+from nro.site.setup import edit_settings
 
 
 def main(argv=None, *, prog="nro paths"):

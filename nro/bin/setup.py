@@ -7,9 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT, installation_record, settings, site_file
-from nro.engine.bootstrap import cancel_setup
-from nro.engine.dependencies import (
+from nro.site.bootstrap import cancel_setup
+from nro.site.configuration import CHECKOUT, installation_record, settings, site_file
+from nro.site.dependencies import (
     LICENSE_HELP,
     QUNEX_TERMS,
     check_installation,
@@ -22,7 +22,7 @@ from nro.engine.dependencies import (
     install_templates,
     install_workbench,
 )
-from nro.engine.site_setup import edit_settings, migrate_site_configuration, save_settings
+from nro.site.setup import edit_settings, migrate_site_configuration, save_settings
 
 
 def _accept_resource_terms() -> bool:
@@ -82,7 +82,7 @@ def _main(argv=None, *, prog="nro setup"):
     if installation_record().get("mode") == "shared" and not args.maintain:
         parser.error("Shared resource maintenance requires --maintain")
     try:
-        from nro.engine.bootstrap import check_installation_barrier, check_workers
+        from nro.site.bootstrap import check_installation_barrier, check_workers
 
         if args.prepared_maintenance:
             check_installation_barrier(site_file(), CHECKOUT)
@@ -97,7 +97,7 @@ def _main(argv=None, *, prog="nro setup"):
                 if not path.exists():
                     raise RuntimeError("Path setup was cancelled")
         site, _ = settings()
-        from nro.configuration.definitions import ensure_store, validate_store
+        from nro.definitions.repository import ensure_store, validate_store
 
         definitions_path = Path(site["definitions"])
         if definitions_path.exists():

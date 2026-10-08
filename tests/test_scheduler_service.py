@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.site import protected_site_fingerprint, settings
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration import scheduler_client
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
@@ -24,6 +23,7 @@ from nro.orchestration.registry import Registry
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.scheduler_implementation import activate
 from nro.orchestration.source_snapshots import SourceStore
+from nro.site.configuration import protected_site_fingerprint, settings
 
 pytestmark = pytest.mark.integration
 

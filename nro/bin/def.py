@@ -7,12 +7,12 @@ import json
 import sys
 from pathlib import Path
 
-from nro.configuration import site
-from nro.configuration.authoring import main as author
-from nro.configuration.definition_migrations import MANAGED_CATEGORIES, migrate_store, update_store
-from nro.configuration.definitions import create_store, validate_store
-from nro.configuration.store import CONFIGURATION_CLASSES, ConfigStore
-from nro.engine.definition_editor import delete_definition, read_definition, review_definition
+from nro.definitions.authoring import main as author
+from nro.definitions.editor import delete_definition, read_definition, review_definition
+from nro.definitions.migrations import MANAGED_CATEGORIES, migrate_store, update_store
+from nro.definitions.repository import create_store, validate_store
+from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
+from nro.site import configuration as site
 
 TYPED_KINDS = frozenset({"config", "model", "workflow", "markup"})
 

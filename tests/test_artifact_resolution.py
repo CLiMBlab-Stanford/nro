@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.artifact_resolution import (
     ArtifactCandidate,
     scientific_contract_fingerprint,
@@ -209,7 +209,7 @@ def test_branch_graph_registration_is_atomic_and_location_independent(tmp_path):
 
 
 def test_branch_workflows_do_not_change_other_branches(tmp_path):
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.store import ConfigStore
     from nro.orchestration.branch_store import BranchStore
 
     store = BranchStore(tmp_path / "control")

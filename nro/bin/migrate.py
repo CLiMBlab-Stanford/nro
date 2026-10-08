@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 
 from nro.cli import package_version
-from nro.configuration.site import settings
 from nro.engine.cli import page_text
+from nro.site.configuration import settings
 
 
 def _parser(prog: str) -> argparse.ArgumentParser:
@@ -64,8 +64,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro migrate") -> None:
     values = settings()[0]
     bids = Path(values["bids"])
     projects = args.projects or sorted(path.name for path in bids.iterdir() if path.is_dir())
-    from nro.configuration.site import CHECKOUT
     from nro.orchestration.scheduler_client import maintenance
+    from nro.site.configuration import CHECKOUT
 
     preview = maintenance(
         Path(values["registry"]),

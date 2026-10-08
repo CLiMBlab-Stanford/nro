@@ -31,8 +31,8 @@ def main():
     pin = json.loads(args.execution) if args.execution else None
     paths = None
     if pin is not None:
-        from nro.configuration.site import settings
         from nro.orchestration.branches import BranchPaths
+        from nro.site.configuration import settings
 
         values = settings(path=Path(pin["site"]))[0]
         paths = BranchPaths(

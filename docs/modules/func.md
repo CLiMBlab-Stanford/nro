@@ -170,7 +170,7 @@ cosine drift regressors; its default is 1/128 Hz.
 configuration selects global signal, FD, base motion parameters, the first five
 aCompCor components, cosine drifts, and outlier columns.
 
-```{literalinclude} ../../nro/configuration/starters/configs/func/main_func.yml
+```{literalinclude} ../../nro/definitions/starters/configs/func/main_func.yml
 :language: yaml
 ```
 

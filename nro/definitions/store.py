@@ -18,16 +18,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from nro.configuration.parsing import DefinitionError, parse_mapping
-from nro.configuration.schema import (
+from nro.definitions.parsing import DefinitionError, parse_mapping
+from nro.definitions.schema import (
     RUNTIME_FIELDS,
     SCHEMAS,
     compile_configuration,
     normalize_fields,
     scientific_values,
 )
-from nro.configuration.site import definitions_roots, resolve_resources
 from nro.modules import MODULE_NAMES
+from nro.site.configuration import definitions_roots, resolve_resources
 
 PACKAGED_CONFIGS = Path(__file__).parent / "starters/configs"
 
@@ -219,7 +219,7 @@ class ConfigStore:
         )
         self.root = self.roots[0]
         self.site_values = dict(site_values) if site_values is not None else None
-        from nro.configuration.definition_migrations import validate_store_integrity
+        from nro.definitions.migrations import validate_store_integrity
 
         for candidate in self.roots:
             if not candidate.is_dir():
@@ -404,7 +404,7 @@ class ConfigStore:
             values = self._merge_configuration(configuration_class, values, declared, path=path)
         markup_id = values.get("markup")
         if markup_id is not None:
-            from nro.configuration.markup import MarkupStore
+            from nro.definitions.markup import MarkupStore
 
             try:
                 MarkupStore(roots=self.roots).path(markup_id)

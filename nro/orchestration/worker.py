@@ -17,7 +17,6 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.paths import BIDS_PATH
 from nro.engine.io import atomic_write_json
 from nro.engine.references import resolve_public_payload
 from nro.orchestration.completion import record_completion
@@ -40,6 +39,7 @@ from nro.orchestration.resource_handoff import RESOURCE_HANDOFF_EXIT
 from nro.orchestration.resources import WORKER_COMPATIBILITY
 from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_implementation import validate_worker_script
+from nro.site.paths import BIDS_PATH
 
 COMPATIBLE = WORKER_COMPATIBILITY
 HEARTBEAT_INTERVAL = 30.0
@@ -1227,8 +1227,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     """Run one reusable worker until it drains or receives shutdown."""
     args = build_parser().parse_args(argv)
-    from nro.configuration.site import settings
     from nro.orchestration.scheduler_implementation import require_worker_source
+    from nro.site.configuration import settings
 
     control = Path(settings()[0]["registry"])
     require_worker_source(control)

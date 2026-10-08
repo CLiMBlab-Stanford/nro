@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore, fingerprint
+from nro.definitions.store import ConfigStore, fingerprint
 from nro.modules.firstlevels.compiler import compile_model
 from nro.modules.firstlevels.contract import _matches_definition, definition_fingerprint
 from nro.modules.firstlevels.task_models import scientific_model

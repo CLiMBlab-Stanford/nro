@@ -6,8 +6,8 @@ from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
 
-from nro.configuration.schema import validate_parameters
-from nro.configuration.store import main_configuration_factory
+from nro.definitions.schema import validate_parameters
+from nro.definitions.store import main_configuration_factory
 from nro.engine.targets import DEFAULT_SMOOTHING_MM
 
 dynconn_default = partial(main_configuration_factory, "dynconn")

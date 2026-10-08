@@ -11,13 +11,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from nro.configuration.definition_migrations import (
+from nro.definitions.migrations import (
     SCHEMA_VERSION as DEFINITIONS_SCHEMA_VERSION,
 )
-from nro.configuration.definition_migrations import (
+from nro.definitions.migrations import (
     store_schema,
 )
-from nro.engine.site_setup import save_settings
+from nro.site.setup import save_settings
 
 
 def _git(checkout: Path, *arguments: str) -> str:
@@ -108,7 +108,10 @@ def _initialize_definitions(
     code = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from nro.configuration.definitions import create_store\n"
+        "try:\n"
+        "    from nro.configuration.definitions import create_store\n"
+        "except ImportError:\n"
+        "    from nro.definitions.repository import create_store\n"
         "create_store(Path(sys.argv[1]))\n"
     )
     environment = {
@@ -117,6 +120,13 @@ def _initialize_definitions(
         "PYTHONPATH": str(checkout),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    for key in (
+        "NRO_EXECUTION_SOURCE_DIGEST",
+        "NRO_EXECUTION_SOURCE_ROOT",
+        "NRO_PROCESS_ROLE",
+        "NRO_SCHEDULER_MAINTENANCE",
+    ):
+        environment.pop(key, None)
     subprocess.run(
         [str(python), "-B", "-c", code, str(definitions)],
         cwd=checkout,
@@ -137,13 +147,13 @@ def _prepare_pool(
     code = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from nro.engine import installation_layers\n"
-        "from nro.engine.site_setup import migrate_site_configuration\n"
+        "from nro.site import installation_layers\n"
+        "from nro.site.setup import migrate_site_configuration\n"
         "control, bids, checkout, definitions, site = map(Path, sys.argv[1:])\n"
         "migrate_site_configuration(site)\n"
         "installation_layers.capture_shared_application(checkout)\n"
-        "from nro.configuration.definitions import ensure_store\n"
-        "from nro.engine.shared_installation import prepare_pool\n"
+        "from nro.definitions.repository import ensure_store\n"
+        "from nro.site.shared_installation import prepare_pool\n"
         "from nro.orchestration.registry import Registry\n"
         "ensure_store(definitions)\n"
         "migrate_site_configuration(site)\n"

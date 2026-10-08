@@ -28,7 +28,7 @@ def read_definition(path: Path) -> bytes | None:
 
 @contextmanager
 def _definition_lock(path: Path, expected: bytes | None):
-    from nro.configuration.site import definition_write
+    from nro.site.configuration import definition_write
 
     with definition_write(path), _file_lock(path, expected):
         yield
@@ -70,7 +70,7 @@ def save_definition(
     """
     with _definition_lock(path, expected):
         if store_root is not None:
-            from nro.configuration.definition_migrations import update_store
+            from nro.definitions.migrations import update_store
 
             update_store(
                 store_root,
@@ -115,7 +115,7 @@ def delete_definition(
         if store_root is None:
             path.unlink()
         else:
-            from nro.configuration.definition_migrations import update_store
+            from nro.definitions.migrations import update_store
 
             update_store(
                 store_root,
@@ -306,7 +306,7 @@ def review_definition(
                         return False
                     draft_state = "modified"
                 text = draft.read_text(encoding="utf-8")
-                from nro.configuration.definition_migrations import normalize_managed_text
+                from nro.definitions.migrations import normalize_managed_text
 
                 text = normalize_managed_text(path, text)
                 draft.write_text(text, encoding="utf-8")

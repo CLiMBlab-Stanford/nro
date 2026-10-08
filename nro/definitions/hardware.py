@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import resolve_definition, settings
+from nro.definitions.parsing import parse_mapping
+from nro.site.configuration import resolve_definition, settings
 
 CATALOG_RELATIVE_PATH = Path("hardware/gradient_unwarping.yml")
 SUPPORTED_ACTIONS = frozenset({"unwarp", "already_corrected"})

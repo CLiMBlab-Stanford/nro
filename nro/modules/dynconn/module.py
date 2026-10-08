@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from nro.configuration.schema import scientific_values
+from nro.definitions.schema import scientific_values
 from nro.engine.cleaned_timeseries import (
     CleanedRunInclusionPolicy,
     cleaned_run_exclusions,

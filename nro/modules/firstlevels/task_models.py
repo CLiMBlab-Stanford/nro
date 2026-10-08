@@ -10,9 +10,9 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import definitions_roots
+from nro.definitions.parsing import parse_mapping
 from nro.engine.io import atomic_write_text
+from nro.site.configuration import definitions_roots
 
 
 def model_path(identifier: str, root: Path | None = None) -> Path:
@@ -188,7 +188,7 @@ def model_ids_in_sets(sets: tuple[str, ...]) -> tuple[str, ...]:
 
 def register_model(identifier: str, source: Path, *, root: Path | None = None) -> Path:
     """Validate and atomically register YAML; an existing identifier is an error."""
-    from nro.configuration.site import definition_write
+    from nro.site.configuration import definition_write
 
     destination = model_path(identifier, root)
     model = validate_task_model(parse_mapping(Path(source).read_text(), source=str(source)))

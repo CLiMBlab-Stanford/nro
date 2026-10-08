@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from nro.configuration.hardware import GradientUnwarpingResolution
+from nro.definitions.hardware import GradientUnwarpingResolution
 from nro.modules.func.contract import MARSS_DIAGNOSTIC_METHOD, final_resampling_contract
 from nro.orchestration.runner_support import ContainerSpec
 

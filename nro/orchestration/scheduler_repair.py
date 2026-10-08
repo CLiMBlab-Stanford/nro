@@ -5,7 +5,6 @@ import shutil
 import uuid
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT
 from nro.orchestration import scheduler_implementation
 from nro.orchestration.branch_registry import SCHEMA_VERSION as BRANCH_SCHEMA_VERSION
 from nro.orchestration.branch_registry import BranchRegistry
@@ -13,6 +12,7 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import SCHEMA_VERSION, RegistryLock
 from nro.orchestration.releases import ReleaseStore
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
+from nro.site.configuration import CHECKOUT
 
 
 def repair_scientific_schemas(registry) -> list[dict]:

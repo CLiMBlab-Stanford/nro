@@ -5,14 +5,14 @@ import json
 import logging
 from pathlib import Path
 
-from nro.configuration.markup import load_source_markup
-from nro.configuration.paths import BIDS_PATH, WORK_PATH
-from nro.configuration.runtime import load_runtime_configuration
+from nro.definitions.markup import load_source_markup
+from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs
 from nro.engine.paths import module_work_root
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runtime import select_runtime_config
+from nro.site.paths import BIDS_PATH, WORK_PATH
 
 from .module import run_module
 from .planning import selected_runs

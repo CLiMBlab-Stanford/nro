@@ -17,7 +17,7 @@ from typing import Iterator, Mapping, Sequence
 
 import yaml
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.branches import BranchRecord
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.control_paths import ControlPaths

@@ -24,7 +24,7 @@ from nro.bin.status import _concise_error, _format_elapsed, _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import CoreSelection, core_selection, page_text
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.registry import SCHEMA_VERSION, Registry
@@ -54,8 +54,8 @@ def test_run_cpu_override() -> None:
 
 
 def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys) -> None:
-    from nro.configuration import site
     from nro.orchestration import execution_pins, planner_client, scheduler_client
+    from nro.site import configuration as site
 
     source = SimpleNamespace(root=tmp_path / "source", digest="digest")
     execution_site = tmp_path / "execution-site.toml"
@@ -940,8 +940,8 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     import nro.bin.status as status_command
-    import nro.configuration.site as site
     import nro.orchestration.scheduler_client as scheduler_client
+    import nro.site.configuration as site
 
     bids = (tmp_path / "bids").resolve()
     control = (tmp_path / "control").resolve()
@@ -1050,7 +1050,7 @@ def test_main_repair_uses_lab_wide_scheduler_during_release_transition(
 ) -> None:
     import os
 
-    from nro.configuration import site
+    from nro.site import configuration as site
 
     binding = tmp_path / "implementation.json"
     binding.write_text("{}")

@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.engine import shared_installation
 from nro.orchestration import scheduler_operations, scheduler_service, worker_control
 from nro.orchestration.branch_registry import SCHEMA_VERSION as SCIENTIFIC_SCHEMA_VERSION
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import Registry
+from nro.site import shared_installation
 
 
 def _mock_service(monkeypatch, tmp_path, responses):
@@ -276,7 +276,7 @@ def test_schema_rebuild_stops_the_live_scheduler_before_direct_registry_access(
 
     monkeypatch.setattr(registry, "stored_schema_version", stored_schema_version)
 
-    from nro.engine import maintenance
+    from nro.site import maintenance
 
     audit_shared_state = maintenance.audit_shared_state
 
@@ -485,7 +485,7 @@ def test_publish_records_release_in_installation(tmp_path, monkeypatch):
     }
     (root / ".nro-installation.json").write_text(json.dumps(installation))
     monkeypatch.setattr(
-        "nro.configuration.site.installation_record", lambda checkout=None: installation.copy()
+        "nro.site.configuration.installation_record", lambda checkout=None: installation.copy()
     )
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     registry.initialize()

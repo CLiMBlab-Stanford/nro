@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.modules.firstlevels.compiler import compile_model
 from nro.modules.firstlevels.task_models import (
     load_task_model,

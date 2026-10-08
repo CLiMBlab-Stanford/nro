@@ -6,7 +6,7 @@ from io import StringIO
 import pytest
 import yaml
 
-from nro.configuration.events import EventStore
+from nro.definitions.events import EventStore
 from nro.engine.events import validate_events
 
 

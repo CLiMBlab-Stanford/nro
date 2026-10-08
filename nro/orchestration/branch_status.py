@@ -3,13 +3,13 @@
 import json
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT, settings
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import matches_module_lineage, matches_work_item_selectors
 from nro.orchestration.branch_requests import register_requests
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.catalog import MODULES, module_descriptor
 from nro.orchestration.planner import Planner, RegisteredTarget
+from nro.site.configuration import CHECKOUT, settings
 
 
 def refresh(rows: list[dict], selection) -> None:

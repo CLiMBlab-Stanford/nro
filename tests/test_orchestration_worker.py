@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from nro.bin.status import main as status_main
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.io import write_public_json
 from nro.orchestration import completion, dependency_state
 from nro.orchestration.artifact_records import file_record

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Iterable, Mapping
 
 import yaml
 
-from nro.configuration.store import CONFIGURATION_CLASSES, fingerprint
+from nro.definitions.store import CONFIGURATION_CLASSES, fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text
 from nro.engine.paths import module_artifact_root, module_namespace_root
 from nro.engine.references import (
@@ -66,7 +66,7 @@ def _resolve_configuration_values(value: object) -> object:
             name = value[_SITE_SETTING]
             if name != "binds":
                 raise ValueError(f"Unknown portable site setting {name!r}")
-            from nro.configuration.site import settings
+            from nro.site.configuration import settings
 
             return list(settings()[0].get("binds", ()))
         return {key: _resolve_configuration_values(member) for key, member in value.items()}

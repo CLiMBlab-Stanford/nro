@@ -146,7 +146,7 @@ def neuroimaging_environment(*, subjects_dir: Path) -> dict[str, str]:
         "SUBJECTS_DIR": str(subjects_dir),
         **thread_environment(),
     }
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     site, _ = settings()
     environment["FS_LICENSE"] = site["license"]

@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from nro.configuration.store import ConfigStore, configuration_fingerprint
+from nro.definitions.store import ConfigStore, configuration_fingerprint
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.contract_migrations import (
     INDETERMINATE,

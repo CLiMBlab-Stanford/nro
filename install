@@ -20,6 +20,6 @@ in_rehearsal_environment = (
     and Path(sys.prefix).resolve() == managed_python.parent.parent.resolve()
 )
 if not in_rehearsal_environment:
-    bootstrap_dependencies = runpy.run_path(str(root / "nro/engine/bootstrap_dependencies.py"))
+    bootstrap_dependencies = runpy.run_path(str(root / "nro/site/bootstrap_dependencies.py"))
     bootstrap_dependencies["enter"](root, script, sys.argv[1:])
-runpy.run_path(str(root / "nro/engine/bootstrap.py"), run_name="__main__")
+runpy.run_path(str(root / "nro/site/bootstrap.py"), run_name="__main__")

@@ -11,10 +11,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional, Sequence
 
-from nro.configuration.hardware import resolve_gradient_unwarping
-from nro.configuration.markup import active_source_markup
-from nro.configuration.runtime import SETTINGS
-from nro.configuration.site import settings as site_settings
+from nro.definitions.hardware import resolve_gradient_unwarping
+from nro.definitions.markup import active_source_markup
+from nro.definitions.runtime import SETTINGS
 from nro.engine.container import (
     ContainerSettings,
     add_container_arguments,
@@ -56,6 +55,7 @@ from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import ContainerSpec, Runner, write_completion_breadcrumb
 from nro.orchestration.runner_graph import Step
 from nro.orchestration.runtime import selected_configuration_fingerprint
+from nro.site.configuration import settings as site_settings
 
 from .constants import (
     _FREESURFER_GRAY_MATTER_SEGMENTATIONS,

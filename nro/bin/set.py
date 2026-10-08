@@ -93,8 +93,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.set") -> None:
         else:
             print("No supported registry settings were provided.")
         return
-    from nro.configuration import site
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site import configuration as site
 
     values = site.settings()[0]
     bids_root = site.bids_root()

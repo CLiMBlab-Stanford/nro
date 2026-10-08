@@ -8,7 +8,7 @@ import pytest
 
 from nro.bin.purge import _excluded_selection
 from nro.bin.purge import main as purge_main
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import page_text
 from nro.orchestration.branch_purge import (
     _contains_protected_output,
@@ -78,7 +78,7 @@ def test_excluded_selection_follows_downstream_dependencies(monkeypatch, tmp_pat
         definitions / "markup" / "main_markup.yml",
         "demo:\n  '01':\n    exclude:\n      - ses-1/func/bad_bold.nii.gz\n",
     )
-    monkeypatch.setattr("nro.configuration.markup.definitions_roots", lambda: (definitions,))
+    monkeypatch.setattr("nro.definitions.markup.definitions_roots", lambda: (definitions,))
     common = {
         "project": "demo",
         "participant": "01",

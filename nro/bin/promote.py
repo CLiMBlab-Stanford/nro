@@ -5,8 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from nro.configuration.site import CHECKOUT, settings
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.orchestration.branch_requests import register_requests
 from nro.orchestration.branch_store import BranchStore
@@ -14,6 +13,7 @@ from nro.orchestration.catalog import MODULES, terminal_modules
 from nro.orchestration.planner import Planner
 from nro.orchestration.scheduler_client import maintenance
 from nro.orchestration.selection import discover_bids_inventory
+from nro.site.configuration import CHECKOUT, settings
 
 
 def main(argv=None, *, prog="nro promote"):

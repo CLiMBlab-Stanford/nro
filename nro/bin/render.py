@@ -9,11 +9,11 @@ from pathlib import Path
 import yaml
 
 from nro.bin.scene import generate_scenes
-from nro.configuration.paths import WB_COMMAND_PATH
 from nro.engine.cli import add_core_selection_arguments, core_selection
 from nro.engine.rendering import RENDER_FORMATS, read_seed_file, render_scene
 from nro.engine.workbench import resolve_workbench_command
 from nro.orchestration.catalog import MODULES
+from nro.site.paths import WB_COMMAND_PATH
 
 
 def build_parser(*, prog: str = "nro.bin.render") -> argparse.ArgumentParser:

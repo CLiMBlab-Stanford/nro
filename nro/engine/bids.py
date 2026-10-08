@@ -53,7 +53,7 @@ def with_bids_metadata_cache(function: Callable) -> Callable:
 
 def _source_markup():
     """Return a captured worker markup without coupling BIDS primitives to configuration."""
-    from nro.configuration.markup import active_source_markup
+    from nro.definitions.markup import active_source_markup
 
     return active_source_markup()
 

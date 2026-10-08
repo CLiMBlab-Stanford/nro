@@ -20,7 +20,7 @@ from nro.engine.paths import project_data_root
 
 def _available(paths):
     """Filter paths through the worker's captured source markup."""
-    from nro.configuration.markup import active_source_markup
+    from nro.definitions.markup import active_source_markup
 
     markup = active_source_markup()
     return tuple(paths) if markup is None else markup.filter(paths)

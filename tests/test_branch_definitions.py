@@ -4,12 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration import branch_definitions, site
-from nro.configuration.definition_migrations import update_store
-from nro.configuration.definitions import create_store
-from nro.engine.definition_editor import save_definition
+from nro.definitions import branch_definitions
+from nro.definitions.editor import save_definition
+from nro.definitions.migrations import update_store
+from nro.definitions.repository import create_store
 from nro.orchestration import branches
 from nro.orchestration.branch_store import BranchStore
+from nro.site import configuration as site
 
 
 @pytest.fixture
@@ -61,8 +62,8 @@ def test_default_read_only_and_explicit_private_selection(stores):
 
 
 def test_child_inherits_parent_private_definitions(stores, tmp_path, monkeypatch):
-    from nro.configuration import store as store_module
-    from nro.configuration.store import ConfigStore
+    from nro.definitions import store as store_module
+    from nro.definitions.store import ConfigStore
 
     branch_store, checkout, shared, parent, _ = stores
     branch_definitions.select_definitions(branch_store, checkout, shared, parent)

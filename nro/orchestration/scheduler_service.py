@@ -18,8 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nro.configuration.site import protected_site_fingerprint
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.artifact_resolution import (
     scientific_contract_fingerprint,
     scientific_contracts,
@@ -46,6 +45,7 @@ from nro.orchestration.scheduler_operations import (
     supply_needed,
 )
 from nro.orchestration.source_snapshots import SourceSnapshot
+from nro.site.configuration import protected_site_fingerprint
 
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
@@ -1429,7 +1429,6 @@ def serve(
     idle_grace: float = DEFAULT_IDLE_GRACE_SECONDS,
 ) -> int:
     """Own scheduler access until all durable work has remained quiescent."""
-    from nro.configuration.site import settings
     from nro.orchestration.registry import Registry
     from nro.orchestration.scheduler_bus import (
         activate,
@@ -1441,6 +1440,7 @@ def serve(
     )
     from nro.orchestration.scheduler_implementation import require_worker_source
     from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
+    from nro.site.configuration import settings
 
     global _STOP
     _STOP = False
@@ -1686,11 +1686,11 @@ def serve(
 
 def run_once(*, launch_token: str, bids_root: Path) -> int:
     """Process one retryable stdin request under a fenced launch claim."""
-    from nro.configuration.site import settings
     from nro.orchestration.registry import Registry
     from nro.orchestration.scheduler_bus import publish_startup_error, read_launch, release_launch
     from nro.orchestration.scheduler_implementation import require_worker_source
     from nro.orchestration.scheduler_requests import RequestCoordinator, prepare
+    from nro.site.configuration import settings
 
     values = settings()[0]
     control = Path(values["registry"])

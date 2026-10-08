@@ -15,14 +15,9 @@ from typing import Any, Callable, Iterable
 
 import yaml
 
-from nro.configuration.branch_definitions import read_selection
-from nro.configuration.definition_migrations import MANIFEST, update_store
-from nro.configuration.site import (
-    make_site_document,
-    read_site_definition,
-    site_definition_path,
-)
-from nro.configuration.store import fingerprint
+from nro.definitions.branch_definitions import read_selection
+from nro.definitions.migrations import MANIFEST, update_store
+from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
@@ -36,6 +31,11 @@ from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.registry import ensure_shared_directory
 from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.runner_graph import relocate_runner_contract
+from nro.site.configuration import (
+    make_site_document,
+    read_site_definition,
+    site_definition_path,
+)
 
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _ACTIVE = ("queued", "running", "cancel_requested")
