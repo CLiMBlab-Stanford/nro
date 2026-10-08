@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.metadata
-import os
 import pkgutil
 import sys
-import tomllib
 from collections.abc import Callable
-from pathlib import Path
 
 import nro.bin
+from nro.versioning import application_version
 
 COMMAND_HELP = {
     "release": "Inspect installed releases or perform manual release maintenance.",
@@ -51,17 +48,7 @@ CENTRAL_ONLY_COMMANDS = frozenset({"hotfix", "migrate", "project", "release"})
 
 def package_version() -> str:
     """Read the selected application version, including layered shared installs."""
-    source = os.environ.get("NRO_EXECUTION_SOURCE_ROOT")
-    if source:
-        project = Path(source) / "pyproject.toml"
-        try:
-            value = tomllib.loads(project.read_text(encoding="utf-8"))["project"]["version"]
-        except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as error:
-            raise RuntimeError(f"Cannot read nro version from {project}") from error
-        if not isinstance(value, str) or not value:
-            raise RuntimeError(f"Invalid nro version in {project}")
-        return value
-    return importlib.metadata.version("nro")
+    return application_version()
 
 
 def available_commands() -> tuple[str, ...]:

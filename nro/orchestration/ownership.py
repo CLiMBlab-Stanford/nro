@@ -6,7 +6,6 @@ import json
 import sys
 from copy import deepcopy
 from datetime import datetime, timezone
-from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Mapping
 
@@ -29,6 +28,7 @@ from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.workflow_registry import lineage_directory_label
+from nro.versioning import application_version
 
 if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
@@ -380,7 +380,7 @@ def write_work_item_ownership(
     else:
         source_project_root = registry.paths.bids_root / str(work_item["project"])
     roots = _reference_roots(project_root, source_project_root=source_project_root)
-    ensure_derivative_dataset(project_root, version=package_version("nro"))
+    ensure_derivative_dataset(project_root, version=application_version())
     now = datetime.now(timezone.utc).isoformat()
     configuration = {
         "id": lineage["config_id"],
