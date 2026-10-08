@@ -54,6 +54,7 @@ def main(argv=None, *, prog="nro doctor"):
         slurm=not args.local,
         quick=not args.deep,
         with_lesion=bool(record.get("with_lesion")),
+        with_cicada=bool(record.get("with_cicada")),
     )
     if args.json:
         print(json.dumps(results, indent=2))

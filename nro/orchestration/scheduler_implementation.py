@@ -31,7 +31,6 @@ _COORDINATION_SITE_KEYS = frozenset(
         "templates",
         "workbench",
         "oslom",
-        "pycicada",
         "license",
         "runtime",
         "partition",

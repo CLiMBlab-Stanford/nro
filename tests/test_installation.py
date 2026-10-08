@@ -172,16 +172,6 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
     assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
 
 
-def test_pycicada_executable_resolves_from_site_settings(isolated_site, tmp_path):
-    executable = tmp_path / "pycicada/bin/cicada-python"
-    save_settings(isolated_site, {"pycicada": str(executable)})
-
-    values, _sources = site.settings()
-
-    assert values["pycicada"] == str(executable)
-    assert site.resolve_resources("site:pycicada") == str(executable)
-
-
 def test_invalid_path_update_is_atomic(isolated_site):
     original = isolated_site.read_bytes()
     with pytest.raises(ValueError):
@@ -689,8 +679,9 @@ def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, mon
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("without_marss", [False, True])
 @pytest.mark.parametrize("with_lesion", [False, True])
+@pytest.mark.parametrize("with_cicada", [False, True])
 def test_personal_setup_installs_selected_extras(
-    tmp_path, monkeypatch, without_oslom, existing, without_marss, with_lesion
+    tmp_path, monkeypatch, without_oslom, existing, without_marss, with_lesion, with_cicada
 ):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
@@ -721,12 +712,14 @@ def test_personal_setup_installs_selected_extras(
             *(["--without-oslom"] if without_oslom else []),
             *(["--without-marss"] if without_marss else []),
             *(["--with-lesion"] if with_lesion else []),
+            *(["--with-cicada"] if with_cicada else []),
         ]
     )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
     assert ("oslom" in calls[0][0]) is not without_oslom
     assert ("marss" in calls[0][0]) is not without_marss
     assert ("lesion" in calls[0][0]) is with_lesion
+    assert ("cicada" in calls[0][0]) is with_cicada
     assert calls[0][1]["cwd"] == root
     assert calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"] == str(root / ".nro-env")
     assert ("--without-oslom" in calls[1][0]) is without_oslom

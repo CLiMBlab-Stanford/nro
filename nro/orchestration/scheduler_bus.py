@@ -31,6 +31,7 @@ SCHEDULER_TIME_HOURS = 24
 SCHEDULER_MEMORY_GB = 4
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}")
 _STATUS_FORMAT = 2
+_STATUS_READ_ATTEMPTS = 32
 _STATUS_STATIC_FILE = re.compile(r"status-static-[0-9a-f]{64}\.json")
 _STATUS_DYNAMIC_FILE = re.compile(r"status-dynamic-[01]\.json")
 _STATUS_STATIC_ROW_FIELDS = frozenset(
@@ -688,7 +689,7 @@ def _assemble_status_snapshot(control: Path, manifest: dict[str, Any]) -> dict[s
 def read_snapshot(control: Path) -> dict[str, Any] | None:
     """Read the last complete scheduler read model without opening SQLite."""
     path = ControlPaths(control).service_snapshot
-    for _attempt in range(3):
+    for _attempt in range(_STATUS_READ_ATTEMPTS):
         try:
             value = read_json(path)
         except FileNotFoundError:

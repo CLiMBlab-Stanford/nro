@@ -46,6 +46,7 @@ def _main(argv=None, *, prog="nro setup"):
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--without-oslom", action="store_true")
     parser.add_argument("--with-lesion", action="store_true")
+    parser.add_argument("--with-cicada", action="store_true")
     parser.add_argument("--accept-qunex-license", action="store_true")
     parser.add_argument("--local", action="store_true")
     args = parser.parse_args(values)
@@ -58,6 +59,7 @@ def _main(argv=None, *, prog="nro setup"):
             deep=False,
             with_oslom=not args.without_oslom,
             with_lesion=args.with_lesion,
+            with_cicada=args.with_cicada,
             slurm=not args.local,
         )
         for result in results:
@@ -138,6 +140,7 @@ def _main(argv=None, *, prog="nro setup"):
             slurm=not args.local,
             container_execution=args.local,
             with_lesion=args.with_lesion,
+            with_cicada=args.with_cicada,
         )
         for result in results:
             print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")

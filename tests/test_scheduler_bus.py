@@ -843,6 +843,34 @@ def test_component_status_snapshot_reuses_static_graph(tmp_path):
     assert len(tuple(ControlPaths(control).service.glob("status-static-*.json"))) == 2
 
 
+def test_component_status_snapshot_survives_repeated_publication_races(tmp_path, monkeypatch):
+    control = tmp_path / ".nro"
+    expected = {
+        "protocol": scheduler_bus.PROTOCOL,
+        "generation": 1,
+        "published_at": "now",
+        "service_active": True,
+        "workers": [],
+        "submissions": [],
+        "branches": {},
+    }
+    scheduler_bus.publish_snapshot(control, expected)
+    assemble = scheduler_bus._assemble_status_snapshot
+    attempts = 0
+
+    def racing(*args):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 9:
+            raise ValueError("publication advanced")
+        return assemble(*args)
+
+    monkeypatch.setattr(scheduler_bus, "_assemble_status_snapshot", racing)
+
+    assert scheduler_bus.read_snapshot(control) == expected
+    assert attempts == 9
+
+
 def test_worker_role_cannot_open_scheduler_database(tmp_path, monkeypatch):
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
     registry.initialize()

@@ -48,7 +48,6 @@ class Options:
     output_grid: str
     topup_config: str
     ica_aroma_cmd: Optional[Path]
-    cicada_cmd: Path
     ica_classifier: str
     ica_regression: str
     cicada_tolerance: int
@@ -101,7 +100,6 @@ def functional_config_payload(
         "output_grid": opts.output_grid,
         "topup_config": opts.topup_config,
         "ica_aroma_cmd": str(opts.ica_aroma_cmd) if opts.ica_aroma_cmd else None,
-        "cicada_cmd": str(opts.cicada_cmd),
         "ica_classifier": opts.ica_classifier,
         "ica_regression": opts.ica_regression,
         "cicada_tolerance": int(opts.cicada_tolerance),

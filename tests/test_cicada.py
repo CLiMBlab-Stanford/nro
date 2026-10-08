@@ -1,16 +1,42 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
-from nro.modules.func import denoising_steps
+from nro.modules.func import cicada, denoising_steps
 from nro.modules.func.cicada import (
     parse_component_indices,
     prepare_melodic_adapter,
     write_result_manifest,
 )
+
+
+def test_pycicada_command_requires_the_pinned_optional_dependency(monkeypatch) -> None:
+    monkeypatch.setattr(cicada.importlib.metadata, "version", lambda _name: "0.2.0")
+    assert cicada.pycicada_command()[1:] == ("-m", "cicada_python.cli")
+
+    monkeypatch.setattr(cicada.importlib.metadata, "version", lambda _name: "0.1.0")
+    with pytest.raises(RuntimeError, match="requires pycicada 0.2.0"):
+        cicada.pycicada_command()
+
+    def missing(_name):
+        raise cicada.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(cicada.importlib.metadata, "version", missing)
+    with pytest.raises(RuntimeError, match="install --with-cicada"):
+        cicada.pycicada_command()
+
+
+def test_pycicada_contract_version_matches_the_installation_pin() -> None:
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    requirement = project["project"]["optional-dependencies"]["cicada"]
+    assert requirement == [
+        "pycicada @ git+https://github.com/CLiMBlab-Stanford/pycicada.git"
+        f"@v{cicada.PYCICADA_VERSION}"
+    ]
 
 
 def test_parse_component_indices_accepts_empty_and_one_based_lists(tmp_path: Path) -> None:
@@ -73,7 +99,7 @@ def test_result_manifest_preserves_external_warnings_and_indexing(tmp_path: Path
     output = tmp_path / "classification.json"
     write_result_manifest(
         output=output,
-        executable=tmp_path / "cicada-python",
+        backend_version="0.2.0",
         classification_directory=classification,
         tolerance=5,
         smoothing_retention_mode="revised",
@@ -89,8 +115,6 @@ def test_result_manifest_preserves_external_warnings_and_indexing(tmp_path: Path
 def test_classifier_step_uses_external_command_and_publishes_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    executable = tmp_path / "cicada-python"
-    executable.write_text("#!/bin/sh\n", encoding="utf-8")
     source_melodic = tmp_path / "source/melodic.ica"
     source_melodic.mkdir(parents=True)
     (source_melodic / "melodic_mix").write_text("1 0\n0 1\n", encoding="utf-8")
@@ -114,6 +138,7 @@ def test_classifier_step_uses_external_command_and_publishes_manifest(
         kwargs["output_directory"].mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(denoising_steps, "prepare_melodic_adapter", prepare)
+    monkeypatch.setattr(denoising_steps, "pycicada_command", lambda: ("pycicada",))
     runner = Runner()
     inputs = {
         name: tmp_path / name
@@ -133,7 +158,6 @@ def test_classifier_step_uses_external_command_and_publishes_manifest(
     result_manifest = tmp_path / "classification.json"
     step = denoising_steps._create_cicada_classification_step(
         runner=runner,  # type: ignore[arg-type]
-        executable=executable,
         epi_mni=inputs["bold.nii.gz"],
         mask_mni=inputs["mask.nii.gz"],
         confounds=inputs["confounds.tsv"],
@@ -158,6 +182,6 @@ def test_classifier_step_uses_external_command_and_publishes_manifest(
     assert step.action is not None
     step.action()
     assert runner.command is not None
-    assert runner.command[:2] == [str(executable), "run"]
+    assert runner.command[:2] == ["pycicada", "run"]
     assert "--no-denoise" in runner.command
     assert json.loads(result_manifest.read_text(encoding="utf-8"))["noise_components"] == [2]

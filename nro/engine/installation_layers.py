@@ -59,6 +59,7 @@ def _dependency_spec(root: Path, options: dict, *, uv_version: str) -> dict:
                 ("oslom", options["with_oslom"]),
                 ("bidsify", options["with_bidsify"]),
                 ("lesion", options["with_lesion"]),
+                ("cicada", options.get("with_cicada", False)),
                 ("marss", options["with_marss"]),
             )
             if enabled
@@ -128,8 +129,8 @@ def _validate_dependency_environment(environment: Path, spec: dict, *, checkout:
 
 def _sync_command(uv: Path, options: dict) -> list[str]:
     command = [str(uv), "sync", "--frozen", "--python", "3.12", "--no-install-project"]
-    for extra in ("oslom", "bidsify", "lesion", "marss"):
-        if options[f"with_{extra}"]:
+    for extra in ("oslom", "bidsify", "lesion", "cicada", "marss"):
+        if options.get(f"with_{extra}", False):
             command += ["--extra", extra]
     if not options["dev"]:
         command += ["--no-dev"]

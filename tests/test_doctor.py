@@ -39,6 +39,7 @@ def test_doctor_reports_selected_installation(tmp_path, monkeypatch, capsys):
             "slurm": True,
             "quick": True,
             "with_lesion": False,
+            "with_cicada": False,
         }
     ]
 
@@ -65,6 +66,7 @@ def test_deep_doctor_uses_full_checks_and_keeps_json_list(tmp_path, monkeypatch,
             "slurm": True,
             "quick": False,
             "with_lesion": False,
+            "with_cicada": False,
         }
     ]
 
