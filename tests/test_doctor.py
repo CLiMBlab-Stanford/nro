@@ -40,6 +40,7 @@ def test_doctor_reports_selected_installation(tmp_path, monkeypatch, capsys):
             "quick": True,
             "with_lesion": False,
             "with_cicada": False,
+            "with_viewer": True,
         }
     ]
 
@@ -67,6 +68,7 @@ def test_deep_doctor_uses_full_checks_and_keeps_json_list(tmp_path, monkeypatch,
             "quick": False,
             "with_lesion": False,
             "with_cicada": False,
+            "with_viewer": True,
         }
     ]
 

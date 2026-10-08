@@ -182,7 +182,8 @@ These names are BIDS-like, not a claim of validator compliance.
 | `noise_model` | `ar1` or `ols`. |
 | `ar_grid` | Finite AR(1) correlation candidates strictly between -1 and 1. Ignored for OLS. |
 | `spatial_block_size` | Locations evaluated together during fitting and summary calculation. One run's input array is loaded at a time. |
-| `wb_command` | Installed Workbench executable used for surface smoothing. |
+| `container` | QuNex container settings used for Workbench surface smoothing. |
+| `wb_command` | Workbench command inside the configured container. |
 
 ```{literalinclude} ../../nro/configuration/starters/configs/firstlevels/main_firstlevels.yml
 :language: yaml

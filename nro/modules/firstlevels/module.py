@@ -14,6 +14,7 @@ from scipy.ndimage import gaussian_filter
 
 from nro.configuration.schema import scientific_values
 from nro.engine.bids import BidsRun, resolve_bids_table
+from nro.engine.container import ContainerSettings, build_container
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import (
     atomic_output_path,
@@ -466,9 +467,16 @@ def build_module(
         root = execution_context.output_path(root)
         work_root = execution_context.output_path(work_root, private=True)
     prefix = work_item_prefix(participant, model_id, space, smoothing)
+    container = None
+    if smoothing and is_surface_space(space):
+        container = build_container(
+            ContainerSettings.from_config(config["container"]),
+            work_directory=work_root / prefix,
+            execution_context=execution_context,
+        )
     runner = Runner(
         module_name="firstlevels",
-        container=None,
+        container=container,
         binds=(),
         logger=LOG,
         execution_context=execution_context,
@@ -531,7 +539,7 @@ def build_module(
                         output,
                         smoothing=smoothing,
                         surface=surface,
-                        wb_command=config["wb_command"],
+                        wb_command=Path(config["wb_command"]).name,
                         run_command=runner.run_child,
                         overwrite=bool(config["overwrite"]),
                     )

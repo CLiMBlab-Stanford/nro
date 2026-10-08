@@ -10,4 +10,16 @@ noise_model: ar1
 ar_grid: [-0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 spatial_block_size: 2048
 overwrite: false
-wb_command: site:workbench
+container:
+  image: site:qunex
+  engine: site:runtime
+  cleanenv: true
+  bind: site:binds
+  home: null
+  inner_setup: >-
+    set +e; source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1;
+    qx_setup_rc=$?; set -e; if [ "$qx_setup_rc" -ne 0 ]; then
+    echo "QuNex environment setup failed with status $qx_setup_rc" >&2;
+    exit "$qx_setup_rc"; fi
+  no_container: false
+wb_command: wb_command

@@ -382,6 +382,11 @@ def _main(argv=None) -> None:
         "--without-oslom", action="store_true", help="Skip OSLOM and its Python dependencies"
     )
     parser.add_argument(
+        "--without-viewer",
+        action="store_true",
+        help="Skip native Connectome Workbench scene viewing and rendering support",
+    )
+    parser.add_argument(
         "--with-bidsify",
         action="store_true",
         help="Install Flywheel, dcm2bids, and DICOM Python dependencies",
@@ -427,6 +432,7 @@ def _main(argv=None) -> None:
             args.non_interactive,
             args.offline,
             args.without_oslom,
+            args.without_viewer,
             args.with_bidsify,
             args.with_lesion,
             args.with_cicada,
@@ -617,12 +623,16 @@ def _main(argv=None) -> None:
             )
         if mode == "branch" and existing and environment.exists():
             check_branch_environment(site, environment)
+        with_viewer = not args.without_viewer
+        if mode == "branch" and default_record is not None:
+            with_viewer = with_viewer and bool(default_record.get("with_viewer", True))
         record = {
             "mode": mode,
             "checkout": str(ROOT),
             "site": str(site),
             "ready": False,
             "with_oslom": not args.without_oslom,
+            "with_viewer": with_viewer,
             "with_bidsify": args.with_bidsify or bool(existing and existing.get("with_bidsify")),
             "with_lesion": args.with_lesion or bool(existing and existing.get("with_lesion")),
             "with_cicada": args.with_cicada or bool(existing and existing.get("with_cicada")),
@@ -723,6 +733,8 @@ def _main(argv=None) -> None:
             command += ["--offline"]
         if not record["with_oslom"]:
             command += ["--without-oslom"]
+        if not record["with_viewer"]:
+            command += ["--without-viewer"]
         if record["with_lesion"]:
             command += ["--with-lesion"]
         if record["with_cicada"]:

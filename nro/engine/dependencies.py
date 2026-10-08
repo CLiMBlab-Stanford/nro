@@ -411,14 +411,16 @@ def check_installation(
     container_execution=True,
     with_lesion=False,
     with_cicada=False,
+    with_viewer=True,
 ) -> list[dict]:
     """Return named dependency checks with ok, required, and detail fields.
 
     Quick mode checks whether configured resources and Python modules are
     available without loading scientific libraries or parsing every definition.
     Deep mode verifies resource identities. ``container_execution`` also starts
-    each image in the current process environment. Neither mode installs
-    resources or processes subject data.
+    each image in the current process environment. ``with_viewer`` controls the
+    native Workbench check; scientific container checks are unchanged. Neither
+    mode installs resources or processes subject data.
     """
     values, _ = settings()
     results = []
@@ -498,7 +500,8 @@ def check_installation(
     for key in images:
         check(key, lambda key=key: file(key))
     check("FreeSurfer license", lambda: file("license"))
-    check("Workbench", lambda: run_probe([executable(values["workbench"]), "-version"]))
+    if with_viewer:
+        check("Workbench", lambda: run_probe([executable(values["workbench"]), "-version"]))
     check("MNI template", lambda: file("mni_template"))
     if with_lesion:
         for name, expected in MASKER_RESOURCES.items():

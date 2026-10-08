@@ -55,6 +55,7 @@ def main(argv=None, *, prog="nro doctor"):
         quick=not args.deep,
         with_lesion=bool(record.get("with_lesion")),
         with_cicada=bool(record.get("with_cicada")),
+        with_viewer=bool(record.get("with_viewer", True)),
     )
     if args.json:
         print(json.dumps(results, indent=2))
