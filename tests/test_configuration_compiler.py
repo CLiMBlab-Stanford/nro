@@ -309,7 +309,7 @@ def test_every_module_uses_execution_only_overwrite(store, kind):
     assert changed.scientific_fingerprint == config.scientific_fingerprint
 
 
-@pytest.mark.parametrize("kind", ("anat", "func", "clean"))
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
 def test_legacy_execution_and_flat_container_fields_are_rejected(store, kind):
     with pytest.raises(ValueError, match="force"):
         store.load_configuration(kind, "legacy", document={"force": False})
@@ -317,7 +317,7 @@ def test_legacy_execution_and_flat_container_fields_are_rejected(store, kind):
         store.load_configuration(kind, "legacy", document={"container_engine": "apptainer"})
 
 
-@pytest.mark.parametrize("kind", ("anat", "func", "clean"))
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
 def test_nested_container_changes_remain_scientific(store, kind):
     config = store.load_configuration(kind, "main")
     changed = store.load_configuration(

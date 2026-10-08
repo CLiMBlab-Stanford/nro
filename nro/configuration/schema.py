@@ -266,6 +266,7 @@ SCHEMAS = {
     "firstlevels": {
         "markup": OPTIONAL_TEXT,
         "input_filter": Field("filter"),
+        "container": CONTAINER,
         **DENOISING,
         "aggregation_weighting": enum("equal", "precision"),
         "noise_model": enum("ols", "ar1"),

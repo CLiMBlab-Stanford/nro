@@ -397,6 +397,12 @@ the archive is checked against a pinned SHA-256 before extraction.
 Automatic installation requires an x86_64 host and a target ending in
 `workbench/bin_linux64/wb_command` or `workbench/bin_rh_linux64/wb_command`.
 An existing incomplete Workbench directory is reported rather than overwritten.
+The native installation provides `nro scene`, `nro view`, and `nro render`.
+Scientific modules run their Workbench commands inside the pinned QuNex image.
+On a host that cannot run the native Workbench build, use
+`./install --without-viewer`. This skips the native download and check without
+disabling scientific processing. A later installation without the flag restores
+viewer support.
 
 The template catalog pins MNI T1w and GM probability maps and fsaverage surface
 geometry by S3 object version and checksum. It includes the 41k geometry needed

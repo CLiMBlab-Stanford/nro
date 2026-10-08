@@ -46,7 +46,8 @@ every setting. In particular:
 - `registry` contains private scheduler state, logs, and source snapshots.
 - `definitions` selects the version-controlled site repository containing
   protected site settings, workflows, configurations, models, and event files.
-- `images`, `templates`, `workbench`, and `oslom` contain processing resources.
+- `images`, `templates`, and `oslom` contain processing resources. `workbench`
+  contains the optional native scene viewer and renderer.
 - `license` must name an existing FreeSurfer license.
 - `runtime` selects Singularity or Apptainer.
 - `partition` and `account` must match the Slurm site. Enter `-` for no account.

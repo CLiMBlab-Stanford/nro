@@ -680,8 +680,16 @@ def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, mon
 @pytest.mark.parametrize("without_marss", [False, True])
 @pytest.mark.parametrize("with_lesion", [False, True])
 @pytest.mark.parametrize("with_cicada", [False, True])
+@pytest.mark.parametrize("without_viewer", [False, True])
 def test_personal_setup_installs_selected_extras(
-    tmp_path, monkeypatch, without_oslom, existing, without_marss, with_lesion, with_cicada
+    tmp_path,
+    monkeypatch,
+    without_oslom,
+    existing,
+    without_marss,
+    with_lesion,
+    with_cicada,
+    without_viewer,
 ):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
@@ -713,6 +721,7 @@ def test_personal_setup_installs_selected_extras(
             *(["--without-marss"] if without_marss else []),
             *(["--with-lesion"] if with_lesion else []),
             *(["--with-cicada"] if with_cicada else []),
+            *(["--without-viewer"] if without_viewer else []),
         ]
     )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
@@ -723,6 +732,7 @@ def test_personal_setup_installs_selected_extras(
     assert calls[0][1]["cwd"] == root
     assert calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"] == str(root / ".nro-env")
     assert ("--without-oslom" in calls[1][0]) is without_oslom
+    assert ("--without-viewer" in calls[1][0]) is without_viewer
     assert json.loads((root / bootstrap.RECORD).read_text())["ready"]
 
 
@@ -1029,6 +1039,7 @@ def test_branch_setup_acquires_only_explicit_lesion_resources(monkeypatch) -> No
     from nro.bin import setup
 
     calls: list[bool] = []
+    checks: list[dict] = []
     monkeypatch.setattr(setup, "installation_record", lambda: {"mode": "branch"})
     monkeypatch.setattr(
         setup,
@@ -1038,12 +1049,16 @@ def test_branch_setup_acquires_only_explicit_lesion_resources(monkeypatch) -> No
     monkeypatch.setattr(
         setup,
         "check_installation",
-        lambda **_kwargs: [{"ok": True, "required": True, "name": "test", "detail": "ok"}],
+        lambda **kwargs: (
+            checks.append(kwargs)
+            or [{"ok": True, "required": True, "name": "test", "detail": "ok"}]
+        ),
     )
 
-    setup._main(["--resources-only", "--with-lesion", "--offline"])
+    setup._main(["--resources-only", "--with-lesion", "--without-viewer", "--offline"])
 
     assert calls == [True]
+    assert checks[0]["with_viewer"] is False
 
 
 def test_archive_escape_is_rejected(tmp_path):

@@ -45,6 +45,11 @@ def _main(argv=None, *, prog="nro setup"):
     parser.add_argument("--non-interactive", action="store_true")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--without-oslom", action="store_true")
+    parser.add_argument(
+        "--without-viewer",
+        action="store_true",
+        help="Skip native Connectome Workbench installation and checks",
+    )
     parser.add_argument("--with-lesion", action="store_true")
     parser.add_argument("--with-cicada", action="store_true")
     parser.add_argument("--accept-qunex-license", action="store_true")
@@ -60,6 +65,7 @@ def _main(argv=None, *, prog="nro setup"):
             with_oslom=not args.without_oslom,
             with_lesion=args.with_lesion,
             with_cicada=args.with_cicada,
+            with_viewer=not args.without_viewer,
             slurm=not args.local,
         )
         for result in results:
@@ -114,11 +120,15 @@ def _main(argv=None, *, prog="nro setup"):
                 "Review the QuNex terms and pass --accept-qunex-license for unattended acquisition"
             )
         if not args.non_interactive and not args.offline:
-            print(
-                "Missing containers, Workbench, and templates will be downloaded to the configured locations."
-            )
+            resources = "containers and templates"
+            if not args.without_viewer:
+                resources = "containers, Workbench, and templates"
+            print(f"Missing {resources} will be downloaded to the configured locations.")
             print(f"Image destination: {site['images']}")
-            for key in ("images", "templates", "workbench"):
+            keys = ["images", "templates"]
+            if not args.without_viewer:
+                keys.append("workbench")
+            for key in keys:
                 parent = Path(site[key])
                 while not parent.exists():
                     parent = parent.parent
@@ -130,7 +140,15 @@ def _main(argv=None, *, prog="nro setup"):
         if args.with_lesion:
             install_synthstroke_model(offline=args.offline)
             install_neurolit_checkpoints(offline=args.offline)
-        install_workbench(offline=args.offline)
+        if not args.without_viewer:
+            try:
+                install_workbench(offline=args.offline)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                raise RuntimeError(
+                    f"{error}\nNative Workbench viewer setup failed. "
+                    "Rerun ./install --without-viewer to install nro without scene viewing "
+                    "and rendering."
+                ) from error
         install_templates(offline=args.offline)
         if not args.without_oslom:
             install_oslom(offline=args.offline)
@@ -141,10 +159,17 @@ def _main(argv=None, *, prog="nro setup"):
             container_execution=args.local,
             with_lesion=args.with_lesion,
             with_cicada=args.with_cicada,
+            with_viewer=not args.without_viewer,
         )
         for result in results:
             print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
         if any(not r["ok"] and r["required"] for r in results):
+            if any(r["name"] == "Workbench" and not r["ok"] for r in results):
+                raise RuntimeError(
+                    "Native Workbench viewer checks failed. Rerun "
+                    "./install --without-viewer to install nro without scene viewing and "
+                    "rendering."
+                )
             raise RuntimeError("Required checks failed; correct the settings and rerun ./install")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Setup incomplete: {error}\n")
