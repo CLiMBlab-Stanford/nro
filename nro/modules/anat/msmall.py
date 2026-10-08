@@ -491,6 +491,7 @@ def add_msmall_plan(
         )
     )
     hcp_subject = f"{subject.removeprefix('sub-')}_msmall"
+    structural_session = branch / "structural" / hcp_subject
     session = branch / "study" / hcp_subject
     native = session / "MNINonLinear" / "Native"
     rois = session / "MNINonLinear" / "ROIs"
@@ -607,13 +608,13 @@ def add_msmall_plan(
             "calibration": calibration.contract(calibration.subject_dir),
         },
     )
-    t1_dir = session / "T1w"
+    t1_dir = structural_session / "T1w"
     add_stage(
         "prefreesurfer",
         "MSMAll PreFreeSurfer",
         inputs=(structural_t1w, structural_t2w),
         outputs=(t1_dir / "T1w_acpc_dc_restore.nii.gz", t1_dir / "T2w_acpc_dc_restore.nii.gz"),
-        cleanup=(session,),
+        cleanup=(structural_session,),
         parameters=structural_parameters,
     )
     add_stage(
@@ -624,11 +625,11 @@ def add_msmall_plan(
             t1_dir / "T1w_acpc_dc_restore.nii.gz",
         ),
         outputs=(
-            session / "MNINonLinear/registration_qc.json",
-            session / "MNINonLinear/xfms/acpc2MNILinear.mat",
-            session / "MNINonLinear/xfms/acpc_dc2standard.nii.gz",
+            structural_session / "MNINonLinear/registration_qc.json",
+            structural_session / "MNINonLinear/xfms/acpc2MNILinear.mat",
+            structural_session / "MNINonLinear/xfms/acpc_dc2standard.nii.gz",
         ),
-        cleanup=(session / ".MNINonLinear.masked.tmp",),
+        cleanup=(structural_session / ".MNINonLinear.masked.tmp",),
         parameters=calibration.contract(calibration.subject_dir)["atlas_registration"],
         implementation_files=(atlas_validator,),
     )
@@ -661,7 +662,7 @@ def add_msmall_plan(
             rois / f"Atlas_ROIs.{grayordinates_resolution}.nii.gz",
         ),
         surface_stage=True,
-        cleanup=(native, atlas, rois),
+        cleanup=(session,),
         parameters=surface_parameters,
     )
     add_stage(

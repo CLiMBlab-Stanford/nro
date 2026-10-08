@@ -16,6 +16,9 @@ from nro.orchestration.hotfixes.v0286_msmall_runner_stages import (
 from nro.orchestration.hotfixes.v0287_msmall_atlas_registration import (
     HOTFIX_ID as MSMALL_ATLAS_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0295_msmall_stage_isolation import (
+    HOTFIX_ID as MSMALL_ISOLATION_HOTFIX_ID,
+)
 from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
@@ -141,6 +144,7 @@ def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert HOTFIX_ID in available()
     assert MSMALL_HOTFIX_ID in available()
     assert MSMALL_ATLAS_HOTFIX_ID in available()
+    assert MSMALL_ISOLATION_HOTFIX_ID in available()
 
 
 def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Path) -> None:
@@ -356,6 +360,87 @@ def test_msmall_atlas_hotfix_preserves_freesurfer_and_invalidates_descendants(
     repeated = apply(
         registry,
         identifier=MSMALL_ATLAS_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert repeated.records == 0
+
+
+def test_msmall_stage_isolation_hotfix_preserves_non_msmall_steps(tmp_path: Path) -> None:
+    registry, _ = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+    event = (
+        registry.paths.control
+        / "branches/main/events/demo/anat/sub-01/sub-01/digest/runner-contract.json"
+    )
+    event.parent.mkdir(parents=True)
+    root = tmp_path / "WORK/demo/derivatives/nro/anat/main/sub-01"
+
+    def node(
+        identifier: str,
+        name: str,
+        inputs: list[Path],
+        outputs: list[Path],
+        dependencies: list[str],
+    ) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": name,
+            "kind": "command",
+            "inputs": [str(path) for path in inputs],
+            "outputs": [str(path) for path in outputs],
+            "dependencies": dependencies,
+        }
+
+    ordinary = node("ordinary", "Canonical anatomy", [], [root / "T1w.nii.gz"], [])
+    prefree = node(
+        "prefree",
+        "MSMAll PreFreeSurfer",
+        [root / "T1w.nii.gz"],
+        [
+            root / "msmall/study/01_msmall/T1w/T1w_acpc_dc_restore.nii.gz",
+            root / "msmall/stages/prefreesurfer.complete",
+        ],
+        ["ordinary"],
+    )
+    post = node(
+        "post",
+        "MSMAll PostFreeSurfer",
+        [root / "msmall/stages/prefreesurfer.complete"],
+        [root / "msmall/stages/postfreesurfer.complete"],
+        ["prefree"],
+    )
+    publication = node(
+        "publish",
+        "Publish MSMAll sphere",
+        [root / "msmall/stages/postfreesurfer.complete"],
+        [tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/sphere.gii"],
+        ["post"],
+    )
+    payload = {
+        "version": 4,
+        "module": "Anatomical Module",
+        "signature": "work-item",
+        "topology": [ordinary, prefree, post, publication],
+        "nodes": [ordinary, prefree, post, publication],
+    }
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = apply(
+        registry,
+        identifier=MSMALL_ISOLATION_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+
+    assert report.records == 1
+    repaired = json.loads(event.read_text())
+    assert repaired["signature"] == f"hotfix:{MSMALL_ISOLATION_HOTFIX_ID}"
+    assert [item["id"] for item in repaired["nodes"]] == ["ordinary"]
+
+    repeated = apply(
+        registry,
+        identifier=MSMALL_ISOLATION_HOTFIX_ID,
         projects=("demo",),
         execute=False,
     )

@@ -251,6 +251,12 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     prefree = by_name["MSMAll PreFreeSurfer"]
     assert all(path.name != "msmall_driver.sh" for path in prefree.inputs)
     assert prefree.scientific_signature
+    assert any("/msmall/structural/" in str(path) for path in prefree.outputs)
+    freesurfer = by_name["MSMAll FreeSurfer Reconstruction"]
+    assert any("/msmall/structural/" in str(path) for path in freesurfer.outputs)
+    postfreesurfer = by_name["MSMAll PostFreeSurfer"]
+    assert any("/msmall/structural/" in str(path) for path in postfreesurfer.inputs)
+    assert any("/msmall/study/" in str(path) for path in postfreesurfer.outputs)
 
     structural_configuration_step = next(
         step for step in runner._graph.steps if step.name == "Write MSMAll Structural Configuration"
@@ -469,6 +475,7 @@ def test_msmall_subcortical_validation_requires_all_hcp_labels(tmp_path: Path) -
 def test_msmall_freesurfer_restarts_cleanly_and_bypasses_legacy_talairach_gate() -> None:
     driver = (Path(__file__).parents[1] / "nro/modules/anat/msmall_driver.sh").read_text()
 
-    assert 'rm -rf "$session_root/T1w/$session"' in driver
+    assert 'rm -rf "$structural_session_root/T1w/$session"' in driver
+    assert 'cp -a --reflink=auto "$structural_session_root" "$session_root"' in driver
     assert "--extra-reconall-arg=-notal-check" in driver
     assert "flirt -interp spline -dof 7" in driver
