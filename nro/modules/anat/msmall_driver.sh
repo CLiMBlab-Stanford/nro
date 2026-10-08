@@ -63,11 +63,13 @@ if [[ -z "$work_root" || "$work_root" == / ]]; then
     exit 2
 fi
 
+structural_study="$work_root/structural"
 study="$work_root/study"
 session="${subject#sub-}_msmall"
 session_root="$study/$session"
 runtime="$work_root/runtime"
-mkdir -p "$study" "$runtime"
+structural_session_root="$structural_study/$session"
+mkdir -p "$structural_study" "$study" "$runtime"
 
 require_file() {
     if [[ ! -s "$1" ]]; then
@@ -128,7 +130,7 @@ PY
 
 run_prefreesurfer() {
     "$HCPPIPEDIR/PreFreeSurfer/PreFreeSurferPipeline.sh" \
-        --path="$study" \
+        --path="$structural_study" \
         --session="$session" \
         --t1="$(join_at "${t1w[@]}")" \
         --t2="$(join_at "${t2w[@]}")" \
@@ -150,9 +152,9 @@ run_prefreesurfer() {
 }
 
 repair_atlas_registration() {
-    local t1_dir="$session_root/T1w"
-    local atlas="$session_root/MNINonLinear"
-    local staging="$session_root/.MNINonLinear.masked.tmp"
+    local t1_dir="$structural_session_root/T1w"
+    local atlas="$structural_session_root/MNINonLinear"
+    local staging="$structural_session_root/.MNINonLinear.masked.tmp"
     local templates="$HCPPIPEDIR/global/templates"
     rm -rf "$staging"
     mkdir -p "$staging/xfms"
@@ -228,17 +230,21 @@ validate_subcortical_models() {
 run_freesurfer() {
     # A failed recon-all tree is not a trustworthy checkpoint. The enclosing
     # stage marker, rather than FreeSurfer's partial directory, governs reuse.
-    rm -rf "$session_root/T1w/$session"
+    rm -rf "$structural_session_root/T1w/$session"
     "$HCPPIPEDIR/FreeSurfer/FreeSurferPipeline.sh" \
-        --session="$session" --session-dir="$session_root/T1w" \
-        --t1w-image="$session_root/T1w/T1w_acpc_dc_restore.nii.gz" \
-        --t1w-brain="$session_root/T1w/T1w_acpc_dc_restore_brain.nii.gz" \
-        --t2w-image="$session_root/T1w/T2w_acpc_dc_restore.nii.gz" \
+        --session="$session" --session-dir="$structural_session_root/T1w" \
+        --t1w-image="$structural_session_root/T1w/T1w_acpc_dc_restore.nii.gz" \
+        --t1w-brain="$structural_session_root/T1w/T1w_acpc_dc_restore_brain.nii.gz" \
+        --t2w-image="$structural_session_root/T1w/T2w_acpc_dc_restore.nii.gz" \
         --seed=1234 --processing-mode=HCPStyleData \
         --extra-reconall-arg=-notal-check
 }
 
 run_postfreesurfer() {
+    # HCP PostFreeSurfer writes into its input study. Give it a private copy so
+    # rerunning this or a later stage cannot contaminate structural checkpoints.
+    rm -rf "$session_root"
+    cp -a --reflink=auto "$structural_session_root" "$session_root"
     "$HCPPIPEDIR/PostFreeSurfer/PostFreeSurferPipeline.sh" \
         --study-folder="$study" --session="$session" \
         --surfatlasdir="$HCPPIPEDIR_Templates/standard_mesh_atlases" \
