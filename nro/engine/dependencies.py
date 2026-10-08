@@ -709,11 +709,34 @@ def extract_zip(archive: Path, destination: Path) -> None:
                 path.chmod(0o755)
 
 
+def _wrap_workbench_software_gl(executable: Path, software: Path) -> None:
+    """Run a Workbench entry point with its bundled software OpenGL libraries."""
+    vendor = executable.with_name(executable.name + ".vendor")
+    if not vendor.is_file():
+        with atomic_output_path(vendor) as staged:
+            shutil.copy2(executable, staged)
+            staged.chmod(0o755)
+    wrapper = f"""#!/bin/sh
+directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+software="$directory/../{software.relative_to(executable.parent.parent)}"
+if [ -n "${{LD_LIBRARY_PATH:-}}" ]; then
+    export LD_LIBRARY_PATH="$software:$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="$software"
+fi
+exec "$directory/{vendor.name}" "$@"
+"""
+    with atomic_output_path(executable) as staged:
+        staged.write_text(wrapper)
+        staged.chmod(0o755)
+
+
 def install_workbench(*, offline=False) -> None:
-    """Reuse Workbench or install a checksum-pinned platform archive after an executable probe."""
+    """Install or reuse checksum-pinned Workbench and verify its command runtime."""
     values, _ = settings()
     executable = Path(values["workbench"])
     if executable.is_file():
+        run_probe([str(executable), "-version"])
         return
     if offline:
         raise RuntimeError(f"Workbench is missing: {executable}")
@@ -734,7 +757,7 @@ def install_workbench(*, offline=False) -> None:
                 f"Refusing to replace an existing incomplete Workbench directory: {root}"
             )
         os_release = platform.freedesktop_os_release()
-        flavor = (
+        preferred = (
             "rh_linux64"
             if any(
                 x in (os_release.get("ID", "") + " " + os_release.get("ID_LIKE", ""))
@@ -742,23 +765,43 @@ def install_workbench(*, offline=False) -> None:
             )
             else "linux64"
         )
-        source = WORKBENCH_BASE + f"workbench-{flavor}-v2.2.1.zip"
         with tempfile.TemporaryDirectory(dir=root.parent, prefix=".workbench-") as temporary:
             temporary = Path(temporary)
-            archive = temporary / "download.zip"
-            download(source, archive, checksum=WORKBENCH_SHA256[flavor])
-            extract_zip(archive, temporary / "extracted")
-            candidates = [
-                path
-                for path in (temporary / "extracted").rglob("wb_command")
-                if path.parent.name.startswith("bin_")
-            ]
-            if len(candidates) != 1:
-                raise RuntimeError("Unexpected Workbench archive layout")
-            command = candidates[0]
-            command.chmod(0o755)
-            run_probe([str(command), "-version"])
+            flavors = (preferred, "linux64") if preferred == "rh_linux64" else (preferred,)
+            for flavor in flavors:
+                source = WORKBENCH_BASE + f"workbench-{flavor}-v2.2.1.zip"
+                archive = temporary / f"download-{flavor}.zip"
+                extracted = temporary / f"extracted-{flavor}"
+                download(source, archive, checksum=WORKBENCH_SHA256[flavor])
+                extract_zip(archive, extracted)
+                candidates = [
+                    path
+                    for path in extracted.rglob("wb_command")
+                    if path.parent.name.startswith("bin_")
+                ]
+                if len(candidates) != 1:
+                    raise RuntimeError("Unexpected Workbench archive layout")
+                command = candidates[0]
+                command.chmod(0o755)
+                try:
+                    run_probe([str(command), "-version"])
+                    break
+                except RuntimeError as error:
+                    if flavor != "rh_linux64" or "libGLU.so.1" not in str(error):
+                        raise
+                    print(
+                        "Red Hat Workbench needs host libGLU; trying its portable Linux archive",
+                        flush=True,
+                    )
+            else:  # pragma: no cover - every flavor either breaks or raises
+                raise RuntimeError("No compatible Connectome Workbench archive is available")
             tree = command.parent.parent
+            if flavor != preferred:
+                software = tree / "libs_linux64/osmesa"
+                viewer = command.with_name("wb_view")
+                if not (software / "libGLU.so.1").is_file() or not viewer.is_file():
+                    raise RuntimeError("Portable Workbench archive lacks its OpenGL fallback")
+                _wrap_workbench_software_gl(viewer, software)
             if command.parent.name != executable.parent.name:
                 command.parent.rename(tree / executable.parent.name)
             atomic_write_json(
