@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -15,6 +17,22 @@ from nro.engine.io import atomic_write_text
 from .confounds import _dvars_metrics, _fd_power, _infer_mcflirt_order
 
 RunCommand = Callable[[Sequence[str]], None]
+PYCICADA_VERSION = "0.2.0"
+
+
+def pycicada_command() -> tuple[str, ...]:
+    """Return the pinned external classifier command or explain how to install it."""
+    try:
+        installed = importlib.metadata.version("pycicada")
+    except importlib.metadata.PackageNotFoundError as error:
+        raise RuntimeError(
+            "CICADA classification requires pycicada; rerun ./install --with-cicada"
+        ) from error
+    if installed != PYCICADA_VERSION:
+        raise RuntimeError(
+            f"CICADA classification requires pycicada {PYCICADA_VERSION}, found {installed}"
+        )
+    return (sys.executable, "-m", "cicada_python.cli")
 
 
 def _component_number(path: Path) -> int:
@@ -149,7 +167,7 @@ def parse_component_indices(path: Path) -> tuple[int, ...]:
 def write_result_manifest(
     *,
     output: Path,
-    executable: Path,
+    backend_version: str,
     classification_directory: Path,
     tolerance: int,
     smoothing_retention_mode: str,
@@ -167,7 +185,8 @@ def write_result_manifest(
     provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     payload = {
         "classifier": "cicada",
-        "executable": str(executable),
+        "backend": "pycicada",
+        "backend_version": backend_version,
         "tolerance": int(tolerance),
         "smoothing_retention_mode": smoothing_retention_mode,
         "component_indexing": "one-based",

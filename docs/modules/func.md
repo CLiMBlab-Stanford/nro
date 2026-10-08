@@ -70,8 +70,8 @@ every run used the default path.
    component maps needed for classification to the 2 mm MNI reference. The
    selected classifier labels noise components, which are then regressed from
    every output-space time course. `ica_regression` selects aggressive or
-   nonaggressive regression. CICADA runs through the site-managed executable in
-   `cicada_cmd`; `cicada_tolerance` and
+   nonaggressive regression. CICADA runs through the separately installed,
+   pinned pycicada process; `cicada_tolerance` and
    `cicada_smoothing_retention_mode` control its classification. A private
    pre-denoising FD/DVARS table supplies CICADA's motion features. The manifest
    records the classifier, labels, regression policy, and warnings.
@@ -153,9 +153,10 @@ configurations use `marss_mode: off` or `diagnose`.
 `none`. ICA-AROMA and CICADA remain available for explicit comparison
 configurations. Both classifiers require a MELODIC decomposition; the default
 path skips it. CICADA requires the MNI
-functional output while this integration is under evaluation. The site setting
-`resources.pycicada` supplies its external executable. CICADA-specific settings
-do not affect AROMA or no-classifier artifact identity.
+functional output while this integration is under evaluation. Install the
+backend with `./install --with-cicada`; a CICADA configuration reports that
+remedy if the optional package is absent. CICADA-specific settings do not affect
+AROMA or no-classifier artifact identity.
 
 `confounds.aseg_in_epi` and `brain_mask_in_epi` override confound extraction
 masks. `n_acompcor` and `acompcor_max_voxels` bound aCompCor extraction.

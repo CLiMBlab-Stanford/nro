@@ -82,8 +82,9 @@ The official package estimates and subtracts the artifact. nro validates its
 outputs and replaces the full 4D artifact file with a slice-wise rank-one
 factorization whose reconstruction error is checked and recorded.
 
-CICADA is also invoked through a process boundary. The site installs its
-executable separately; nro supplies prepared images and an adapted MELODIC
+pycicada is also invoked through a process boundary. The optional
+`--with-cicada` installation extra pins its package separately; nro supplies
+prepared images and an adapted MELODIC
 directory, then reads its one-based signal and noise labels. nro applies the
 configured component regression itself so AROMA and CICADA comparisons share
 the same MELODIC estimation policy and regression implementation.

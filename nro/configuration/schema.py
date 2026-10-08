@@ -208,7 +208,6 @@ SCHEMAS = {
         "output_grid": enum("t1_native", "t1_epi_vox"),
         "topup_config": TEXT,
         "ica_aroma_cmd": OPTIONAL_TEXT,
-        "cicada_cmd": TEXT,
         "ica_classifier": enum("none", "ica_aroma", "cicada"),
         "ica_regression": enum("aggressive", "nonaggressive"),
         "cicada_tolerance": NONNEGATIVE_INT,
@@ -539,11 +538,9 @@ def scientific_values(kind: str, values: dict) -> dict:
         if classifier == "none":
             result.pop("ica_regression", None)
             result.pop("ica_aroma_cmd", None)
-            result.pop("cicada_cmd", None)
             result.pop("cicada_tolerance", None)
             result.pop("cicada_smoothing_retention_mode", None)
         elif classifier == "ica_aroma":
-            result.pop("cicada_cmd", None)
             result.pop("cicada_tolerance", None)
             result.pop("cicada_smoothing_retention_mode", None)
         elif classifier == "cicada":

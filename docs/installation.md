@@ -30,6 +30,10 @@ workers perform no model downloads. This optional stack is omitted from
 ordinary installations. Shared installations use
 `./install --maintain --with-lesion`; development branches use
 `./install --with-lesion` from their checkout.
+
+Pass `--with-cicada` to install the pinned pycicada classifier. CICADA is an
+optional functional-processing backend; installations that do not request it
+do not install its package or validate its availability.
 When lesion GPU execution is enabled, the scheduler submits a dedicated worker
 with `--gres=gpu:1` only when the NeuroLIT step is ready. The cluster must
 provide a GPU through that generic Slurm resource. GPU workers do not remain

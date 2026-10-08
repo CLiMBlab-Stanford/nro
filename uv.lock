@@ -2518,7 +2518,7 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.29.1"
+version = "0.29.2"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
@@ -2539,6 +2539,9 @@ bidsify = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "pydicom" },
+]
+cicada = [
+    { name = "pycicada" },
 ]
 lesion = [
     { name = "monai" },
@@ -2576,6 +2579,7 @@ requires-dist = [
     { name = "nitransforms", specifier = ">=24,<26" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pandas", specifier = ">=2.2,<3" },
+    { name = "pycicada", marker = "extra == 'cicada'", git = "https://github.com/CLiMBlab-Stanford/pycicada.git?rev=v0.2.0" },
     { name = "pydicom", marker = "extra == 'bidsify'", specifier = ">=3,<4" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "safetensors", marker = "extra == 'lesion'", specifier = ">=0.4,<1" },
@@ -2584,7 +2588,7 @@ requires-dist = [
     { name = "socksio", marker = "extra == 'lesion'", specifier = ">=1,<2" },
     { name = "torch", marker = "extra == 'lesion'", specifier = "==2.6.0", index = "https://download.pytorch.org/whl/cu118" },
 ]
-provides-extras = ["bidsify", "oslom", "marss", "lesion"]
+provides-extras = ["bidsify", "oslom", "marss", "lesion", "cicada"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3175,6 +3179,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ba/61/48e48fef36afbab3635bc4f7341641c4ed4f83bcdc3dfb484cc90a63b750/pybids-0.22.0.tar.gz", hash = "sha256:98e7957e47c08d3c131de6f6cef629d009abce888849102b33820ca6a9930152", size = 13080005, upload-time = "2026-03-12T01:57:27.318Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/8f/5901cde1985f92a993c39a15475b259f46590ecc33c4cdf8103b188b440b/pybids-0.22.0-py3-none-any.whl", hash = "sha256:342e560a546881be0ab42da338e38f4995d3a9063f13ec19bd14aee17a74852f", size = 229115, upload-time = "2026-03-12T01:57:25.099Z" },
+]
+
+[[package]]
+name = "pycicada"
+version = "0.2.0"
+source = { git = "https://github.com/CLiMBlab-Stanford/pycicada.git?rev=v0.2.0#4fd0c03ff3ba4f3e9a329a553cd8b16dfae6f85e" }
+dependencies = [
+    { name = "nibabel" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scipy" },
 ]
 
 [[package]]

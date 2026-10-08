@@ -387,6 +387,7 @@ def check_installation(
     quick=False,
     container_execution=True,
     with_lesion=False,
+    with_cicada=False,
 ) -> list[dict]:
     """Return named dependency checks with ok, required, and detail fields.
 
@@ -467,6 +468,8 @@ def check_installation(
                 __import__(name)
 
         check(name, import_check)
+    if with_cicada:
+        check("pycicada", lambda: available_module("cicada_python"))
     check("container runtime", lambda: run_probe([executable(values["runtime"]), "--version"]))
     images = required_images()
     for key in images:

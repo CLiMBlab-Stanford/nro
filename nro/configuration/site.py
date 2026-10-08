@@ -60,7 +60,7 @@ def _checkout() -> Path:
 
 CHECKOUT = _checkout()
 RECORD_NAME = ".nro-installation.json"
-SITE_DEFINITION_VERSION = 2
+SITE_DEFINITION_VERSION = 3
 SITE_DEFINITION = Path("site/site.yml")
 LAB = Path("/juice6/u/nlp/climblab")
 DEFAULTS = {
@@ -74,7 +74,6 @@ DEFAULTS = {
     "templates": str(LAB / "templateflow"),
     "workbench": str(LAB / "shared/workbench/bin_linux64/wb_command"),
     "oslom": str(LAB / "shared/oslom/oslom_undir"),
-    "pycicada": str(LAB / "shared/pycicada/bin/cicada-python"),
     "license": str(LAB / "freesurfer/license.txt"),
     "runtime": "singularity",
     "partition": "sphinx",
@@ -125,7 +124,6 @@ SITE_SECTIONS = {
         "templates",
         "workbench",
         "oslom",
-        "pycicada",
         "license",
         "qunex",
         "synthstrip",
@@ -172,7 +170,6 @@ def generic_defaults() -> dict:
                 "templates": "templateflow",
                 "workbench": "workbench/bin_linux64/wb_command",
                 "oslom": "oslom/oslom_undir",
-                "pycicada": "pycicada/bin/cicada-python",
                 "license": "freesurfer/license.txt",
             }.items()
         },
@@ -315,8 +312,12 @@ def validate_site_document(value: object) -> tuple[dict, dict]:
         raise ValueError(
             "site/site.yml requires version, storage, resources, execution, and bidsify"
         )
-    if value["version"] != SITE_DEFINITION_VERSION:
+    if value["version"] not in {2, SITE_DEFINITION_VERSION}:
         raise ValueError(f"Unsupported site definition version: {value['version']!r}")
+    if value["version"] == 2:
+        value = dict(value)
+        value["resources"] = dict(value["resources"])
+        value["resources"].pop("pycicada", None)
     settings_values: dict = {}
     for section, keys in SITE_SECTIONS.items():
         section_value = value[section]

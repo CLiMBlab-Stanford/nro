@@ -221,8 +221,10 @@ def _private_flywheel_credentials(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2}:
-        raise ValueError(f"Definitions schema 1 requires site definition version 1 or 2: {path}")
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3}:
+        raise ValueError(
+            f"Definitions schema 1 requires site definition version 1, 2, or 3: {path}"
+        )
     bidsify = value.get("bidsify")
     if not isinstance(bidsify, dict) or not isinstance(bidsify.get("servers", {}), dict):
         raise ValueError(f"Invalid Flywheel server definitions: {path}")
@@ -230,7 +232,8 @@ def _private_flywheel_credentials(root: Path) -> None:
         if not isinstance(profile, dict):
             raise ValueError(f"Invalid Flywheel server definition: {path}")
         profile.pop("credential_env", None)
-    value["version"] = 2
+    if value["version"] == 1:
+        value["version"] = 2
     path.write_text(
         normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
         encoding="utf-8",
@@ -248,10 +251,43 @@ def _current_authoring_notice(root: Path) -> None:
             path.write_text(normalized, encoding="utf-8")
 
 
+def _managed_pycicada_dependency(root: Path) -> None:
+    """Remove the obsolete site path now that pycicada is an installation extra."""
+    path = root / "site/site.yml"
+    if not path.is_file():
+        return
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") not in {2, 3}:
+        raise ValueError(f"Definitions schema 3 requires site definition version 2 or 3: {path}")
+    resources = value.get("resources")
+    if not isinstance(resources, dict):
+        raise ValueError(f"Invalid site resources: {path}")
+    resources.pop("pycicada", None)
+    value["version"] = 3
+    path.write_text(
+        normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
+        encoding="utf-8",
+    )
+    directory = root / "configs/func"
+    if directory.is_dir():
+        for config in directory.glob("*_func.yml"):
+            document = yaml.safe_load(config.read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                raise ValueError(f"Invalid functional configuration: {config}")
+            if "cicada_cmd" not in document:
+                continue
+            document.pop("cicada_cmd")
+            config.write_text(
+                normalize_managed_text(config, yaml.safe_dump(document, sort_keys=False)),
+                encoding="utf-8",
+            )
+
+
 MIGRATIONS = (
     Migration(0, 1, "0.13.0", _adopt_unversioned),
     Migration(1, 2, "0.14.4", _private_flywheel_credentials),
     Migration(2, 3, "0.16.0", _current_authoring_notice),
+    Migration(3, 4, "0.29.2", _managed_pycicada_dependency),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].destination
 

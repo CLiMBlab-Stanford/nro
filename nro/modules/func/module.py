@@ -338,7 +338,6 @@ def build_module(
             registration_t1,
             anat_brain_mask,
             opts.ica_aroma_cmd,
-            opts.cicada_cmd if classifier == "cicada" else None,
             (subjects_dir if subjects_dir.exists() else None),
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             opts.out_dir,
@@ -2291,7 +2290,6 @@ def build_module(
                     runner.add_step(
                         _create_cicada_classification_step(
                             runner=runner,
-                            executable=opts.cicada_cmd,
                             epi_mni=epi_mni,
                             mask_mni=anat_brain_mask_in_mni,
                             confounds=cicada_metrics,
@@ -2969,7 +2967,6 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--topup-config", type=str, default=cfg.topup_config)
     p.add_argument("--ica-aroma-cmd", type=Path, default=cfg.ica_aroma_cmd)
-    p.add_argument("--cicada-cmd", type=Path, default=cfg.cicada_cmd)
     p.add_argument(
         "--ica-classifier",
         choices=["none", "ica_aroma", "cicada"],
@@ -3117,7 +3114,6 @@ def main(
     ):
         setattr(args, key, resolve_project_path(getattr(args, key), project=project))
     args.ica_aroma_cmd = resolve_cwd_path(args.ica_aroma_cmd)
-    args.cicada_cmd = resolve_cwd_path(args.cicada_cmd)
     args.synbold_disco_image = resolve_cwd_path(args.synbold_disco_image)
     args.synbold_disco_license = resolve_cwd_path(args.synbold_disco_license)
 
@@ -3246,7 +3242,6 @@ def main(
         output_grid=str(args.output_grid),
         topup_config=str(args.topup_config),
         ica_aroma_cmd=(Path(args.ica_aroma_cmd) if args.ica_aroma_cmd is not None else None),
-        cicada_cmd=Path(args.cicada_cmd),
         ica_classifier=str(args.ica_classifier),
         ica_regression=str(args.ica_regression),
         cicada_tolerance=int(args.cicada_tolerance),

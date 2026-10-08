@@ -13,7 +13,9 @@ from nro.engine.execution import (
     strip_ansi as _strip_ansi,
 )
 from nro.modules.func.cicada import (
+    PYCICADA_VERSION,
     prepare_melodic_adapter,
+    pycicada_command,
     reset_directory,
     write_motion_metrics,
     write_result_manifest,
@@ -400,7 +402,6 @@ def _create_cicada_melodic_step(
 def _create_cicada_classification_step(
     *,
     runner: Runner,
-    executable: Path,
     epi_mni: Path,
     mask_mni: Path,
     confounds: Path,
@@ -432,8 +433,6 @@ def _create_cicada_classification_step(
     )
 
     def execute() -> None:
-        if not executable.is_file():
-            raise SystemExit(f"Configured CICADA executable does not exist: {executable}")
         reset_directory(adapter_directory)
         prepare_melodic_adapter(
             run_command=lambda command: runner.run_child(list(command), env=env),
@@ -447,7 +446,7 @@ def _create_cicada_classification_step(
         threshold_target.symlink_to(thresholded_components_mni)
         reset_directory(task_directory)
         command = [
-            str(executable),
+            *pycicada_command(),
             "run",
             "--output-dir",
             str(task_directory),
@@ -478,7 +477,7 @@ def _create_cicada_classification_step(
         runner.run_direct(command, env=env)
         write_result_manifest(
             output=result_manifest,
-            executable=executable,
+            backend_version=PYCICADA_VERSION,
             classification_directory=classification,
             tolerance=tolerance,
             smoothing_retention_mode=smoothing_retention_mode,
@@ -488,7 +487,6 @@ def _create_cicada_classification_step(
     return Step.python(
         name="Run CICADA Component Classification",
         inputs=(
-            executable,
             epi_mni,
             mask_mni,
             confounds,
@@ -505,6 +503,8 @@ def _create_cicada_classification_step(
         action=execute,
         parameters={
             "classifier": "cicada",
+            "backend": "pycicada",
+            "backend_version": PYCICADA_VERSION,
             "tolerance": tolerance,
             "smoothing_retention_mode": smoothing_retention_mode,
         },

@@ -80,7 +80,7 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path, m
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 2
+    assert migrated["version"] == 3
     assert migrated["bidsify"]["servers"]["cni"] == {
         "host": "cni.example.org",
         "projects": ["lab/study"],
@@ -141,12 +141,16 @@ SourceStore(applications).capture(checkout)
         check=True,
     )
 
-    assert yaml.safe_load(site.read_text())["version"] == 2
+    assert yaml.safe_load(site.read_text())["version"] == 3
     validate_store(root, require_site=True)
 
 
 def test_schema_three_updates_managed_definition_cli_guidance(tmp_path):
     root = create_store(tmp_path / "definitions")
+    site = root / "site/site.yml"
+    site_value = yaml.safe_load(site.read_text())
+    site_value["version"] = 2
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(site_value, sort_keys=False))
     workflow = root / "workflows/main_workflow.yml"
     workflow.write_text(workflow.read_text().replace(MANAGED_NOTICE, LEGACY_MANAGED_NOTICES[0], 1))
     (root / MANIFEST).write_text(_manifest_text(root, 2))
@@ -157,6 +161,30 @@ def test_schema_three_updates_managed_definition_cli_guidance(tmp_path):
 
     assert workflow.read_text().startswith(MANAGED_NOTICE)
     assert LEGACY_MANAGED_NOTICES[0] not in workflow.read_text()
+
+
+def test_schema_four_removes_site_pycicada_path(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    site = root / "site/site.yml"
+    value = yaml.safe_load(site.read_text())
+    value["version"] = 2
+    value["resources"]["pycicada"] = "/shared/pycicada/bin/cicada-python"
+    config = root / "configs/func/legacy_func.yml"
+    starter = Path(__file__).parents[1] / "nro/configuration/starters/configs/func/main_func.yml"
+    config_value = yaml.safe_load(starter.read_text())
+    config_value["cicada_cmd"] = "site:pycicada"
+    config.write_text(MANAGED_NOTICE + yaml.safe_dump(config_value, sort_keys=False))
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 3))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    migrated = yaml.safe_load(site.read_text())
+    assert migrated["version"] == 3
+    assert "pycicada" not in migrated["resources"]
+    assert "cicada_cmd" not in yaml.safe_load(config.read_text())
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

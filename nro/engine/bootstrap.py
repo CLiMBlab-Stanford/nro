@@ -392,6 +392,11 @@ def _main(argv=None) -> None:
         help="Install the SynthStroke dependencies used by lesion-aware anatomy",
     )
     parser.add_argument(
+        "--with-cicada",
+        action="store_true",
+        help="Install the optional pycicada component-classification backend",
+    )
+    parser.add_argument(
         "--without-marss",
         action="store_true",
         help="Omit the MARSS simultaneous-slice correction dependency",
@@ -424,6 +429,7 @@ def _main(argv=None) -> None:
             args.without_oslom,
             args.with_bidsify,
             args.with_lesion,
+            args.with_cicada,
             args.without_marss,
             args.dev,
             args.accept_qunex_license,
@@ -619,6 +625,7 @@ def _main(argv=None) -> None:
             "with_oslom": not args.without_oslom,
             "with_bidsify": args.with_bidsify or bool(existing and existing.get("with_bidsify")),
             "with_lesion": args.with_lesion or bool(existing and existing.get("with_lesion")),
+            "with_cicada": args.with_cicada or bool(existing and existing.get("with_cicada")),
             "with_marss": not args.without_marss,
             "dev": args.dev or bool(existing and existing.get("dev")),
             "local": args.local or bool(existing and existing.get("local")),
@@ -683,6 +690,8 @@ def _main(argv=None) -> None:
                 sync += ["--extra", "bidsify"]
             if record["with_lesion"]:
                 sync += ["--extra", "lesion"]
+            if record["with_cicada"]:
+                sync += ["--extra", "cicada"]
             if record["with_marss"]:
                 sync += ["--extra", "marss"]
             if not record["dev"]:
@@ -716,6 +725,8 @@ def _main(argv=None) -> None:
             command += ["--without-oslom"]
         if record["with_lesion"]:
             command += ["--with-lesion"]
+        if record["with_cicada"]:
+            command += ["--with-cicada"]
         if args.accept_qunex_license:
             command += ["--accept-qunex-license"]
         if record["local"]:
