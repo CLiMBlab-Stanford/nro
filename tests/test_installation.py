@@ -1079,6 +1079,46 @@ def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monke
     dependencies.install_workbench(offline=True)
 
 
+def test_workbench_falls_back_from_red_hat_archive_without_host_glu(
+    isolated_site, tmp_path, monkeypatch
+):
+    command = tmp_path / "workbench/bin_linux64/wb_command"
+    save_settings(isolated_site, {"workbench": str(command)})
+    downloads = []
+
+    def archive_download(url, target, checksum=None):
+        flavor = "rh_linux64" if "rh_linux64" in url else "linux64"
+        downloads.append(flavor)
+        assert checksum == dependencies.WORKBENCH_SHA256[flavor]
+        with zipfile.ZipFile(target, "w") as zipped:
+            zipped.writestr(f"workbench/bin_{flavor}/wb_command", "command")
+            zipped.writestr(f"workbench/bin_{flavor}/wb_view", "viewer")
+            if flavor == "linux64":
+                zipped.writestr("workbench/libs_linux64/osmesa/libGLU.so.1", "bundled")
+
+    def probe(arguments):
+        if "bin_rh_linux64" in arguments[0]:
+            raise RuntimeError("libGLU.so.1: cannot open shared object file")
+        return "Connectome Workbench 2.2.1"
+
+    monkeypatch.setattr(dependencies, "download", archive_download)
+    monkeypatch.setattr(dependencies, "run_probe", probe)
+    monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        dependencies.platform,
+        "freedesktop_os_release",
+        lambda: {"ID": "rocky", "ID_LIKE": "rhel centos fedora"},
+    )
+
+    dependencies.install_workbench()
+
+    viewer = command.with_name("wb_view")
+    assert downloads == ["rh_linux64", "linux64"]
+    assert command.read_text() == "command"
+    assert viewer.with_name("wb_view.vendor").read_text() == "viewer"
+    assert "libs_linux64/osmesa" in viewer.read_text()
+
+
 def test_install_help_from_another_working_directory(tmp_path):
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
