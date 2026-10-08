@@ -6,11 +6,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from nro.configuration.site import definitions_root, settings, validate_setting
 from nro.engine.io import atomic_write_text
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
 from nro.orchestration.source_snapshots import SourceSnapshot, SourceStore, execution_source_root
+from nro.site.configuration import definitions_root, settings, validate_setting
 
 
 def capture_site(root: Path, values: dict) -> Path:

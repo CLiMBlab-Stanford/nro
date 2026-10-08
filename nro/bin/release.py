@@ -52,7 +52,7 @@ def main(argv=None, *, prog="nro release"):
     if not args.version and (args.pr or args.attest_merged or args.bootstrap):
         parser.error("Attestation requires a version")
     try:
-        from nro.configuration.site import bids_root
+        from nro.site.configuration import bids_root
 
         paths = RegistryPaths.for_project("", bids_root=bids_root())
         store = ReleaseStore(BranchStore(paths.control))

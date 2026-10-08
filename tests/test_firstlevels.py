@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_allclose
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.bids import BidsRun, discover_raw_runs
 from nro.engine.cifti import indexed_cifti_indices, load_indexed_cifti_map
 from nro.engine.io import read_public_json

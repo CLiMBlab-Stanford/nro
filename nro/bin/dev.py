@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.engine.development import changed_paths, load_scopes, run_selection, select_tests
+from nro.development import changed_paths, load_scopes, run_selection, select_tests
 from nro.engine.io import atomic_write_text
 
 

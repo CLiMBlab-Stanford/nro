@@ -17,7 +17,7 @@ from typing import Iterable
 
 import yaml
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.references import resolve_public_payload
 from nro.orchestration.artifact_records import (
@@ -486,8 +486,8 @@ def _assess_direct_inputs(
     if registered_only:
         return None, None
 
-    from nro.configuration.hardware import gradient_unwarping_records
-    from nro.configuration.markup import MarkupStore
+    from nro.definitions.hardware import gradient_unwarping_records
+    from nro.definitions.markup import MarkupStore
     from nro.engine.source_metadata import semantic_metadata_snapshot
     from nro.modules.anat.planning import (
         raw_anatomical_images,
@@ -911,7 +911,7 @@ def evaluate_assessment(
                 ) == config_records[int(row["module_lineage_id"])]["config_fingerprint"]
                 recorded_configuration = manifest.get("configuration") or {}
                 if not registered_only and isinstance(recorded_configuration.get("resolved"), dict):
-                    from nro.configuration.store import configuration_fingerprint
+                    from nro.definitions.store import configuration_fingerprint
 
                     descriptor = module_descriptor(row["module"])
                     try:

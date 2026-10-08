@@ -7,7 +7,7 @@ import json
 import uuid
 from pathlib import Path
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.artifact_resolution import scientific_contract_fingerprint
 from nro.orchestration.branch_planning import BranchPlan
 from nro.orchestration.branch_store import BranchStore
@@ -279,8 +279,8 @@ def admit_plan(
                 item.spec.key
             ].contract_fingerprint != fingerprint(item.contract):
                 raise ValueError("Scientific plan changed before admission; resolve it again")
-        from nro.configuration.site import protected_site_fingerprint
         from nro.orchestration.compiled_request import encode_spec, export_workflow
+        from nro.site.configuration import protected_site_fingerprint
 
         payload = dict(
             protocol=1,

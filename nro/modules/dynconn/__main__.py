@@ -7,9 +7,8 @@ import logging
 import time
 from pathlib import Path
 
-from nro.configuration.markup import load_source_markup
-from nro.configuration.paths import BIDS_PATH, WORK_PATH
-from nro.configuration.runtime import load_runtime_configuration
+from nro.definitions.markup import load_source_markup
+from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.clean_targets import CleanTarget, expected_clean_target
 from nro.engine.cli import stderr
@@ -29,6 +28,7 @@ from nro.orchestration.runtime import (
     select_runtime_config,
     selected_configuration_fingerprint,
 )
+from nro.site.paths import BIDS_PATH, WORK_PATH
 
 from .config import InclusionConfig, InputsConfig, LowRankConfig, ModuleConfig, OutputConfig
 from .module import build_module

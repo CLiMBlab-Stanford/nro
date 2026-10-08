@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
-from nro.configuration.parsing import DefinitionError, parse_mapping
-from nro.configuration.site import definitions_roots
-from nro.configuration.store import validate_config_id
+from nro.definitions.parsing import DefinitionError, parse_mapping
+from nro.definitions.store import validate_config_id
+from nro.site.configuration import definitions_roots
 
 SOURCE_MARKUP_ENV = "NRO_SOURCE_MARKUP"
 _FIELDS = frozenset({"T1w", "T2w", "exclude", "lesion", "msmall"})

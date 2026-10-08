@@ -147,17 +147,17 @@ def test_snapshot_rejects_unrelated_commands(tmp_path):
 
 
 def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
-    from nro.configuration.site import settings
     from nro.orchestration.execution_pins import capture_site
+    from nro.site.configuration import settings
 
     root = source(tmp_path)
-    config = root / "nro/configuration"
-    config.mkdir()
-    (config / "__init__.py").write_text("")
-    original = Path(__file__).resolve().parents[1] / "nro/configuration/site.py"
-    shutil.copyfile(original, config / "site.py")
+    site_package = root / "nro/site"
+    site_package.mkdir()
+    (site_package / "__init__.py").write_text("")
+    original = Path(__file__).resolve().parents[1] / "nro/site/configuration.py"
+    shutil.copyfile(original, site_package / "configuration.py")
     (root / "nro/probe.py").write_text(
-        'from nro.configuration.site import settings\nprint(settings()[0]["bids"])\n'
+        'from nro.site.configuration import settings\nprint(settings()[0]["bids"])\n'
     )
     snapshot = SourceStore(tmp_path / "snapshots").capture(root)
     values = settings()[0]

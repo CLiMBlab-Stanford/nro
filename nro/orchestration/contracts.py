@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 
 WORK_ITEM_CONTRACT_VERSION = 4
 

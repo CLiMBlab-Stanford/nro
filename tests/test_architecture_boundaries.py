@@ -12,6 +12,25 @@ MODULES = ROOT / "nro/modules"
 ORCHESTRATION = ROOT / "nro/orchestration"
 
 
+def test_site_and_definition_lifecycle_stays_out_of_engine() -> None:
+    forbidden = {
+        "bootstrap.py",
+        "bootstrap_dependencies.py",
+        "branch_definition_setup.py",
+        "definition_editor.py",
+        "dependencies.py",
+        "installation_layers.py",
+        "installation_transition.py",
+        "maintenance.py",
+        "shared_installation.py",
+        "site_setup.py",
+        "upgrade_rehearsal.py",
+        "user_launcher.py",
+    }
+    assert forbidden.isdisjoint(path.name for path in (ROOT / "nro/engine").glob("*.py"))
+    assert not tuple((ROOT / "nro/configuration").glob("*.py"))
+
+
 def _imports(path: Path) -> tuple[str, ...]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     names: list[str] = []
@@ -80,7 +99,7 @@ def test_planning_catalog_does_not_load_array_or_image_stacks(
         "import os\n"
         "import sys\n"
         "from pathlib import Path\n"
-        "import nro.configuration.site as site\n"
+        "import nro.site.configuration as site\n"
         f"site.CHECKOUT = Path({str(checkout)!r})\n"
         "site.installation_record = lambda root=site.CHECKOUT: {}\n"
         f"os.environ['NRO_SITE_CONFIG'] = {str(site_config)!r}\n"

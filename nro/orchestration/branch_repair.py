@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.manifests import assess_registry
@@ -193,7 +193,7 @@ def _recover_public_work_items(
 
 def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
     """Read ownership records backed by a declared public output."""
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     values = settings()[0]
     configured_bids = Path(values["bids"]).expanduser().resolve()
@@ -432,7 +432,7 @@ def finish(registry, *, checkout: Path, reservation: str, workflows: list[dict])
 
 def _register_current_workflows(scientific, *, store=None) -> list[dict]:
     """Compile current definitions and detach their scheduler-facing bindings."""
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.store import ConfigStore
     from nro.orchestration.compiled_request import export_workflow
 
     store = store or ConfigStore()

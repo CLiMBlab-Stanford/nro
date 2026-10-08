@@ -206,7 +206,6 @@ def _operation_notice(payload: dict) -> str:
 
 def _start_service(endpoint: SchedulerEndpoint, *, options: dict | None = None) -> str | None:
     """Submit one controller when this caller wins the atomic launch claim."""
-    from nro.configuration.site import settings
     from nro.orchestration.scheduler_bus import (
         claim_launch,
         release_launch,
@@ -214,6 +213,7 @@ def _start_service(endpoint: SchedulerEndpoint, *, options: dict | None = None) 
         update_launch_job,
         write_controller_script,
     )
+    from nro.site.configuration import settings
 
     options = dict(options or {})
     unexpected = set(options) - {"partition", "account", "time", "memory", "cpus"}

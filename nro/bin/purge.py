@@ -10,7 +10,6 @@ from typing import Iterable
 
 import yaml
 
-from nro.configuration.paths import WORK_PATH
 from nro.engine.cli import (
     add_core_selection_arguments,
     core_selection,
@@ -33,6 +32,7 @@ from nro.orchestration.purge_paths import (
 )
 from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.selection import selected_projects
+from nro.site.paths import WORK_PATH
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ def _descendant_closure(
 
 def _excluded_work_item_ids(rows: Iterable[dict], *, bids_root: Path) -> set[int]:
     """Identify work items whose recorded raw inputs are now excluded by markup."""
-    from nro.configuration.markup import MarkupStore
+    from nro.definitions.markup import MarkupStore
 
     store = MarkupStore()
     selections = {}
@@ -414,10 +414,10 @@ def build_parser(*, prog: str = "nro.bin.purge") -> argparse.ArgumentParser:
 
 
 def _purge_cache(args) -> None:
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.execution_cache import CacheCollection, collect_cache
     from nro.orchestration.scheduler_client import maintenance
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import CHECKOUT, installation_record, settings
 
     values = settings()[0]
     bids_root = Path(values["bids"]).resolve()
@@ -612,8 +612,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import CHECKOUT, installation_record, settings
 
     values = settings()[0]
     if (

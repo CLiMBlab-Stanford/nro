@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore, fingerprint
+from nro.definitions.store import ConfigStore, fingerprint
 from nro.orchestration import manifests
 from nro.orchestration.assessment import (
     AssessmentConflict,

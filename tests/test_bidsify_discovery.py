@@ -279,7 +279,7 @@ def test_multisite_configuration_loads(tmp_path):
 
     import yaml
 
-    from nro.configuration.site import (
+    from nro.site.configuration import (
         definitions_root,
         read_site_definition,
         write_site_definition,
@@ -393,7 +393,7 @@ def test_external_rebidsify_retains_subject_and_session(tmp_path, monkeypatch, p
 def test_invalid_project_sources_are_rejected(tmp_path, mapping):
     import yaml
 
-    from nro.configuration.site import definitions_root
+    from nro.site.configuration import definitions_root
 
     config = yaml.safe_load((definitions_root() / "bidsify/main.yml").read_text())
     config["project_sources"] = mapping

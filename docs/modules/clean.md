@@ -78,7 +78,7 @@ Container settings select Workbench and other external execution resources;
 `overwrite` and `verbose` control execution and reporting. `wb_command` is the tool
 command used inside the configured execution environment.
 
-```{literalinclude} ../../nro/configuration/starters/configs/clean/main_clean.yml
+```{literalinclude} ../../nro/definitions/starters/configs/clean/main_clean.yml
 :language: yaml
 ```
 

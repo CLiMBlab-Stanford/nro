@@ -5,9 +5,8 @@ import logging
 import time
 from pathlib import Path
 
-from nro.configuration.markup import load_source_markup
-from nro.configuration.paths import BIDS_PATH, WORK_PATH
-from nro.configuration.runtime import load_runtime_configuration
+from nro.definitions.markup import load_source_markup
+from nro.definitions.runtime import load_runtime_configuration
 from nro.engine.bids import (
     discover_raw_runs,
     matches_filter,
@@ -42,6 +41,7 @@ from nro.orchestration.runtime import (
     select_runtime_config,
     selected_configuration_fingerprint,
 )
+from nro.site.paths import BIDS_PATH, WORK_PATH
 
 
 def infer_gray_matter_mask(

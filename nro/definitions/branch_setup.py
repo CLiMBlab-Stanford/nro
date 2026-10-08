@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.engine.bootstrap import prepare_branch_definitions
+from nro.site.bootstrap import prepare_branch_definitions
 
 
 def main(argv: list[str] | None = None) -> None:

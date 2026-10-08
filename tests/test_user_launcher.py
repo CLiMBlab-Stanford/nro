@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.engine import bootstrap, user_launcher
+from nro.site import bootstrap, user_launcher
 
 
 def installation(root, *, branch=None):
@@ -273,7 +273,7 @@ def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monke
     # their own focused tests, so avoid invoking that validator in this fixture.
     monkeypatch.setattr(branches, "branch_id", lambda name: name)
     monkeypatch.setattr(
-        "nro.configuration.branch_definitions.checkout_identity",
+        "nro.definitions.branch_definitions.checkout_identity",
         lambda _: (root, "feature", "a" * 40),
     )
     monkeypatch.setattr("nro.orchestration.control_paths.branch_id", lambda name: name)

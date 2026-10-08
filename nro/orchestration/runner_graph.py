@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Generic, Iterable, Mapping, Optional, Sequence, TypeVar
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json
 
 

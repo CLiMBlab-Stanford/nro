@@ -11,8 +11,8 @@ def selected_projects(bids_root: Path, projects: Iterable[str] = ()) -> list[str
     requested = tuple(dict.fromkeys(projects))
     if requested:
         return list(requested)
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import CHECKOUT, installation_record, settings
 
     values = settings()[0]
     control = Path(values["registry"])

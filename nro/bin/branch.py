@@ -37,9 +37,9 @@ def build_parser(*, prog: str = "nro branch") -> argparse.ArgumentParser:
 
 
 def _description(store: BranchStore, name: str) -> dict:
-    from nro.configuration.branch_definitions import read_selection
-    from nro.configuration.site import settings
+    from nro.definitions.branch_definitions import read_selection
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import settings
 
     registry = store.registry(name)
     record = registry.record
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro branch") -> None:
         parser.error("reparent requires --parent")
     if args.parent and args.action not in {"register", "reparent"}:
         parser.error("--parent applies only to register and reparent")
-    from nro.configuration.site import bids_root
+    from nro.site.configuration import bids_root
 
     paths = RegistryPaths.for_project("", bids_root=bids_root())
     store = BranchStore(paths.control)
@@ -116,8 +116,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro branch") -> None:
             store.authorize_checkout(name, root, revision=snapshot.revision)
             result = _description(store, name)
         elif args.action == "definitions":
-            from nro.configuration.branch_definitions import select_definitions
-            from nro.configuration.site import settings
+            from nro.definitions.branch_definitions import select_definitions
+            from nro.site.configuration import settings
 
             shared = Path(settings()[0]["definitions"])
             selected = select_definitions(store, args.checkout, shared, args.definitions)

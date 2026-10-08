@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 import nro.modules.networks.__main__ as networks_main
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cifti import (
     indexed_cifti_indices,
     load_indexed_cifti_map,

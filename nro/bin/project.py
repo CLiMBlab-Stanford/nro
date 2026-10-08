@@ -70,8 +70,8 @@ def _confirm() -> bool:
 def main(argv: list[str] | None = None, *, prog: str = "nro project") -> None:
     """Preview or execute project-level maintenance through the central scheduler."""
     args = build_parser(prog=prog).parse_args(argv)
-    from nro.configuration.site import CHECKOUT, settings
     from nro.orchestration.scheduler_client import maintenance
+    from nro.site.configuration import CHECKOUT, settings
 
     values = settings()[0]
     if args.json and not args.force and not args.dry_run:

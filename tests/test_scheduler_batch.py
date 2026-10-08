@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration import manifests, scheduler_operations, scheduler_service
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.contracts import WorkItemSpec
@@ -216,7 +216,7 @@ def test_status_uses_mixed_contract_assessment_for_every_checkout(monkeypatch, t
 
 
 def test_main_status_does_not_adopt_another_branch_recovery_record(monkeypatch, tmp_path):
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.store import ConfigStore
     from nro.orchestration import branches as branches_module
 
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from nro.bidsify.credentials import read_key
-from nro.configuration.site import settings
+from nro.site.configuration import settings
 
 from .errors import BidsificationError
 

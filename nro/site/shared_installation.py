@@ -145,8 +145,8 @@ def prepare_pool(
 ) -> dict:
     """Quiesce workers under an installation barrier while preserving demand."""
     checkout = Path(checkout).expanduser().resolve()
-    from nro.engine.maintenance import MaintenanceJournal, audit_shared_state
     from nro.orchestration.selection import discover_bids_inventory
+    from nro.site.maintenance import MaintenanceJournal, audit_shared_state
 
     journal = MaintenanceJournal(registry.paths.control, checkout)
     from nro.orchestration.scheduler_implementation import implementation_path
@@ -300,10 +300,10 @@ def publish(checkout: Path, registry: Registry, *, installation: dict | None = N
     if checkout not in main.checkouts:
         snapshot = branches.authorize_checkout("main", checkout, revision=snapshot.revision)
     release = ReleaseStore(branches).record_tagged(checkout)
-    from nro.configuration.site import installation_record
-    from nro.engine.bootstrap import RECORD
     from nro.engine.io import atomic_write_text
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.bootstrap import RECORD
+    from nro.site.configuration import installation_record
 
     installation = dict(installation or installation_record(checkout))
     if installation.get("mode") != "shared" or installation.get("checkout") != str(checkout):

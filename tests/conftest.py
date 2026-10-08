@@ -7,16 +7,16 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration import site
-from nro.engine import site_setup
 from nro.orchestration import scheduler_implementation
+from nro.site import configuration as site
+from nro.site import setup as site_setup
 
 
 @pytest.fixture(scope="session")
 def definitions_fixture(tmp_path_factory):
-    from nro.configuration.definition_migrations import refresh_manifest
-    from nro.configuration.definitions import create_store
-    from nro.configuration.site import read_site_definition, write_site_definition
+    from nro.definitions.migrations import refresh_manifest
+    from nro.definitions.repository import create_store
+    from nro.site.configuration import read_site_definition, write_site_definition
 
     root = create_store(tmp_path_factory.mktemp("definitions") / "store")
     shutil.copytree(Path(__file__).parent / "fixtures/models", root / "models", dirs_exist_ok=True)

@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import Executor, Future
 from typing import Callable
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.registry import RegistryLockTimeout, utcnow
 from nro.orchestration.scheduler_bus import validate_message
 

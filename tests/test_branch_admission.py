@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration.artifact_ownership import work_item_paths
 from nro.orchestration.artifact_resolution import ArtifactCandidate
 from nro.orchestration.branch_admission import admit_plan
@@ -780,7 +780,7 @@ def test_detached_service_rejects_late_science_without_opening_branch_code(setup
             ).fetchone()[0]
         )
     payload["revisions"] = {spec.key: 2}
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     values = {
         **settings()[0],

@@ -20,8 +20,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
-from nro.configuration.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
-from nro.configuration.site import settings
+from nro.definitions.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
 from nro.engine.io import atomic_output_path, atomic_write_json
 from nro.modules.anat.lesion_policy import (
     MASKER_MODEL,
@@ -30,6 +29,7 @@ from nro.modules.anat.lesion_policy import (
     NEUROLIT_CHECKPOINTS,
 )
 from nro.modules.anat.policy import FASTSURFER_OCI_DIGEST
+from nro.site.configuration import settings
 
 FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
 IMAGES = {
@@ -131,7 +131,7 @@ WORKBENCH_GL_MISSING = tuple(name for _, _, name in WORKBENCH_GL_RUNTIME.values(
 
 def template_catalog() -> dict:
     """Read the installed mapping of template paths to checksums and S3 versions."""
-    path = Path(__file__).resolve().parents[1] / "configuration/template_resources.json"
+    path = Path(__file__).resolve().parents[1] / "definitions/template_resources.json"
     return json.loads(path.read_text())
 
 
@@ -185,8 +185,8 @@ def ensure_fsaverage6_midthickness(root: Path) -> None:
 
 def install_runtime(*, offline=False) -> None:
     """Reuse a host runtime or install unprivileged Apptainer when supported."""
-    from nro.configuration.site import CHECKOUT, read_overrides, site_file
-    from nro.engine.site_setup import save_settings
+    from nro.site.configuration import CHECKOUT, read_overrides, site_file
+    from nro.site.setup import save_settings
 
     values, _ = settings()
     if shutil.which(values["runtime"]):
@@ -472,7 +472,7 @@ def check_installation(
 
         check("definitions store", definitions_check)
     else:
-        from nro.configuration.definitions import validate_store
+        from nro.definitions.repository import validate_store
 
         check("definitions store", lambda: validate_store(Path(values["definitions"])))
     for name in (

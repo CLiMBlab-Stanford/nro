@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.definition_migrations import SCHEMA_VERSION
-from nro.engine.upgrade_rehearsal import rehearse
+from nro.definitions.migrations import SCHEMA_VERSION
+from nro.site.upgrade_rehearsal import rehearse
 
 pytestmark = pytest.mark.integration
 

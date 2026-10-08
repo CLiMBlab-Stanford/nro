@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from nro.configuration.runtime import ConfigNode, configure
+from nro.definitions.runtime import ConfigNode, configure
 
 configure(
     {
@@ -189,7 +189,7 @@ def test_confounds_loads_epi_once(
     )
 
     confounds = pd.read_csv(out_tsv, sep="\t")
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.store import ConfigStore
 
     clean_config_path = ConfigStore().configuration_path("clean", "main")
     clean_config = yaml.safe_load(clean_config_path.read_text(encoding="utf-8"))

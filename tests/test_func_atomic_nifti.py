@@ -4,7 +4,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from nro.configuration.runtime import configure
+from nro.definitions.runtime import configure
 
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 

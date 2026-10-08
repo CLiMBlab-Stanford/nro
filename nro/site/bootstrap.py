@@ -13,10 +13,10 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from nro.configuration.site import settings
-from nro.engine import user_launcher
-from nro.engine.bootstrap_dependencies import UV_VERSION
 from nro.orchestration.control_paths import ControlPaths
+from nro.site import user_launcher
+from nro.site.bootstrap_dependencies import UV_VERSION
+from nro.site.configuration import settings
 
 ROOT = Path(__file__).resolve().parents[2]
 RECORD = ".nro-installation.json"
@@ -172,12 +172,12 @@ def check_branch_environment(site: Path, environment: Path) -> None:
 
 def prepare_branch_definitions(site: Path, record: dict) -> None:
     """Migrate only this branch's private layer and validate inherited stores."""
-    from nro.configuration.branch_definitions import inherited_definitions, read_selection
-    from nro.configuration.definition_migrations import (
+    from nro.definitions.branch_definitions import inherited_definitions, read_selection
+    from nro.definitions.migrations import (
         migrate_store,
         validate_store_integrity,
     )
-    from nro.configuration.definitions import validate_store
+    from nro.definitions.repository import validate_store
 
     values = settings(path=site)[0]
     control = Path(values["registry"])
@@ -443,7 +443,7 @@ def _main(argv=None) -> None:
         ]
         if any(incompatible):
             parser.error("--rehearse-upgrade cannot be combined with installation options")
-        from nro.engine.upgrade_rehearsal import rehearse
+        from nro.site.upgrade_rehearsal import rehearse
 
         baseline = args.rehearse_upgrade or None
         result = rehearse(ROOT, baseline=baseline)
@@ -468,7 +468,7 @@ def _main(argv=None) -> None:
             parser.error(
                 "--convert-to-branch requires an existing installation and cannot be combined with --mode, --maintain, or --default"
             )
-        from nro.engine.installation_transition import convert_shared
+        from nro.site.installation_transition import convert_shared
 
         with maintenance_lock(ROOT, "branch"):
             record = convert_shared(ROOT, default_record, site=args.site)
@@ -535,7 +535,7 @@ def _main(argv=None) -> None:
     if mode == "shared":
 
         def prepare_shared_site() -> None:
-            from nro.engine.site_setup import (
+            from nro.site.setup import (
                 edit_settings,
                 migrate_site_configuration,
                 save_settings,
@@ -555,9 +555,9 @@ def _main(argv=None) -> None:
 
         def prepare_shared() -> None:
             nonlocal shared_registry
-            from nro.engine.shared_installation import prepare_pool
             from nro.orchestration.registry import Registry
             from nro.orchestration.releases import tagged_source
+            from nro.site.shared_installation import prepare_pool
 
             tagged_source(ROOT)
             values = settings(path=site)[0]
@@ -670,7 +670,7 @@ def _main(argv=None) -> None:
         }
         application = None
         if mode == "shared":
-            from nro.engine import installation_layers
+            from nro.site import installation_layers
 
             environment, dependency_key = installation_layers.prepare_shared_dependencies(
                 ROOT,
@@ -766,7 +766,7 @@ def _main(argv=None) -> None:
                     "-I",
                     "-B",
                     "-m",
-                    "nro.engine.branch_definition_setup",
+                    "nro.definitions.branch_setup",
                     "--site",
                     str(site),
                     "--checkout",
@@ -782,7 +782,7 @@ def _main(argv=None) -> None:
             )
         record["ready"] = True
         if mode == "shared":
-            from nro.engine.shared_installation import publish
+            from nro.site.shared_installation import publish
 
             publish(ROOT, shared_registry, installation=record)
             record = json.loads(record_path.read_text())

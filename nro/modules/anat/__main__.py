@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from nro.configuration.markup import SubjectMarkup, load_source_markup
-from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import configure_anat, load_runtime_configuration
+from nro.definitions.markup import SubjectMarkup, load_source_markup
+from nro.definitions.runtime import configure_anat, load_runtime_configuration
 from nro.orchestration.runtime import select_runtime_config
+from nro.site.paths import BIDS_PATH
 
 
 def _bids_id(value: str, prefix: str) -> str:

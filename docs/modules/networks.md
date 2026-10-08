@@ -123,7 +123,7 @@ does not copy the upstream feature source. See the
 nro fixes output placement from the project, module ID, participant, space, and
 smoothing request. `overwrite` requests rebuilding module outputs.
 
-```{literalinclude} ../../nro/configuration/starters/configs/networks/main_networks.yml
+```{literalinclude} ../../nro/definitions/starters/configs/networks/main_networks.yml
 :language: yaml
 ```
 

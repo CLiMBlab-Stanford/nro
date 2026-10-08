@@ -11,18 +11,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
-from nro.configuration.site import (
-    CHECKOUT,
-    installation_record,
-    protected_site_fingerprint,
-    settings,
-)
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.compiled_request import encode_spec, export_workflow
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.execution_pins import capture_execution
+from nro.site.configuration import (
+    CHECKOUT,
+    installation_record,
+    protected_site_fingerprint,
+    settings,
+)
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec

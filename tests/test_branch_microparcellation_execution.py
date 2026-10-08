@@ -96,7 +96,7 @@ def case(tmp_path, monkeypatch):
     cfg = yaml.safe_load(
         (
             Path(entry.__file__).parents[2]
-            / "configuration/starters/configs/microparcellation/main_microparcellation.yml"
+            / "definitions/starters/configs/microparcellation/main_microparcellation.yml"
         ).read_text()
     )
     cfg["anat_directory"] = "main"

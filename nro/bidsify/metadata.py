@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from nro.configuration.hardware import (
+from nro.definitions.hardware import (
     gradient_unwarping_catalog_path,
     resolve_acquisition_metadata,
 )
-from nro.configuration.site import settings
+from nro.site.configuration import settings
 
 from .errors import BidsificationError
 

@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration import site
-from nro.engine import bootstrap, user_launcher
-from nro.engine import installation_transition as transition
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry_schema import current_schema_sql
+from nro.site import bootstrap, user_launcher
+from nro.site import configuration as site
+from nro.site import installation_transition as transition
 
 
 @pytest.fixture

@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from nro.bin.dev import build_parser
-from nro.engine.development import TestSelection as Selection
-from nro.engine.development import (
+from nro.development import TestSelection as Selection
+from nro.development import (
     changed_paths,
     load_scopes,
     run_selection,

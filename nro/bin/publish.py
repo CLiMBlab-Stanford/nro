@@ -26,8 +26,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.publish") -> Non
     prog controls help/error labels. Invalid arguments raise SystemExit.
     """
     args = build_parser(prog=prog).parse_args(argv)
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import CHECKOUT, installation_record, settings
 
     values = settings()[0]
     if (

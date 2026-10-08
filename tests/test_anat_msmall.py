@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import yaml
 
-from nro.configuration.markup import SubjectMarkup
-from nro.configuration.store import ConfigStore
+from nro.definitions.markup import SubjectMarkup
+from nro.definitions.store import ConfigStore
 from nro.modules.anat import planning as anat_planning
 from nro.modules.anat.msmall import add_msmall_plan, resolve_msmall_calibration
 from nro.modules.anat.msmall_validate_atlas import validate as validate_atlas
@@ -346,7 +346,7 @@ def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> N
             (yaml.safe_dump(historical), before["module_lineage_id"]),
         )
     monkeypatch.setattr(
-        "nro.configuration.markup.MarkupStore.subject",
+        "nro.definitions.markup.MarkupStore.subject",
         lambda _store, _markup_id, _project, _subject_dir: markup,
     )
     from nro.orchestration.manifests import assess_registry

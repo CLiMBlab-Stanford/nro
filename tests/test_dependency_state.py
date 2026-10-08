@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.orchestration import completion, dependency_state
 from nro.orchestration.completion import record_completion
 from nro.orchestration.contracts import WorkItemSpec

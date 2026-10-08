@@ -9,7 +9,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 from nro.engine.cli import (
     CoreSelection,
     add_core_selection_arguments,
@@ -258,7 +258,7 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
         planner_defaults=True,
         default_modules=terminal_modules(),
     )
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     site, _ = settings()
     parser.add_argument("--partition", default=site["partition"])
@@ -330,7 +330,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = build_parser(prog=prog).parse_args(raw_argv)
-    from nro.configuration import site
+    from nro.site import configuration as site
 
     record = site.installation_record()
     if record.get("mode") in {"shared", "branch"} and not record.get("ready") and not args.repair:

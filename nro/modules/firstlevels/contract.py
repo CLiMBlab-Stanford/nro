@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from nro.configuration.schema import scientific_values
-from nro.configuration.store import fingerprint
+from nro.definitions.schema import scientific_values
+from nro.definitions.store import fingerprint
 from nro.engine.artifact_metadata import (
     metadata_contract_compatible,
     validate_metadata_fields,

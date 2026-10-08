@@ -4,8 +4,8 @@ import re
 from copy import deepcopy
 from pathlib import Path
 
-from nro.configuration.parsing import parse_mapping
-from nro.configuration.site import (
+from nro.definitions.parsing import parse_mapping
+from nro.site.configuration import (
     definitions_root,
     definitions_roots,
     read_site_definition,

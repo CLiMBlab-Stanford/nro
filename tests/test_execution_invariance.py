@@ -16,7 +16,7 @@ from nro.modules.networks.adjacency import pconn_to_adjacency
 
 
 def _execution_fields():
-    from nro.configuration.schema import SCHEMAS, Field
+    from nro.definitions.schema import SCHEMAS, Field
 
     def walk(kind, fields, prefix=()):
         for key, rule in fields.items():
@@ -32,8 +32,8 @@ def _execution_fields():
 def test_every_declared_execution_setting_is_excluded_from_scientific_identity(kind, keys):
     from copy import deepcopy
 
-    from nro.configuration.schema import SCHEMAS
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.schema import SCHEMAS
+    from nro.definitions.store import ConfigStore
 
     store = ConfigStore()
     original = store.load_configuration(kind, "main")
@@ -62,7 +62,7 @@ def test_every_declared_execution_setting_is_excluded_from_scientific_identity(k
 
 
 def test_split_half_block_frames_is_scientific():
-    from nro.configuration.store import ConfigStore
+    from nro.definitions.store import ConfigStore
 
     store = ConfigStore()
     original = store.load_configuration("microparcellation", "main")

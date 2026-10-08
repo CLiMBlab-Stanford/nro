@@ -170,7 +170,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.log") -> None:
         selection = core_selection(args)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    from nro.configuration import site
+    from nro.site import configuration as site
 
     bids_root = site.bids_root()
     selectors = selection.work_item_entities

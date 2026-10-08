@@ -113,8 +113,8 @@ def test_branch_change_requires_its_own_checkout(command, tmp_path):
 
 
 def test_select_and_restore_branch_definitions(command, tmp_path, monkeypatch):
-    from nro.configuration import site
-    from nro.configuration.definitions import create_store
+    from nro.definitions.repository import create_store
+    from nro.site import configuration as site
 
     invoke, identities, _ = command
     root = tmp_path / "source"

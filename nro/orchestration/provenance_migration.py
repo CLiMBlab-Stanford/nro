@@ -15,7 +15,7 @@ from typing import Callable, Iterable, Iterator, Mapping, TypeVar
 
 import yaml
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.engine.bids import bids_suffix
 from nro.engine.freesurfer_templates import (
     FASTSURFER_FREESURFER_BUILD,

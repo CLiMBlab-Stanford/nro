@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration.definition_migrations import refresh_manifest
-from nro.configuration.runtime import load_runtime_configuration
-from nro.configuration.store import (
+from nro.definitions.migrations import refresh_manifest
+from nro.definitions.runtime import load_runtime_configuration
+from nro.definitions.store import (
     CONFIGURATION_CLASSES,
     ConfigStore,
     WorkflowError,

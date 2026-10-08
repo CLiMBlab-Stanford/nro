@@ -11,10 +11,10 @@ import yaml
 import nro.modules.func.planning as func_planning
 import nro.orchestration.catalog as orchestration_catalog
 import nro.orchestration.manifests as orchestration_manifests
-from nro.configuration.definition_migrations import refresh_manifest
-from nro.configuration.hardware import resolve_gradient_unwarping
-from nro.configuration.markup import SubjectMarkup
-from nro.configuration.store import ConfigStore, configuration_fingerprint, fingerprint
+from nro.definitions.hardware import resolve_gradient_unwarping
+from nro.definitions.markup import SubjectMarkup
+from nro.definitions.migrations import refresh_manifest
+from nro.definitions.store import ConfigStore, configuration_fingerprint, fingerprint
 from nro.modules.anat import planning as anat_planning
 from nro.modules.anat.contract import (
     anatomical_output_contract,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration.branches import BranchTopology
 from nro.orchestration.contracts import WorkItemSpec
 

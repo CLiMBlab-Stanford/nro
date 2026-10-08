@@ -5,9 +5,9 @@ from pathlib import Path
 
 def registered_rows(bids_root: Path) -> list[dict] | None:
     """Return authorized cached rows, or None before central activation."""
-    from nro.configuration.site import CHECKOUT, installation_record, settings
     from nro.orchestration.scheduler_client import status
     from nro.orchestration.scheduler_implementation import implementation_path
+    from nro.site.configuration import CHECKOUT, installation_record, settings
 
     values = settings()[0]
     control = Path(values["registry"])

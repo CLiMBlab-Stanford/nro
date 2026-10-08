@@ -6,9 +6,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from nro.configuration.markup import MarkupStore
-from nro.configuration.site import with_site_read_cache
-from nro.configuration.store import ResolvedWorkflow, fingerprint
+from nro.definitions.markup import MarkupStore
+from nro.definitions.store import ResolvedWorkflow, fingerprint
 from nro.engine.bids import (
     ENTITY_ORDER,
     discover_raw_runs,
@@ -33,6 +32,7 @@ from nro.orchestration.planning_context import (
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import discover_bids_participants
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
+from nro.site.configuration import with_site_read_cache
 
 
 @dataclass(frozen=True)
@@ -157,12 +157,12 @@ class Planner:
 
     def __init__(self, registry: WorkflowRegistry, *, bids_root: str | Path) -> None:
         """Bind scientific workflow records and raw BIDS without opening a scheduler."""
-        from nro.configuration.site import (
+        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
+        from nro.site.configuration import (
             definitions_roots,
             protected_site_fingerprint,
             settings,
         )
-        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
         self.registry = registry
         self.bids_root = Path(bids_root).expanduser().resolve()
@@ -206,7 +206,7 @@ class Planner:
         lineage_ids: Sequence[str] = (),
     ) -> PlanningResult:
         """Construct requests from an explicit user selection."""
-        from nro.configuration.site import definitions_root, settings
+        from nro.site.configuration import definitions_root, settings
 
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         request_plans: list[RequestPlan] = []
@@ -309,7 +309,7 @@ class Planner:
         max_memory_gb: int,
     ) -> PlanningResult:
         """Recompile exact registered identities without broad selector expansion."""
-        from nro.configuration.site import definitions_root, settings
+        from nro.site.configuration import definitions_root, settings
 
         site_settings = {**settings()[0], "definitions": str(definitions_root())}
         requests: list[RequestPlan] = []

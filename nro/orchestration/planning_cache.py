@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Mapping
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 
 PLANNER_CACHE_VERSION = 1
 _SOURCE_SUFFIXES = (".json", ".tsv", ".bval", ".bvec", ".nii", ".nii.gz")

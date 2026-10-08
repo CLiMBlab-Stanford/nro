@@ -8,7 +8,7 @@ from pathlib import Path
 
 def build_parser(*, prog: str = "nro.bin.start") -> argparse.ArgumentParser:
     """Construct the scheduler-start parser without starting the service."""
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     site, _ = settings()
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
@@ -25,8 +25,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.start") -> None:
     args = build_parser(prog=prog).parse_args(argv)
     if args.time < 1 or args.memory < 1 or args.cpus < 1:
         raise SystemExit("--time, --memory, and --cpus must be positive")
-    from nro.configuration import site
     from nro.orchestration.scheduler_client import start
+    from nro.site import configuration as site
 
     values = site.settings()[0]
     result = start(

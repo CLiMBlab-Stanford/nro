@@ -93,7 +93,7 @@ def test_find_rejects_derivative_only_selectors(arguments) -> None:
 
 def test_find_cli_prints_paths_or_json(tmp_path, monkeypatch, capsys) -> None:
     bids = _dataset(tmp_path)
-    monkeypatch.setattr("nro.configuration.site.bids_root", lambda: bids)
+    monkeypatch.setattr("nro.site.configuration.bids_root", lambda: bids)
 
     main(["-P", "other", "-p", "sub-t12", "-r", "task=Rest"])
     plain = capsys.readouterr().out.strip()

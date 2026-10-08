@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration import site
-from nro.engine import bootstrap
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import Registry
+from nro.site import bootstrap
+from nro.site import configuration as site
 
 
 def test_shared_and_branch_state_locations(tmp_path):
@@ -60,8 +60,8 @@ def test_generic_defaults_are_checkout_independent(tmp_path, monkeypatch):
 
 
 def test_branch_cannot_use_production_registry_or_edit_site(tmp_path, monkeypatch):
-    from nro.engine import site_setup
-    from nro.engine.definition_editor import save_definition
+    from nro.definitions.editor import save_definition
+    from nro.site import setup as site_setup
 
     monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch"})
     monkeypatch.setattr(site_setup, "installation_record", site.installation_record)

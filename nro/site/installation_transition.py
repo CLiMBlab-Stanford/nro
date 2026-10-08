@@ -7,9 +7,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from nro.configuration.site import settings
 from nro.orchestration.branches import checkout_identity
 from nro.orchestration.control_paths import ControlPaths
+from nro.site.configuration import settings
 
 
 def _require_quiescent(site: Path) -> None:
@@ -49,7 +49,7 @@ def convert_shared(root: Path, replacement: dict | None, *, site: Path | None = 
     After conversion begins, failures leave a blocked branch record for retry;
     the previous shared record is retained, never automatically reactivated.
     """
-    from nro.engine.bootstrap import RECORD, write_record
+    from nro.site.bootstrap import RECORD, write_record
 
     record_path = root / RECORD
     current = json.loads(record_path.read_text())

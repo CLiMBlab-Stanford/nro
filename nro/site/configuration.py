@@ -371,7 +371,7 @@ def write_site_definition(
     path = site_definition_path(definitions)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = make_site_document(settings_values, bidsify=bidsify)
-    from nro.configuration.definition_migrations import (
+    from nro.definitions.migrations import (
         MANIFEST,
         normalize_managed_text,
         update_store,
@@ -525,7 +525,7 @@ def definitions_roots() -> tuple[Path, ...]:
     roots = (shared,)
     record = installation_record()
     if record.get("mode") == "branch" and record.get("ready"):
-        from nro.configuration.branch_definitions import inherited_definitions
+        from nro.definitions.branch_definitions import inherited_definitions
 
         roots = inherited_definitions(Path(values["registry"]), record, shared)
     for root in roots:
@@ -585,7 +585,7 @@ def require_definition_write(path: Path | None = None, *, creating_store: bool =
             raise ValueError(
                 "Incomplete development installations cannot edit definitions; finish setup first"
             )
-        from nro.configuration.branch_definitions import require_private_store, selected_definitions
+        from nro.definitions.branch_definitions import require_private_store, selected_definitions
 
         values = settings()[0]
         control, shared = Path(values["registry"]), Path(values["definitions"])

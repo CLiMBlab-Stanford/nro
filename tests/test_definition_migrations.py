@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration.definition_migrations import (
+from nro.definitions.migrations import (
     LEGACY_MANAGED_NOTICES,
     MANAGED_NOTICE,
     MANIFEST,
@@ -20,7 +20,7 @@ from nro.configuration.definition_migrations import (
     update_store,
     validate_store_integrity,
 )
-from nro.configuration.definitions import create_store, validate_store
+from nro.definitions.repository import create_store, validate_store
 
 
 def _files(root: Path) -> dict[Path, bytes]:
@@ -112,8 +112,8 @@ class RejectApplicationDependencies(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, RejectApplicationDependencies())
-from nro.engine import installation_layers
-from nro.engine.site_setup import migrate_site_configuration
+from nro.site import installation_layers
+from nro.site.setup import migrate_site_configuration
 
 site, checkout, applications = map(Path, sys.argv[1:])
 migrate_site_configuration(site)
@@ -170,7 +170,7 @@ def test_schema_four_removes_site_pycicada_path(tmp_path):
     value["version"] = 2
     value["resources"]["pycicada"] = "/shared/pycicada/bin/cicada-python"
     config = root / "configs/func/legacy_func.yml"
-    starter = Path(__file__).parents[1] / "nro/configuration/starters/configs/func/main_func.yml"
+    starter = Path(__file__).parents[1] / "nro/definitions/starters/configs/func/main_func.yml"
     config_value = yaml.safe_load(starter.read_text())
     config_value["cicada_cmd"] = "site:pycicada"
     config.write_text(MANAGED_NOTICE + yaml.safe_dump(config_value, sort_keys=False))
@@ -263,8 +263,8 @@ def test_next_writer_recovers_an_interrupted_publication(tmp_path):
 
 
 def test_branch_install_migrates_only_its_private_layer(tmp_path, monkeypatch):
-    from nro.configuration import branch_definitions
-    from nro.engine import bootstrap
+    from nro.definitions import branch_definitions
+    from nro.site import bootstrap
 
     shared = create_store(tmp_path / "shared")
     parent = create_store(tmp_path / "parent", include_site=False, inherited_site=shared)
@@ -291,7 +291,7 @@ def test_branch_install_migrates_only_its_private_layer(tmp_path, monkeypatch):
 
 
 def test_branch_definition_setup_passes_complete_branch_identity(tmp_path, monkeypatch):
-    from nro.engine import branch_definition_setup
+    from nro.definitions import branch_setup as branch_definition_setup
 
     captured = {}
     monkeypatch.setattr(

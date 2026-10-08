@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nro.configuration import store as store_module
-from nro.configuration.authoring import definition_target, validate_definition
-from nro.configuration.store import ConfigStore
-from nro.engine import definition_editor
+from nro.definitions import editor as definition_editor
+from nro.definitions import store as store_module
+from nro.definitions.authoring import definition_target, validate_definition
+from nro.definitions.store import ConfigStore
 from nro.modules.firstlevels.authoring import discover_event_files, model_draft
 from nro.modules.firstlevels.task_models import validate_task_model
 
@@ -40,7 +40,7 @@ def store(tmp_path, monkeypatch):
 def _write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
-    from nro.configuration.definition_migrations import MANIFEST, refresh_manifest
+    from nro.definitions.migrations import MANIFEST, refresh_manifest
 
     for parent in path.parents:
         if (parent / MANIFEST).is_file():
@@ -225,7 +225,7 @@ def test_markup_edit_does_not_revalidate_unrelated_event_catalog(store, tmp_path
     edit(["markup", "--file", str(draft)])
     assert definition_target(store, "markup", "main").path.read_text().endswith(draft.read_text())
 
-    from nro.configuration.definitions import validate_store
+    from nro.definitions.repository import validate_store
 
     with pytest.raises(ValueError, match="Unindexed event table"):
         validate_store(store.root, require_site=True)
@@ -338,7 +338,7 @@ def test_exiting_editor_without_write_skips_store_integrity_scan(store, monkeypa
         raise AssertionError("read-only draft preparation must not scan the store")
 
     monkeypatch.setattr(
-        "nro.configuration.definition_migrations.validate_store_integrity",
+        "nro.definitions.migrations.validate_store_integrity",
         unexpected_integrity_scan,
     )
     _interactive(monkeypatch, lambda command, **kwargs: None, [])

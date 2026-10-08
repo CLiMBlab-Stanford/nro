@@ -112,7 +112,7 @@ def main() -> None:
     sys.dont_write_bytecode = True
     os.chdir(root)
     if site_path != "-":
-        from nro.configuration.site import ENVIRONMENT_KEYS
+        from nro.site.configuration import ENVIRONMENT_KEYS
 
         for key in ENVIRONMENT_KEYS:
             os.environ.pop(key, None)

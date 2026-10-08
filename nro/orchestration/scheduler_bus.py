@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text, read_json
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory, utcnow

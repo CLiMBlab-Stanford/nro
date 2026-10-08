@@ -7,7 +7,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from nro.configuration.store import ConfigStore
+from nro.definitions.store import ConfigStore
 
 from .images import gifti_vertex_count
 
@@ -17,7 +17,7 @@ FSAVERAGE_VERTEX_COUNTS = {"fsaverage": 163842, "fsaverage6": 40962}
 def templateflow_roots() -> tuple[Path, ...]:
     """Return existing local TemplateFlow trees in preference order."""
     candidates: list[Path] = []
-    from nro.configuration.site import settings
+    from nro.site.configuration import settings
 
     configured = settings()[0]["templates"]
     if configured:

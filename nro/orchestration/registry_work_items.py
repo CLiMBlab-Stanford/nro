@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from nro.configuration.store import fingerprint
+from nro.definitions.store import fingerprint
 from nro.orchestration import dependency_state
 from nro.orchestration.artifact_resolution import (
     output_contracts_overlap,

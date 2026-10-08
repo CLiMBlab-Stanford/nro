@@ -11,7 +11,7 @@ from typing import Callable
 import nibabel as nib
 import numpy as np
 
-from nro.configuration.hardware import (
+from nro.definitions.hardware import (
     GRADIENT_UNWARP_IMAGE,
     GRADIENT_UNWARP_METHOD,
     GradientUnwarpingResolution,

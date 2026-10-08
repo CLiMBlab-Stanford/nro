@@ -16,7 +16,7 @@ from typing import Optional
 
 import numpy as np
 
-from nro.configuration.runtime import SETTINGS
+from nro.definitions.runtime import SETTINGS
 from nro.engine.io import atomic_write_json
 from nro.engine.paths import resolve_project_path
 

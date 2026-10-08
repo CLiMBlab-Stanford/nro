@@ -256,7 +256,7 @@ Scientific tools use the worker's CPU allocation, which `nro run --cpus` sets.
 `verbose` changes logging. `container` controls the runtime, image, binds, home,
 environment isolation, and inner setup command for anatomy.
 
-```{literalinclude} ../../nro/configuration/starters/configs/anat/main_anat.yml
+```{literalinclude} ../../nro/definitions/starters/configs/anat/main_anat.yml
 :language: yaml
 ```
 

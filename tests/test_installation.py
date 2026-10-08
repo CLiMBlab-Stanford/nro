@@ -14,17 +14,19 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from nro.configuration import site
-from nro.configuration.store import ConfigStore
-from nro.engine import (
+from nro.definitions.store import ConfigStore
+from nro.site import (
     bootstrap,
     bootstrap_dependencies,
     dependencies,
     installation_layers,
     shared_installation,
-    site_setup,
 )
-from nro.engine.site_setup import edit_settings, save_settings
+from nro.site import configuration as site
+from nro.site import (
+    setup as site_setup,
+)
+from nro.site.setup import edit_settings, save_settings
 
 
 @pytest.mark.parametrize("response", ["", "y", "Y", "yes", "YES"])
@@ -192,8 +194,8 @@ def test_flywheel_defaults_are_optional_validated_site_settings(isolated_site):
 
 
 def test_site_locator_updates_versioned_protected_definition(isolated_site, tmp_path):
-    from nro.configuration.definitions import create_store
-    from nro.configuration.site import read_site_definition
+    from nro.definitions.repository import create_store
+    from nro.site.configuration import read_site_definition
 
     definitions = create_store(tmp_path / "definitions")
     isolated_site.write_text(f'definitions = "{definitions}"\n')
@@ -205,8 +207,8 @@ def test_site_locator_updates_versioned_protected_definition(isolated_site, tmp_
 
 
 def test_installation_migrates_legacy_site_and_bidsify_settings(isolated_site, tmp_path):
-    from nro.configuration.definitions import create_store
-    from nro.configuration.site import read_site_definition
+    from nro.definitions.repository import create_store
+    from nro.site.configuration import read_site_definition
 
     definitions = create_store(tmp_path / "definitions")
     (definitions / ".nro-definitions.yml").unlink()
@@ -324,7 +326,7 @@ def test_shared_site_ignores_personal_environment(isolated_site, monkeypatch):
     monkeypatch.setattr(
         site, "installation_record", lambda: {"mode": "shared", "site": str(isolated_site)}
     )
-    monkeypatch.setattr("nro.engine.site_setup.installation_record", site.installation_record)
+    monkeypatch.setattr("nro.site.setup.installation_record", site.installation_record)
     assert site.settings()[0]["bids"] == "/shared/BIDS"
     with pytest.raises(ValueError, match="maintain"):
         edit_settings(["bids=/other"])

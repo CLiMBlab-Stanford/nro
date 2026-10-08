@@ -28,8 +28,7 @@ from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
 
 import yaml
 
-from nro.configuration.paths import BIDS_PATH, REGISTRY_PATH
-from nro.configuration.store import (
+from nro.definitions.store import (
     CONFIGURATION_CLASSES,
     fingerprint,
 )
@@ -49,6 +48,7 @@ from nro.orchestration.registry_schema import (
 from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.resources import WORK_ITEM_RESOURCE_CLASSES, compatible_work_item_classes
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
+from nro.site.paths import BIDS_PATH, REGISTRY_PATH
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import ExecutionEnvelope, WorkItemSpec
@@ -643,7 +643,7 @@ class Registry(WorkflowRegistry):
         ``installation_maintenance`` lets the installer resume an incomplete
         shared setup. Normal callers must leave it disabled.
         """
-        from nro.configuration.site import require_execution_support
+        from nro.site.configuration import require_execution_support
 
         require_execution_support(installation_maintenance=installation_maintenance)
         self.paths = paths

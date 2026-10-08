@@ -8,9 +8,8 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Sequence
 
-from nro.configuration.markup import load_source_markup
-from nro.configuration.paths import BIDS_PATH
-from nro.configuration.runtime import configure_func, load_runtime_configuration
+from nro.definitions.markup import load_source_markup
+from nro.definitions.runtime import configure_func, load_runtime_configuration
 from nro.engine.bids import (
     discover_raw_runs,
     parse_selectors,
@@ -18,6 +17,7 @@ from nro.engine.bids import (
     strip_bids_prefix,
 )
 from nro.orchestration.runtime import select_runtime_config
+from nro.site.paths import BIDS_PATH
 
 
 def build_parser() -> argparse.ArgumentParser:

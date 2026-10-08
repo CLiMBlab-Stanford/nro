@@ -73,7 +73,7 @@ def normalize_key(value: str, *, host: str) -> str:
 
 def store_key(root: Path, server: str, value: str, *, host: str) -> Path:
     """Atomically replace the current user's key with private permissions."""
-    from nro.configuration.definition_migrations import store_lock
+    from nro.definitions.migrations import store_lock
 
     root = Path(root).expanduser().resolve()
     path = credential_path(root, server)
@@ -139,7 +139,7 @@ def has_key(root: Path, server: str, *, host: str) -> bool:
 
 def remove_key(root: Path, server: str) -> bool:
     """Remove the current user's key without touching another user's credentials."""
-    from nro.configuration.definition_migrations import store_lock
+    from nro.definitions.migrations import store_lock
 
     root = Path(root).expanduser().resolve()
     path = credential_path(root, server)

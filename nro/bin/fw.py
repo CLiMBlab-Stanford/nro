@@ -7,7 +7,7 @@ import getpass
 from pathlib import Path
 
 from nro.bidsify.credentials import has_key, remove_key, store_key
-from nro.configuration.site import read_site_definition, settings
+from nro.site.configuration import read_site_definition, settings
 
 
 def _site() -> tuple[Path, dict]:

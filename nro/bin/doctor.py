@@ -4,8 +4,8 @@ import argparse
 import json
 import sys
 
-from nro.configuration import site
-from nro.engine.dependencies import check_installation
+from nro.site import configuration as site
+from nro.site.dependencies import check_installation
 
 
 def installation_details() -> list[dict]:

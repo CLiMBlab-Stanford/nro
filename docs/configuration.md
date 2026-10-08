@@ -1,5 +1,15 @@
 # Workflows and configuration
 
+Configurations are one kind of definition. Everything authored through
+`nro def` is implemented by `nro.definitions`; this includes module
+configurations, workflows, models, markup, hardware descriptions, and
+bidsification policy. A resolved configuration is the validated runtime form
+compiled from those definitions, not a separate class of site metadata.
+
+Protected operational settings such as shared paths and installation state
+belong to `nro.site`. They are configured during site setup rather than through
+`nro def`.
+
 Scientific defaults ship with nro as packaged `main` configurations, grouped by
 configuration class. The external definitions store may contain small site-specific
 overrides and named alternatives; see [definitions stores](definitions.md). A
@@ -18,7 +28,7 @@ used for task-name suggestions during bidsification. It may also contain
 and known-bad source exclusion. A site can also define
 [gradient-unwarping hardware](definitions.md#gradient-unwarping-hardware).
 
-```{literalinclude} ../nro/configuration/starters/workflows/main_workflow.yml
+```{literalinclude} ../nro/definitions/starters/workflows/main_workflow.yml
 :language: yaml
 ```
 
@@ -39,7 +49,7 @@ an omitted class selects `main`. Missing references and unknown classes are
 errors. Private runtime snapshots are also validated, without applying today's
 defaults to previously resolved settings.
 
-The [field schema](autoapi/nro/configuration/schema/index.rst) defines types,
+The [field schema](autoapi/nro/definitions/schema/index.rst) defines types,
 nullable fields, allowed values, bounds, and execution-only roles. Packaged
 `main` YAML files must supply every required field. An external
 `main_CLASS.yml`, when present, is a partial override: omitted fields continue
@@ -180,5 +190,5 @@ it. Review its effect on artifacts with `status --update` or a deliberately
 scoped `run --no-submit`. Neither is a guarantee that no registry state changes:
 both perform writes. Keep shared workers stopped while changing shared code.
 
-The Python entry points are [ConfigStore](autoapi/nro/configuration/store/index.rst)
-and [runtime configuration](autoapi/nro/configuration/runtime/index.rst).
+The Python entry points are [ConfigStore](autoapi/nro/definitions/store/index.rst)
+and [runtime configuration](autoapi/nro/definitions/runtime/index.rst).

@@ -29,7 +29,8 @@ compiled work-item contracts -----> branch scientific registry
 
 ## Boundaries
 
-- `nro.configuration` owns definitions loading, validation, inheritance, and
+- `nro.definitions` owns every declarative record managed by `nro def`,
+  including module configurations, plus loading, validation, inheritance, and
   compiled scientific values. Scientific modules consume compiled values.
 - `nro.modules.<name>` owns one module's planning, DAG, algorithms, artifact
   contract, and output metadata. It may use public helpers from `nro.engine`.
@@ -46,8 +47,9 @@ compiled work-item contracts -----> branch scientific registry
   second scheduler or scientific pipeline.
 - `nro.bidsify` owns staged source-data ingestion. Published BIDS data is an
   input to planning, not a derivative work item.
-- `install` and `nro.engine.shared_installation` own environment setup and
-  transactional shared maintenance.
+- `nro.site` owns protected site settings, environment setup, and
+  transactional shared maintenance. These settings are operational inputs,
+  not user-authored definitions.
 
 Artifact producers declare their inventory and metadata once. Completion,
 repair, downstream resolution, scenes, rendering, and purge consume those

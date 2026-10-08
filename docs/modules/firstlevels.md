@@ -185,7 +185,7 @@ These names are BIDS-like, not a claim of validator compliance.
 | `container` | QuNex container settings used for Workbench surface smoothing. |
 | `wb_command` | Workbench command inside the configured container. |
 
-```{literalinclude} ../../nro/configuration/starters/configs/firstlevels/main_firstlevels.yml
+```{literalinclude} ../../nro/definitions/starters/configs/firstlevels/main_firstlevels.yml
 :language: yaml
 ```
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from nro.configuration.store import ConfigStore, fingerprint
+from nro.definitions.store import ConfigStore, fingerprint
 from nro.engine.freesurfer_templates import (
     FREESURFER_BUILD,
     FREESURFER_FSAVERAGE_SOURCE,

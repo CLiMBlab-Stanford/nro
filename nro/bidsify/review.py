@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nro.configuration.events import EventFile, EventStore
+from nro.definitions.events import EventFile, EventStore
 from nro.engine.events import validate_events
 
 from .config import ALLOWED_TYPES, bids_label

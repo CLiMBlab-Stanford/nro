@@ -21,7 +21,7 @@ module. Lab-wide planning, state, and workers remain in `nro/orchestration`.
 
 ## Configuration authority
 
-`nro/configuration/store.py` resolves configurations and workflows from the
+`nro/definitions/store.py` resolves configurations and workflows from the
 external [definitions store](definitions.md). Its `configs/` directory contains
 one directory per configuration class. Workflows live in `workflows/`. Processing
 requests accept identifiers; `nro paths` selects the store root.

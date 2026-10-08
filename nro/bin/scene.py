@@ -9,7 +9,6 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
-from nro.configuration.paths import WB_COMMAND_PATH
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
 from nro.engine.cli import add_core_selection_arguments, core_selection, matches_module_lineage
 from nro.engine.scenes import (
@@ -28,6 +27,7 @@ from nro.engine.workbench import resolve_workbench_command, surface_inventory
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.catalog import MODULES
+from nro.site.paths import WB_COMMAND_PATH
 
 
 def _mapping(value: object) -> dict[str, str]:
@@ -270,8 +270,8 @@ def generate_scenes(
     selection, *, wb_command: str | Path, publish: bool = False
 ) -> tuple[list[Path], dict]:
     """Build scenes for a resolved selection and return their paths and site settings."""
-    from nro.configuration.site import CHECKOUT, bids_root, settings
     from nro.orchestration.branch_views import registered_rows
+    from nro.site.configuration import CHECKOUT, bids_root, settings
 
     selected_bids_root = bids_root()
     rows = registered_rows(selected_bids_root)
