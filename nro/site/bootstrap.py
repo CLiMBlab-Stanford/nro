@@ -65,16 +65,22 @@ def check_workers(site: Path) -> None:
         return
     from nro.orchestration.scheduler_bus import read_active, read_snapshot
 
+    active = read_active(paths.root)
     snapshot = read_snapshot(paths.root)
     if snapshot is not None:
+        if active is not None:
+            raise RuntimeError("Stop or drain the shared worker pool before maintenance.")
         workers = [
             row
             for row in snapshot.get("workers", ())
             if row["state"] in {"idle", "running", "draining", "shutdown_requested"}
         ]
         submissions = list(snapshot.get("submissions", ()))
-        records = workers + submissions
-    elif read_active(paths.root) is not None:
+        # A controller can fail after reserving a submission but before sbatch
+        # returns its job ID. Once its lease is gone, those unbound records do
+        # not describe processes that maintenance must wait for.
+        records = [row for row in (*workers, *submissions) if row.get("slurm_job_id")]
+    elif active is not None:
         raise RuntimeError("Stop or drain the shared worker pool before maintenance.")
     else:
         # An installation predating scheduler snapshots may be inspected only
@@ -102,7 +108,7 @@ def check_workers(site: Path) -> None:
         records = workers + submissions
     if not records:
         return
-    if any(not row.get("slurm_job_id") for row in records):
+    if snapshot is None and any(not row.get("slurm_job_id") for row in records):
         raise RuntimeError(
             "Stop or drain the shared worker pool before maintaining this installation."
         )

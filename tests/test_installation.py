@@ -900,6 +900,43 @@ def test_maintenance_rejects_active_workers(tmp_path):
         bootstrap.check_workers(config)
 
 
+def test_maintenance_ignores_unbound_records_from_dead_scheduler(tmp_path, monkeypatch):
+    from nro.orchestration import scheduler_bus
+
+    control = tmp_path / "registry"
+    scheduler = control / "shared/scheduler"
+    scheduler.mkdir(parents=True)
+    (scheduler / "registry.sqlite3").touch()
+    scheduler_bus.publish_snapshot(
+        control,
+        {
+            "protocol": scheduler_bus.PROTOCOL,
+            "generation": 1,
+            "published_at": "test",
+            "service_active": True,
+            "workers": [],
+            "submissions": [
+                {
+                    "id": 1,
+                    "state": "prepared",
+                    "slurm_job_id": None,
+                    "memory_gb": 32,
+                }
+            ],
+            "branches": {},
+        },
+    )
+    config = tmp_path / "site.toml"
+    save_settings(config, {"registry": str(control)})
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("An unbound record was queried through Slurm"),
+    )
+
+    bootstrap.check_workers(config)
+
+
 def test_prepared_shared_setup_verifies_its_installation_barrier(tmp_path):
     control = tmp_path / "registry"
     scheduler = control / "shared/scheduler"
