@@ -540,7 +540,7 @@ def _main(argv=None) -> None:
     prepare_shared = None
     if mode == "shared":
 
-        def prepare_shared_site() -> None:
+        def prepare_shared_site(*, migrate: bool) -> None:
             from nro.site.setup import (
                 edit_settings,
                 migrate_site_configuration,
@@ -554,10 +554,11 @@ def _main(argv=None) -> None:
                     edit_settings(path=site, maintain=True)
                     if not site.exists():
                         raise RuntimeError("Path setup was cancelled")
-            # Migrate protected definitions before importing application-layer
-            # machinery. Source capture uses the registry lock implementation,
-            # whose module resolves protected site settings during import.
-            migrate_site_configuration(site)
+            if migrate:
+                # Migrate protected definitions before importing application-layer
+                # machinery. Source capture uses the registry lock implementation,
+                # whose module resolves protected site settings during import.
+                migrate_site_configuration(site)
 
         def prepare_shared() -> None:
             nonlocal shared_registry
@@ -613,22 +614,10 @@ def _main(argv=None) -> None:
         if args.adopt_definitions:
             if mode == "branch":
                 parser.error("--adopt-definitions is unavailable in branch installations")
-            from nro.definitions.migrations import adopt_store_drift
-            from nro.definitions.repository import validate_store
-
-            definitions = Path(settings(path=site)[0]["definitions"])
-            adopted = adopt_store_drift(
-                definitions,
-                validate=lambda candidate: validate_store(candidate, require_site=True),
-            )
-            print(
-                "Adopted direct definition changes: " + ", ".join(str(path) for path in adopted),
-                flush=True,
-            )
         if mode != "shared" and mode != "branch":
             check_workers(site)
         if prepare_shared_site is not None:
-            prepare_shared_site()
+            prepare_shared_site(migrate=not args.adopt_definitions)
         layered = mode in {"personal", "shared"}
         if layered:
             environment = None
@@ -743,6 +732,21 @@ def _main(argv=None) -> None:
             subprocess.run(sync, cwd=ROOT, env=sync_env, check=True)
             record["environment"] = str(environment)
         environment.mkdir(parents=True, exist_ok=True)
+        if args.adopt_definitions:
+            if application is None:
+                raise RuntimeError("Definition adoption requires a staged application")
+            python = str(environment / "bin/python")
+            command = list(
+                application.command(
+                    [python, "-m", "nro.bin.def", "apply"],
+                    site=site,
+                )
+            )
+            subprocess.run(command, cwd=ROOT, env=env, check=True)
+            if mode == "shared":
+                from nro.site.setup import migrate_site_configuration
+
+                migrate_site_configuration(site)
         if mode == "branch":
             (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
         if prepare_shared is not None:

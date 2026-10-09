@@ -767,6 +767,68 @@ def test_personal_setup_installs_selected_extras(
     assert Path(installed["application"]) == application_root
 
 
+def test_definition_adoption_runs_in_staged_application(tmp_path, monkeypatch):
+    root = tmp_path / "personal"
+    (root / ".nro-bootstrap/bin").mkdir(parents=True)
+    (root / ".nro-bootstrap/bin/uv").write_text("uv")
+    config = root / "site.toml"
+    config.write_text(f'definitions = "{tmp_path / "definitions"}"\n')
+    (root / bootstrap.RECORD).write_text(
+        json.dumps(
+            {
+                "mode": "personal",
+                "checkout": str(root),
+                "environment": str(root / ".nro-env"),
+                "site": str(config),
+                "ready": True,
+                "with_oslom": False,
+            }
+        )
+    )
+    environment = root / ".nro-environments" / ("dependencies-" + "d" * 64)
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").write_text("python")
+    application_root = root / ".nro-environments/applications" / ("a" * 64)
+    (application_root / "nro/orchestration").mkdir(parents=True)
+    (application_root / "nro/orchestration/source_launcher.py").write_text("")
+    application = SimpleNamespace(
+        root=application_root,
+        digest="a" * 64,
+        command=lambda command, **options: (
+            command[0],
+            str(application_root / "nro/orchestration/source_launcher.py"),
+            "a" * 64,
+            str(config),
+            "site-digest",
+            *command[2:],
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr(bootstrap, "check_workers", lambda _site: None)
+    monkeypatch.setattr(bootstrap, "connect_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        installation_layers,
+        "prepare_dependencies",
+        lambda *args, **kwargs: (environment, "d" * 64),
+    )
+    monkeypatch.setattr(installation_layers, "capture_application", lambda _root: application)
+    monkeypatch.setattr(installation_layers, "prune_environments", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda command, **options: calls.append((command, options)),
+    )
+
+    bootstrap.main(["--maintain", "--offline", "--adopt-definitions"])
+
+    assert len(calls) == 2
+    assert calls[0][0][-2:] == ["nro.bin.def", "apply"]
+    assert calls[0][0][0] == str(environment / "bin/python")
+    assert calls[0][1]["env"]["NRO_SETUP_CHILD"] == "1"
+    assert "nro.bin.setup" in calls[1][0]
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_failed_personal_candidate_never_replaces_active_installation(
     tmp_path, monkeypatch, existing

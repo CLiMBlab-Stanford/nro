@@ -50,8 +50,9 @@ Definitions changed directly outside the authoring commands normally block
 setup. To recover an intentional direct edit, run `./install
 --adopt-definitions` (with `--maintain` for a shared installation). The
 installer validates and publishes all current definition-store drift before
-continuing. This exceptional recovery option is unavailable to development
-branches.
+continuing. Validation runs in the staged candidate environment, so recovery
+does not depend on packages available to the system Python. This exceptional
+recovery option is unavailable to development branches.
 
 The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
 if setup reports that it is absent. No environment activation is needed.
