@@ -1532,6 +1532,33 @@ class Registry(WorkflowRegistry):
                 (state, time.time() + lease_seconds, utcnow(), worker_id),
             )
 
+    def worker_checkin(
+        self,
+        worker_id: str,
+        *,
+        state: str,
+        attempt_id: int | None = None,
+        lease_seconds: float = 120.0,
+    ) -> dict[str, bool]:
+        """Renew one worker lease and return its cancellation state."""
+        with self.connection(write=True) as db:
+            db.execute(
+                """UPDATE workers
+                   SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
+                       lease_expires_at=?, updated_at=? WHERE id=?""",
+                (state, time.time() + lease_seconds, utcnow(), worker_id),
+            )
+            worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+            attempt = (
+                db.execute("SELECT state FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+                if attempt_id is not None
+                else None
+            )
+        return {
+            "shutdown_requested": bool(worker and worker["state"] == "shutdown_requested"),
+            "attempt_cancel_requested": bool(attempt and attempt["state"] == "cancel_requested"),
+        }
+
     def worker_shutdown_requested(self, worker_id: str) -> bool:
         """Return whether the worker has a persisted shutdown request."""
         with self.connection() as db:
