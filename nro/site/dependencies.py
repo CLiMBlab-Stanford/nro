@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -17,6 +18,8 @@ import urllib.request
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+
+import certifi
 
 from nro.definitions.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
 from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
@@ -327,8 +330,13 @@ def download(
     official_oslom = url == OSLOM_SOURCE and checksum == OSLOM_SHA256
     if not url.startswith("https://") and not official_oslom:
         raise ValueError("Downloads require HTTPS")
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
     with atomic_output_path(target) as staged:
-        with urllib.request.urlopen(url, timeout=60) as response, staged.open("wb") as stream:
+        with (
+            urllib.request.urlopen(url, timeout=60, context=context) as response,
+            staged.open("wb") as stream,
+        ):
             if not response.url.startswith("https://") and not (
                 official_oslom and response.url == OSLOM_SOURCE
             ):

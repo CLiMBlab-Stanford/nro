@@ -2518,9 +2518,10 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.31.2"
+version = "0.31.3"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "matplotlib" },
     { name = "nibabel" },
     { name = "nilearn" },
@@ -2566,6 +2567,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2025,<2027" },
     { name = "dcm2bids", marker = "extra == 'bidsify'", specifier = ">=3.2,<4" },
     { name = "flywheel-sdk", marker = "extra == 'bidsify'", specifier = ">=20,<21" },
     { name = "google-api-python-client", marker = "extra == 'bidsify'", specifier = ">=2,<3" },

@@ -1092,6 +1092,35 @@ def test_failed_download_never_replaces_target(tmp_path, monkeypatch, header, ch
     assert list(tmp_path.iterdir()) == [target]
 
 
+def test_download_combines_system_and_managed_certificate_authorities(tmp_path, monkeypatch):
+    class Context:
+        cafile = None
+
+        def load_verify_locations(self, *, cafile):
+            self.cafile = cafile
+
+    class Response(io.BytesIO):
+        url = "https://example.org/file"
+        headers = {"Content-Length": "4"}
+
+    context = Context()
+    monkeypatch.setattr(dependencies.ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr(dependencies.certifi, "where", lambda: "/managed/cacert.pem")
+
+    def download(url, **kwargs):
+        assert url == "https://example.org/file"
+        assert kwargs["context"] is context
+        return Response(b"data")
+
+    monkeypatch.setattr(dependencies.urllib.request, "urlopen", download)
+
+    target = tmp_path / "file"
+    dependencies.download("https://example.org/file", target)
+
+    assert context.cafile == "/managed/cacert.pem"
+    assert target.read_bytes() == b"data"
+
+
 def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -> None:
     target = tmp_path / "image.sif"
     build_directories: list[Path] = []
