@@ -9,7 +9,12 @@ from pathlib import Path
 
 from nro.definitions.authoring import main as author
 from nro.definitions.editor import delete_definition, read_definition, review_definition
-from nro.definitions.migrations import MANAGED_CATEGORIES, migrate_store, update_store
+from nro.definitions.migrations import (
+    MANAGED_CATEGORIES,
+    adopt_store_drift,
+    migrate_store,
+    update_store,
+)
 from nro.definitions.repository import create_store, validate_store
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.site import configuration as site
@@ -111,10 +116,11 @@ def _apply(args: argparse.Namespace) -> tuple[Path, str]:
         if relative in updates:
             raise ValueError(f"Definition was specified more than once: {relative}")
         updates[relative] = None
-    if not updates:
-        raise ValueError("Specify at least one --file or --rm operation")
-    first = next(iter(updates))
+    first = next(iter(updates), Path("site/site.yml"))
     with site.definition_write(root / first):
+        if not updates:
+            adopt_store_drift(root, validate=_validator(root))
+            return root, "Updated"
         for relative in updates:
             site.require_definition_write(root / relative)
         update_store(root, updates, validate=_validator(root), adopt_drift=True)

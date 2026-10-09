@@ -442,12 +442,12 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
     )
     monkeypatch.setattr(
         installation_layers,
-        "prepare_shared_dependencies",
+        "prepare_dependencies",
         lambda *args, **kwargs: events.append(("dependencies", root)) or (dependencies, "d" * 64),
     )
     monkeypatch.setattr(
         installation_layers,
-        "capture_shared_application",
+        "capture_application",
         lambda selected: events.append(("application", selected)) or application,
     )
     commands = []
@@ -528,10 +528,10 @@ def test_failed_shared_candidate_keeps_the_active_installation(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         installation_layers,
-        "prepare_shared_dependencies",
+        "prepare_dependencies",
         lambda *args, **kwargs: (dependencies, "d" * 64),
     )
-    monkeypatch.setattr(installation_layers, "capture_shared_application", lambda root: application)
+    monkeypatch.setattr(installation_layers, "capture_application", lambda root: application)
     calls = []
 
     def run(command, **options):
@@ -585,10 +585,10 @@ def test_shared_dependencies_are_reused_until_their_inputs_change(tmp_path, monk
     }
     env = {"UV_CACHE_DIR": str(root / "cache")}
 
-    first, first_key = installation_layers.prepare_shared_dependencies(
+    first, first_key = installation_layers.prepare_dependencies(
         root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
     )
-    second, second_key = installation_layers.prepare_shared_dependencies(
+    second, second_key = installation_layers.prepare_dependencies(
         root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
     )
 
@@ -603,12 +603,12 @@ def test_shared_dependencies_are_reused_until_their_inputs_change(tmp_path, monk
     (root / "uv.lock").write_text(
         (root / "uv.lock").read_text().replace('version = "1.0.0"', 'version = "1.0.1"')
     )
-    version_only, version_only_key = installation_layers.prepare_shared_dependencies(
+    version_only, version_only_key = installation_layers.prepare_dependencies(
         root, uv, record, uv_version=bootstrap.UV_VERSION, env=env, offline=True
     )
     assert version_only == first and version_only_key == first_key
 
-    changed, changed_key = installation_layers.prepare_shared_dependencies(
+    changed, changed_key = installation_layers.prepare_dependencies(
         root,
         uv,
         {**record, "with_bidsify": True},
@@ -652,7 +652,7 @@ def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, mon
         "dev": False,
     }
 
-    first, key = installation_layers.prepare_shared_dependencies(
+    first, key = installation_layers.prepare_dependencies(
         root,
         uv,
         options,
@@ -661,7 +661,7 @@ def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, mon
         offline=False,
         previous_environment=active,
     )
-    second, second_key = installation_layers.prepare_shared_dependencies(
+    second, second_key = installation_layers.prepare_dependencies(
         root,
         uv,
         options,
@@ -713,6 +713,33 @@ def test_personal_setup_installs_selected_extras(
     calls = []
     monkeypatch.setattr(bootstrap.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)))
     monkeypatch.setattr(bootstrap, "connect_user", lambda *a, **kw: None)
+    environment = root / ".nro-environments" / ("dependencies-" + "d" * 64)
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").write_text("python")
+    application_root = root / ".nro-environments/applications" / ("a" * 64)
+    (application_root / "nro/orchestration").mkdir(parents=True)
+    (application_root / "nro/orchestration/source_launcher.py").write_text("")
+    application = SimpleNamespace(
+        root=application_root,
+        digest="a" * 64,
+        command=lambda command, **options: (
+            command[0],
+            str(application_root / "nro/orchestration/source_launcher.py"),
+            "a" * 64,
+            str(config),
+            "site-digest",
+            *command[2:],
+        ),
+    )
+    dependency_options = {}
+
+    def dependencies(_root, _uv, options, **_kwargs):
+        dependency_options.update(options)
+        return environment, "d" * 64
+
+    monkeypatch.setattr(installation_layers, "prepare_dependencies", dependencies)
+    monkeypatch.setattr(installation_layers, "capture_application", lambda _root: application)
+    monkeypatch.setattr(installation_layers, "prune_environments", lambda *args, **kwargs: None)
     bootstrap.main(
         [
             "--offline",
@@ -727,17 +754,76 @@ def test_personal_setup_installs_selected_extras(
             *(["--without-viewer"] if without_viewer else []),
         ]
     )
-    assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
-    assert "--managed-python" in calls[0][0]
-    assert ("oslom" in calls[0][0]) is not without_oslom
-    assert ("marss" in calls[0][0]) is not without_marss
-    assert ("lesion" in calls[0][0]) is with_lesion
-    assert ("cicada" in calls[0][0]) is with_cicada
+    assert dependency_options["with_oslom"] is not without_oslom
+    assert dependency_options["with_marss"] is not without_marss
+    assert dependency_options["with_lesion"] is with_lesion
+    assert dependency_options["with_cicada"] is with_cicada
     assert calls[0][1]["cwd"] == root
-    assert calls[0][1]["env"]["UV_PROJECT_ENVIRONMENT"] == str(root / ".nro-env")
-    assert ("--without-oslom" in calls[1][0]) is without_oslom
-    assert ("--without-viewer" in calls[1][0]) is without_viewer
-    assert json.loads((root / bootstrap.RECORD).read_text())["ready"]
+    assert ("--without-oslom" in calls[0][0]) is without_oslom
+    assert ("--without-viewer" in calls[0][0]) is without_viewer
+    installed = json.loads((root / bootstrap.RECORD).read_text())
+    assert installed["ready"]
+    assert Path(installed["environment"]) == environment
+    assert Path(installed["application"]) == application_root
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_failed_personal_candidate_never_replaces_active_installation(
+    tmp_path, monkeypatch, existing
+):
+    root = tmp_path / "personal"
+    (root / ".nro-bootstrap/bin").mkdir(parents=True)
+    (root / ".nro-bootstrap/bin/uv").write_text("uv")
+    config = root / "site.toml"
+    config.write_text(f'registry = "{tmp_path / "registry"}"\n')
+    record_path = root / bootstrap.RECORD
+    original = None
+    if existing:
+        record = {
+            "mode": "personal",
+            "checkout": str(root),
+            "environment": str(root / ".nro-env"),
+            "site": str(config),
+            "ready": True,
+            "with_oslom": True,
+        }
+        record_path.write_text(json.dumps(record))
+        original = record_path.read_bytes()
+    environment = root / ".nro-environments" / ("dependencies-" + "d" * 64)
+    (environment / "bin").mkdir(parents=True)
+    (environment / "bin/python").write_text("python")
+    application_root = root / ".nro-environments/applications" / ("a" * 64)
+    (application_root / "nro/orchestration").mkdir(parents=True)
+    (application_root / "nro/orchestration/source_launcher.py").write_text("")
+    application = SimpleNamespace(
+        root=application_root,
+        digest="a" * 64,
+        command=lambda command, **options: tuple(command),
+    )
+    monkeypatch.setattr(bootstrap, "ROOT", root)
+    monkeypatch.setattr(bootstrap, "check_workers", lambda _site: None)
+    monkeypatch.setattr(
+        installation_layers,
+        "prepare_dependencies",
+        lambda *args, **kwargs: (environment, "d" * 64),
+    )
+    monkeypatch.setattr(installation_layers, "capture_application", lambda _root: application)
+
+    def fail(command, **options):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fail)
+    arguments = (
+        ["--offline"] if existing else ["--offline", "--mode", "personal", "--site", str(config)]
+    )
+    with pytest.raises(SystemExit) as stopped:
+        bootstrap.main(arguments)
+
+    assert stopped.value.code == 1
+    if original is None:
+        assert not record_path.exists()
+    else:
+        assert record_path.read_bytes() == original
 
 
 def test_maintenance_rejects_active_workers(tmp_path):
@@ -1393,4 +1479,4 @@ def test_only_outer_setup_reports_cancellation(monkeypatch, capsys, entry, child
     with pytest.raises(SystemExit) as error:
         module.main([])
     assert error.value.code == 130
-    assert capsys.readouterr().err.count("Setup cancelled") == (0 if child else 1)
+    assert capsys.readouterr().err.count("Installation cancelled") == (0 if child else 1)

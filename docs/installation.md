@@ -8,9 +8,11 @@ The bootstrap requires Python 3.11 or newer with `venv` and pip support.
 It installs uv 0.8.22 and PyYAML 6.0.3 in `.nro-bootstrap`, then uses `uv.lock`
 to create an environment from uv-managed CPython 3.12. This interpreter supplies
 SQLite 3.35 or newer; nro does not use the host Python's SQLite library. The system
-Python does not need nro's packages. Personal and branch environments are editable. A shared
-release uses a staged, non-editable environment so pulling a new checkout does
-not change the active command before maintenance completes. Python
+Python does not need nro's packages. Personal and shared installations use
+staged, immutable application and dependency layers. A failed or interrupted
+setup leaves the previous installation active; a failed first setup publishes
+no active installation. Pulling a checkout therefore does not change the
+active command before setup completes. Branch environments remain editable. Python
 distributions downloaded by uv stay in `.nro-python`, so a shared environment
 does not depend on the maintainer's home directory. Existing Conda environments
 are not modified.
@@ -43,6 +45,13 @@ The installer includes the pinned official MARSS package. Pass `--without-marss`
 to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
 it whenever the multiband-factor threshold calls for correction.
 Pass `--local` when setting up a host without Slurm.
+
+Definitions changed directly outside the authoring commands normally block
+setup. To recover an intentional direct edit, run `./install
+--adopt-definitions` (with `--maintain` for a shared installation). The
+installer validates and publishes all current definition-store drift before
+continuing. This exceptional recovery option is unavailable to development
+branches.
 
 The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
 if setup reports that it is absent. No environment activation is needed.

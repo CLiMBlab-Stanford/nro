@@ -175,7 +175,7 @@ def _main(argv=None, *, prog="nro setup"):
                 )
             raise RuntimeError("Required checks failed; correct the settings and rerun ./install")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        parser.exit(1, f"Setup incomplete: {error}\n")
+        parser.exit(1, f"Resource setup failed: {error}\n")
 
 
 def main(argv=None, *, prog="nro setup"):

@@ -151,7 +151,7 @@ def _prepare_pool(
         "from nro.site.setup import migrate_site_configuration\n"
         "control, bids, checkout, definitions, site = map(Path, sys.argv[1:])\n"
         "migrate_site_configuration(site)\n"
-        "installation_layers.capture_shared_application(checkout)\n"
+        "installation_layers.capture_application(checkout)\n"
         "from nro.definitions.repository import ensure_store\n"
         "from nro.site.shared_installation import prepare_pool\n"
         "from nro.orchestration.registry import Registry\n"

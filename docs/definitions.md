@@ -323,9 +323,10 @@ retains unpublished work in private, ignored draft directories and offers it on
 the next edit of the same definition. Keep unrelated notes outside the
 structured definition directories.
 
-If a direct edit has already occurred, `nro def apply` can adopt it
-only when the transaction names every drifted path. This recovery behavior does
-not make direct editing a supported workflow.
+If direct edits have already occurred, bare `nro def apply` validates and
+adopts all current drift as one transaction. An explicit transaction must name
+every drifted path. This recovery behavior does not make direct editing a
+supported workflow.
 
 Every configuration class inherits its packaged `main` definition. A store may
 omit `main_CLASS.yml`; if present, that file is a partial site override. Named
