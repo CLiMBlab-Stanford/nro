@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.31.2"
+version = "0.31.3"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
+    "certifi>=2025,<2027",
     "numpy>=1.26,<3",
     "scipy>=1.12,<2",
     "pandas>=2.2,<3",
