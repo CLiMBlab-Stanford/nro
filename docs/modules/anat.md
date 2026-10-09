@@ -95,10 +95,12 @@ The branch uses the fixed marked runs and their opposite-PE fieldmaps to run the
 HCP structural, minimal functional, multi-run FIX, MSMAll, and dedrifting route.
 Because nro source anatomy is already skull-stripped, nonlinear atlas
 registration uses explicit moving and reference masks and disables FNIRT's
-whole-head intensity model. Each major HCP operation is a separate runner step,
-so preemption resumes through the ordinary anatomical DAG and freshness rules.
-The branch runs on a long CPU worker and does not publish the calibration time
-series as ordinary functional derivatives.
+whole-head intensity model. The moving mask is the binarized mask from the
+completed surface reconstruction; nonzero background remnants in the T1w image
+do not define brain support. Each major HCP operation is a separate runner
+step, so preemption resumes through the ordinary anatomical DAG and freshness
+rules. The branch runs on a long CPU worker and does not publish the calibration
+time series as ordinary functional derivatives.
 
 nro transfers the resulting participant registration onto its canonical
 `fsnative` topology with Workbench spherical project/unproject operations. It

@@ -193,8 +193,10 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
         sphere.write_text("sphere")
     structural_t1w = tmp_path / "out/sub-01_desc-preproc_T1w.nii.gz"
     structural_t2w = tmp_path / "out/sub-01_space-T1w_desc-preproc_T2w.nii.gz"
+    structural_brain_mask = tmp_path / "out/sub-01_desc-brain_mask.nii.gz"
     _image(structural_t1w, {})
     _image(structural_t2w, {})
+    _image(structural_brain_mask, {})
     runner = Runner(
         module_name="Anatomical Module",
         container=None,
@@ -211,6 +213,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
         license_path=license_path,
         structural_t1w=structural_t1w,
         structural_t2w=structural_t2w,
+        structural_brain_mask=structural_brain_mask,
         native_registration_spheres=spheres,
         env={},
         force=False,
@@ -248,7 +251,8 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     mask_dependencies = runner._graph.dependencies(by_name["Restore MSMAll Source Brain Masks"])
     assert by_name["MSMAll PreFreeSurfer"].id in mask_dependencies
     mask_step = by_name["Restore MSMAll Source Brain Masks"]
-    assert structural_t1w in mask_step.inputs
+    assert structural_brain_mask in mask_step.inputs
+    assert structural_t1w not in mask_step.inputs
     assert {path.name for path in mask_step.outputs} >= {
         "nro_input_brain_mask.nii.gz",
         "T1w_acpc_brain_mask.nii.gz",
@@ -281,6 +285,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     )
     assert structural_t1w in structural_configuration_step.inputs
     assert structural_t2w in structural_configuration_step.inputs
+    assert structural_brain_mask in structural_configuration_step.inputs
     assert t1w in structural_configuration_step.inputs
     assert t2w in structural_configuration_step.inputs
     assert structural_configuration_step.action is not None
@@ -292,6 +297,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     calibration_configuration = (tmp_path / "work/msmall/calibration_configuration.sh").read_text()
     assert f"t1w=({structural_t1w})" in structural_configuration
     assert f"t2w=({structural_t2w})" in structural_configuration
+    assert f"brain_mask={structural_brain_mask}" in structural_configuration
     assert f"t1w=({t1w})" not in structural_configuration
     assert f"t2w=({t2w})" not in structural_configuration
     assert "run_names=(rfMRI_REST001)" in calibration_configuration
@@ -492,5 +498,6 @@ def test_msmall_freesurfer_restarts_cleanly_and_bypasses_legacy_talairach_gate()
     assert 'cp -a --reflink=auto "$structural_session_root" "$session_root"' in driver
     assert "--extra-reconall-arg=-notal-check" in driver
     assert "flirt -interp spline -dof 7" in driver
-    assert 'fslmaths "${t1w[0]}" -bin "$source_mask"' in driver
+    assert "printf 'BrainMask\\t%s\\t' \"$brain_mask\"" in driver
+    assert 'fslmaths "$brain_mask" -bin "$source_mask"' in driver
     assert '--premat="$t1_dir/xfms/acpc.mat"' in driver
