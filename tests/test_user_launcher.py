@@ -156,9 +156,7 @@ def test_incomplete_installation_allows_only_definition_drift_recovery(tmp_path,
         {
             "default": record["checkout"],
             "checkouts": {
-                record["checkout"]: str(
-                    Path(record["checkout"]) / user_launcher.RECORD_NAME
-                )
+                record["checkout"]: str(Path(record["checkout"]) / user_launcher.RECORD_NAME)
             },
         },
     )

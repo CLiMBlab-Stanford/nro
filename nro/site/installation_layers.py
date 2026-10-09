@@ -246,9 +246,7 @@ def capture_application(root: Path) -> SourceSnapshot:
     return SourceStore(root / ".nro-environments" / "applications").capture(root)
 
 
-def prune_environments(
-    root: Path, active: Path, *, active_application: Path | None = None
-) -> None:
+def prune_environments(root: Path, active: Path, *, active_application: Path | None = None) -> None:
     """Remove inactive dependency and application layers after a successful cutover."""
     parent = root / ".nro-environments"
     if not parent.is_dir() or active.parent != parent:

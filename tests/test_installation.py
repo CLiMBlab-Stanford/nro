@@ -814,9 +814,7 @@ def test_failed_personal_candidate_never_replaces_active_installation(
 
     monkeypatch.setattr(bootstrap.subprocess, "run", fail)
     arguments = (
-        ["--offline"]
-        if existing
-        else ["--offline", "--mode", "personal", "--site", str(config)]
+        ["--offline"] if existing else ["--offline", "--mode", "personal", "--site", str(config)]
     )
     with pytest.raises(SystemExit) as stopped:
         bootstrap.main(arguments)

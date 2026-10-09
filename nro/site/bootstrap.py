@@ -622,8 +622,7 @@ def _main(argv=None) -> None:
                 validate=lambda candidate: validate_store(candidate, require_site=True),
             )
             print(
-                "Adopted direct definition changes: "
-                + ", ".join(str(path) for path in adopted),
+                "Adopted direct definition changes: " + ", ".join(str(path) for path in adopted),
                 flush=True,
             )
         if mode != "shared" and mode != "branch":
@@ -860,8 +859,7 @@ def main(argv=None) -> None:
         if error.returncode in {-2, 130}:
             cancel_setup()
         print(
-            "Installation not changed: "
-            f"setup command exited with status {error.returncode}",
+            f"Installation not changed: setup command exited with status {error.returncode}",
             file=sys.stderr,
         )
         raise SystemExit(1) from None
