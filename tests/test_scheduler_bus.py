@@ -631,11 +631,13 @@ def test_worker_checkin_combines_lease_and_cancellation_poll(monkeypatch) -> Non
     calls = []
     monkeypatch.setattr(
         "nro.orchestration.worker_client.exchange",
-        lambda _endpoint, message, **options: calls.append((message, options))
-        or {
-            "shutdown_requested": False,
-            "attempt_cancel_requested": True,
-        },
+        lambda _endpoint, message, **options: (
+            calls.append((message, options))
+            or {
+                "shutdown_requested": False,
+                "attempt_cancel_requested": True,
+            }
+        ),
     )
 
     result = client.worker_checkin("worker", state="running", attempt_id=17)
