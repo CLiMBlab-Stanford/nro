@@ -693,7 +693,14 @@ def _main(argv=None) -> None:
                 application_digest=application.digest,
             )
         else:
-            sync = [str(uv), "sync", "--frozen", "--python", "3.12"]
+            sync = [
+                str(uv),
+                "sync",
+                "--frozen",
+                "--managed-python",
+                "--python",
+                "3.12",
+            ]
             if record["with_oslom"]:
                 sync += ["--extra", "oslom"]
             if record["with_bidsify"]:

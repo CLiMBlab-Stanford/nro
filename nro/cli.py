@@ -100,6 +100,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
         parser.parse_args(values)
         return
 
+    from nro.site.runtime_requirements import require_current_runtime
+
+    require_current_runtime()
+
     command = values.pop(0)
     if command not in available_commands():
         parser.error(f"unknown command {command!r}; choose from " + ", ".join(available_commands()))

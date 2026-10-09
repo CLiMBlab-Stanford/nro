@@ -25,6 +25,14 @@ from nro.orchestration.hotfixes.v0301_msmall_source_masks import (
 from nro.orchestration.hotfixes.v0302_msmall_brain_mask import (
     HOTFIX_ID as MSMALL_BRAIN_MASK_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0303_duplicate_ownership_receipts import (
+    HOTFIX_ID as DUPLICATE_RECEIPT_HOTFIX_ID,
+)
+from nro.orchestration.hotfixes.v0303_obsolete_pycicada_receipts import (
+    HOTFIX_ID as PYCICADA_RECEIPT_HOTFIX_ID,
+)
+from nro.orchestration.ownership import ownership_record_fingerprint
+from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
@@ -153,6 +161,175 @@ def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert MSMALL_ISOLATION_HOTFIX_ID in available()
     assert MSMALL_MASK_HOTFIX_ID in available()
     assert MSMALL_BRAIN_MASK_HOTFIX_ID in available()
+    assert DUPLICATE_RECEIPT_HOTFIX_ID in available()
+    assert PYCICADA_RECEIPT_HOTFIX_ID in available()
+
+
+def _ownership_receipt(key: str, *, fingerprint: str, output: str = "manifest.json") -> dict:
+    payload = {
+        "owner": "nro",
+        "record_version": 5,
+        "project": "demo",
+        "module": "func",
+        "lineage_fingerprint": fingerprint,
+        "participant": "01",
+        "entities": {"run": "01", "task": "rest"},
+        "directory_label": "main",
+        "work_item_key": key,
+        "artifact_contract": {"output": {"expected": [output]}},
+    }
+    payload["record_fingerprint"] = ownership_record_fingerprint(payload)
+    return payload
+
+
+def test_duplicate_ownership_receipt_hotfix_requires_canonical_sibling(tmp_path: Path) -> None:
+    registry, _database = _registry(tmp_path)
+    root = registry.paths.bids_root / "demo/derivatives/nro/func/main/.nro/work_items/func"
+    root.mkdir(parents=True)
+    lineage = "lineage"
+    expected = work_item_key("demo", "func", lineage, "01", {"run": "01", "task": "rest"})
+    obsolete_key = "func:" + "a" * 64
+    obsolete = root / (obsolete_key.split(":", 1)[1] + ".json")
+    obsolete.write_text(json.dumps(_ownership_receipt(obsolete_key, fingerprint=lineage)))
+
+    missing = apply(
+        registry,
+        identifier=DUPLICATE_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert missing.records == 0
+
+    canonical = root / (expected.split(":", 1)[1] + ".json")
+    canonical.write_text(json.dumps(_ownership_receipt(expected, fingerprint=lineage)))
+    preview = apply(
+        registry,
+        identifier=DUPLICATE_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert preview.paths == (obsolete,)
+    assert obsolete.is_file()
+
+    result = apply(
+        registry,
+        identifier=DUPLICATE_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert result.records == 1
+    assert not obsolete.exists()
+    assert canonical.is_file()
+    assert (
+        apply(
+            registry,
+            identifier=DUPLICATE_RECEIPT_HOTFIX_ID,
+            projects=("demo",),
+            execute=True,
+        ).records
+        == 0
+    )
+
+
+def test_duplicate_ownership_receipt_hotfix_requires_same_output_claim(tmp_path: Path) -> None:
+    registry, _database = _registry(tmp_path)
+    root = registry.paths.bids_root / "demo/derivatives/nro/func/main/.nro/work_items/func"
+    root.mkdir(parents=True)
+    lineage = "lineage"
+    expected = work_item_key("demo", "func", lineage, "01", {"run": "01", "task": "rest"})
+    obsolete_key = "func:" + "a" * 64
+    obsolete = root / (obsolete_key.split(":", 1)[1] + ".json")
+    obsolete.write_text(json.dumps(_ownership_receipt(obsolete_key, fingerprint=lineage)))
+    canonical = root / (expected.split(":", 1)[1] + ".json")
+    canonical.write_text(
+        json.dumps(_ownership_receipt(expected, fingerprint=lineage, output="different.json"))
+    )
+
+    report = apply(
+        registry,
+        identifier=DUPLICATE_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+
+    assert report.records == 0
+
+
+def test_obsolete_pycicada_receipt_hotfix_is_strict_and_idempotent(tmp_path: Path) -> None:
+    registry, _database = _registry(tmp_path)
+    root = registry.paths.bids_root / "demo/derivatives/nro/func/main/.nro/work_items/func"
+    root.mkdir(parents=True)
+    receipt = root / "legacy.json"
+    payload = {
+        "owner": "nro",
+        "record_version": 5,
+        "execution": {
+            "runtime_configuration": {
+                "cicada_cmd": "nro-site:pycicada:.",
+                "ica_classifier": "none",
+            }
+        },
+    }
+    payload["record_fingerprint"] = ownership_record_fingerprint(payload)
+    receipt.write_text(json.dumps(payload))
+
+    preview = apply(
+        registry,
+        identifier=PYCICADA_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert preview.paths == (receipt,)
+    assert preview.records == 1
+    assert (
+        json.loads(receipt.read_text())["execution"]["runtime_configuration"]["cicada_cmd"]
+        == "nro-site:pycicada:."
+    )
+
+    result = apply(
+        registry,
+        identifier=PYCICADA_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert result.records == 1
+    repaired = json.loads(receipt.read_text())
+    assert repaired["execution"]["runtime_configuration"] == {"ica_classifier": "none"}
+    assert repaired["record_fingerprint"] == ownership_record_fingerprint(repaired)
+
+    repeated = apply(
+        registry,
+        identifier=PYCICADA_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert repeated.records == 0
+
+
+def test_obsolete_pycicada_receipt_hotfix_rejects_damaged_receipts(tmp_path: Path) -> None:
+    registry, _database = _registry(tmp_path)
+    root = registry.paths.bids_root / "demo/derivatives/nro/func/main/.nro/work_items/func"
+    root.mkdir(parents=True)
+    receipt = root / "damaged.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "owner": "nro",
+                "record_version": 5,
+                "record_fingerprint": "wrong",
+                "execution": {"runtime_configuration": {"cicada_cmd": "nro-site:pycicada:."}},
+            }
+        )
+    )
+
+    report = apply(
+        registry,
+        identifier=PYCICADA_RECEIPT_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+
+    assert report.records == 0
 
 
 def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Path) -> None:

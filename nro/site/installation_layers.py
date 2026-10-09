@@ -18,7 +18,7 @@ from nro.engine.io import atomic_write_json
 if TYPE_CHECKING:
     from nro.orchestration.source_snapshots import SourceSnapshot
 
-DEPENDENCY_PROTOCOL = 1
+DEPENDENCY_PROTOCOL = 2
 
 
 def _dependency_lock_identity(path: Path) -> str:
@@ -48,7 +48,7 @@ def _dependency_spec(root: Path, options: dict, *, uv_version: str) -> dict:
     return {
         "protocol": DEPENDENCY_PROTOCOL,
         "lock_identity": _dependency_lock_identity(lock),
-        "python": "3.12",
+        "python": "managed-cpython-3.12",
         "platform": sys.platform,
         "machine": platform.machine(),
         "libc": list(platform.libc_ver()),
@@ -128,7 +128,15 @@ def _validate_dependency_environment(environment: Path, spec: dict, *, checkout:
 
 
 def _sync_command(uv: Path, options: dict) -> list[str]:
-    command = [str(uv), "sync", "--frozen", "--python", "3.12", "--no-install-project"]
+    command = [
+        str(uv),
+        "sync",
+        "--frozen",
+        "--managed-python",
+        "--python",
+        "3.12",
+        "--no-install-project",
+    ]
     for extra in ("oslom", "bidsify", "lesion", "cicada", "marss"):
         if options.get(f"with_{extra}", False):
             command += ["--extra", extra]
