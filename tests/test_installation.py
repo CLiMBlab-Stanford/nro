@@ -596,6 +596,7 @@ def test_shared_dependencies_are_reused_until_their_inputs_change(tmp_path, monk
     assert first_key == second_key
     sync_calls = [command for command in calls if "sync" in command]
     assert len(sync_calls) == 1
+    assert "--managed-python" in sync_calls[0]
     assert "--no-install-project" in sync_calls[0]
     assert "--offline" in sync_calls[0]
 
@@ -727,6 +728,7 @@ def test_personal_setup_installs_selected_extras(
         ]
     )
     assert "sync" in calls[0][0] and "--frozen" in calls[0][0]
+    assert "--managed-python" in calls[0][0]
     assert ("oslom" in calls[0][0]) is not without_oslom
     assert ("marss" in calls[0][0]) is not without_marss
     assert ("lesion" in calls[0][0]) is with_lesion

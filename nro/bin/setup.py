@@ -38,6 +38,9 @@ def _main(argv=None, *, prog="nro setup"):
             env={**os.environ, "NRO_SETUP_CHILD": "1"},
         )
         raise SystemExit(result.returncode)
+    from nro.site.runtime_requirements import require_current_runtime
+
+    require_current_runtime()
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     parser.add_argument("--resources-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--prepared-maintenance", action="store_true", help=argparse.SUPPRESS)
