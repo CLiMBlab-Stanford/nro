@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -935,6 +936,50 @@ def test_maintenance_ignores_unbound_records_from_dead_scheduler(tmp_path, monke
     )
 
     bootstrap.check_workers(config)
+
+
+def test_maintenance_ignores_expired_unbound_database_records(tmp_path, monkeypatch):
+    control = tmp_path / "registry"
+    scheduler = control / "shared/scheduler"
+    scheduler.mkdir(parents=True)
+    with sqlite3.connect(scheduler / "registry.sqlite3") as db:
+        db.execute("CREATE TABLE workers (state TEXT, slurm_job_id TEXT, lease_expires_at REAL)")
+        db.execute(
+            "CREATE TABLE scheduler_submissions (state TEXT, slurm_job_id TEXT, created_at TEXT)"
+        )
+        db.execute("INSERT INTO workers VALUES ('running', NULL, 0)")
+        db.execute(
+            "INSERT INTO scheduler_submissions VALUES "
+            "('prepared', NULL, '2000-01-01T00:00:00+00:00')"
+        )
+    config = tmp_path / "site.toml"
+    save_settings(config, {"registry": str(control)})
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail(
+            "An expired unbound record was queried through Slurm"
+        ),
+    )
+
+    bootstrap.check_workers(config)
+
+
+def test_maintenance_rejects_live_unbound_worker_lease(tmp_path):
+    control = tmp_path / "registry"
+    scheduler = control / "shared/scheduler"
+    scheduler.mkdir(parents=True)
+    with sqlite3.connect(scheduler / "registry.sqlite3") as db:
+        db.execute("CREATE TABLE workers (state TEXT, slurm_job_id TEXT, lease_expires_at REAL)")
+        db.execute(
+            "CREATE TABLE scheduler_submissions (state TEXT, slurm_job_id TEXT, created_at TEXT)"
+        )
+        db.execute("INSERT INTO workers VALUES ('running', NULL, ?)", (time.time() + 60,))
+    config = tmp_path / "site.toml"
+    save_settings(config, {"registry": str(control)})
+
+    with pytest.raises(RuntimeError, match="Stop or drain"):
+        bootstrap.check_workers(config)
 
 
 def test_prepared_shared_setup_verifies_its_installation_barrier(tmp_path):

@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -87,19 +88,34 @@ def check_workers(site: Path) -> None:
         # after confirming that no controller owns the database.
         with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
             try:
-                workers = [
-                    {"slurm_job_id": row[0]}
-                    for row in db.execute(
+                worker_columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
+                if "lease_expires_at" in worker_columns:
+                    worker_rows = db.execute(
                         "SELECT slurm_job_id FROM workers WHERE state IN "
-                        "('idle','running','draining','shutdown_requested')"
+                        "('idle','running','draining','shutdown_requested') AND "
+                        "(COALESCE(slurm_job_id,'') != '' OR lease_expires_at > ?)",
+                        (time.time(),),
                     )
-                ]
+                    workers = [{"slurm_job_id": row[0]} for row in worker_rows]
+                else:
+                    workers = [
+                        {"slurm_job_id": row[0]}
+                        for row in db.execute(
+                            "SELECT slurm_job_id FROM workers WHERE state IN "
+                            "('idle','running','draining','shutdown_requested')"
+                        )
+                    ]
+                submission_columns = {
+                    row[1] for row in db.execute("PRAGMA table_info(scheduler_submissions)")
+                }
+                submission_rows = db.execute(
+                    "SELECT slurm_job_id FROM scheduler_submissions WHERE state IN "
+                    "('prepared','submitted','running','cancel_requested')"
+                )
                 submissions = [
                     {"slurm_job_id": row[0]}
-                    for row in db.execute(
-                        "SELECT slurm_job_id FROM scheduler_submissions WHERE state IN "
-                        "('prepared','submitted','running','cancel_requested')"
-                    )
+                    for row in submission_rows
+                    if row[0] or "created_at" not in submission_columns
                 ]
             except sqlite3.DatabaseError as error:
                 raise RuntimeError(
