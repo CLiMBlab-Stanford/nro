@@ -14,7 +14,7 @@ from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.lesion_policy import lesion_reconstruction_contract
 from nro.modules.anat.msmall import resolve_msmall_calibration
-from nro.modules.anat.policy import surface_reconstruction_contract
+from nro.modules.anat.policy import surface_reconstruction_contract, t1w_synthesis_contract
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import (
     ParticipantUnavailableError,
@@ -122,25 +122,31 @@ def plan_work_items(
     t2w = tuple(
         path for path in anatomical_images if path.name.endswith(("_T2w.nii", "_T2w.nii.gz"))
     )
+    t1w_fallback = str(config["t1w_fallback"])
+    synthetic_t1w = not t1w and bool(t2w)
+    if synthetic_t1w and t1w_fallback == "skip":
+        raise ParticipantUnavailableError(
+            "No non-excluded T1w image is available and T1w fallback is disabled"
+        )
+    if synthetic_t1w and context.source_markup.lesion:
+        raise ParticipantUnavailableError("Lesion-aware anatomy requires acquired T1w data")
     try:
-        calibration = resolve_msmall_calibration(
-            markup=context.source_markup,
-            t1w=t1w,
-            t2w=t2w,
-            parameters=config["msmall"],
-            surface_engine=surface_engine,
-            selection_strategy=str(config["selection_strategy"]),
+        calibration = (
+            resolve_msmall_calibration(
+                markup=context.source_markup,
+                t1w=t1w,
+                t2w=t2w,
+                parameters=config["msmall"],
+                surface_engine=surface_engine,
+                selection_strategy=str(config["selection_strategy"]),
+            )
+            if t1w
+            else None
         )
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         raise ParticipantUnavailableError(str(error)) from error
     if calibration is not None:
         inputs = tuple(dict.fromkeys((*inputs, *calibration.input_paths)))
-    if (
-        surface_engine == "fastsurfer"
-        and not context.source_markup.lesion
-        and not any(path.name.endswith(("_T1w.nii", "_T1w.nii.gz")) for path in anatomical_images)
-    ):
-        raise ParticipantUnavailableError("FastSurfer surface reconstruction requires T1w data")
     # Resource-specific runner steps are dispatched independently. The parent
     # anatomical work item always returns to the ordinary CPU pool.
     resource_class = "long" if calibration is not None else descriptor.resource_class
@@ -156,6 +162,7 @@ def plan_work_items(
         "output_metadata": anatomical_output_contract(
             lesion=context.source_markup.lesion,
             msmall=calibration is not None,
+            synthetic_t1w=synthetic_t1w,
         ),
         "source_markup": _effective_markup_contract(context.subject_dir, context.source_markup),
         "source_metadata": semantic_metadata_snapshot(
@@ -168,6 +175,8 @@ def plan_work_items(
         processing_values["lesion_reconstruction"] = lesion_reconstruction_contract()
     if calibration is not None:
         processing_values["msmall"] = calibration.contract(context.subject_dir)
+    if synthetic_t1w:
+        processing_values["t1w_synthesis"] = t1w_synthesis_contract()
     processing_values["surface_reconstruction"] = surface_reconstruction_contract(surface_engine)
     return (
         WorkItemSpec.create(

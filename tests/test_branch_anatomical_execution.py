@@ -191,18 +191,17 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     configuration = next(
         step for step in graph.steps if step.name == "Write Anatomical Configuration"
     )
-    configuration.outputs[0].write_text(
-        json.dumps(
-            {
-                "selection_strategy": "average",
-                "gradient_unwarping": "off",
-                "fs_subject": "sub-1",
-                "mni_template": str(template),
-                "synthstrip_image": str(synthstrip),
-                "configuration_fingerprint": "previous-preprocessing-fingerprint",
-            }
-        )
-    )
+    recorded_configuration = {
+        "selection_strategy": "average",
+        "gradient_unwarping": "off",
+        "fs_subject": "sub-1",
+        "mni_template": str(template),
+        "synthstrip_image": str(synthstrip),
+        "configuration_fingerprint": "previous-preprocessing-fingerprint",
+    }
+    if modalities == ("T2w",):
+        recorded_configuration["t1w_fallback"] = "synthesize_from_t2w"
+    configuration.outputs[0].write_text(json.dumps(recorded_configuration))
     assert configuration.validate is not None and configuration.validate()[0]
     owner = context.paths.output_project("demo") / "derivatives/nro/anat/main"
     assert (owner / "sub-1/anat").is_dir()
@@ -210,7 +209,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     manifest = next(s for s in graph.steps if s.completion_boundary)
     assert manifest.outputs == (owner / "sub-1/anat/sub-1_desc-preprocessAnat_manifest.json",)
     registrations = [step for step in graph.steps if step.name == "Register T2w to T1w Reference"]
-    if modalities == ("T1w", "T2w"):
+    if modalities in {("T2w",), ("T1w", "T2w")}:
         assert len(registrations) == 1
         registration = registrations[0]
         assert registration.inputs[0].is_relative_to(context.paths.development / "dev" / "WORK")
@@ -221,6 +220,17 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         )
     else:
         assert not registrations
+    synthesis = [step for step in graph.steps if step.name == "Synthesize T1w Reference from T2w"]
+    if modalities == ("T2w",):
+        assert len(synthesis) == 1
+        assert any(
+            path.name == "sub-1_desc-preproc_T1w.nii.gz"
+            for step in graph.steps
+            for path in step.outputs
+        )
+        assert not any("myelinMap" in path.name for step in graph.steps for path in step.outputs)
+    else:
+        assert not synthesis
     for session in ("ses-1", "ses-2"):
         assert any(
             p.is_relative_to(owner / "sub-1" / session / "anat")

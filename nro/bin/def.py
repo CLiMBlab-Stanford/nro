@@ -66,7 +66,7 @@ def _relative(value: str) -> Path:
     if path.is_absolute() or not path.parts or ".." in path.parts:
         raise argparse.ArgumentTypeError("definition paths must be relative to the store")
     if path == Path("site/site.yml"):
-        raise argparse.ArgumentTypeError("use `nro paths` to update protected site settings")
+        raise argparse.ArgumentTypeError("use `nro site` to update protected site settings")
     return path
 
 
@@ -363,7 +363,7 @@ def main(argv=None, *, prog="nro def"):
             command = (
                 "nro branch definitions --definitions PATH"
                 if site.installation_record().get("mode") == "branch"
-                else "nro paths set definitions=PATH"
+                else "nro site set storage.definitions=PATH"
             )
             print(f"Store selection is unchanged. Use {command} to select this store.")
     except (OSError, ValueError) as error:

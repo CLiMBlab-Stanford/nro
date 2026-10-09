@@ -99,6 +99,11 @@ class MsmAllCalibration:
                 "reference_mask": "HCP_MNI152_2mm_brain_mask_dil",
                 "affine_degrees_of_freedom": 7,
                 "fnirt_intensity_model": "disabled_for_binary_masks",
+                "inverse_warp_reference": {
+                    "space": "subject_ACPC",
+                    "resolution_mm": 2.0,
+                    "margin_mm": 4.0,
+                },
                 "validation": {
                     "affine_singular_value_range": [0.8, 1.2],
                     "maximum_affine_anisotropy_ratio": 1.01,
@@ -394,6 +399,7 @@ def add_msmall_plan(
     input_identities = out_dir / f"{subject}_desc-msmallInputs_provenance.json"
     driver = Path(__file__).with_name("msmall_driver.sh")
     atlas_validator = Path(__file__).with_name("msmall_validate_atlas.py")
+    inverse_reference_builder = Path(__file__).with_name("msmall_inverse_reference.py")
     subcortical_validator = Path(__file__).with_name("msmall_validate_subcortical.py")
     hcp_inputs = tuple(
         dict.fromkeys(
@@ -669,10 +675,11 @@ def add_msmall_plan(
             structural_session / "MNINonLinear/registration_qc.json",
             structural_session / "MNINonLinear/xfms/acpc2MNILinear.mat",
             structural_session / "MNINonLinear/xfms/acpc_dc2standard.nii.gz",
+            structural_session / "MNINonLinear/xfms/standard2acpc_dc.nii.gz",
         ),
         cleanup=(structural_session / ".MNINonLinear.masked.tmp",),
         parameters=calibration.contract(calibration.subject_dir)["atlas_registration"],
-        implementation_files=(atlas_validator,),
+        implementation_files=(atlas_validator, inverse_reference_builder),
     )
     freesurfer_dir = t1_dir / hcp_subject
     add_stage(
@@ -697,6 +704,7 @@ def add_msmall_plan(
             marker("masked_atlas"),
             freesurfer_dir / "surf/lh.white",
             freesurfer_dir / "surf/rh.white",
+            structural_session / "MNINonLinear/xfms/standard2acpc_dc.nii.gz",
         ),
         outputs=(
             *hcp_baseline.values(),

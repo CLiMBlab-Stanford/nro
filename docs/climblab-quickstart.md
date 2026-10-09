@@ -32,7 +32,7 @@ source ~/.bashrc
 hash -r
 type -a nro
 nro doctor
-nro paths show
+nro site ls
 ```
 
 The first `nro` found should be `~/.local/bin/nro`. No Conda or virtual

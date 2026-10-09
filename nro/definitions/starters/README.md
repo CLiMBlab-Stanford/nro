@@ -22,7 +22,7 @@ Use nro commands to generate, edit, delete, or import definitions. Managed YAML
 and Python files warn against direct editing, and the store manifest detects
 changes made outside those commands. Run `nro def validate PATH` to
 check the store. Select this directory
-with `nro paths set definitions=PATH`; shared installations require `--maintain`.
+with `nro site set storage.definitions=PATH`; shared installations require `--maintain`.
 Use `nro def edit`, `nro def rm`, and `nro def ls` for configs, workflows,
 models, and source markup.
 Use `nro def apply --file RELATIVE_PATH=LOCAL_FILE` for event catalogs,

@@ -12,11 +12,11 @@ def build_parser(*, prog: str = "nro.bin.start") -> argparse.ArgumentParser:
 
     site, _ = settings()
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    parser.add_argument("--partition", default=site["partition"])
+    parser.add_argument("--partition", default=site["partition"] or None)
     parser.add_argument("--account", default=site["account"] or None)
-    parser.add_argument("--time", type=int, default=24, metavar="HOURS")
-    parser.add_argument("--memory", type=int, default=4, metavar="GB")
-    parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--time", type=int, default=site["scheduler_time"], metavar="HOURS")
+    parser.add_argument("--memory", type=int, default=site["scheduler_memory"], metavar="GB")
+    parser.add_argument("--cpus", type=int, default=site["scheduler_cpus"])
     return parser
 
 

@@ -80,7 +80,7 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path, m
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 3
+    assert migrated["version"] == 4
     assert migrated["bidsify"]["servers"]["cni"] == {
         "host": "cni.example.org",
         "projects": ["lab/study"],
@@ -141,7 +141,7 @@ SourceStore(applications).capture(checkout)
         check=True,
     )
 
-    assert yaml.safe_load(site.read_text())["version"] == 3
+    assert yaml.safe_load(site.read_text())["version"] == 4
     validate_store(root, require_site=True)
 
 
@@ -182,9 +182,64 @@ def test_schema_four_removes_site_pycicada_path(tmp_path):
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 3
+    assert migrated["version"] == 4
     assert "pycicada" not in migrated["resources"]
     assert "cicada_cmd" not in yaml.safe_load(config.read_text())
+
+
+def test_schema_five_defaults_existing_anatomy_to_t2w_synthesis(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    config = root / "configs/anat/main_anat.yml"
+    starter = Path(__file__).parents[1] / "nro/definitions/starters/configs/anat/main_anat.yml"
+    value = yaml.safe_load(starter.read_text())
+    value.pop("t1w_fallback")
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 4))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    assert yaml.safe_load(config.read_text())["t1w_fallback"] == "synthesize_from_t2w"
+
+
+def test_schema_six_moves_slurm_and_pool_defaults_into_site_policy(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    site = root / "site/site.yml"
+    value = yaml.safe_load(site.read_text())
+    value["version"] = 3
+    slurm = value.pop("slurm")
+    value["execution"].update(
+        partition=slurm["partition"],
+        viewing_partition=slurm["viewing_partition"],
+        account=slurm["account"],
+    )
+    for key in (
+        "concurrency",
+        "gpu_concurrency",
+        "worker_idle_timeout",
+        "worker_drain_minutes",
+    ):
+        value["execution"].pop(key)
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 5))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    migrated = yaml.safe_load(site.read_text())
+    assert migrated["version"] == 4
+    assert migrated["execution"]["concurrency"] == 50
+    assert migrated["execution"]["gpu_concurrency"] == 1
+    assert migrated["slurm"]["scheduler"] == {"time_hours": 24, "memory_gb": 4, "cpus": 4}
+    assert migrated["slurm"]["worker"] == {
+        "time_hours": 24,
+        "memory_gb": 32,
+        "max_memory_gb": 256,
+        "cpus": 2,
+    }
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

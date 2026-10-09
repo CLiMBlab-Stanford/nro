@@ -13,7 +13,7 @@ TASK_GUIDES = {
 
           nro --version
           nro doctor
-          nro paths show
+          nro site ls
 
         Inspect registered work before requesting anything:
 

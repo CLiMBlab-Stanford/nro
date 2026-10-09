@@ -1,6 +1,7 @@
 """Test scheduler transport, recovery records, and launch election."""
 
 import json
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +17,17 @@ from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.registry import Registry
 from nro.orchestration.worker_client import WorkerSchedulerClient
+
+
+def test_controller_submission_reports_slurm_error(monkeypatch, tmp_path):
+    script = tmp_path / "controller.sbatch"
+
+    def reject(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="invalid partition")
+
+    monkeypatch.setattr(scheduler_bus.subprocess, "run", reject)
+    with pytest.raises(RuntimeError, match="invalid partition"):
+        scheduler_bus.submit_controller(script)
 
 
 def test_simultaneous_callers_elect_one_controller(tmp_path):

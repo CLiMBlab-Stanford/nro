@@ -14,7 +14,15 @@ the averaging strategy uses FreeSurfer `mri_robust_template` when several images
 are available. A missing modality is skipped. Single images are copied.
 Acquisition metadata and filename ordering resolve selection reproducibly.
 
-T1w and T2w availability determines the graph. Session outputs retain their
+T1w and T2w availability determines the graph. If no non-excluded T1w exists,
+the default `t1w_fallback: synthesize_from_t2w` policy uses FreeSurfer SynthSR
+to create a 1 mm T1-like participant reference from the selected T2w image.
+Its sidecar and publication manifest identify the synthetic contrast and source
+images. `t1w_fallback: skip` instead makes that participant unavailable.
+Synthetic T1w anatomy is not eligible for MSMAll calibration, lesion-aware
+processing, or a T1w/T2w myelin proxy.
+
+Session outputs retain their
 acquisition geometry. The module selects participant T1w and T2w references
 independently, even when their sources come from different sessions. It rigidly
 aligns the selected T1w image to the pose of the configured MNI template and
@@ -47,8 +55,9 @@ selected sources before comparing subjects with different acquisition schemes.
    it before publication. ANTs affine files encode the
    fixed-to-moving map used for resampling, so grid construction inverts that
    map when projecting source-mask points into the participant reference.
-   Publish both transform directions and numerical pose checks. If no T1w exists,
-   use the selected T2w as the pose source.
+   Publish both transform directions and numerical pose checks. If no acquired
+   T1w exists, synthesize a T1-like reference from the selected T2w before pose
+   normalization.
 3. If both modalities exist, align the selected T2w reference directly to the
    T1w reference with six-degree-of-freedom FSL FLIRT. Save the forward and
    inverse transforms and the optional T1w/T2w ratio.
@@ -66,7 +75,7 @@ selected sources before comparing subjects with different acquisition schemes.
    1 mm on a GPU, stores that stage in private work, and returns the work item
    to a CPU worker for surface reconstruction. The GPU stage publishes a
    complete private archive, and the CPU stage publishes a validated directory.
-   FastSurfer requires a T1w input.
+   Both engines receive the acquired or synthesized participant T1w reference.
    Export anatomical volumes, cortical ribbon, subcortical masks, and the gray
    matter mask from FreeSurfer segmentation labels. The label names and numeric
    values are in `nro.modules.anat.constants`; they are not learned tissue probabilities.
@@ -201,9 +210,11 @@ matched by the site's hardware catalog are eligible for correction. The catalog
 and coefficient file are site resources, not module settings.
 `fsaverage_template` selects either `fsaverage6`, the packaged default, or the
 full-resolution `fsaverage` surface target. `selection_strategy` controls
-acquisition combination. `surface_reconstruction_engine` selects `freesurfer`,
-the default, or `fastsurfer`. FastSurfer performs only its neural-network
-segmentation stage on a GPU; its surface stage resumes on a general CPU worker.
+acquisition combination. `t1w_fallback` selects T2w-to-T1w synthesis, the
+default, or disables the fallback with `skip`. `surface_reconstruction_engine`
+selects `freesurfer`, the default, or `fastsurfer`. FastSurfer performs only its
+neural-network segmentation stage on a GPU; its surface stage resumes on a
+general CPU worker.
 The selector, backend version, fixed 1 mm reconstruction grid, and scientific
 options enter the artifact contract. Thread counts and resource routing do not.
 `mni_template`

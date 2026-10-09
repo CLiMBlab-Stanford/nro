@@ -31,6 +31,9 @@ from nro.orchestration.hotfixes.v0303_duplicate_ownership_receipts import (
 from nro.orchestration.hotfixes.v0303_obsolete_pycicada_receipts import (
     HOTFIX_ID as PYCICADA_RECEIPT_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0307_msmall_inverse_warp import (
+    HOTFIX_ID as MSMALL_INVERSE_WARP_HOTFIX_ID,
+)
 from nro.orchestration.ownership import ownership_record_fingerprint
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.runner_graph import RunnerGraph, Step
@@ -688,6 +691,103 @@ def test_msmall_source_mask_hotfix_preserves_only_prefreesurfer_branch(
     repeated = apply(
         registry,
         identifier=MSMALL_MASK_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert repeated.records == 0
+
+
+def test_msmall_inverse_warp_hotfix_preserves_independent_stages(tmp_path: Path) -> None:
+    registry, _ = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+    event = (
+        registry.paths.control
+        / "branches/main/events/demo/anat/sub-01/sub-01/digest/runner-contract.json"
+    )
+    event.parent.mkdir(parents=True)
+    root = tmp_path / "WORK/demo/derivatives/nro/anat/main/sub-01"
+    stages = root / "msmall/stages"
+
+    def node(
+        identifier: str,
+        name: str,
+        inputs: list[Path],
+        outputs: list[Path],
+        dependencies: list[str],
+    ) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": name,
+            "kind": "command",
+            "inputs": [str(path) for path in inputs],
+            "outputs": [str(path) for path in outputs],
+            "dependencies": dependencies,
+        }
+
+    ordinary = node("ordinary", "Ordinary Anatomy", [], [root / "ordinary.nii.gz"], [])
+    prefree = node(
+        "prefree",
+        "MSMAll PreFreeSurfer",
+        [],
+        [stages / "prefreesurfer.complete"],
+        [],
+    )
+    atlas = node(
+        "atlas",
+        "MSMAll Mask-Aware Atlas Registration",
+        [stages / "prefreesurfer.complete"],
+        [
+            root / "msmall/structural/subject/MNINonLinear/registration_qc.json",
+            root / "msmall/structural/subject/MNINonLinear/xfms/acpc_dc2standard.nii.gz",
+            stages / "masked_atlas.complete",
+        ],
+        ["prefree"],
+    )
+    freesurfer = node(
+        "freesurfer",
+        "MSMAll FreeSurfer Reconstruction",
+        [stages / "prefreesurfer.complete"],
+        [
+            root / "msmall/structural/subject/T1w/subject/surf/lh.white",
+            stages / "freesurfer.complete",
+        ],
+        ["prefree"],
+    )
+    post = node(
+        "post",
+        "MSMAll PostFreeSurfer",
+        [stages / "masked_atlas.complete", stages / "freesurfer.complete"],
+        [stages / "postfreesurfer.complete"],
+        ["atlas", "freesurfer"],
+    )
+    payload = {
+        "version": 4,
+        "module": "Anatomical Module",
+        "signature": "old-work-item",
+        "topology": [ordinary, prefree, atlas, freesurfer, post],
+        "nodes": [ordinary, prefree, atlas, freesurfer, post],
+    }
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = apply(
+        registry,
+        identifier=MSMALL_INVERSE_WARP_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+
+    assert report.records == 1
+    repaired = json.loads(event.read_text())
+    assert repaired["signature"] == f"hotfix:{MSMALL_INVERSE_WARP_HOTFIX_ID}"
+    by_id = {item["id"]: item for item in repaired["nodes"]}
+    assert set(by_id) == {"ordinary", "prefree", "freesurfer"}
+    assert "accept_relocated_signatures" not in by_id["ordinary"]
+    assert by_id["prefree"]["accept_relocated_signatures"] is True
+    assert by_id["freesurfer"]["accept_relocated_signatures"] is True
+
+    repeated = apply(
+        registry,
+        identifier=MSMALL_INVERSE_WARP_HOTFIX_ID,
         projects=("demo",),
         execute=False,
     )

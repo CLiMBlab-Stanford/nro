@@ -7,7 +7,6 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1038,6 +1037,26 @@ def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -
     assert build_directories and not build_directories[0].exists()
 
 
+def test_pinned_image_rejects_a_conflicting_receipt(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    target.write_bytes(b"container")
+    receipt = target.with_name(target.name + ".receipt.json")
+    receipt.write_text(json.dumps({"sha256": "different"}))
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+
+    with pytest.raises(RuntimeError, match="wrong identity"):
+        dependencies._install_image(
+            "test_image",
+            "https://example.org/image.sif",
+            offline=True,
+            checksum=dependencies.hashlib.sha256(b"container").hexdigest(),
+        )
+
+
 def test_fastsurfer_image_is_standard_and_lesion_checkpoints_are_explicit(
     tmp_path, monkeypatch
 ) -> None:
@@ -1213,117 +1232,60 @@ def test_branch_setup_acquires_only_explicit_lesion_resources(monkeypatch) -> No
     assert checks[0]["with_viewer"] is False
 
 
-def test_archive_escape_is_rejected(tmp_path):
-    archive = tmp_path / "archive.zip"
-    with zipfile.ZipFile(archive, "w") as zipped:
-        zipped.writestr("../escape", "bad")
-    with pytest.raises(ValueError, match="escapes"):
-        dependencies.extract_zip(archive, tmp_path / "extract")
-    assert not (tmp_path / "escape").exists()
-
-
-def test_conda_library_extraction_selects_the_expected_regular_file(tmp_path):
-    import zstandard
-
-    payload = io.BytesIO()
-    with tarfile.open(fileobj=payload, mode="w") as archive:
-        content = b"portable library"
-        member = tarfile.TarInfo("lib/libOpenGL.so.0.0.0")
-        member.size = len(content)
-        archive.addfile(member, io.BytesIO(content))
-    package = tmp_path / "libopengl.conda"
-    with zipfile.ZipFile(package, "w") as archive:
-        archive.writestr(
-            "pkg-test.tar.zst",
-            zstandard.ZstdCompressor().compress(payload.getvalue()),
-        )
-
-    destination = tmp_path / "runtime/libOpenGL.so.0.0.0"
-    dependencies._extract_conda_library(
-        package,
-        "lib/libOpenGL.so.0.0.0",
-        destination,
-    )
-
-    assert destination.read_bytes() == b"portable library"
-
-
-def test_workbench_installs_wrapper_and_reuses_it(isolated_site, tmp_path, monkeypatch):
+def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeypatch):
     command = tmp_path / "workbench/bin_linux64/wb_command"
-    save_settings(isolated_site, {"workbench": str(command)})
-
-    def archive_download(url, target, checksum=None):
-        assert checksum == dependencies.WORKBENCH_SHA256["linux64"]
-        with zipfile.ZipFile(target, "w") as zipped:
-            zipped.writestr("workbench/bin_linux64/wb_command", "wrapper")
-            zipped.writestr("workbench/exe_linux64/wb_command", "binary")
-
-    calls = []
-    monkeypatch.setattr(dependencies, "download", archive_download)
-    monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(dependencies.platform, "freedesktop_os_release", lambda: {"ID": "ubuntu"})
-    monkeypatch.setattr(dependencies, "run_probe", lambda command: calls.append(command))
-    dependencies.install_workbench()
-    assert command.read_text() == "wrapper"
-    assert "/bin_linux64/" in calls[0][0]
-    monkeypatch.setattr(
-        dependencies, "download", lambda *a, **kw: pytest.fail("Unexpected download")
+    save_settings(
+        isolated_site,
+        {"workbench": str(command), "binds": [str(tmp_path) + ":" + str(tmp_path)]},
     )
+    acquisitions = []
+    probes = []
+    monkeypatch.setattr(
+        dependencies,
+        "_install_image",
+        lambda key, source, **options: acquisitions.append((key, source, options)),
+    )
+    monkeypatch.setattr(dependencies, "run_probe", lambda command: probes.append(command))
+
+    dependencies.install_workbench()
+    viewer = command.with_name("wb_view")
+    assert acquisitions == [
+        (
+            "workbench_image",
+            dependencies.WORKBENCH_IMAGE_URL,
+            {"offline": False, "checksum": dependencies.WORKBENCH_IMAGE_SHA256},
+        )
+    ]
+    assert probes == [[str(command), "-version"]]
+    assert command.stat().st_mode & 0o111
+    assert viewer.stat().st_mode & 0o111
+    subprocess.run(["bash", "-n", str(command)], check=True)
+    subprocess.run(["bash", "-n", str(viewer)], check=True)
+    assert "wb_command" in command.read_text()
+    assert "wb_view" in viewer.read_text()
+    assert "APPTAINERENV_XAUTHORITY" in viewer.read_text()
+    assert str(tmp_path) in command.read_text()
+    receipt = json.loads((command.parent.parent / "nro-workbench-container.json").read_text())
+    assert receipt["sha256"] == dependencies.WORKBENCH_IMAGE_SHA256
+
+
+def test_workbench_reuses_an_explicit_native_override(isolated_site, tmp_path, monkeypatch):
+    command = tmp_path / "custom/wb_command"
+    command.parent.mkdir()
+    command.write_text("#!/bin/sh\nexit 0\n")
+    command.chmod(0o755)
+    save_settings(isolated_site, {"workbench": str(command)})
+    probes = []
+    monkeypatch.setattr(dependencies, "run_probe", lambda value: probes.append(value))
+    monkeypatch.setattr(
+        dependencies,
+        "_install_image",
+        lambda *_args, **_kwargs: pytest.fail("native override must not acquire an image"),
+    )
+
     dependencies.install_workbench(offline=True)
 
-
-def test_workbench_installs_portable_opengl_when_host_libraries_are_missing(
-    isolated_site, tmp_path, monkeypatch
-):
-    command = tmp_path / "workbench/bin_linux64/wb_command"
-    save_settings(isolated_site, {"workbench": str(command)})
-    downloads = []
-
-    def archive_download(url, target, checksum=None):
-        flavor = "rh_linux64" if "rh_linux64" in url else "linux64"
-        downloads.append(flavor)
-        assert checksum == dependencies.WORKBENCH_SHA256[flavor]
-        with zipfile.ZipFile(target, "w") as zipped:
-            zipped.writestr(f"workbench/bin_{flavor}/wb_command", "command")
-            zipped.writestr(f"workbench/bin_{flavor}/wb_view", "viewer")
-            if flavor == "linux64":
-                zipped.writestr("workbench/libs_linux64/osmesa/libGLU.so.1", "bundled")
-
-    def probe(arguments):
-        executable = Path(arguments[0])
-        if "bin_rh_linux64" in str(executable):
-            raise RuntimeError("libGLU.so.1: cannot open shared object file")
-        if not executable.with_name("wb_command.vendor").is_file():
-            raise RuntimeError("libOpenGL.so.0: cannot open shared object file")
-        return "Connectome Workbench 2.2.1"
-
-    def install_gl_runtime(tree, temporary):
-        runtime = tree / "libs_linux64/glvnd"
-        runtime.mkdir(parents=True)
-        for library in dependencies.WORKBENCH_GL_MISSING:
-            (runtime / library).write_text("bundled")
-        return [{"source": "test", "sha256": "test"}]
-
-    monkeypatch.setattr(dependencies, "download", archive_download)
-    monkeypatch.setattr(dependencies, "run_probe", probe)
-    monkeypatch.setattr(dependencies, "_install_workbench_gl_runtime", install_gl_runtime)
-    monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(
-        dependencies.platform,
-        "freedesktop_os_release",
-        lambda: {"ID": "rocky", "ID_LIKE": "rhel centos fedora"},
-    )
-
-    dependencies.install_workbench()
-
-    viewer = command.with_name("wb_view")
-    assert downloads == ["rh_linux64", "linux64"]
-    assert command.with_name("wb_command.vendor").read_text() == "command"
-    assert "libs_linux64/glvnd" in command.read_text()
-    assert viewer.with_name("wb_view.vendor").read_text() == "viewer"
-    assert "libs_linux64/osmesa" in viewer.read_text()
-    receipt = json.loads((command.parent.parent / "nro-download.json").read_text())
-    assert receipt["opengl_runtime"] == [{"source": "test", "sha256": "test"}]
+    assert probes == [[str(command), "-version"]]
 
 
 def test_install_help_from_another_working_directory(tmp_path):

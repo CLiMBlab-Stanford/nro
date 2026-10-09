@@ -83,6 +83,13 @@ MSMALL_MANIFEST_FIELDS = {
     "outputs.msmall.software_versions": "string",
 }
 
+SYNTHETIC_T1W_MANIFEST_FIELDS = {
+    "t1w_synthesis": "mapping",
+    "t1w_synthesis.backend": "string",
+    "t1w_synthesis.source_contrast": "string",
+    "t1w_synthesis.output_contrast": "string",
+}
+
 
 def pose_normalization_contract() -> dict[str, object]:
     """Describe how the participant anatomical reference is pose-normalized."""
@@ -105,13 +112,20 @@ def msmall_structural_input_contract() -> dict[str, str]:
     }
 
 
-def anatomical_output_contract(*, lesion: bool = False, msmall: bool = False) -> dict[str, object]:
+def anatomical_output_contract(
+    *,
+    lesion: bool = False,
+    msmall: bool = False,
+    synthetic_t1w: bool = False,
+) -> dict[str, object]:
     """Return the required public metadata schema for substantive freshness comparison."""
     fields = dict(ANATOMICAL_MANIFEST_FIELDS)
     if lesion:
         fields.update(LESION_MANIFEST_FIELDS)
     if msmall:
         fields.update(MSMALL_MANIFEST_FIELDS)
+    if synthetic_t1w:
+        fields.update(SYNTHETIC_T1W_MANIFEST_FIELDS)
     return {
         "publication_manifest_fields": fields,
         "surface_metric_structure": "hemisphere_specific",
@@ -127,6 +141,8 @@ def validate_anatomical_manifest(document: Mapping[str, object]) -> None:
     msmall = document.get("msmall")
     if isinstance(msmall, Mapping) and msmall.get("enabled") is True:
         fields.update(MSMALL_MANIFEST_FIELDS)
+    if isinstance(document.get("t1w_synthesis"), Mapping):
+        fields.update(SYNTHETIC_T1W_MANIFEST_FIELDS)
     validate_metadata_fields(
         document,
         fields,

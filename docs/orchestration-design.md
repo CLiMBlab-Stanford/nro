@@ -24,7 +24,7 @@ module. Lab-wide planning, state, and workers remain in `nro/orchestration`.
 `nro/definitions/store.py` resolves configurations and workflows from the
 external [definitions store](definitions.md). Its `configs/` directory contains
 one directory per configuration class. Workflows live in `workflows/`. Processing
-requests accept identifiers; `nro paths` selects the store root.
+requests accept identifiers; `nro site` selects the store root.
 
 A module configuration contains only local parameters. A workflow selects
 configuration IDs and therefore supplies upstream lineage. The complete base

@@ -24,6 +24,7 @@ from nro.orchestration.planner import Planner, PlanningResult, RegisteredTarget
 from nro.orchestration.registry import Registry
 from nro.orchestration.resources import (
     GPU_RESOURCE_CLASS,
+    LONG_CPU_RESOURCE_CLASS,
     SCHEDULABLE_RESOURCE_CLASSES,
     memory_tiers,
 )
@@ -31,8 +32,6 @@ from nro.orchestration.selection import discover_bids_inventory
 from nro.orchestration.submission import _submit_workers, _write_worker_script
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
-DEFAULT_CONCURRENCY = 50
-DEFAULT_WORKER_IDLE_TIMEOUT = 30
 _RESUMABLE_STATUSES = frozenset({"Queued", "Waiting", "Stopped", "Timeout", "Error"})
 _DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Corrupt", "Blocked"})
 
@@ -261,29 +260,32 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     from nro.site.configuration import settings
 
     site, _ = settings()
-    parser.add_argument("--partition", default=site["partition"])
+    parser.add_argument("--partition", default=site["partition"] or None)
     parser.add_argument("--account", default=site["account"] or None)
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=DEFAULT_CONCURRENCY,
-        help=f"Maximum shared worker concurrency (default: {DEFAULT_CONCURRENCY})",
+        default=site["concurrency"],
+        help=f"Maximum shared worker concurrency (site default: {site['concurrency']})",
     )
-    parser.add_argument("--time", type=int, default=24, metavar="HOURS")
-    parser.add_argument("--memory", type=int, default=32, metavar="GB")
-    parser.add_argument("--max-memory", type=int, default=256, metavar="GB")
-    parser.add_argument("--cpus", type=int, default=2)
+    parser.set_defaults(gpu_concurrency=site["gpu_concurrency"])
+    parser.add_argument("--time", type=int, default=site["worker_time"], metavar="HOURS")
+    parser.add_argument("--memory", type=int, default=site["worker_memory"], metavar="GB")
+    parser.add_argument("--max-memory", type=int, default=site["worker_max_memory"], metavar="GB")
+    parser.add_argument("--cpus", type=int, default=site["worker_cpus"])
+    parser.add_argument("--long-time", type=int, default=site["long_worker_time"], metavar="HOURS")
+    parser.add_argument("--long-cpus", type=int, default=site["long_worker_cpus"])
     parser.add_argument(
         "--worker-idle-timeout",
         type=int,
-        default=DEFAULT_WORKER_IDLE_TIMEOUT,
+        default=site["worker_idle_timeout"],
         metavar="SECONDS",
-        help=f"Exit a worker after this many idle seconds (default: {DEFAULT_WORKER_IDLE_TIMEOUT})",
+        help=f"Exit a worker after this many idle seconds (site default: {site['worker_idle_timeout']})",
     )
     parser.add_argument(
         "--drain-minutes",
         type=int,
-        default=15,
+        default=site["worker_drain_minutes"],
         help="Stop workers from claiming new work this long before wall time",
     )
     parser.add_argument(
@@ -496,10 +498,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         )
     if set(modules) == {"anat"} and selection.runs:
         raise SystemExit("--run does not apply to the anatomical module")
-    if args.concurrency < 1:
-        raise SystemExit("--concurrency must be at least 1")
+    if args.concurrency < 1 or args.gpu_concurrency < 1:
+        raise SystemExit("--concurrency and --gpu-concurrency must be at least 1")
     if args.memory < 1 or args.max_memory < args.memory:
         raise SystemExit("--memory must be positive and --max-memory must be at least --memory")
+    if args.time < 1 or args.cpus < 1 or args.long_time < 1 or args.long_cpus < 1:
+        raise SystemExit("worker time and CPU settings must be positive")
     if args.drain_minutes < 0 or args.drain_minutes * 60 >= args.time * 60 * 60:
         raise SystemExit("--drain-minutes must be nonnegative and shorter than --time")
     if args.worker_idle_timeout < 1:
@@ -742,8 +746,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                             "account",
                             "time",
                             "cpus",
+                            "long_time",
+                            "long_cpus",
                             "worker_idle_timeout",
                             "drain_minutes",
+                            "gpu_concurrency",
                         )
                     },
                     "projects": list(planned_projects),
@@ -812,8 +819,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                         "account",
                         "time",
                         "cpus",
+                        "long_time",
+                        "long_cpus",
                         "worker_idle_timeout",
                         "drain_minutes",
+                        "gpu_concurrency",
                     )
                 },
             )
@@ -868,6 +878,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     registry.reconcile_requests()
     fresh = sum(state == "fresh" for state, _reason in states.values())
     submitted: list[str] = []
+    registry.set_gpu_concurrency(args.gpu_concurrency)
     if args.local and args.no_submit:
         raise SystemExit("--local and --no-submit are mutually exclusive")
     if args.local:
@@ -893,14 +904,15 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         scripts: dict[tuple[str, int], Path] = {}
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
             for tier in memory_tiers(args.memory, args.max_memory):
+                long_cpu = resource_class == LONG_CPU_RESOURCE_CLASS
                 scripts[(resource_class, tier)] = _write_worker_script(
                     registry,
                     bids_root=bids_root,
                     partition=args.partition,
                     account=args.account,
-                    hours=args.time,
+                    hours=args.long_time if long_cpu else args.time,
                     memory_gb=tier,
-                    cpus=args.cpus,
+                    cpus=args.long_cpus if long_cpu else args.cpus,
                     resource_class=resource_class,
                     idle_timeout=args.worker_idle_timeout,
                     drain_seconds=args.drain_minutes * 60,

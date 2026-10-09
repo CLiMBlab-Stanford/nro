@@ -521,12 +521,13 @@ def write_controller_script(
     lines = [
         "#!/usr/bin/env bash",
         "#SBATCH --job-name=nro-scheduler",
-        f"#SBATCH --partition={partition}",
         f"#SBATCH --time={time_hours}:00:00",
         f"#SBATCH --mem={memory_gb}G",
         f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --output={paths.service}/controller-%j.log",
     ]
+    if partition:
+        lines.append(f"#SBATCH --partition={partition}")
     if account:
         lines.append(f"#SBATCH --account={account}")
     lines.extend(("set -euo pipefail", "export NRO_PROCESS_ROLE=scheduler"))
@@ -537,9 +538,15 @@ def write_controller_script(
 
 def submit_controller(script: Path) -> str:
     """Submit one controller and return its Slurm job identity."""
-    result = subprocess.run(
-        ["sbatch", "--parsable", str(script)], check=True, text=True, capture_output=True
-    )
+    try:
+        result = subprocess.run(
+            ["sbatch", "--parsable", str(script)], check=True, text=True, capture_output=True
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "").strip()
+        raise RuntimeError(
+            f"Slurm rejected scheduler submission for {script}" + (f": {detail}" if detail else "")
+        ) from error
     job_id = result.stdout.strip().split(";", 1)[0]
     if not job_id:
         raise RuntimeError(f"sbatch returned no controller job ID: {result.stdout!r}")

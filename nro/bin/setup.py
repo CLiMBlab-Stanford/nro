@@ -51,7 +51,7 @@ def _main(argv=None, *, prog="nro setup"):
     parser.add_argument(
         "--without-viewer",
         action="store_true",
-        help="Skip native Connectome Workbench installation and checks",
+        help="Skip Connectome Workbench installation and checks",
     )
     parser.add_argument("--with-lesion", action="store_true")
     parser.add_argument("--with-cicada", action="store_true")
@@ -148,7 +148,7 @@ def _main(argv=None, *, prog="nro setup"):
                 install_workbench(offline=args.offline)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 raise RuntimeError(
-                    f"{error}\nNative Workbench viewer setup failed. "
+                    f"{error}\nWorkbench viewer setup failed. "
                     "Rerun ./install --without-viewer to install nro without scene viewing "
                     "and rendering."
                 ) from error
@@ -169,7 +169,7 @@ def _main(argv=None, *, prog="nro setup"):
         if any(not r["ok"] and r["required"] for r in results):
             if any(r["name"] == "Workbench" and not r["ok"] for r in results):
                 raise RuntimeError(
-                    "Native Workbench viewer checks failed. Rerun "
+                    "Workbench viewer checks failed. Rerun "
                     "./install --without-viewer to install nro without scene viewing and "
                     "rendering."
                 )

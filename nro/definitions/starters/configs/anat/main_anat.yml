@@ -14,6 +14,7 @@ container:
     exit "$qx_setup_rc"; fi
   no_container: false
 selection_strategy: first
+t1w_fallback: synthesize_from_t2w
 surface_reconstruction_engine: freesurfer
 mni_template: site:mni_template
 synthstrip_container: site:synthstrip

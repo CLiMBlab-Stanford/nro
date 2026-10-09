@@ -25,26 +25,10 @@ from nro.site.configuration import (
     validate_setting,
     write_site_definition,
 )
+from nro.site.policy import BY_STORAGE_KEY, SITE_SETTINGS, parse_cli_value
 
 DESCRIPTIONS = {
-    "definitions": "Configurations, workflows, models, source markup, events, and ingestion profiles",
-    "bids": "Directory containing BIDS projects",
-    "work": "Intermediate files",
-    "development": "Branch-owned derivatives, intermediate files, and debug BIDS",
-    "registry": "Shared registry and logs",
-    "images": "Container images",
-    "gradient_coefficients": "Gradient-unwarping coefficient files",
-    "templates": "TemplateFlow data",
-    "workbench": "wb_command executable",
-    "license": "Existing FreeSurfer license",
-    "runtime": "Singularity or Apptainer executable",
-    "oslom": "oslom_undir executable",
-    "partition": "Slurm partition",
-    "viewing_partition": "Slurm partition for interactive scene viewing",
-    "account": "Slurm account (- for none)",
-    "binds": "Container bind paths as a JSON list",
-    "flywheel_server": "Default Flywheel server (- for none)",
-    "flywheel_project": "Default Flywheel GROUP/PROJECT (- for none)",
+    specification.storage_key: specification.description for specification in SITE_SETTINGS.values()
 }
 
 
@@ -217,7 +201,7 @@ def migrate_site_configuration(path: Path) -> Path:
     return protected_path
 
 
-def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
+def edit_settings(assignments=None, *, maintain=False, path=None, live=False, quiet=False) -> None:
     """Edit independent site values interactively or from key=value assignments.
 
     Shared edits require maintenance authorization and an inactive worker pool.
@@ -227,10 +211,10 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
         raise ValueError(
             "Branch installations cannot edit the shared site; use its maintainer installation"
         )
-    if installation_record().get("mode") == "shared" and not maintain:
+    if installation_record().get("mode") == "shared" and not (maintain or live):
         raise ValueError("Shared settings require --maintain and maintainer write access.")
     path = site_file() if path is None else path
-    if installation_record().get("mode") == "shared":
+    if installation_record().get("mode") == "shared" and not live:
         from nro.site.bootstrap import check_workers
 
         check_workers(path)
@@ -241,7 +225,9 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
             key, separator, value = assignment.partition("=")
             if not separator:
                 raise ValueError(f"Expected key=value: {assignment!r}")
-            if key == "binds":
+            if key in BY_STORAGE_KEY:
+                value = parse_cli_value(SITE_SETTINGS[BY_STORAGE_KEY[key]], value)
+            elif key == "binds":
                 value = json.loads(value)
             elif key in PATH_KEYS:
                 value = str(Path(value).expanduser())
@@ -249,7 +235,7 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
             overrides[key] = value
     else:
         if not sys.stdin.isatty():
-            raise ValueError("Interactive setup needs a terminal; use paths set key=value.")
+            raise ValueError("Interactive setup needs a terminal; use site set KEY=VALUE.")
 
         def complete(text, state):
             matches = glob.glob(os.path.expanduser(text) + "*")
@@ -265,20 +251,21 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
                 overrides["binds"] = proposals["binds"]
             print(f"Site configuration: {path}\nEnter keeps a value; Tab completes paths.")
             print("Proposed settings:")
-            for key in DESCRIPTIONS:
-                print(f"  {key}: {values[key]}")
+            for public_key, specification in SITE_SETTINGS.items():
+                print(f"  {public_key}: {values[specification.storage_key]}")
             accept_all = input("Accept all defaults? [Y/n]: ").strip().lower() in {"", "y", "yes"}
-            for key, description in DESCRIPTIONS.items():
+            for public_key, specification in SITE_SETTINGS.items():
+                key = specification.storage_key
                 entered = (
-                    "" if accept_all else input(f"{description}\n  {key} [{values[key]}]: ").strip()
+                    ""
+                    if accept_all
+                    else input(
+                        f"{specification.description}\n  {public_key} [{values[key]}]: "
+                    ).strip()
                 )
                 value = entered or values[key]
-                if key == "binds" and entered:
-                    value = json.loads(entered)
-                if key in {"account", "flywheel_server", "flywheel_project"} and entered == "-":
-                    value = ""
-                if key in PATH_KEYS:
-                    value = str(Path(value).expanduser())
+                if entered:
+                    value = parse_cli_value(specification, entered)
                 validate_setting(key, value)
                 overrides[key] = value
             for key, value in sorted(overrides.items()):
@@ -288,4 +275,7 @@ def edit_settings(assignments=None, *, maintain=False, path=None) -> None:
         finally:
             readline.set_completer(previous)
     destination = save_settings(path, overrides)
-    print(f"Saved {destination}. New commands use these settings; existing data were not moved.")
+    if not quiet:
+        print(
+            f"Saved {destination}. New commands use these settings; existing data were not moved."
+        )

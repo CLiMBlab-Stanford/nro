@@ -104,7 +104,7 @@ nro def edit file bidsify/main.yml --file ./main.yml
 ```
 
 This path form validates the complete staged store before publication. Use
-`nro paths set` instead of `file` for protected `site/site.yml` settings.
+`nro site set` instead of `file` for protected `site/site.yml` settings.
 
 ## List definitions
 

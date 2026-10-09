@@ -491,6 +491,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
                 partition=values["viewing_partition"],
                 account=values["account"] or None,
                 control=Path(values["registry"]),
+                hours=values["viewer_time"],
+                memory_gb=values["viewer_memory"],
+                cpus=values["viewer_cpus"],
             )
         except ValueError as error:
             raise SystemExit(str(error)) from error

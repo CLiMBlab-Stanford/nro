@@ -11,6 +11,7 @@ FASTSURFER_VERSION = "2.5.4"
 FASTSURFER_SOURCE_REVISION = "cdfccea"
 FASTSURFER_OCI_DIGEST = "sha256:8db4881c12961a7d6e2c8ed879f6207fbba82d1668c1d64bef281512cebbe1e5"
 FASTSURFER_VOXEL_SIZE_MM = 1.0
+T1W_FALLBACK_DEFAULT = "synthesize_from_t2w"
 
 
 def bias_correction_contract() -> dict[str, object]:
@@ -20,6 +21,19 @@ def bias_correction_contract() -> dict[str, object]:
         "mask_source": "SynthStrip",
         "mask_application": "hard_mask",
         "bias_field_retained": True,
+    }
+
+
+def t1w_synthesis_contract() -> dict[str, object]:
+    """Describe synthesis of a canonical T1w reference from selected T2w data."""
+    return {
+        "backend": "FreeSurfer mri_synthsr",
+        "version": FREESURFER_VERSION,
+        "build": FREESURFER_BUILD,
+        "source_contrast": "T2w",
+        "output_contrast": "synthetic T1w",
+        "output_resolution_mm": 1.0,
+        "device": "CPU",
     }
 
 

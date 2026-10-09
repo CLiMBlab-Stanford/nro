@@ -87,7 +87,7 @@ filesystem reconciliation.
 
 | Additional option | Behavior/default |
 | --- | --- |
-| `--concurrency N` | Shared limit, default 50. |
+| `--concurrency N` | Shared limit; defaults to `execution.concurrency`. |
 | `--cpus N` | CPUs and scientific-process threads per worker, default 2. |
 | `--time HOURS` | Worker allocation duration, default 24 hours. |
 | `--memory GB` | Initial worker memory, default 32 GB. |
@@ -238,32 +238,20 @@ These global controls do not accept selectors, `--only`, or `--force`; combining
 demand or completed outputs. Coordinate with other users before using either
 control.
 
-## `nro set`
+## Site execution policy
 
 ```bash
-nro set ls
-nro get
-nro get concurrency gpu_concurrency
-nro set concurrency=60
-nro set gpu_concurrency=2
+nro site ls execution
+nro site get execution.concurrency execution.gpu_concurrency
+nro site set execution.concurrency=60 execution.gpu_concurrency=2
 ```
 
-`nro set ls` lists every accepted name, its value constraint, its scope, and its
-effect. Add `--json` for structured output. Updates accept one or more
-`NAME=VALUE` pairs. `concurrency` updates active requests and
-limits the general worker pool. `gpu_concurrency` is a persistent scheduler
-setting, defaults to one, and limits resource-specific GPU steps independently.
-Unsupported keys warn and are skipped. Malformed pairs or invalid recognized
-values fail. `--json` returns the update result. The global site configuration
-selects the registry and BIDS context.
+The concurrency values are durable site policy. The general limit defaults to
+50; the GPU limit defaults to one. `nro site set` saves all assignments
+atomically and rejects unknown keys. When a scheduler is live, it receives these
+two changes immediately. With no scheduler, the saved values apply when
+coordination resumes.
 
-Changing a limit does not create demand or immediately kill or launch workers.
-Workers observe it during normal check-in; a later `nro run --resume` or worker
-completion supplies newly useful capacity. Updating `concurrency` fails when no
-active request can be changed. `gpu_concurrency` may be set before a GPU step is
-ready.
-
-`nro get` returns every current setting as `NAME=VALUE`; positional names limit
-the result to those settings. `--json` returns a `settings` object instead.
-Because `concurrency` is defined by active derivative and ingestion requests, it
-is `unset` (`null` in JSON) when no active request supplies a limit.
+Changing a limit does not create demand or immediately terminate workers.
+Workers observe it during normal scheduler coordination. `nro run` continues to
+offer invocation-specific overrides without changing the durable defaults.

@@ -270,7 +270,7 @@ scan-plan file are detected and reparsed when the request resumes.
 | `synthstrip` | Command argument list; `null` resolves the configured SynthStrip container command. |
 | `validator` | Command argument list. The staged dataset path is appended. Nonzero exit blocks publication. |
 | `memory_gb`, `cpus`, `hours` | Worker allocation settings; defaults 32 GiB, 2 CPUs, 12 hours. |
-| `concurrency` | Requested shared limit; default 50. `nro set concurrency=N` updates active ingestion and derivative requests. |
+| `concurrency` | Requested shared limit; defaults to `execution.concurrency`. `nro site set execution.concurrency=N` changes the durable site limit and relays it to a live scheduler. |
 | `protocols` | Ordered metadata refinements with `pattern`, `datatype`, and `suffix`. The first rule matching `SeriesDescription`, `ProtocolName`, or `SequenceName` applies after dcm2niix supplies a supported `BidsGuess`. |
 | `scanplans.parser` | Branch-selectable parser implementation. A null value requests the packaged stub. |
 
@@ -315,7 +315,7 @@ Mappings are site-specific; new stores leave them empty. Multiple BIDS datasets
 may draw different sessions from the same source project, but a source session
 has only one destination. An unmapped BIDS dataset requires source selection
 when multiple sources match its selectors. Selecting a source in the
-wizard does not edit the protected site document; use `nro paths set` or edit
+wizard does not edit the protected site document; use `nro site set` or edit
 and validate that document through site maintenance to retain the default.
 
 ### Existing-session rules

@@ -71,6 +71,9 @@ def ensure(endpoint) -> str | None:
                 python=endpoint.python,
                 partition=values["partition"],
                 account=values.get("account") or None,
+                time_hours=values["planner_time"],
+                memory_gb=values["planner_memory"],
+                cpus=values["planner_cpus"],
             )
             job_id = submit(script)
         update_launch_job(claim, job_id)

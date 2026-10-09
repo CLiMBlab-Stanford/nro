@@ -18,7 +18,7 @@ def resolve_workbench_command(configured: str | Path) -> str:
     executable = Path(configured).expanduser()
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError(
-            f"Native Connectome Workbench is not available: {executable}. "
+            f"Connectome Workbench is not available: {executable}. "
             "Install it by rerunning ./install without --without-viewer, or configure "
             "the site workbench path."
         )
