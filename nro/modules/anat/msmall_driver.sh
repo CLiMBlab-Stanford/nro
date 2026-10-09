@@ -97,6 +97,8 @@ record_inventory() {
             printf 'T2w\t%s\t' "$path"
             sha256sum "$path" | cut -d' ' -f1
         done
+        printf 'BrainMask\t%s\t' "$brain_mask"
+        sha256sum "$brain_mask" | cut -d' ' -f1
         for index in "${!run_names[@]}"; do
             printf '%s\t%s\t' "${run_names[$index]}" "${run_paths[$index]}"
             sha256sum "${run_paths[$index]}" | cut -d' ' -f1
@@ -159,7 +161,7 @@ repair_prefreesurfer_masks() {
     # nro inputs are already skull-stripped. HCP's template-derived brain
     # extraction can contract around those inputs, so carry nro's mask through
     # the rigid AC-PC transform instead of estimating it again.
-    fslmaths "${t1w[0]}" -bin "$source_mask"
+    fslmaths "$brain_mask" -bin "$source_mask"
     applywarp --rel --interp=nn \
         -i "$source_mask" \
         -r "$t1_dir/T1w_acpc_dc_restore.nii.gz" \
@@ -456,7 +458,9 @@ finalize() {
     printf 'completed %s\n' "$(date --iso-8601=seconds)" > "$work_root/complete"
 }
 
-for path in "${t1w[@]}" "${t2w[@]}" "$fs_license"; do require_file "$path"; done
+for path in "${t1w[@]}" "${t2w[@]}" "$brain_mask" "$fs_license"; do
+    require_file "$path"
+done
 case "$stage" in
     inventory) record_inventory ;;
     prefreesurfer) run_prefreesurfer ;;

@@ -95,7 +95,7 @@ class MsmAllCalibration:
             "parameters": dict(self.parameters),
             "atlas_registration": {
                 "moving_input": "skull_stripped_T1w",
-                "moving_mask": "explicit_binary_brain_mask",
+                "moving_mask": "binarized_surface_reconstruction_brain_mask",
                 "reference_mask": "HCP_MNI152_2mm_brain_mask_dil",
                 "affine_degrees_of_freedom": 7,
                 "fnirt_intensity_model": "disabled_for_binary_masks",
@@ -294,6 +294,7 @@ def _structural_configuration_text(
     license_path: Path,
     structural_t1w: Path,
     structural_t2w: Path,
+    structural_brain_mask: Path,
 ) -> str:
     structural_lines = [
         f"subject={shlex.quote(subject)}",
@@ -301,6 +302,7 @@ def _structural_configuration_text(
         f"fs_license={shlex.quote(str(license_path))}",
         _shell_array("t1w", [structural_t1w]),
         _shell_array("t2w", [structural_t2w]),
+        f"brain_mask={shlex.quote(str(structural_brain_mask))}",
     ]
     return "\n".join(structural_lines) + "\n"
 
@@ -379,6 +381,7 @@ def add_msmall_plan(
     license_path: Path,
     structural_t1w: Path,
     structural_t2w: Path,
+    structural_brain_mask: Path,
     native_registration_spheres: Mapping[str, Path],
     env: Mapping[str, str],
     force: bool,
@@ -392,7 +395,16 @@ def add_msmall_plan(
     driver = Path(__file__).with_name("msmall_driver.sh")
     atlas_validator = Path(__file__).with_name("msmall_validate_atlas.py")
     subcortical_validator = Path(__file__).with_name("msmall_validate_subcortical.py")
-    hcp_inputs = tuple(dict.fromkeys((*calibration.input_paths, structural_t1w, structural_t2w)))
+    hcp_inputs = tuple(
+        dict.fromkeys(
+            (
+                *calibration.input_paths,
+                structural_t1w,
+                structural_t2w,
+                structural_brain_mask,
+            )
+        )
+    )
     structural_parameters = {
         "selection_strategy": calibration.selection_strategy,
         "structural_inputs": msmall_structural_input_contract(),
@@ -416,7 +428,7 @@ def add_msmall_plan(
             for image in (*calibration.t1w, *calibration.t2w)
             for path in image_source_paths(image)
         )
-    ) + (structural_t1w, structural_t2w)
+    ) + (structural_t1w, structural_t2w, structural_brain_mask)
 
     def write_structural_configuration() -> None:
         text = _structural_configuration_text(
@@ -426,6 +438,7 @@ def add_msmall_plan(
             license_path=license_path,
             structural_t1w=structural_t1w,
             structural_t2w=structural_t2w,
+            structural_brain_mask=structural_brain_mask,
         )
         _write_text_if_changed(structural_configuration, text)
 
@@ -626,7 +639,7 @@ def add_msmall_plan(
         "Restore MSMAll Source Brain Masks",
         inputs=(
             marker("prefreesurfer"),
-            structural_t1w,
+            structural_brain_mask,
             t1_dir / "xfms/acpc.mat",
             t1_dir / "T1w_acpc_dc_restore.nii.gz",
             t1_dir / "T2w_acpc_dc_restore.nii.gz",

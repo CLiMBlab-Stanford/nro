@@ -41,16 +41,19 @@ def test_dispatcher_forwards_arguments_and_installed_program_name(monkeypatch) -
     assert calls == [(["-p", "t12"], "nro run")]
 
 
-def test_version_reports_installed_distribution_without_site_loading(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("flag", ["--version", "-v"])
+def test_version_reports_installed_distribution_without_site_loading(
+    monkeypatch, capsys, flag: str
+) -> None:
     import nro.site.configuration as site
 
     monkeypatch.setattr(
         site,
         "installation_record",
-        lambda: pytest.fail("--version must not load installation state"),
+        lambda: pytest.fail("version reporting must not load installation state"),
     )
     with pytest.raises(SystemExit) as error:
-        cli.main(["--version"])
+        cli.main([flag])
 
     assert error.value.code == 0
     assert capsys.readouterr().out.strip() == f"nro {version('nro')}"

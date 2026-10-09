@@ -1646,6 +1646,7 @@ def build_module(
             license_path=Path(env["FS_LICENSE"]),
             structural_t1w=subj_t1,
             structural_t2w=subj_t2,
+            structural_brain_mask=brain_mask,
             native_registration_spheres={
                 hemi: Path(exported_surfaces[f"{hemi}.sphere.reg"]) for hemi in ("lh", "rh")
             },

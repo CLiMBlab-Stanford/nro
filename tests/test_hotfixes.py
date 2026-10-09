@@ -22,6 +22,9 @@ from nro.orchestration.hotfixes.v0295_msmall_stage_isolation import (
 from nro.orchestration.hotfixes.v0301_msmall_source_masks import (
     HOTFIX_ID as MSMALL_MASK_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0302_msmall_brain_mask import (
+    HOTFIX_ID as MSMALL_BRAIN_MASK_HOTFIX_ID,
+)
 from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
@@ -149,6 +152,7 @@ def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert MSMALL_ATLAS_HOTFIX_ID in available()
     assert MSMALL_ISOLATION_HOTFIX_ID in available()
     assert MSMALL_MASK_HOTFIX_ID in available()
+    assert MSMALL_BRAIN_MASK_HOTFIX_ID in available()
 
 
 def test_msmall_runner_stage_hotfix_adopts_exact_legacy_checkpoints(tmp_path: Path) -> None:
@@ -507,6 +511,104 @@ def test_msmall_source_mask_hotfix_preserves_only_prefreesurfer_branch(
     repeated = apply(
         registry,
         identifier=MSMALL_MASK_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert repeated.records == 0
+
+
+def test_msmall_brain_mask_hotfix_invalidates_only_msmall_nodes(tmp_path: Path) -> None:
+    registry, _ = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+    event = (
+        registry.paths.control
+        / "branches/main/events/demo/anat/sub-01/sub-01/digest/runner-contract.json"
+    )
+    event.parent.mkdir(parents=True)
+    root = tmp_path / "WORK/demo/derivatives/nro/anat/main/sub-01"
+    stages = root / "msmall/stages"
+
+    def node(
+        identifier: str,
+        name: str,
+        inputs: list[Path],
+        outputs: list[Path],
+        dependencies: list[str],
+    ) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": name,
+            "kind": "command",
+            "inputs": [str(path) for path in inputs],
+            "outputs": [str(path) for path in outputs],
+            "dependencies": dependencies,
+        }
+
+    ordinary = node("ordinary", "Ordinary Anatomy", [], [root / "ordinary.nii.gz"], [])
+    configuration = node(
+        "configuration",
+        "Write MSMAll Structural Configuration",
+        [],
+        [root / "msmall/structural_configuration.sh"],
+        [],
+    )
+    prefreesurfer = node(
+        "prefree",
+        "MSMAll PreFreeSurfer",
+        [],
+        [stages / "prefreesurfer.complete"],
+        ["configuration"],
+    )
+    inferred_mask = node(
+        "mask",
+        "Restore MSMAll Source Brain Masks",
+        [root / "anat/sub-01_desc-preproc_T1w.nii.gz"],
+        [stages / "prefreesurfer_masks.complete"],
+        ["prefree"],
+    )
+    atlas = node(
+        "atlas",
+        "MSMAll Mask-Aware Atlas Registration",
+        [],
+        [stages / "masked_atlas.complete"],
+        ["mask"],
+    )
+    publication = node(
+        "publication",
+        "Publish MSMAll sphere",
+        [],
+        [root / "anat/sub-01_space-MSMAll_hemi-L_sphere.surf.gii"],
+        ["atlas"],
+    )
+    nodes = [ordinary, configuration, prefreesurfer, inferred_mask, atlas, publication]
+    event.write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "module": "Anatomical Module",
+                "signature": "work-item",
+                "topology": nodes,
+                "nodes": nodes,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = apply(
+        registry,
+        identifier=MSMALL_BRAIN_MASK_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+
+    assert report.records == 1
+    repaired = json.loads(event.read_text())
+    assert repaired["signature"] == f"hotfix:{MSMALL_BRAIN_MASK_HOTFIX_ID}"
+    assert [item["id"] for item in repaired["nodes"]] == ["ordinary"]
+
+    repeated = apply(
+        registry,
+        identifier=MSMALL_BRAIN_MASK_HOTFIX_ID,
         projects=("demo",),
         execute=False,
     )

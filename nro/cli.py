@@ -69,6 +69,7 @@ def build_parser(*, prog: str = "nro") -> argparse.ArgumentParser:
         description="Run and inspect nro derivative workflows.",
     )
     parser.add_argument(
+        "-v",
         "--version",
         action="version",
         version=f"%(prog)s {package_version()}",
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
     """Dispatch argv to a user command; unknown commands exit with a parser error."""
     values = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser(prog=prog)
-    if not values or values[0] in {"-h", "--help", "--version"}:
+    if not values or values[0] in {"-h", "--help", "-v", "--version"}:
         parser.parse_args(values)
         return
 
