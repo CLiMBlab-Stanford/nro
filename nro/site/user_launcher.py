@@ -30,7 +30,7 @@ def read_index(path: Path) -> dict:
     return value
 
 
-def select_installation(index: dict, cwd: Path) -> dict:
+def select_installation(index: dict, cwd: Path, *, allow_incomplete: bool = False) -> dict:
     """Resolve the nearest installed checkout, or the outside-checkout default.
 
     Recognized but unregistered nro checkouts stop selection. They cannot fall
@@ -60,7 +60,7 @@ def select_installation(index: dict, cwd: Path) -> dict:
         )
     if record.get("checkout") != root or Path(root).resolve() != Path(root):
         raise ValueError("Installation checkout binding changed; reconnect explicitly")
-    if not record.get("ready"):
+    if not record.get("ready") and not allow_incomplete:
         raise ValueError(f"Installation is incomplete: {root}; rerun ./install")
     if record.get("mode") not in {"personal", "shared", "branch"}:
         raise ValueError("Unknown installation role; reconnect explicitly")
@@ -118,7 +118,12 @@ def main(argv=None, *, index_path: Path | None = None) -> None:
     """Replace the launcher with the selected interpreter, excluding ambient imports."""
     try:
         index = read_index(index_path or Path(__file__).with_name(INDEX_NAME))
-        record = select_installation(index, Path.cwd())
+        arguments = sys.argv[1:] if argv is None else argv
+        record = select_installation(
+            index,
+            Path.cwd(),
+            allow_incomplete=arguments[:2] == ["def", "apply"],
+        )
         python = str(Path(record["environment"]) / "bin/python")
         env = {
             key: value
@@ -130,7 +135,6 @@ def main(argv=None, *, index_path: Path | None = None) -> None:
             NRO_CHECKOUT=record["checkout"],
             PYTHONDONTWRITEBYTECODE="1",
         )
-        arguments = sys.argv[1:] if argv is None else argv
         if record.get("application") is None:
             command = [python, "-I", "-B", "-m", "nro.cli", *arguments]
         else:

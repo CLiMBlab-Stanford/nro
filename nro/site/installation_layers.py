@@ -1,4 +1,4 @@
-"""Build immutable dependency and application layers for shared installations."""
+"""Build immutable dependency and application layers for stable installations."""
 
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ def _adopt_existing_environment(
     return True
 
 
-def prepare_shared_dependencies(
+def prepare_dependencies(
     root: Path,
     uv: Path,
     options: dict,
@@ -238,7 +238,7 @@ def prepare_shared_dependencies(
     return environment, key
 
 
-def capture_shared_application(root: Path) -> SourceSnapshot:
+def capture_application(root: Path) -> SourceSnapshot:
     """Publish release source separately from its reusable dependencies."""
     from nro.orchestration.source_snapshots import SourceStore
 
@@ -246,7 +246,7 @@ def capture_shared_application(root: Path) -> SourceSnapshot:
     return SourceStore(root / ".nro-environments" / "applications").capture(root)
 
 
-def prune_shared_environments(
+def prune_environments(
     root: Path, active: Path, *, active_application: Path | None = None
 ) -> None:
     """Remove inactive dependency and application layers after a successful cutover."""

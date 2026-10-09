@@ -143,6 +143,34 @@ def test_incomplete_installation_cannot_replace_default(tmp_path):
     )
 
 
+def test_incomplete_installation_allows_only_definition_drift_recovery(tmp_path, monkeypatch):
+    record = installation(tmp_path / "personal")
+    record["mode"] = "personal"
+    record["ready"] = False
+    Path(record["checkout"], user_launcher.RECORD_NAME).write_text(json.dumps(record))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    index_path = bin_dir / user_launcher.INDEX_NAME
+    bootstrap.write_record(
+        index_path,
+        {
+            "default": record["checkout"],
+            "checkouts": {
+                record["checkout"]: str(
+                    Path(record["checkout"]) / user_launcher.RECORD_NAME
+                )
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        user_launcher.select_installation(user_launcher.read_index(index_path), tmp_path)
+    calls = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(user_launcher.os, "execve", lambda *args: calls.append(args))
+    user_launcher.main(["def", "apply"], index_path=index_path)
+    assert calls[0][1][-2:] == ["def", "apply"]
+
+
 def test_branch_only_installation_has_no_outside_default(tmp_path, monkeypatch):
     record = installation(tmp_path / "dev", branch="dev")
     bootstrap.connect_user(record, bin_dir=tmp_path / "bin")

@@ -152,6 +152,20 @@ def test_cli_does_not_select_created_store(tmp_path, capsys):
     assert error.value.code == 1
 
 
+def test_bare_apply_adopts_all_valid_direct_changes(tmp_path, monkeypatch, capsys):
+    root = create_store(tmp_path / "store")
+    site_file = root / "site/site.yml"
+    site_file.write_text(site_file.read_text() + "\n")
+    monkeypatch.setattr(site, "definitions_root", lambda: root)
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "personal", "ready": False})
+    monkeypatch.setattr(site, "settings", lambda: ({"definitions": str(root)}, root / "site.toml"))
+
+    main(["apply"])
+
+    assert "Updated" in capsys.readouterr().out
+    assert validate_store(root)["site"] == 1
+
+
 def test_shared_filesystem_publication(tmp_path, monkeypatch):
     def unsupported(*args):
         ctypes.set_errno(errno.EINVAL)

@@ -164,7 +164,8 @@ def validate_store_integrity(root: Path, *, expected: int | None = None) -> None
         sample = ", ".join(map(str, changed[:5])) + (" ..." if len(changed) > 5 else "")
         raise ValueError(
             "Definitions changed outside nro's authoring commands: "
-            f"{sample}. Restore the files or publish them with `nro def apply`."
+            f"{sample}. Restore the files, publish them with `nro def apply`, or recover "
+            "during installation with `./install --adopt-definitions`."
         )
 
 
@@ -181,6 +182,26 @@ def changed_paths(root: Path) -> tuple[Path, ...]:
         for key in sorted(set(observed) | set(recorded))
         if observed.get(key) != recorded.get(key)
     )
+
+
+def adopt_store_drift(
+    root: Path,
+    *,
+    validate: Callable[[Path], None] | None = None,
+) -> tuple[Path, ...]:
+    """Validate and record every direct change currently present in a store."""
+    root = Path(root).expanduser().resolve()
+    drift = changed_paths(root)
+    if not drift:
+        raise ValueError(f"Definitions store has no unpublished direct changes: {root}")
+    updates: dict[Path, bytes | None] = {}
+    for relative in drift:
+        path = root / relative
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"Cannot adopt a non-regular definition: {path}")
+        updates[relative] = path.read_bytes() if path.is_file() else None
+    update_store(root, updates, validate=validate, adopt_drift=True)
+    return drift
 
 
 def normalize_managed_text(path: Path, text: str) -> str:

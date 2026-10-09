@@ -410,6 +410,11 @@ def _main(argv=None) -> None:
     parser.add_argument("--accept-qunex-license", action="store_true")
     parser.add_argument("--local", action="store_true", help="Do not require Slurm")
     parser.add_argument(
+        "--adopt-definitions",
+        action="store_true",
+        help="Validate and adopt all direct definition-store changes before setup",
+    )
+    parser.add_argument(
         "--rehearse-upgrade",
         nargs="?",
         const="",
@@ -440,6 +445,7 @@ def _main(argv=None) -> None:
             args.dev,
             args.accept_qunex_license,
             args.local,
+            args.adopt_definitions,
         ]
         if any(incompatible):
             parser.error("--rehearse-upgrade cannot be combined with installation options")
@@ -604,11 +610,28 @@ def _main(argv=None) -> None:
             )
 
     with maintenance_lock(ROOT, mode):
+        if args.adopt_definitions:
+            if mode == "branch":
+                parser.error("--adopt-definitions is unavailable in branch installations")
+            from nro.definitions.migrations import adopt_store_drift
+            from nro.definitions.repository import validate_store
+
+            definitions = Path(settings(path=site)[0]["definitions"])
+            adopted = adopt_store_drift(
+                definitions,
+                validate=lambda candidate: validate_store(candidate, require_site=True),
+            )
+            print(
+                "Adopted direct definition changes: "
+                + ", ".join(str(path) for path in adopted),
+                flush=True,
+            )
         if mode != "shared" and mode != "branch":
             check_workers(site)
         if prepare_shared_site is not None:
             prepare_shared_site()
-        if mode == "shared":
+        layered = mode in {"personal", "shared"}
+        if layered:
             environment = None
         elif mode == "branch" and existing and existing.get("dependency_key"):
             # A converted shared checkout initially retains its immutable release
@@ -644,7 +667,7 @@ def _main(argv=None) -> None:
             record["branch"] = branch_name
         if environment is not None:
             record["environment"] = str(environment)
-        if mode != "shared":
+        if mode == "branch":
             write_record(record_path, record)
         uv_env = ROOT / ".nro-bootstrap"
         uv = uv_env / "bin/uv"
@@ -669,10 +692,10 @@ def _main(argv=None) -> None:
             "NRO_SETUP_CHILD": "1",
         }
         application = None
-        if mode == "shared":
+        if layered:
             from nro.site import installation_layers
 
-            environment, dependency_key = installation_layers.prepare_shared_dependencies(
+            environment, dependency_key = installation_layers.prepare_dependencies(
                 ROOT,
                 uv,
                 record,
@@ -681,11 +704,13 @@ def _main(argv=None) -> None:
                 offline=args.offline,
                 previous_environment=(
                     Path(existing["environment"])
-                    if existing is not None and existing.get("environment")
+                    if existing is not None
+                    and existing.get("environment")
+                    and (mode == "shared" or existing.get("dependency_key"))
                     else None
                 ),
             )
-            application = installation_layers.capture_shared_application(ROOT)
+            application = installation_layers.capture_application(ROOT)
             record.update(
                 environment=str(environment),
                 dependency_key=dependency_key,
@@ -719,7 +744,7 @@ def _main(argv=None) -> None:
             subprocess.run(sync, cwd=ROOT, env=sync_env, check=True)
             record["environment"] = str(environment)
         environment.mkdir(parents=True, exist_ok=True)
-        if mode != "shared":
+        if mode == "branch":
             (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
         if prepare_shared is not None:
             prepare_shared()
@@ -793,13 +818,19 @@ def _main(argv=None) -> None:
 
             publish(ROOT, shared_registry, installation=record)
             record = json.loads(record_path.read_text())
-            installation_layers.prune_shared_environments(
+            installation_layers.prune_environments(
                 ROOT,
                 Path(record["environment"]),
                 active_application=Path(record["application"]),
             )
         else:
             write_record(record_path, record)
+            if mode == "personal":
+                installation_layers.prune_environments(
+                    ROOT,
+                    Path(record["environment"]),
+                    active_application=Path(record["application"]),
+                )
         connect_user(
             record,
             bin_dir=args.bin_dir,
@@ -812,7 +843,8 @@ def cancel_setup() -> None:
     """Report cancellation only from the outermost setup process."""
     if os.environ.get("NRO_SETUP_CHILD") != "1":
         print(
-            "\nSetup cancelled. Rerun ./install to resume; use --maintain for shared setup.",
+            "\nInstallation cancelled; the active installation is unchanged. "
+            "Rerun ./install to retry; use --maintain for shared setup.",
             file=sys.stderr,
         )
     raise SystemExit(130) from None
@@ -827,10 +859,14 @@ def main(argv=None) -> None:
     except subprocess.CalledProcessError as error:
         if error.returncode in {-2, 130}:
             cancel_setup()
-        print(f"Setup incomplete: command exited with status {error.returncode}", file=sys.stderr)
+        print(
+            "Installation not changed: "
+            f"setup command exited with status {error.returncode}",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from None
     except (OSError, ValueError, RuntimeError) as error:
-        print(f"Setup incomplete: {error}", file=sys.stderr)
+        print(f"Installation not changed: {error}", file=sys.stderr)
         raise SystemExit(1) from None
 
 
@@ -844,4 +880,4 @@ if __name__ == "__main__":
         sqlite3.Error,
         subprocess.CalledProcessError,
     ) as error:
-        sys.exit(f"Setup incomplete: {error}")
+        sys.exit(f"Installation not changed: {error}")
