@@ -30,6 +30,7 @@ case "$stage" in
 esac
 implementation_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 atlas_validator="$implementation_dir/msmall_validate_atlas.py"
+inverse_reference_builder="$implementation_dir/msmall_inverse_reference.py"
 subcortical_validator="$implementation_dir/msmall_validate_subcortical.py"
 
 set +e
@@ -201,9 +202,13 @@ repair_atlas_registration() {
         --intout="$staging/xfms/NonlinearIntensities.nii.gz" \
         --cout="$staging/xfms/NonlinearReg.nii.gz" \
         --config="$HCPPIPEDIR_Config/T1_2_MNI152_2mm.cnf"
+    /opt/fsl/fsl/bin/python "$inverse_reference_builder" \
+        --source "$t1_dir/T1w_acpc_dc_restore.nii.gz" \
+        --output "$staging/xfms/acpc_inverse_reference_2mm.nii.gz" \
+        --resolution-mm 2 --margin-mm 4
     invwarp -w "$staging/xfms/acpc_dc2standard.nii.gz" \
         -o "$staging/xfms/standard2acpc_dc.nii.gz" \
-        -r "$templates/MNI152_T1_2mm.nii.gz"
+        -r "$staging/xfms/acpc_inverse_reference_2mm.nii.gz"
 
     local modality source
     for modality in T1w T2w; do

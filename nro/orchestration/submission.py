@@ -80,12 +80,13 @@ def _write_worker_script(
     lines = [
         "#!/usr/bin/env bash",
         f"#SBATCH --job-name={job_name}",
-        f"#SBATCH --partition={partition}",
         f"#SBATCH --time={hours}:00:00",
         f"#SBATCH --mem={memory_gb}G",
         f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --output={registry.paths.workers}/slurm-%j.log",
     ]
+    if partition:
+        lines.append(f"#SBATCH --partition={partition}")
     if account:
         lines.append(f"#SBATCH --account={account}")
     if resource_class == GPU_RESOURCE_CLASS:
@@ -136,7 +137,13 @@ def _submit_workers(
                 raise RuntimeError(f"sbatch returned no job ID: {result.stdout!r}")
             registry.update_submission(submission_id, state="submitted", slurm_job_id=job_id)
             submitted.append(job_id)
-        except BaseException:
+        except BaseException as error:
             registry.update_submission(submission_id, state="error")
+            if isinstance(error, subprocess.CalledProcessError):
+                detail = (error.stderr or error.stdout or "").strip()
+                message = f"Slurm rejected worker submission for {script}"
+                if detail:
+                    message += f": {detail}"
+                raise RuntimeError(message) from error
             raise
     return submitted

@@ -585,13 +585,17 @@ def _assess_direct_inputs(
                 for path in anatomical_images
                 if path.name.endswith(("_T2w.nii", "_T2w.nii.gz"))
             )
-            expected_msmall = resolve_msmall_calibration(
-                markup=source_markup,
-                t1w=t1w,
-                t2w=t2w,
-                parameters=module_config["msmall"],
-                surface_engine=str(module_config["surface_reconstruction_engine"]),
-                selection_strategy=str(module_config["selection_strategy"]),
+            expected_msmall = (
+                resolve_msmall_calibration(
+                    markup=source_markup,
+                    t1w=t1w,
+                    t2w=t2w,
+                    parameters=module_config["msmall"],
+                    surface_engine=str(module_config["surface_reconstruction_engine"]),
+                    selection_strategy=str(module_config["selection_strategy"]),
+                )
+                if t1w
+                else None
             )
             if expected_msmall is not None:
                 direct_inputs = tuple(dict.fromkeys((*direct_inputs, *expected_msmall.input_paths)))

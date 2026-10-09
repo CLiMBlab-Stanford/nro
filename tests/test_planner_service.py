@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from nro.orchestration import planner_bus, planner_client, planner_service, scheduler_service
 from nro.orchestration.planner_bus import claim_launch, read_active, read_launch, update_launch_job
+
+
+def test_planner_submission_reports_slurm_error(monkeypatch, tmp_path):
+    script = tmp_path / "planner.sbatch"
+
+    def reject(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="time limit exceeds partition")
+
+    monkeypatch.setattr(planner_bus.subprocess, "run", reject)
+    with pytest.raises(RuntimeError, match="time limit exceeds partition"):
+        planner_bus.submit(script)
 
 
 def test_planner_service_executes_requests_and_shuts_down(tmp_path, monkeypatch):

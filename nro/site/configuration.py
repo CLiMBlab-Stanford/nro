@@ -60,7 +60,7 @@ def _checkout() -> Path:
 
 CHECKOUT = _checkout()
 RECORD_NAME = ".nro-installation.json"
-SITE_DEFINITION_VERSION = 3
+SITE_DEFINITION_VERSION = 4
 SITE_DEFINITION = Path("site/site.yml")
 LAB = Path("/juice6/u/nlp/climblab")
 DEFAULTS = {
@@ -79,6 +79,25 @@ DEFAULTS = {
     "partition": "sphinx",
     "viewing_partition": "john",
     "account": "nlp",
+    "concurrency": 50,
+    "gpu_concurrency": 1,
+    "worker_idle_timeout": 30,
+    "worker_drain_minutes": 15,
+    "scheduler_time": 24,
+    "scheduler_memory": 4,
+    "scheduler_cpus": 4,
+    "planner_time": 24,
+    "planner_memory": 8,
+    "planner_cpus": 2,
+    "worker_time": 24,
+    "worker_memory": 32,
+    "worker_max_memory": 256,
+    "worker_cpus": 2,
+    "long_worker_time": 48,
+    "long_worker_cpus": 8,
+    "viewer_time": 12,
+    "viewer_memory": 32,
+    "viewer_cpus": 2,
     "flywheel_server": "",
     "flywheel_project": "",
     "binds": ["/juice6:/juice6"],
@@ -96,6 +115,7 @@ DERIVED = {
     "gradient_unwarp": ("images", "hcp-base_1.0.3_4.3.0.sif"),
     "freesurfer": ("images", "freesurfer_7.4.1.sif"),
     "fastsurfer": ("images", "fastsurfer-cu118_2.5.4.sif"),
+    "workbench_image": ("images", "nro-workbench_2.2.1-7.sif"),
     "fastsurfer_data": ("images", "fastsurfer-lit-0.6.1"),
     "synthstroke_data": ("images", "synthstroke-synth-plus-e9774354"),
     "mni_template": (
@@ -103,18 +123,20 @@ DERIVED = {
         "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
     ),
 }
-PATH_KEYS = (
-    set(DEFAULTS)
-    - {
-        "runtime",
-        "partition",
-        "viewing_partition",
-        "account",
-        "flywheel_server",
-        "flywheel_project",
-        "binds",
-    }
-) | set(DERIVED)
+PATH_KEYS = {
+    "definitions",
+    "bids",
+    "work",
+    "development",
+    "registry",
+    "images",
+    "gradient_coefficients",
+    "templates",
+    "workbench",
+    "oslom",
+    "license",
+    *DERIVED,
+}
 
 SITE_SECTIONS = {
     "storage": ("bids", "work", "development", "registry"),
@@ -131,11 +153,44 @@ SITE_SECTIONS = {
         "gradient_unwarp",
         "freesurfer",
         "fastsurfer",
+        "workbench_image",
         "fastsurfer_data",
         "synthstroke_data",
         "mni_template",
     ),
-    "execution": ("runtime", "partition", "viewing_partition", "account", "binds"),
+    "execution": (
+        "runtime",
+        "binds",
+        "concurrency",
+        "gpu_concurrency",
+        "worker_idle_timeout",
+        "worker_drain_minutes",
+    ),
+}
+SLURM_SCALARS = ("partition", "viewing_partition", "account")
+SLURM_GROUPS = {
+    "scheduler": {
+        "time_hours": "scheduler_time",
+        "memory_gb": "scheduler_memory",
+        "cpus": "scheduler_cpus",
+    },
+    "planner": {
+        "time_hours": "planner_time",
+        "memory_gb": "planner_memory",
+        "cpus": "planner_cpus",
+    },
+    "worker": {
+        "time_hours": "worker_time",
+        "memory_gb": "worker_memory",
+        "max_memory_gb": "worker_max_memory",
+        "cpus": "worker_cpus",
+    },
+    "long_worker": {"time_hours": "long_worker_time", "cpus": "long_worker_cpus"},
+    "viewer": {
+        "time_hours": "viewer_time",
+        "memory_gb": "viewer_memory",
+        "cpus": "viewer_cpus",
+    },
 }
 REQUIRED_SITE_KEYS = {
     "storage": SITE_SECTIONS["storage"],
@@ -174,7 +229,9 @@ def generic_defaults() -> dict:
             }.items()
         },
         "binds": [],
-        "viewing_partition": "interactive",
+        "partition": "",
+        "viewing_partition": "",
+        "account": "",
     }
 
 
@@ -302,17 +359,14 @@ def _validate_bidsify_site(value: object) -> dict:
 
 def validate_site_document(value: object) -> tuple[dict, dict]:
     """Validate a protected site document and return flat settings and ingestion facts."""
-    if not isinstance(value, dict) or set(value) != {
-        "version",
-        "storage",
-        "resources",
-        "execution",
-        "bidsify",
-    }:
+    if not isinstance(value, dict) or set(value) not in (
+        {"version", "storage", "resources", "execution", "bidsify"},
+        {"version", "storage", "resources", "execution", "slurm", "bidsify"},
+    ):
         raise ValueError(
-            "site/site.yml requires version, storage, resources, execution, and bidsify"
+            "site/site.yml requires version, storage, resources, execution, slurm, and bidsify"
         )
-    if value["version"] not in {2, SITE_DEFINITION_VERSION}:
+    if value["version"] not in {2, 3, SITE_DEFINITION_VERSION}:
         raise ValueError(f"Unsupported site definition version: {value['version']!r}")
     if value["version"] == 2:
         value = dict(value)
@@ -321,14 +375,56 @@ def validate_site_document(value: object) -> tuple[dict, dict]:
     settings_values: dict = {}
     for section, keys in SITE_SECTIONS.items():
         section_value = value[section]
+        if not isinstance(section_value, dict):
+            raise ValueError(f"site.{section} must be a mapping")
+        if section == "execution" and value["version"] < 4:
+            legacy_keys = {"runtime", "partition", "viewing_partition", "account", "binds"}
+            if set(section_value) - legacy_keys:
+                raise ValueError("site.execution contains unknown settings")
+        section_value = dict(section_value)
+        if section == "execution" and value["version"] < 4:
+            section_value = {
+                key: item for key, item in section_value.items() if key in {"runtime", "binds"}
+            }
+            section_value.update(
+                {
+                    key: DEFAULTS[key]
+                    for key in SITE_SECTIONS["execution"]
+                    if key not in section_value
+                }
+            )
         if not isinstance(section_value, dict) or set(section_value) - set(keys):
             raise ValueError(f"site.{section} contains unknown settings")
         missing = set(REQUIRED_SITE_KEYS[section]) - set(section_value)
         if missing:
             raise ValueError(f"site.{section} is missing: {', '.join(sorted(missing))}")
         settings_values.update(section_value)
+    if value["version"] < 4:
+        legacy_execution = value["execution"]
+        settings_values.update(
+            {key: legacy_execution.get(key, DEFAULTS[key]) for key in SLURM_SCALARS}
+        )
+        settings_values.update(
+            {key: DEFAULTS[key] for fields in SLURM_GROUPS.values() for key in fields.values()}
+        )
+    else:
+        slurm = value["slurm"]
+        if not isinstance(slurm, dict) or set(slurm) != {*SLURM_SCALARS, *SLURM_GROUPS}:
+            raise ValueError("site.slurm has an invalid structure")
+        settings_values.update({key: slurm[key] for key in SLURM_SCALARS})
+        for group, fields in SLURM_GROUPS.items():
+            group_value = slurm[group]
+            if not isinstance(group_value, dict) or set(group_value) != set(fields):
+                raise ValueError(f"site.slurm.{group} has an invalid structure")
+            settings_values.update(
+                {storage_key: group_value[name] for name, storage_key in fields.items()}
+            )
     for key, item in settings_values.items():
         validate_setting(key, item)
+    if settings_values["worker_max_memory"] < settings_values["worker_memory"]:
+        raise ValueError("site.slurm.worker.max_memory must be at least memory")
+    if settings_values["worker_drain_minutes"] * 60 >= settings_values["worker_time"] * 3600:
+        raise ValueError("site.execution.worker_drain_minutes must be shorter than worker time")
     return settings_values, _validate_bidsify_site(value["bidsify"])
 
 
@@ -357,6 +453,13 @@ def make_site_document(settings_values: dict, *, bidsify: dict | None = None) ->
         **{
             section: {key: settings_values[key] for key in keys if key in settings_values}
             for section, keys in SITE_SECTIONS.items()
+        },
+        "slurm": {
+            **{key: settings_values[key] for key in SLURM_SCALARS},
+            **{
+                group: {name: settings_values[key] for name, key in fields.items()}
+                for group, fields in SLURM_GROUPS.items()
+            },
         },
         "bidsify": _validate_bidsify_site(bidsify or {}),
     }
@@ -432,6 +535,33 @@ def validate_setting(key: str, value: object) -> None:
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValueError("binds must be a list of strings")
         return
+    if key in {
+        "concurrency",
+        "gpu_concurrency",
+        "scheduler_time",
+        "scheduler_memory",
+        "scheduler_cpus",
+        "planner_time",
+        "planner_memory",
+        "planner_cpus",
+        "worker_time",
+        "worker_memory",
+        "worker_max_memory",
+        "worker_cpus",
+        "long_worker_time",
+        "long_worker_cpus",
+        "viewer_time",
+        "viewer_memory",
+        "viewer_cpus",
+    }:
+        if type(value) is not int or value < 1:
+            raise ValueError(f"{key} must be a positive integer")
+        return
+    if key in {"worker_idle_timeout", "worker_drain_minutes"}:
+        minimum = 1 if key == "worker_idle_timeout" else 0
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"{key} must be an integer of at least {minimum}")
+        return
     if not isinstance(value, str) or "\n" in value or "\x00" in value:
         raise ValueError(f"{key} must be a single-line string")
     if key == "flywheel_server" and value and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value):
@@ -440,7 +570,17 @@ def validate_setting(key: str, value: object) -> None:
         raise ValueError("flywheel_project must use GROUP/PROJECT")
     if key in PATH_KEYS and not Path(value).expanduser().is_absolute():
         raise ValueError(f"{key} must be an absolute path")
-    if key not in {"account", "flywheel_server", "flywheel_project"} and not value.strip():
+    if (
+        key
+        not in {
+            "account",
+            "partition",
+            "viewing_partition",
+            "flywheel_server",
+            "flywheel_project",
+        }
+        and not value.strip()
+    ):
         raise ValueError(f"{key} cannot be empty")
 
 

@@ -81,8 +81,10 @@ from .lesions import (
 )
 from .msmall import MsmAllCalibration, add_msmall_plan, resolve_msmall_calibration
 from .policy import (
+    T1W_FALLBACK_DEFAULT,
     bias_correction_contract,
     surface_reconstruction_contract,
+    t1w_synthesis_contract,
 )
 from .reconstruction import (
     SurfaceReconstructionInputs,
@@ -123,6 +125,7 @@ from .steps import (
     _surface_names,
     _write_json_step,
 )
+from .t1w_synthesis import create_t1w_synthesis_step
 
 LOG = logging.getLogger("anat")
 # Standard aseg identifiers from FreeSurferColorLUT.txt:
@@ -166,6 +169,7 @@ class Options:
     fastsurfer_data: Optional[Path] = None
     lesion_use_gpu: bool = True
     msmall: MsmAllCalibration | None = None
+    t1w_fallback: str = T1W_FALLBACK_DEFAULT
 
 
 def build_module(
@@ -216,12 +220,17 @@ def build_module(
         raise SystemExit(
             f"Unsupported surface-reconstruction engine: {opts.surface_reconstruction_engine}"
         )
-    if opts.surface_reconstruction_engine == "freesurfer":
+    if opts.t1w_fallback not in {"synthesize_from_t2w", "skip"}:
+        raise SystemExit(f"Unsupported T1w fallback policy: {opts.t1w_fallback}")
+    synthetic_t1w = not inputs.t1w and bool(inputs.t2w)
+    if synthetic_t1w and opts.t1w_fallback == "skip":
+        raise SystemExit("No non-excluded T1w image is available and T1w fallback is disabled.")
+    if synthetic_t1w and opts.lesion:
+        raise SystemExit("Lesion-aware anatomy requires an acquired T1w image.")
+    if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w:
         if opts.freesurfer_image is None:
             raise SystemExit("Missing FreeSurfer container path.")
         require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
-    elif not inputs.t1w:
-        raise SystemExit("FastSurfer surface reconstruction requires at least one T1w image.")
     if opts.lesion:
         if not inputs.t1w:
             raise SystemExit("Lesion-aware anatomy requires at least one T1w image.")
@@ -264,6 +273,8 @@ def build_module(
             raise SystemExit("MSMAll calibration is not supported for lesion-aware anatomy.")
         if opts.surface_reconstruction_engine != "freesurfer":
             raise SystemExit("MSMAll calibration currently requires FreeSurfer reconstruction.")
+        if synthetic_t1w:
+            raise SystemExit("MSMAll calibration requires an acquired T1w image.")
     require_nonempty_file(opts.mni_template, "MNI template")
     mni_brain_template = Path(
         str(opts.mni_template).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")
@@ -305,7 +316,9 @@ def build_module(
             Path(env["FS_LICENSE"]) if Path(env["FS_LICENSE"]).is_file() else None,
             lesion_masker_command,
             synthstroke_data,
-            opts.freesurfer_image if opts.surface_reconstruction_engine == "freesurfer" else None,
+            opts.freesurfer_image
+            if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w
+            else None,
             opts.fastsurfer_image
             if opts.lesion or opts.surface_reconstruction_engine == "fastsurfer"
             else None,
@@ -360,6 +373,8 @@ def build_module(
         "mni_template": str(opts.mni_template),
         "synthstrip_image": str(opts.synthstrip_image),
     }
+    if synthetic_t1w:
+        configuration["t1w_fallback"] = opts.t1w_fallback
     if opts.lesion:
         configuration["lesion"] = {
             "enabled": opts.lesion,
@@ -665,6 +680,31 @@ def build_module(
         )
         runner.add_step(t2_step)
 
+    if synthetic_t1w:
+        assert subj_t2_selected is not None
+        assert opts.freesurfer_image is not None
+        fs_license = Path(env["FS_LICENSE"])
+        require_nonempty_file(fs_license, "FreeSurfer license")
+        subj_t1_selected = reference_work / f"{inputs.sub_id}_desc-synthetic_T1w.nii.gz"
+        runner.add_step(
+            create_t1w_synthesis_step(
+                run_child=runner.run_child,
+                runtime=opts.container_runtime,
+                image=opts.freesurfer_image,
+                license_file=fs_license,
+                t2w=subj_t2_selected,
+                output=subj_t1_selected,
+                threads=max(1, int(env.get("OMP_NUM_THREADS", "1"))),
+                env=env,
+                force=opts.overwrite,
+            )
+        )
+        t1_meta = {
+            "modality": "T1w",
+            "sources": list(t2_meta["sources"]),
+            "strategy": "synthesize_from_t2w",
+        }
+
     pose_source = lesion_bias_corrected_t1_selected or subj_t1_selected or subj_t2_selected
     if pose_source is None:
         raise SystemExit("No subject-level anatomical image available after selection.")
@@ -854,6 +894,15 @@ def build_module(
                     "SpatialReference": "T1w",
                     "PoseTransform": str(published_source_to_reference),
                     "PoseQuality": str(pose_qc),
+                    **(
+                        {
+                            "Synthetic": True,
+                            "SourceContrast": "T2w",
+                            "Synthesis": t1w_synthesis_contract(),
+                        }
+                        if synthetic_t1w
+                        else {}
+                    ),
                 },
                 inputs=(subj_t1, published_source_to_reference, pose_qc),
                 force=opts.overwrite,
@@ -879,7 +928,7 @@ def build_module(
             )
         )
     myelin_map: Optional[Path] = None
-    if subj_t1 is not None and subj_t2 is not None:
+    if subj_t1 is not None and subj_t2 is not None and not synthetic_t1w:
         myelin_map = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-myelinMap_T1w.nii.gz"
         t2_nonzero = opts.work_dir / "myelin_map" / f"{inputs.sub_id}_desc-T2wNonzero_T2w.nii.gz"
         runner.add_step(
@@ -1966,9 +2015,17 @@ def build_module(
         "output_metadata_contract": anatomical_output_contract(
             lesion=opts.lesion,
             msmall=opts.msmall is not None,
+            synthetic_t1w=synthetic_t1w,
         ),
         "complete": True,
     }
+    if synthetic_t1w:
+        manifest["t1w_synthesis"] = t1w_synthesis_contract()
+        manifest_options = manifest["options"]
+        assert isinstance(manifest_options, dict)
+        manifest_configuration = manifest_options["configuration"]
+        assert isinstance(manifest_configuration, dict)
+        manifest_configuration["t1w_fallback"] = opts.t1w_fallback
     if opts.lesion:
         assert lesion_mask is not None
         assert lesion_probability is not None
@@ -2105,6 +2162,11 @@ def _build_argparser() -> argparse.ArgumentParser:
         "--selection-strategy", choices=["first", "robust_average"], default=cfg.selection_strategy
     )
     p.add_argument(
+        "--t1w-fallback",
+        choices=["synthesize_from_t2w", "skip"],
+        default=cfg.t1w_fallback,
+    )
+    p.add_argument(
         "--surface-reconstruction-engine",
         choices=["freesurfer", "fastsurfer"],
         default=cfg.surface_reconstruction_engine,
@@ -2157,7 +2219,7 @@ def main(
             surface_engine=str(args.surface_reconstruction_engine),
             selection_strategy=str(args.selection_strategy),
         )
-        if markup is not None
+        if markup is not None and t1w
         else None
     )
     out_dir = resolve_project_path(
@@ -2228,6 +2290,7 @@ def main(
             fastsurfer_data=Path(site["fastsurfer_data"]),
             lesion_use_gpu=bool(args.lesion_use_gpu),
             msmall=msmall,
+            t1w_fallback=str(args.t1w_fallback),
         ),
         execution_context=execution_context,
     )

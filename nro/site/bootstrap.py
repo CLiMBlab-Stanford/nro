@@ -384,7 +384,7 @@ def _main(argv=None) -> None:
     parser.add_argument(
         "--without-viewer",
         action="store_true",
-        help="Skip native Connectome Workbench scene viewing and rendering support",
+        help="Skip Connectome Workbench scene viewing and rendering support",
     )
     parser.add_argument(
         "--with-bidsify",
@@ -483,7 +483,7 @@ def _main(argv=None) -> None:
     if existing and args.mode and args.mode != existing["mode"]:
         parser.error("An existing installation's role cannot be changed implicitly")
     if existing and args.site and args.site.expanduser().resolve() != Path(existing["site"]):
-        parser.error("Use nro paths to edit the existing site configuration")
+        parser.error("Use nro site to edit the existing site configuration")
     if existing and existing["mode"] == "shared" and not args.maintain:
         connect_user(
             existing,

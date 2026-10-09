@@ -7,7 +7,16 @@ from pathlib import Path
 from nro.engine.viewer_broker import open_viewer
 
 
-def run_x11(command: list[str], *, partition: str, account: str | None, control: Path) -> None:
+def run_x11(
+    command: list[str],
+    *,
+    partition: str,
+    account: str | None,
+    control: Path,
+    hours: int = 12,
+    memory_gb: int = 32,
+    cpus: int = 2,
+) -> None:
     """Open a Workbench scene through the user's persistent viewer allocation.
 
     The command must use Workbench's direct scene-loading form. Existing Slurm
@@ -22,4 +31,7 @@ def run_x11(command: list[str], *, partition: str, account: str | None, control:
         partition=partition,
         account=account,
         control=control,
+        hours=hours,
+        memory_gb=memory_gb,
+        cpus=cpus,
     )

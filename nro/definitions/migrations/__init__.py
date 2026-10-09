@@ -242,7 +242,7 @@ def _private_flywheel_credentials(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3}:
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4}:
         raise ValueError(
             f"Definitions schema 1 requires site definition version 1, 2, or 3: {path}"
         )
@@ -278,13 +278,14 @@ def _managed_pycicada_dependency(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {2, 3}:
+    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4}:
         raise ValueError(f"Definitions schema 3 requires site definition version 2 or 3: {path}")
     resources = value.get("resources")
     if not isinstance(resources, dict):
         raise ValueError(f"Invalid site resources: {path}")
     resources.pop("pycicada", None)
-    value["version"] = 3
+    if value["version"] < 3:
+        value["version"] = 3
     path.write_text(
         normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
         encoding="utf-8",
@@ -304,11 +305,68 @@ def _managed_pycicada_dependency(root: Path) -> None:
             )
 
 
+def _t2w_anatomical_fallback(root: Path) -> None:
+    """Default existing anatomical configurations to SynthSR when T1w is unavailable."""
+    directory = root / "configs/anat"
+    if not directory.is_dir():
+        return
+    for config in directory.glob("*_anat.yml"):
+        document = yaml.safe_load(config.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError(f"Invalid anatomical configuration: {config}")
+        document.setdefault("t1w_fallback", "synthesize_from_t2w")
+        config.write_text(
+            normalize_managed_text(config, yaml.safe_dump(document, sort_keys=False)),
+            encoding="utf-8",
+        )
+
+
+def _unified_site_policy(root: Path) -> None:
+    """Move Slurm defaults and pool policy into the protected site document."""
+    path = root / "site/site.yml"
+    if not path.is_file():
+        return
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4}:
+        raise ValueError(f"Definitions schema 5 requires site definition version 2 or 3: {path}")
+    if value["version"] == 4:
+        return
+    execution = value.get("execution")
+    if not isinstance(execution, dict):
+        raise ValueError(f"Invalid site execution settings: {path}")
+    partition = execution.pop("partition", "")
+    viewing_partition = execution.pop("viewing_partition", "")
+    account = execution.pop("account", "")
+    execution.update(
+        concurrency=50,
+        gpu_concurrency=1,
+        worker_idle_timeout=30,
+        worker_drain_minutes=15,
+    )
+    value["slurm"] = {
+        "partition": partition,
+        "viewing_partition": viewing_partition,
+        "account": account,
+        "scheduler": {"time_hours": 24, "memory_gb": 4, "cpus": 4},
+        "planner": {"time_hours": 24, "memory_gb": 8, "cpus": 2},
+        "worker": {"time_hours": 24, "memory_gb": 32, "max_memory_gb": 256, "cpus": 2},
+        "long_worker": {"time_hours": 48, "cpus": 8},
+        "viewer": {"time_hours": 12, "memory_gb": 32, "cpus": 2},
+    }
+    value["version"] = 4
+    path.write_text(
+        normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
+        encoding="utf-8",
+    )
+
+
 MIGRATIONS = (
     Migration(0, 1, "0.13.0", _adopt_unversioned),
     Migration(1, 2, "0.14.4", _private_flywheel_credentials),
     Migration(2, 3, "0.16.0", _current_authoring_notice),
     Migration(3, 4, "0.29.2", _managed_pycicada_dependency),
+    Migration(4, 5, "0.31.0", _t2w_anatomical_fallback),
+    Migration(5, 6, "0.31.0", _unified_site_policy),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].destination
 

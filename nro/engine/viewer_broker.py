@@ -147,6 +147,9 @@ def _launch(
     viewer: Path,
     partition: str,
     account: str | None,
+    hours: int = VIEWER_HOURS,
+    memory_gb: int = VIEWER_MEMORY_GB,
+    cpus: int = VIEWER_CPUS,
 ) -> tuple[subprocess.Popen, str, Path]:
     if not os.environ.get("DISPLAY"):
         raise ValueError(
@@ -160,13 +163,14 @@ def _launch(
     command = [
         launcher,
         "--x11",
-        f"--partition={partition}",
         "--job-name=nro-view-server",
         "--ntasks=1",
-        f"--cpus-per-task={VIEWER_CPUS}",
-        f"--mem={VIEWER_MEMORY_GB}G",
-        f"--time={VIEWER_HOURS}:00:00",
+        f"--cpus-per-task={cpus}",
+        f"--mem={memory_gb}G",
+        f"--time={hours}:00:00",
     ]
+    if partition:
+        command.insert(2, f"--partition={partition}")
     if account:
         command.append(f"--account={account}")
     command.extend(
@@ -233,6 +237,9 @@ def open_viewer(
     partition: str,
     account: str | None,
     control: Path,
+    hours: int = VIEWER_HOURS,
+    memory_gb: int = VIEWER_MEMORY_GB,
+    cpus: int = VIEWER_CPUS,
 ) -> int:
     """Open one scene through the current user's persistent viewer allocation."""
     scene = Path(scene).expanduser().absolute()
@@ -257,7 +264,13 @@ def open_viewer(
             if active is None:
                 _cancel_stale_active(root)
                 process, token, log = _launch(
-                    root, viewer=viewer, partition=partition, account=account
+                    root,
+                    viewer=viewer,
+                    partition=partition,
+                    account=account,
+                    hours=hours,
+                    memory_gb=memory_gb,
+                    cpus=cpus,
                 )
                 active = _await_start(process, root, token, log)
             try:

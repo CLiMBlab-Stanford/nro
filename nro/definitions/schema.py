@@ -153,6 +153,7 @@ SCHEMAS = {
         "container": CONTAINER,
         **EXECUTION_CONTROLS,
         "selection_strategy": enum("first", "robust_average"),
+        "t1w_fallback": enum("synthesize_from_t2w", "skip"),
         "surface_reconstruction_engine": enum("freesurfer", "fastsurfer"),
         "mni_template": TEXT,
         "synthstrip_container": TEXT,

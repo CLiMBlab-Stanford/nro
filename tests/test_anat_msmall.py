@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -13,6 +14,7 @@ from nro.definitions.markup import SubjectMarkup
 from nro.definitions.store import ConfigStore
 from nro.modules.anat import planning as anat_planning
 from nro.modules.anat.msmall import add_msmall_plan, resolve_msmall_calibration
+from nro.modules.anat.msmall_inverse_reference import create_inverse_reference
 from nro.modules.anat.msmall_validate_atlas import validate as validate_atlas
 from nro.modules.anat.msmall_validate_subcortical import validate as validate_subcortical
 from nro.orchestration.catalog import module_descriptor
@@ -261,6 +263,11 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     }
     atlas_dependencies = runner._graph.dependencies(by_name["MSMAll Mask-Aware Atlas Registration"])
     assert by_name["Restore MSMAll Source Brain Masks"].id in atlas_dependencies
+    atlas_step = by_name["MSMAll Mask-Aware Atlas Registration"]
+    assert any(path.name == "standard2acpc_dc.nii.gz" for path in atlas_step.outputs)
+    assert any(
+        path.name == "standard2acpc_dc.nii.gz" for path in by_name["MSMAll PostFreeSurfer"].inputs
+    )
     volume_dependencies = runner._graph.dependencies(by_name["MSMAll fMRI Volume rfMRI_REST001"])
     assert by_name["Write MSMAll Calibration Configuration"].id in volume_dependencies
     assert by_name["Write MSMAll Surface Configuration"].id in volume_dependencies
@@ -316,6 +323,45 @@ def test_msmall_driver_has_no_independent_checkpoint_graph() -> None:
     assert "verify_checkpoint" not in driver
     assert "clear_after" not in driver
     assert 'case "$stage" in' in driver
+
+
+def test_msmall_inverse_reference_covers_source_extent_with_margin(tmp_path: Path) -> None:
+    source = tmp_path / "source.nii.gz"
+    output = tmp_path / "inverse_reference.nii.gz"
+    affine = np.array(
+        [
+            [0.0, -0.7, 0.0, 80.0],
+            [0.7, 0.0, 0.0, -90.0],
+            [0.0, 0.0, 0.7, -72.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    source_image = nib.Nifti1Image(np.zeros((260, 300, 250), dtype=np.uint8), affine)
+    nib.save(source_image, source)
+
+    create_inverse_reference(source, output, resolution_mm=2.0, margin_mm=4.0)
+
+    reference = nib.load(output)
+    assert reference.header.get_zooms()[:3] == pytest.approx((2.0, 2.0, 2.0))
+
+    def support_bounds(image: nib.spatialimages.SpatialImage) -> tuple[np.ndarray, np.ndarray]:
+        bounds = [(-0.5, float(size) - 0.5) for size in image.shape[:3]]
+        corners = np.asarray(list(itertools.product(*bounds)), dtype=np.float64)
+        world = nib.affines.apply_affine(image.affine, corners)
+        return world.min(axis=0), world.max(axis=0)
+
+    source_lower, source_upper = support_bounds(source_image)
+    reference_lower, reference_upper = support_bounds(reference)
+    assert np.all(reference_lower <= source_lower - 3.9)
+    assert np.all(reference_upper >= source_upper + 3.9)
+
+
+def test_msmall_driver_uses_subject_space_inverse_warp_reference() -> None:
+    driver = (Path(__file__).parents[1] / "nro/modules/anat/msmall_driver.sh").read_text()
+
+    assert 'inverse_reference_builder="$implementation_dir/msmall_inverse_reference.py"' in driver
+    assert '--source "$t1_dir/T1w_acpc_dc_restore.nii.gz"' in driver
+    assert '-r "$staging/xfms/acpc_inverse_reference_2mm.nii.gz"' in driver
 
 
 def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> None:

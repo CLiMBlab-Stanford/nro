@@ -34,14 +34,17 @@ Ctrl-C exits with status 130 and one cancellation message. Incomplete shared
 setup resumes with `./install --maintain`; accepting defaults does not eliminate
 the need for license files and suitable host permissions.
 
-## `nro paths`
+## `nro site`
 
-With no subcommand, show proposed defaults and ask whether to accept all. If
-declined, prompt independently for every setting. `show` prints the locator,
-protected definition, resolved values, and their sources. `set key=value ...`
-validates and atomically saves updates in the protected definitions document.
-`--maintain` is required to edit a shared site's settings. This command never
-moves datasets, artifacts, or registries. See the installation guide for all keys.
+`ls [PREFIX]` lists settings, effective values, and application lifecycles.
+`get [KEY ...]` prints selected values. `set KEY=VALUE ...` validates and
+atomically saves updates in the protected definitions document. `edit` runs the
+interactive editor, and `validate` checks the current document. Storage and
+installation-resource changes on a shared site require `--maintain`; live
+execution limits are relayed to an existing scheduler automatically. No site
+operation starts a scheduler solely to apply a setting.
+
+`nro paths`, `nro get`, and `nro set` remain compatibility aliases.
 
 ## `nro doctor`
 

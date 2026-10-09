@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -15,13 +14,12 @@ import tarfile
 import tempfile
 import time
 import urllib.request
-import zipfile
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
 from nro.definitions.hardware import GRADIENT_UNWARP_IMAGE, gradient_unwarping_configured
-from nro.engine.io import atomic_output_path, atomic_write_json
+from nro.engine.io import atomic_output_path, atomic_write_json, atomic_write_text
 from nro.modules.anat.lesion_policy import (
     MASKER_MODEL,
     MASKER_RESOURCES,
@@ -97,36 +95,13 @@ def install_synthstroke_model(*, offline: bool = False) -> None:
 
 LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html and set license=/path/to/license.txt"
 QUNEX_TERMS = "https://qunex.yale.edu/access/"
-WORKBENCH_BASE = "https://www.humanconnectome.org/storage/app/media/workbench/"
+WORKBENCH_IMAGE_URL = (
+    "https://github.com/CLiMBlab-Stanford/nro-workbench/releases/download/"
+    "v2.2.1-7/nro-workbench.sif"
+)
+WORKBENCH_IMAGE_SHA256 = "04df826d74fb71c6c873216707563b1dd1df280d495413f9cd70d1e7fe2421cd"
 OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
-WORKBENCH_SHA256 = {
-    "linux64": "4a4cf2b8ae79fe476adabf51ece716aaad0a73991d96fb2cdee45b4edb46f9c4",
-    "rh_linux64": "6e46818fe7f2debe8ac4cf7236994fb0c7d3f1793c16ee7402949b7cd7404ae4",
-}
-WORKBENCH_GL_RUNTIME = {
-    "libglvnd": (
-        "ce35ceca19110ba9d27cb0058e55c62ea0489b3dfad76d016df2d0bf4f027998",
-        "lib/libGLdispatch.so.0.0.0",
-        "libGLdispatch.so.0",
-    ),
-    "libegl": (
-        "d577ab061760e631c2980eb88d6970e43391c461a89fc7cd6f98e2999d626d44",
-        "lib/libEGL.so.1.1.0",
-        "libEGL.so.1",
-    ),
-    "libglx": (
-        "72ba2a55de3d8902b40359433bbc51f50574067eaf2ae4081a2347d3735e30bb",
-        "lib/libGLX.so.0.0.0",
-        "libGLX.so.0",
-    ),
-    "libopengl": (
-        "6807eff238bbd19680184aad70c90c9c14824fca8b52b791b6669e37e0e963a7",
-        "lib/libOpenGL.so.0.0.0",
-        "libOpenGL.so.0",
-    ),
-}
-WORKBENCH_GL_MISSING = tuple(name for _, _, name in WORKBENCH_GL_RUNTIME.values())
 
 
 def template_catalog() -> dict:
@@ -419,7 +394,7 @@ def check_installation(
     available without loading scientific libraries or parsing every definition.
     Deep mode verifies resource identities. ``container_execution`` also starts
     each image in the current process environment. ``with_viewer`` controls the
-    native Workbench check; scientific container checks are unchanged. Neither
+    Workbench launcher check; scientific container checks are unchanged. Neither
     mode installs resources or processes subject data.
     """
     values, _ = settings()
@@ -655,21 +630,45 @@ def check_installation(
     return results
 
 
-def _install_image(key: str, source: str, *, offline: bool) -> None:
+def _install_image(key: str, source: str, *, offline: bool, checksum: str | None = None) -> None:
     """Acquire one configured container image under its resource lock."""
     values, _ = settings()
     path = Path(values[key])
-    if path.is_file() and path.stat().st_size:
+
+    def reuse_existing() -> bool:
+        if not path.is_file() or not path.stat().st_size:
+            return False
+        if checksum is not None:
+            receipt = path.with_name(path.name + ".receipt.json")
+            if receipt.is_file():
+                document = json.loads(receipt.read_text(encoding="utf-8"))
+                if document.get("sha256") != checksum:
+                    raise RuntimeError(f"Installed image has the wrong identity: {path}")
+                verify_image_receipt(path, receipt)
+            else:
+                verify_sha256(path, checksum, key)
+                atomic_write_json(
+                    receipt,
+                    {
+                        "source": source,
+                        "sha256": checksum,
+                        "file_identity": _file_identity(path),
+                        "verification": "Pinned SHA-256 verified before adoption",
+                    },
+                )
+        return True
+
+    if reuse_existing():
         print(f"Reuse {key}: {path}")
         return
     if offline:
         raise RuntimeError(f"Offline setup cannot obtain {key}: {path}")
     if not shutil.which(values["runtime"]):
         raise RuntimeError(
-            "Install or load Singularity/Apptainer, then set runtime with nro paths."
+            "Install or load Singularity/Apptainer, then set execution.runtime with nro site."
         )
     with resource_lock(path):
-        if path.is_file() and path.stat().st_size:
+        if reuse_existing():
             return
         print(f"Downloading {key} from {source}", flush=True)
         with atomic_output_path(path) as staged:
@@ -689,9 +688,11 @@ def _install_image(key: str, source: str, *, offline: bool) -> None:
                         env=environment,
                     )
             else:
-                download(source, staged)
+                download(source, staged, checksum=checksum)
             run_probe([values["runtime"], "inspect", str(staged)])
             digest = sha256(staged)
+            if checksum is not None and digest != checksum:
+                raise RuntimeError(f"Container checksum mismatch for {source}")
         atomic_write_json(
             path.with_name(path.name + ".receipt.json"),
             {
@@ -719,191 +720,73 @@ def install_lesion_resources(*, offline: bool = False) -> None:
     install_neurolit_checkpoints(offline=offline)
 
 
-def extract_zip(archive: Path, destination: Path) -> None:
-    """Extract a ZIP after rejecting traversal and symlink entries; preserve executable bits."""
-    with zipfile.ZipFile(archive) as zipped:
-        for item in zipped.infolist():
-            target = (destination / item.filename).resolve()
-            if not target.is_relative_to(destination.resolve()):
-                raise ValueError(f"Archive path escapes destination: {item.filename}")
-            if (item.external_attr >> 16) & 0o170000 == 0o120000:
-                raise ValueError(f"Archive symlink is not supported: {item.filename}")
-        zipped.extractall(destination)
-        for item in zipped.infolist():
-            path = destination / item.filename
-            if path.is_file() and (item.external_attr >> 16) & 0o111:
-                path.chmod(0o755)
-
-
-def _wrap_workbench_libraries(executable: Path, libraries: tuple[Path, ...]) -> None:
-    """Run a Workbench entry point with compatibility library directories."""
-    vendor = executable.with_name(executable.name + ".vendor")
-    if not vendor.is_file():
-        with atomic_output_path(vendor) as staged:
-            shutil.copy2(executable, staged)
-            staged.chmod(0o755)
-    relatives = [library.relative_to(executable.parent.parent) for library in libraries]
-    compatibility = ":".join(f"$directory/../{relative}" for relative in relatives)
-    wrapper = f"""#!/bin/sh
-directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-compatibility="{compatibility}"
-if [ -n "${{LD_LIBRARY_PATH:-}}" ]; then
-    export LD_LIBRARY_PATH="$compatibility:$LD_LIBRARY_PATH"
-else
-    export LD_LIBRARY_PATH="$compatibility"
+def _workbench_launcher(values: dict, program: str) -> str:
+    """Build a host launcher for one command in the pinned Workbench image."""
+    binds = list(values["binds"])
+    for key in ("bids", "work", "development", "templates"):
+        path = Path(values[key]).expanduser().resolve()
+        if path.exists():
+            binds.append(f"{path}:{path}")
+    arguments = [values["runtime"], "exec", "--cleanenv"]
+    for bind in dict.fromkeys(binds):
+        arguments.extend(("--bind", bind))
+    command = " ".join(shlex.quote(str(argument)) for argument in arguments)
+    image = shlex.quote(str(values["workbench_image"]))
+    executable = shlex.quote(program)
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+export APPTAINERENV_DISPLAY="${{DISPLAY:-}}"
+export SINGULARITYENV_DISPLAY="${{DISPLAY:-}}"
+export APPTAINERENV_XAUTHORITY="${{XAUTHORITY:-}}"
+export SINGULARITYENV_XAUTHORITY="${{XAUTHORITY:-}}"
+arguments=({command})
+if [[ -n "${{XAUTHORITY:-}}" && -e "$XAUTHORITY" ]]; then
+    arguments+=(--bind "$XAUTHORITY:$XAUTHORITY:ro")
 fi
-exec "$directory/{vendor.name}" "$@"
+if [[ -d /tmp/.X11-unix ]]; then
+    arguments+=(--bind /tmp/.X11-unix:/tmp/.X11-unix)
+fi
+exec "${{arguments[@]}}" {image} {executable} "$@"
 """
-    with atomic_output_path(executable) as staged:
-        staged.write_text(wrapper)
-        staged.chmod(0o755)
-
-
-def _extract_conda_library(archive: Path, member_name: str, destination: Path) -> Path:
-    """Extract one regular library from a checksum-verified conda package."""
-    import zstandard
-
-    with zipfile.ZipFile(archive) as package:
-        payloads = [name for name in package.namelist() if name.startswith("pkg-")]
-        if len(payloads) != 1 or not payloads[0].endswith(".tar.zst"):
-            raise RuntimeError(f"Unexpected conda package layout: {archive}")
-        found = False
-        with package.open(payloads[0]) as compressed:
-            with zstandard.ZstdDecompressor().stream_reader(compressed) as stream:
-                with tarfile.open(fileobj=stream, mode="r|") as payload:
-                    for member in payload:
-                        if member.name != member_name:
-                            continue
-                        if not member.isfile():
-                            raise RuntimeError(
-                                f"Conda library payload is not a file: {member_name}"
-                            )
-                        source = payload.extractfile(member)
-                        if source is None:
-                            raise RuntimeError(f"Cannot read conda library payload: {member_name}")
-                        with atomic_output_path(destination) as staged:
-                            with staged.open("wb") as output:
-                                shutil.copyfileobj(source, output)
-                            staged.chmod(0o755)
-                        found = True
-                        break
-    if not found:
-        raise RuntimeError(f"Conda package lacks expected library: {member_name}")
-    return destination
-
-
-def _install_workbench_gl_runtime(tree: Path, temporary: Path) -> list[dict[str, str]]:
-    """Install the pinned GLVND runtime needed by portable Workbench archives."""
-    destination = tree / "libs_linux64/glvnd"
-    receipts = []
-    for package, (checksum, member, soname) in WORKBENCH_GL_RUNTIME.items():
-        filename = f"{package}-1.7.0-ha4b6fd6_0.conda"
-        source = f"https://conda.anaconda.org/conda-forge/linux-64/{filename}"
-        archive = temporary / filename
-        download(source, archive, checksum=checksum)
-        versioned = _extract_conda_library(archive, member, destination / Path(member).name)
-        with atomic_output_path(destination / soname) as staged:
-            shutil.copy2(versioned, staged)
-        receipts.append({"source": source, "sha256": checksum})
-    return receipts
 
 
 def install_workbench(*, offline=False) -> None:
-    """Install or reuse checksum-pinned Workbench and verify its command runtime."""
+    """Install container-backed Workbench launchers or reuse a native override."""
     values, _ = settings()
     executable = Path(values["workbench"])
-    if executable.is_file():
+    root = executable.parent.parent
+    receipt = root / "nro-workbench-container.json"
+    legacy_receipt = root / "nro-download.json"
+    if executable.is_file() and not receipt.is_file() and not legacy_receipt.is_file():
         run_probe([str(executable), "-version"])
         return
-    if offline:
-        raise RuntimeError(f"Workbench is missing: {executable}")
-    if platform.machine() not in {"x86_64", "amd64"}:
-        raise RuntimeError(
-            "Automatic Workbench installation supports Linux x86_64; configure an existing executable."
-        )
-    if executable.parent.name not in {"bin_linux64", "bin_rh_linux64"}:
-        raise RuntimeError(
-            "For automatic Workbench installation select a path ending in workbench/bin_linux64/wb_command."
-        )
-    root = executable.parent.parent
+    _install_image(
+        "workbench_image",
+        WORKBENCH_IMAGE_URL,
+        offline=offline,
+        checksum=WORKBENCH_IMAGE_SHA256,
+    )
     with resource_lock(root):
-        if executable.is_file():
-            return
-        if root.exists():
-            raise RuntimeError(
-                f"Refusing to replace an existing incomplete Workbench directory: {root}"
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        for program, target in (
+            ("wb_command", executable),
+            ("wb_view", executable.with_name("wb_view")),
+        ):
+            atomic_write_text(
+                target,
+                _workbench_launcher(values, program),
+                mode=0o755,
+                durable=True,
             )
-        os_release = platform.freedesktop_os_release()
-        preferred = (
-            "rh_linux64"
-            if any(
-                x in (os_release.get("ID", "") + " " + os_release.get("ID_LIKE", ""))
-                for x in ("rhel", "centos", "fedora")
-            )
-            else "linux64"
+        atomic_write_json(
+            receipt,
+            {
+                "image": values["workbench_image"],
+                "source": WORKBENCH_IMAGE_URL,
+                "sha256": WORKBENCH_IMAGE_SHA256,
+            },
         )
-        with tempfile.TemporaryDirectory(dir=root.parent, prefix=".workbench-") as temporary:
-            temporary = Path(temporary)
-            gl_runtime = []
-            flavors = (preferred, "linux64") if preferred == "rh_linux64" else (preferred,)
-            for flavor in flavors:
-                source = WORKBENCH_BASE + f"workbench-{flavor}-v2.2.1.zip"
-                archive = temporary / f"download-{flavor}.zip"
-                extracted = temporary / f"extracted-{flavor}"
-                download(source, archive, checksum=WORKBENCH_SHA256[flavor])
-                extract_zip(archive, extracted)
-                candidates = [
-                    path
-                    for path in extracted.rglob("wb_command")
-                    if path.parent.name.startswith("bin_")
-                ]
-                if len(candidates) != 1:
-                    raise RuntimeError("Unexpected Workbench archive layout")
-                command = candidates[0]
-                command.chmod(0o755)
-                try:
-                    run_probe([str(command), "-version"])
-                    break
-                except RuntimeError as error:
-                    message = str(error)
-                    if flavor == "rh_linux64" and "libGLU.so.1" in message:
-                        print(
-                            "Red Hat Workbench needs host libGLU; trying its portable Linux archive",
-                            flush=True,
-                        )
-                        continue
-                    if flavor == "linux64" and any(
-                        library in message for library in WORKBENCH_GL_MISSING
-                    ):
-                        print("Installing the portable Workbench OpenGL runtime", flush=True)
-                        tree = command.parent.parent
-                        gl_runtime = _install_workbench_gl_runtime(tree, temporary)
-                        _wrap_workbench_libraries(
-                            command,
-                            (tree / "libs_linux64/osmesa", tree / "libs_linux64/glvnd"),
-                        )
-                        run_probe([str(command), "-version"])
-                        break
-                    raise
-            else:  # pragma: no cover - every flavor either breaks or raises
-                raise RuntimeError("No compatible Connectome Workbench archive is available")
-            tree = command.parent.parent
-            if flavor != preferred or gl_runtime:
-                software = tree / "libs_linux64/osmesa"
-                viewer = command.with_name("wb_view")
-                if not (software / "libGLU.so.1").is_file() or not viewer.is_file():
-                    raise RuntimeError("Portable Workbench archive lacks its OpenGL fallback")
-                libraries = (software,)
-                if gl_runtime:
-                    libraries += (tree / "libs_linux64/glvnd",)
-                _wrap_workbench_libraries(viewer, libraries)
-            if command.parent.name != executable.parent.name:
-                command.parent.rename(tree / executable.parent.name)
-            receipt = {"source": source, "sha256": sha256(archive)}
-            if gl_runtime:
-                receipt["opengl_runtime"] = gl_runtime
-            atomic_write_json(tree / "nro-download.json", receipt)
-            tree.rename(root)
+    run_probe([str(executable), "-version"])
 
 
 def install_templates(*, offline=False) -> None:

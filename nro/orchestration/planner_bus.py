@@ -207,6 +207,9 @@ def write_script(
     python: Path,
     partition: str,
     account: str | None,
+    time_hours: int = 24,
+    memory_gb: int = PLANNER_MEMORY_GB,
+    cpus: int = PLANNER_CPUS,
 ) -> Path:
     """Write one pinned Slurm script for the planning broker."""
     import shlex
@@ -228,12 +231,13 @@ def write_script(
     lines = [
         "#!/usr/bin/env bash",
         "#SBATCH --job-name=nro-planner",
-        f"#SBATCH --partition={partition}",
-        "#SBATCH --time=24:00:00",
-        f"#SBATCH --mem={PLANNER_MEMORY_GB}G",
-        f"#SBATCH --cpus-per-task={PLANNER_CPUS}",
+        f"#SBATCH --time={time_hours}:00:00",
+        f"#SBATCH --mem={memory_gb}G",
+        f"#SBATCH --cpus-per-task={cpus}",
         f"#SBATCH --output={paths.planner}/planner-%j.log",
     ]
+    if partition:
+        lines.append(f"#SBATCH --partition={partition}")
     if account:
         lines.append(f"#SBATCH --account={account}")
     lines.extend(("set -euo pipefail", "export NRO_PROCESS_ROLE=planner"))
@@ -244,9 +248,15 @@ def write_script(
 
 def submit(script: Path) -> str:
     """Submit one planner allocation and return its Slurm identity."""
-    result = subprocess.run(
-        ["sbatch", "--parsable", str(script)], check=True, text=True, capture_output=True
-    )
+    try:
+        result = subprocess.run(
+            ["sbatch", "--parsable", str(script)], check=True, text=True, capture_output=True
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "").strip()
+        raise RuntimeError(
+            f"Slurm rejected planner submission for {script}" + (f": {detail}" if detail else "")
+        ) from error
     job_id = result.stdout.strip().split(";", 1)[0]
     if not job_id:
         raise RuntimeError("sbatch returned no planner job ID")

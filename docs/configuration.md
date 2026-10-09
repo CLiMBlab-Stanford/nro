@@ -175,7 +175,7 @@ contribute to scientific fingerprints.
 Site resources use `site:KEY` references, resolved before configuration
 fingerprinting. The protected `site/site.yml` in the definitions store owns
 filesystem locations, executables, binds, and Slurm routing. The installation's
-TOML file only locates that store. `nro paths` edits the protected site document;
+TOML file only locates that store. `nro site` edits the protected site document;
 it does not edit module configuration YAML. Changing a resolved resource path
 may affect freshness even when a human believes the content is identical.
 

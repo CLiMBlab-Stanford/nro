@@ -1,38 +1,31 @@
-"""View and edit protected site settings."""
+"""Compatibility alias for ``nro site``."""
 
-import argparse
-from pathlib import Path
+from __future__ import annotations
 
-from nro.site.configuration import settings, site_definition_path, site_file
+import sys
+
 from nro.site.setup import edit_settings
 
 
-def main(argv=None, *, prog="nro paths"):
-    """Display or atomically update site settings, with confirmation for interactive edits.
+def main(argv=None, *, prog="nro paths") -> None:
+    """Translate the former paths interface to site configuration operations."""
+    values = list(sys.argv[1:] if argv is None else argv)
+    if not values:
+        try:
+            edit_settings()
+        except (KeyboardInterrupt, EOFError):
+            print("\nSite configuration cancelled.", file=sys.stderr)
+            raise SystemExit(130) from None
+        return
+    elif values[0] == "show":
+        translated = ["ls", *values[1:]]
+    elif values[0] == "set":
+        translated = ["set", *values[1:]]
+    else:
+        translated = values
+    from nro.bin.site import main as site_main
 
-    argv excludes the executable name; None reads the process arguments.
-    prog controls help/error labels. Invalid arguments raise SystemExit.
-    """
-    parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    parser.add_argument("action", choices=("show", "set"), nargs="?")
-    parser.add_argument("assignments", nargs="*")
-    parser.add_argument("--maintain", action="store_true")
-    args = parser.parse_args(argv)
-    try:
-        if args.action == "show":
-            values, sources = settings()
-            print(f"Definitions locator: {site_file()}")
-            print(f"Protected site definition: {site_definition_path(Path(values['definitions']))}")
-            for key, value in sorted(values.items()):
-                print(f"{key:16} {value!s:60} [{sources[key]}]")
-        else:
-            if args.action == "set" and not args.assignments:
-                parser.error("set requires key=value pairs")
-            edit_settings(args.assignments or None, maintain=args.maintain)
-    except (ValueError, OSError) as error:
-        parser.exit(1, f"{error}\n")
-    except (KeyboardInterrupt, EOFError):
-        parser.exit(130, "\nPath editing cancelled. Settings were not saved.\n")
+    site_main(translated, prog=prog)
 
 
 if __name__ == "__main__":

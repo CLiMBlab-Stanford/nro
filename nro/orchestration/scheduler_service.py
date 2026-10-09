@@ -470,8 +470,13 @@ def _submit_reserved(
             raise RuntimeError(f"sbatch returned no worker job ID: {result.stdout!r}")
         registry.update_submission(submission_id, state="submitted", slurm_job_id=job_id)
         return job_id
-    except BaseException:
+    except BaseException as error:
         registry.update_submission(submission_id, state="error")
+        if isinstance(error, subprocess.CalledProcessError):
+            detail = (error.stderr or error.stdout or "").strip()
+            raise RuntimeError(
+                f"Slurm rejected worker submission for {script}" + (f": {detail}" if detail else "")
+            ) from error
         raise
 
 

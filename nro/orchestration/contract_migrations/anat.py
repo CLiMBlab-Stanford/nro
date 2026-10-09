@@ -203,5 +203,16 @@ CHAIN = ContractMigrationChain(
                 ),
             ),
         ),
+        ContractMigration(
+            destination=13,
+            summary="Synthesize a canonical T1w reference when only T2w anatomy is available",
+            configuration=(
+                AddField(
+                    "t1w_fallback",
+                    default="synthesize_from_t2w",
+                    historical="synthesize_from_t2w",
+                ),
+            ),
+        ),
     ),
 )

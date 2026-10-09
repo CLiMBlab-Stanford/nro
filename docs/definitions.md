@@ -5,7 +5,7 @@ The site owns this directory and can track it in a separate Git repository.
 Installation migrations may rewrite definitions when their schema changes, but
 they preserve the repository and leave ordinary text changes for review.
 
-`nro paths show` displays the selected `definitions` path. Its default is
+`nro site get storage.definitions` displays the selected definitions path. Its default is
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible,
 otherwise `~/nro/definitions`. An explicit site setting takes precedence.
 
@@ -42,13 +42,13 @@ share:
 
 - storage roots for BIDS, work, development outputs, and private control state;
 - external software and resource locations;
-- the container runtime, Slurm partitions, account, and bind paths; and
+- the container runtime, execution policy, Slurm allocation profiles, and bind paths; and
 - Flywheel servers, destination-to-source project mappings, scan-plan sources,
   credential variable names, and existing-session rules.
 
 The document stores credential variable names, never credential values. Keep it
 under version control with the rest of the shared definitions repository.
-`nro paths set` edits this document after installation. Review and commit that
+`nro site set` edits this document after installation. Review and commit that
 change through the site's normal definitions process.
 
 Each checkout retains a generated TOML file containing only the absolute path
@@ -65,10 +65,10 @@ nearer store replaces the file with the same category and ID in every later
 store. Branch selection rejects a private site document, and central admission
 rejects a request prepared against a different protected site.
 
-The document has five top-level fields:
+The document has six top-level fields:
 
 ```yaml
-version: 2
+version: 4
 storage:
   bids: /data/BIDS
   work: /scratch/nro
@@ -83,10 +83,20 @@ resources:
   license: /opt/freesurfer/license.txt
 execution:
   runtime: apptainer
+  binds: []
+  concurrency: 50
+  gpu_concurrency: 1
+  worker_idle_timeout: 30
+  worker_drain_minutes: 15
+slurm:
   partition: compute
   viewing_partition: interactive
   account: ''
-  binds: []
+  scheduler: {time_hours: 24, memory_gb: 4, cpus: 4}
+  planner: {time_hours: 24, memory_gb: 8, cpus: 2}
+  worker: {time_hours: 24, memory_gb: 32, max_memory_gb: 256, cpus: 2}
+  long_worker: {time_hours: 48, cpus: 8}
+  viewer: {time_hours: 12, memory_gb: 32, cpus: 2}
 bidsify:
   default_server: null
   default_project: null
@@ -243,7 +253,7 @@ itself make an artifact stale.
 
 ```bash
 nro def init /data/lab/nro-definitions
-nro paths set definitions=/data/lab/nro-definitions
+nro site set storage.definitions=/data/lab/nro-definitions
 ```
 
 Creation copies packaged workflows, named configuration examples, and an empty
@@ -263,7 +273,7 @@ named examples into an existing store. Package upgrades supply new defaults
 automatically unless the store deliberately overrides them.
 
 On shared installations, changing the authoritative path requires
-`nro paths set definitions=PATH --maintain` and an inactive worker pool. Selecting
+`nro site set storage.definitions=PATH --maintain` and an inactive worker pool. Selecting
 a path does not move files. Copy and validate the destination before switching.
 Every checkout connected to one scheduler inherits the same site document.
 
@@ -304,7 +314,7 @@ for dependency checks. Both store commands support `--json` and exit nonzero on
 failure.
 
 Use [definition authoring](commands/authoring.md) for configurations,
-workflows, task models, and source markup. Use `nro paths set` for protected
+workflows, task models, and source markup. Use `nro site set` for protected
 site values. For event catalogs, ingestion profiles, hardware policy, and
 scan-plan parsers, publish one or more local files as a validated transaction:
 

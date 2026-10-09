@@ -104,7 +104,7 @@ to inspect shell resolution. Launcher checkout bindings live in
 Branch processing requires an [installed, active main scheduler](commands/releases.md).
 The normal commands then use branch-owned outputs, compatible ancestor inputs,
 and the shared worker pool. Shared definition/site editing remains blocked from
-development installations. Use `nro branch`, `nro doctor`, and `nro paths show`
+development installations. Use `nro branch`, `nro doctor`, and `nro site ls`
 to inspect setup. See [development](development.md#branch-isolation-work) for
 execution and maintenance boundaries.
 
@@ -316,28 +316,30 @@ shared and parent stores are read-only and must already use the current schema.
 Accept all defaults to keep the displayed settings. If declined, the editor
 prompts for each setting independently. Enter keeps that value; Tab completes
 paths. A final confirmation saves the choices.
-Use `-` for an empty Slurm account. Scripted editing is also available:
+Use `-` for an empty Slurm account. Scripted editing is also available through
+one typed site interface:
 
 ```bash
-nro paths show
-nro paths set bids=/data/BIDS work=/scratch/nro
-nro paths set runtime=/usr/bin/apptainer
+nro site ls
+nro site set storage.bids=/data/BIDS storage.work=/scratch/nro
+nro site set execution.runtime=/usr/bin/apptainer
+nro site get slurm.partition slurm.scheduler.time_hours
 ```
 
-Shared editing requires `--maintain`, write permission, and a stopped worker
-pool. The command updates `site/site.yml`; it does not relocate files or migrate
-a registry. Commit the result in the definitions repository. Worker attempts
-carry a resolved, immutable site snapshot rather than rereading mutable values.
+Storage and installation-resource edits on a shared site require `--maintain`,
+write permission, and a stopped worker pool. Operational settings do not. The
+command updates `site/site.yml`; it does not relocate files or migrate a registry.
+Each setting declares when it takes effect. Changes to live scheduler limits are
+relayed automatically when a scheduler exists and otherwise apply when
+coordination resumes. Worker attempts retain their immutable execution snapshot.
 
 Private state uses the [shared/branch hierarchy](commands/branches.md#storage-and-safeguards).
 An existing flat-layout control store predates the supported registry baseline and
 is rejected before a scheduler is created. Archive or remove that obsolete private
 state before initializing the current layout. Installation and repair never adopt it.
 
-The path editor accepts `definitions`, `bids`, `work`, `development`,
-`registry`, `images`, `templates`, `gradient_coefficients`, `workbench`,
-`oslom`, `license`, `runtime`, `partition`, `viewing_partition`, `account`,
-`flywheel_server`, `flywheel_project`, and `binds`.
+`nro site ls` lists storage, resources, execution policy, Slurm profiles, and
+bidsification defaults with their effective values and application lifecycle.
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
 `synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `fastsurfer_data`, and
 `mni_template` can override
@@ -347,22 +349,23 @@ Generic defaults omit CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
 the persistent, user-specific X11 allocation created by `nro scene --open`;
-CLIMBLAB uses `john`. Both partitions use the `nlp` account. The viewer broker
-uses 2 CPUs and 32 GB for up to 12 hours. It does not enter nro's worker pool or
-shared concurrency accounting.
+CLIMBLAB uses `john`. Both partitions use the `nlp` account. The viewer profile
+defaults to 2 CPUs and 32 GB for up to 12 hours and is configurable under
+`slurm.viewer`. It does not enter nro's worker pool or shared concurrency
+accounting.
 
 `flywheel_server` and `flywheel_project` are optional defaults for
 `nro bidsify`. The project uses the `GROUP/PROJECT` form. Command-line values
 override these defaults for one invocation. For example:
 
 ```bash
-nro paths set flywheel_server=cni flywheel_project=cashain/climblab
+nro site set bidsify.default_server=cni bidsify.default_project=cashain/climblab
 ```
 
 Personal installations also honor `NRO_WORK_PATH`, `NRO_WB_COMMAND`,
 `TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Every installation reads the BIDS root
-from the protected site document. `nro paths show` reports the locator,
-protected document, resolved values, and their sources. The engine supplies the
+from the protected site document. `nro site ls` reports resolved values and when
+changes take effect. The engine supplies the
 FreeSurfer license and thread settings to processing commands.
 
 Scientific YAML uses explicit `site:KEY` resource references. Resolution with
@@ -403,17 +406,20 @@ against a pinned SHA-256 before publication. Workers use these site-managed
 resources read-only, so a scientific job never downloads or silently replaces
 model weights.
 
-Workbench 2.2.1 is installed from its official Linux archive when absent;
-the archive is checked against a pinned SHA-256 before extraction.
-Automatic installation requires an x86_64 host and a target ending in
-`workbench/bin_linux64/wb_command` or `workbench/bin_rh_linux64/wb_command`.
-An existing incomplete Workbench directory is reported rather than overwritten.
-The native installation provides `nro scene`, `nro view`, and `nro render`.
+Workbench 2.2.1 is installed from the checksum-pinned
+[`nro-workbench`](https://github.com/CLiMBlab-Stanford/nro-workbench)
+Apptainer image. The image
+contains the GUI, Qt, X11, and software-rendering libraries used by `nro scene`,
+`nro view`, and `nro render`; these commands do not depend on compatible host
+graphics libraries. Small `wb_command` and `wb_view` launchers bind the site's
+managed paths into the image. A working executable configured outside an
+nro-managed Workbench directory remains an explicit native override.
+
 Scientific modules run their Workbench commands inside the pinned QuNex image.
-On a host that cannot run the native Workbench build, use
-`./install --without-viewer`. This skips the native download and check without
-disabling scientific processing. A later installation without the flag restores
-viewer support.
+Use `./install --without-viewer` when scene viewing and rendering are not
+needed. This skips the Workbench image and launcher checks without disabling
+scientific processing. A later installation without the flag restores viewer
+support.
 
 The template catalog pins MNI T1w and GM probability maps and fsaverage surface
 geometry by S3 object version and checksum. It includes the 41k geometry needed

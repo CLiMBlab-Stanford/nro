@@ -99,6 +99,9 @@ def test_scene_viewer_uses_the_persistent_broker(monkeypatch, tmp_path: Path) ->
         "partition": "interactive",
         "account": "lab",
         "control": tmp_path / "control",
+        "hours": 12,
+        "memory_gb": 32,
+        "cpus": 2,
     }
 
 

@@ -43,6 +43,7 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
             ).fetchone()
             if row is None or row[0] != owner:
                 raise ValueError("Worker supply request belongs to another branch")
+    registry.set_gpu_concurrency(int(options.get("gpu_concurrency", 1)))
     registry.cancel_attempts_with_stale_upstreams()
     registry.reconcile_requests()
     from nro.orchestration.scheduler_implementation import run_local_worker
@@ -84,9 +85,13 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
                     bids_root=registry.paths.bids_root,
                     partition=options["partition"],
                     account=options["account"],
-                    hours=max(options["time"], 48) if long_cpu else options["time"],
+                    hours=options.get("long_time", max(options["time"], 48))
+                    if long_cpu
+                    else options["time"],
                     memory_gb=tier,
-                    cpus=max(options["cpus"], 8) if long_cpu else options["cpus"],
+                    cpus=options.get("long_cpus", max(options["cpus"], 8))
+                    if long_cpu
+                    else options["cpus"],
                     resource_class=resource_class,
                     idle_timeout=options["worker_idle_timeout"],
                     drain_seconds=options["drain_minutes"] * 60,
@@ -122,6 +127,7 @@ def supply_needed(registry, request_ids: list[str], options: dict, *, checkout: 
             ).fetchone()
             if row is None or row[0] != owner:
                 raise ValueError("Worker supply request belongs to another branch")
+    registry.set_gpu_concurrency(int(options.get("gpu_concurrency", 1)))
     registry.cancel_attempts_with_stale_upstreams()
     registry.reconcile_requests()
     needed = False

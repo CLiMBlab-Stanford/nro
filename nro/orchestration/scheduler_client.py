@@ -269,9 +269,9 @@ def _start_service(endpoint: SchedulerEndpoint, *, options: dict | None = None) 
                 python=endpoint.python,
                 partition=str(options.get("partition") or values["partition"]),
                 account=options.get("account", values.get("account") or None),
-                time_hours=int(options.get("time", 24)),
-                memory_gb=int(options.get("memory", 4)),
-                cpus=int(options.get("cpus", 4)),
+                time_hours=int(options.get("time", values["scheduler_time"])),
+                memory_gb=int(options.get("memory", values["scheduler_memory"])),
+                cpus=int(options.get("cpus", values["scheduler_cpus"])),
             )
             job_id = submit_controller(script)
         update_launch_job(claim, job_id)

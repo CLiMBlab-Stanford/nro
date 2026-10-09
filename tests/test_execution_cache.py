@@ -153,6 +153,45 @@ def test_submission_rejects_cache_removed_after_script_preparation(cache, monkey
         submission._submit_workers(registry, None, script, 4)
 
 
+def test_worker_submission_reports_slurm_rejection(cache, monkeypatch):
+    from nro.orchestration import scheduler_implementation, submission
+
+    registry, _, _ = cache
+    script = registry.paths.workers / "worker.sbatch"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("#!/bin/sh\n")
+    updates = []
+    monkeypatch.setattr(scheduler_implementation, "validate_worker_script", lambda *_args: None)
+    monkeypatch.setattr(registry, "reconcile_scheduler_submissions", lambda: None)
+    monkeypatch.setattr(
+        registry,
+        "reserve_worker_submissions",
+        lambda **_options: [("submission", "token")],
+    )
+    monkeypatch.setattr(
+        registry,
+        "update_submission",
+        lambda submission_id, **values: updates.append((submission_id, values)),
+    )
+    monkeypatch.setattr(
+        submission.subprocess,
+        "run",
+        lambda command, **_options: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(
+                1,
+                command,
+                output="",
+                stderr="sbatch: error: Requested time limit is invalid",
+            )
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Requested time limit is invalid"):
+        submission._submit_workers(registry, None, script, 4)
+
+    assert updates == [("submission", {"state": "error"})]
+
+
 def test_collection_waits_for_reference_publication(cache):
     registry, source, site = cache
     started = threading.Event()

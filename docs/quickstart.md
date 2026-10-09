@@ -81,7 +81,7 @@ hash -r
 type -a nro
 nro doctor                 # Slurm installation
 nro doctor --local         # installation without Slurm
-nro paths show
+nro site ls
 ```
 
 No environment activation is needed. Run `nro doctor --deep` inside a compute
