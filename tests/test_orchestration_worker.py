@@ -2460,6 +2460,25 @@ def test_worker_walltime_sigterm_is_reported_as_timeout(
     assert "longer --time allocation" in row["error_message"]
 
 
+def test_worker_checkin_renews_lease_and_preserves_shutdown(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registry.initialize()
+    registry.register_worker("worker", resource_class="large")
+
+    active = registry.worker_checkin("worker", state="running")
+    assert active == {
+        "shutdown_requested": False,
+        "attempt_cancel_requested": False,
+    }
+
+    registry.request_worker_shutdown(all_users=True)
+    stopping = registry.worker_checkin("worker", state="running")
+    assert stopping == {
+        "shutdown_requested": True,
+        "attempt_cancel_requested": False,
+    }
+
+
 def test_status_update_can_reconcile_an_existing_slurm_timeout(tmp_path: Path, monkeypatch) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)

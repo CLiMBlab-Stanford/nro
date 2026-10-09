@@ -386,6 +386,31 @@ def test_scheduler_background_work_yields_to_requests() -> None:
     )
 
 
+def test_scheduler_snapshot_has_a_bounded_delay() -> None:
+    coordinator = SimpleNamespace(has_inflight=lambda: False)
+    recent = scheduler_service.STATUS_MAX_STALENESS_SECONDS - 0.1
+    assert not scheduler_service._snapshot_ready(
+        coordinator,
+        last_request_activity=recent,
+        last_snapshot=0.0,
+        now=recent,
+    )
+    assert scheduler_service._snapshot_ready(
+        coordinator,
+        last_request_activity=scheduler_service.STATUS_MAX_STALENESS_SECONDS,
+        last_snapshot=0.0,
+        now=scheduler_service.STATUS_MAX_STALENESS_SECONDS,
+    )
+
+    coordinator.has_inflight = lambda: True
+    assert not scheduler_service._snapshot_ready(
+        coordinator,
+        last_request_activity=0.0,
+        last_snapshot=0.0,
+        now=scheduler_service.STATUS_MAX_STALENESS_SECONDS,
+    )
+
+
 def test_scheduler_separates_polling_from_maintenance_execution() -> None:
     executors = {
         name: object() for name in ("poll", "worker", "completion", "command", "maintenance")
@@ -594,6 +619,37 @@ def test_worker_heartbeat_uses_direct_only_rpc(monkeypatch) -> None:
     assert calls[0][1]["durable"] is False
     assert calls[0][1]["require_service"] is True
     assert calls[0][1]["timeout"] == 60.0
+
+
+def test_worker_checkin_combines_lease_and_cancellation_poll(monkeypatch) -> None:
+    client = object.__new__(WorkerSchedulerClient)
+    client.endpoint = SimpleNamespace()
+    client.worker_id = "worker"
+    client.token = "token"
+    client.sequence = 0
+    client._last_poll_warning = 0.0
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.worker_client.exchange",
+        lambda _endpoint, message, **options: (
+            calls.append((message, options))
+            or {
+                "shutdown_requested": False,
+                "attempt_cancel_requested": True,
+            }
+        ),
+    )
+
+    result = client.worker_checkin("worker", state="running", attempt_id=17)
+
+    assert result == {
+        "shutdown_requested": False,
+        "attempt_cancel_requested": True,
+    }
+    assert calls[0][0]["action"] == "check_in"
+    assert calls[0][0]["attempt_id"] == 17
+    assert calls[0][1]["durable"] is False
+    assert scheduler_service._quiet_message({"payload": calls[0][0]})
 
 
 @pytest.mark.parametrize("operation", ("dataset_migration", "hotfix", "project_rename"))

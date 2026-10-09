@@ -50,6 +50,7 @@ from nro.site.configuration import protected_site_fingerprint
 _STOP = False
 MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
+STATUS_MAX_STALENESS_SECONDS = 5.0
 BACKGROUND_QUIET_SECONDS = 2.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
 
@@ -580,6 +581,14 @@ def _apply_worker_operation(registry, message: dict) -> object:
     if action == "heartbeat":
         registry.heartbeat_worker(worker_id, state=message["state"])
         return None
+    if action == "check_in":
+        return registry.worker_checkin(
+            worker_id,
+            state=message["state"],
+            attempt_id=(
+                int(message["attempt_id"]) if message.get("attempt_id") is not None else None
+            ),
+        )
     if action == "shutdown_requested":
         return registry.worker_shutdown_requested(worker_id)
     if action == "submission_running":
@@ -1220,6 +1229,7 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
 def _quiet_message(record: dict) -> bool:
     payload = record["payload"]
     return payload.get("operation") == "worker" and payload.get("action") in {
+        "check_in",
         "heartbeat",
         "shutdown_requested",
         "attempt_cancel_requested",
@@ -1285,6 +1295,7 @@ def _handle_connection(
     coordinator,
     executors: dict[str, ThreadPoolExecutor],
     changed: _ActivitySignal,
+    request_activity: _ActivitySignal,
 ) -> None:
     """Validate one connection and hand its work to the appropriate pool."""
     from nro.orchestration.scheduler_rpc import receive, send, validate_request
@@ -1294,6 +1305,8 @@ def _handle_connection(
         try:
             envelope = receive(connection)
             record, durable = validate_request(envelope, token=token)
+            if not _quiet_message(record):
+                request_activity.set()
             executor = _executor_for(record, executors, durable=durable)
             if durable:
                 response = _submit_durable(record, coordinator, executor, changed)
@@ -1334,14 +1347,11 @@ def _listen(
     registry,
     *,
     stop_event: threading.Event,
-    activity_event: _ActivitySignal,
     **options,
 ) -> None:
     """Accept connections independently of maintenance and snapshot work."""
     while not stop_event.is_set():
         accepted = _accept_connections(listener, readers, registry, **options)
-        if accepted:
-            activity_event.set()
         stop_event.wait(0.02 if accepted else 0.1)
 
 
@@ -1419,6 +1429,20 @@ def _background_ready(coordinator, *, last_request_activity: float, now: float) 
     """Return whether low-priority registry work may run without delaying a request."""
     return (
         not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+    )
+
+
+def _snapshot_ready(
+    coordinator,
+    *,
+    last_request_activity: float,
+    last_snapshot: float,
+    now: float,
+) -> bool:
+    """Allow a pending snapshot after quiet time or its maximum age."""
+    return not coordinator.has_inflight() and (
+        now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+        or now - last_snapshot >= STATUS_MAX_STALENESS_SECONDS
     )
 
 
@@ -1580,7 +1604,7 @@ def serve(
         args=(listener, readers, registry),
         kwargs={
             "stop_event": listener_stop,
-            "activity_event": request_activity,
+            "request_activity": request_activity,
             "values": values,
             "token": launch_token,
             "coordinator": coordinator,
@@ -1639,7 +1663,12 @@ def serve(
             if (
                 snapshot_pending
                 and now - last_snapshot >= STATUS_PUBLISH_INTERVAL_SECONDS
-                and background_ready
+                and _snapshot_ready(
+                    coordinator,
+                    last_request_activity=last_request_activity,
+                    last_snapshot=last_snapshot,
+                    now=now,
+                )
                 and maintenance_idle
             ):
                 generation += 1

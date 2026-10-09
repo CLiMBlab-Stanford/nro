@@ -95,6 +95,24 @@ class WorkerSchedulerClient:
         """Refresh this worker's registry lease through the scheduler."""
         self._poll("heartbeat", None, state=state)
 
+    def worker_checkin(
+        self, worker_id: str, *, state: str, attempt_id: int | None = None
+    ) -> dict[str, bool]:
+        """Renew the worker lease and read cancellation state in one poll."""
+        if worker_id != self.worker_id:
+            raise ValueError("Worker identity differs from the scheduler client binding")
+        fallback = {
+            "shutdown_requested": False,
+            "attempt_cancel_requested": False,
+        }
+        value = self._poll("check_in", fallback, state=state, attempt_id=attempt_id)
+        if not isinstance(value, dict):
+            return fallback
+        return {
+            "shutdown_requested": bool(value.get("shutdown_requested")),
+            "attempt_cancel_requested": bool(value.get("attempt_cancel_requested")),
+        }
+
     def worker_shutdown_requested(self, worker_id: str) -> bool:
         """Return whether the scheduler requests this worker to shut down."""
         return bool(self._poll("shutdown_requested", False))

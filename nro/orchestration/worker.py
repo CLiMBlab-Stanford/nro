@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -42,7 +43,7 @@ from nro.orchestration.scheduler_implementation import validate_worker_script
 from nro.site.paths import BIDS_PATH
 
 COMPATIBLE = WORKER_COMPATIBILITY
-HEARTBEAT_INTERVAL = 30.0
+RUNNING_CHECKIN_INTERVAL = 10.0
 
 
 def _append_event(registry: Registry, work_item: ExecutionEnvelope, event: dict) -> None:
@@ -628,49 +629,53 @@ class Worker:
                         "re-plan it with python -m nro.bin.run"
                     )
 
-                def cancellation_state() -> tuple[bool, bool]:
-                    nonlocal scheduler_retry_after
+                next_checkin = 0.0
+                checkin_state = (False, False)
+
+                def checkin() -> tuple[bool, bool]:
+                    nonlocal next_checkin, checkin_state
                     if self.stop_requested:
                         return True, False
                     now = time.monotonic()
-                    if now < scheduler_retry_after:
-                        return False, False
+                    if now < next_checkin:
+                        return checkin_state
                     try:
-                        scheduler_cancelled = self.registry.attempt_cancel_requested(attempt_id)
+                        if hasattr(self.registry, "worker_checkin"):
+                            state = self.registry.worker_checkin(
+                                self.worker_id,
+                                state="running",
+                                attempt_id=attempt_id,
+                            )
+                            scheduler_cancelled = bool(state.get("attempt_cancel_requested"))
+                            shutdown_requested = bool(state.get("shutdown_requested"))
+                        else:
+                            self.registry.heartbeat_worker(self.worker_id, state="running")
+                            scheduler_cancelled = self.registry.attempt_cancel_requested(attempt_id)
+                            shutdown_requested = False
                     except SchedulerError as error:
                         if error.error_type is not None:
                             raise
-                        scheduler_retry_after = now + HEARTBEAT_INTERVAL
+                        next_checkin = now + RUNNING_CHECKIN_INTERVAL
                         log.write(
-                            f"{utcnow()} WARNING: Scheduler cancellation poll delayed; "
+                            f"{utcnow()} WARNING: Scheduler check-in delayed; "
                             f"the running command will continue: {error}\n"
                         )
                         log.flush()
-                        return False, False
-                    return scheduler_cancelled, scheduler_cancelled
+                        return checkin_state
+                    checkin_state = (
+                        shutdown_requested or scheduler_cancelled,
+                        scheduler_cancelled,
+                    )
+                    next_checkin = now + RUNNING_CHECKIN_INTERVAL * random.uniform(0.8, 1.2)
+                    return checkin_state
+
+                def cancellation_state() -> tuple[bool, bool]:
+                    return checkin()
 
                 self.registry.record_attempt_process(attempt_id, -1)
-                last_heartbeat = 0.0
-                scheduler_retry_after = 0.0
 
                 def heartbeat() -> None:
-                    nonlocal last_heartbeat, scheduler_retry_after
-                    now = time.monotonic()
-                    if now - last_heartbeat < HEARTBEAT_INTERVAL or now < scheduler_retry_after:
-                        return
-                    try:
-                        self.registry.heartbeat_worker(self.worker_id, state="running")
-                    except SchedulerError as error:
-                        if error.error_type is not None:
-                            raise
-                        scheduler_retry_after = now + HEARTBEAT_INTERVAL
-                        log.write(
-                            f"{utcnow()} WARNING: Scheduler heartbeat delayed; "
-                            f"the running command will continue: {error}\n"
-                        )
-                        log.flush()
-                    finally:
-                        last_heartbeat = now
+                    checkin()
 
                 result = self.launcher.run(
                     work_item,
