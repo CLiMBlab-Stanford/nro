@@ -88,6 +88,10 @@ SYNTHETIC_T1W_MANIFEST_FIELDS = {
     "t1w_synthesis.backend": "string",
     "t1w_synthesis.source_contrast": "string",
     "t1w_synthesis.output_contrast": "string",
+    "t1w_synthesis.support_mask": "mapping",
+    "t1w_synthesis.support_mask.source": "string",
+    "t1w_synthesis.support_mask.definition": "string",
+    "t1w_synthesis.support_mask.interpolation": "string",
 }
 
 

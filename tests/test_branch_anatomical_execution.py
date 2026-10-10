@@ -221,8 +221,14 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
     else:
         assert not registrations
     synthesis = [step for step in graph.steps if step.name == "Synthesize T1w Reference from T2w"]
+    synthetic_masks = [
+        step for step in graph.steps if step.name == "Map T2w Brain Mask to Synthetic T1w"
+    ]
     if modalities == ("T2w",):
         assert len(synthesis) == 1
+        assert len(synthetic_masks) == 1
+        assert synthetic_masks[0].inputs[0].name.endswith("desc-selected_T2w.nii.gz")
+        assert synthetic_masks[0].inputs[1].name.endswith("desc-synthetic_T1w.nii.gz")
         assert any(
             path.name == "sub-1_desc-preproc_T1w.nii.gz"
             for step in graph.steps
@@ -231,6 +237,7 @@ def test_anatomical_graph_routes_all_outputs(context, tmp_path, monkeypatch, mod
         assert not any("myelinMap" in path.name for step in graph.steps for path in step.outputs)
     else:
         assert not synthesis
+        assert not synthetic_masks
     for session in ("ses-1", "ses-2"):
         assert any(
             p.is_relative_to(owner / "sub-1" / session / "anat")

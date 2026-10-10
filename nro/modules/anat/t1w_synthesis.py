@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import nibabel as nib
+import numpy as np
+from nibabel.processing import resample_from_to
+
 from nro.orchestration.runner_graph import Step
 
-from .policy import t1w_synthesis_contract
+from .policy import t1w_support_mask_contract, t1w_synthesis_contract
 
 
 def create_t1w_synthesis_step(
@@ -63,4 +68,56 @@ def create_t1w_synthesis_step(
         action=action,
         force=force,
         parameters=t1w_synthesis_contract(),
+    )
+
+
+def create_t1w_support_mask_step(
+    *,
+    t2w: Path,
+    synthetic_t1w: Path,
+    output: Path,
+    force: bool,
+) -> Step:
+    """Map the selected T2w brain support onto the synthetic T1w grid."""
+
+    def action() -> None:
+        source = nib.load(str(t2w))
+        reference = nib.load(str(synthetic_t1w))
+        if len(source.shape) != 3 or len(reference.shape) != 3:
+            raise ValueError("Synthetic T1w support requires two 3D anatomical images")
+        source_data = np.asarray(source.dataobj)
+        support = np.isfinite(source_data) & (source_data != 0)
+        if not np.any(support):
+            raise ValueError(f"Selected T2w image has no finite nonzero brain support: {t2w}")
+
+        source_mask = nib.Nifti1Image(support.astype(np.uint8), source.affine)
+        resampled = resample_from_to(
+            source_mask,
+            (reference.shape, reference.affine),
+            order=0,
+            mode="constant",
+            cval=0,
+        )
+        values = (np.asarray(resampled.dataobj) > 0.5).astype(np.uint8)
+        if not np.any(values):
+            raise ValueError("Selected T2w support does not overlap the synthetic T1w grid")
+
+        header = reference.header.copy()
+        header.set_data_dtype(np.uint8)
+        image = nib.Nifti1Image(values, reference.affine, header=header)
+        image.set_qform(reference.get_qform(), int(reference.header["qform_code"]))
+        image.set_sform(reference.get_sform(), int(reference.header["sform_code"]))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(f".partial-{output.name}")
+        temporary.unlink(missing_ok=True)
+        nib.save(image, str(temporary))
+        os.replace(temporary, output)
+
+    return Step.python(
+        name="Map T2w Brain Mask to Synthetic T1w",
+        inputs=(t2w, synthetic_t1w),
+        outputs=(output,),
+        action=action,
+        force=force,
+        parameters=t1w_support_mask_contract(),
     )

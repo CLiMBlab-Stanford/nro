@@ -34,6 +34,16 @@ def t1w_synthesis_contract() -> dict[str, object]:
         "output_contrast": "synthetic T1w",
         "output_resolution_mm": 1.0,
         "device": "CPU",
+        "support_mask": t1w_support_mask_contract(),
+    }
+
+
+def t1w_support_mask_contract() -> dict[str, object]:
+    """Describe the anatomical support mask used with a synthetic T1w image."""
+    return {
+        "source": "selected skull-stripped T2w",
+        "definition": "finite nonzero voxels",
+        "interpolation": "nearest_neighbor",
     }
 
 

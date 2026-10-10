@@ -125,7 +125,7 @@ from .steps import (
     _surface_names,
     _write_json_step,
 )
-from .t1w_synthesis import create_t1w_synthesis_step
+from .t1w_synthesis import create_t1w_support_mask_step, create_t1w_synthesis_step
 
 LOG = logging.getLogger("anat")
 # Standard aseg identifiers from FreeSurferColorLUT.txt:
@@ -373,6 +373,7 @@ def build_module(
         "mni_template": str(opts.mni_template),
         "synthstrip_image": str(opts.synthstrip_image),
     }
+    synthetic_t1w_mask: Optional[Path] = None
     if synthetic_t1w:
         configuration["t1w_fallback"] = opts.t1w_fallback
     if opts.lesion:
@@ -699,6 +700,15 @@ def build_module(
                 force=opts.overwrite,
             )
         )
+        synthetic_t1w_mask = reference_work / f"{inputs.sub_id}_desc-selectedT1w_mask.nii.gz"
+        runner.add_step(
+            create_t1w_support_mask_step(
+                t2w=subj_t2_selected,
+                synthetic_t1w=subj_t1_selected,
+                output=synthetic_t1w_mask,
+                force=opts.overwrite,
+            )
+        )
         t1_meta = {
             "modality": "T1w",
             "sources": list(t2_meta["sources"]),
@@ -709,10 +719,12 @@ def build_module(
     if pose_source is None:
         raise SystemExit("No subject-level anatomical image available after selection.")
     pose_modality = "T1w" if subj_t1_selected is not None else "T2w"
-    pose_mask = lesion_selected_t1_mask or (
-        reference_work / f"{inputs.sub_id}_desc-selected{pose_modality}_mask.nii.gz"
+    pose_mask = (
+        lesion_selected_t1_mask
+        or synthetic_t1w_mask
+        or (reference_work / f"{inputs.sub_id}_desc-selected{pose_modality}_mask.nii.gz")
     )
-    if lesion_selected_t1_mask is None:
+    if lesion_selected_t1_mask is None and synthetic_t1w_mask is None:
         runner.add_step(
             Step.command_step(
                 ["fslmaths", str(pose_source), "-bin", str(pose_mask)],
