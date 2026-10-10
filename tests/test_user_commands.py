@@ -53,7 +53,8 @@ def test_run_cpu_override() -> None:
     assert build_parser().parse_args(["--cpus", "8"]).cpus == 8
 
 
-def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
+def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys, mode) -> None:
     from nro.orchestration import execution_pins, planner_client, scheduler_client
     from nro.site import configuration as site
 
@@ -65,7 +66,7 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
         site,
         "installation_record",
         lambda: {
-            "mode": "branch",
+            "mode": mode,
             "ready": True,
             "site": os.environ["NRO_SITE_CONFIG"],
         },

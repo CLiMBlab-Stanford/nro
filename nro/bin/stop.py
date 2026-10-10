@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
 
     values = site.settings()[0]
     branch_execution = (
-        site.installation_record().get("mode") == "branch"
+        site.installation_record().get("mode") in {"personal", "shared", "branch"}
         or implementation_path(Path(values["registry"])).is_file()
     )
     pool_control = args.worker or args.scheduler

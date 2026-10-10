@@ -314,7 +314,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
 
     values = site.settings()[0]
     branch_execution = (
-        site.installation_record().get("mode") == "branch"
+        site.installation_record().get("mode") in {"personal", "shared", "branch"}
         or implementation_path(Path(values["registry"])).is_file()
     )
     projects = list(dict.fromkeys(selection.projects))

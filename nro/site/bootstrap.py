@@ -573,12 +573,12 @@ def _main(argv=None) -> None:
         paths.require_current_layout()
         if existing and existing.get("branch") != branch_name:
             parser.error("Checkout branch changed; return to its installed branch")
-    if args.drain and mode != "shared":
+    if args.drain and mode not in {"shared", "personal"}:
         parser.error("--drain applies only to shared installation maintenance")
     shared_registry = None
     prepare_shared_site = None
     prepare_shared = None
-    if mode == "shared":
+    if mode in {"shared", "personal"}:
 
         def prepare_shared_site(*, migrate: bool) -> None:
             from nro.site.setup import (
@@ -654,8 +654,6 @@ def _main(argv=None) -> None:
         if args.adopt_definitions:
             if mode == "branch":
                 parser.error("--adopt-definitions is unavailable in branch installations")
-        if mode != "shared" and mode != "branch":
-            check_workers(site)
         if prepare_shared_site is not None:
             prepare_shared_site(migrate=not args.adopt_definitions)
         layered = mode in {"personal", "shared"}
@@ -783,7 +781,7 @@ def _main(argv=None) -> None:
                 )
             )
             subprocess.run(command, cwd=ROOT, env=env, check=True)
-            if mode == "shared":
+            if mode in {"shared", "personal"}:
                 from nro.site.setup import migrate_site_configuration
 
                 migrate_site_configuration(site)
@@ -800,7 +798,7 @@ def _main(argv=None) -> None:
         )
         if mode != "branch":
             command += ["--maintain"]
-        if mode == "shared":
+        if mode in {"shared", "personal"}:
             command += ["--prepared-maintenance"]
         if args.non_interactive:
             command += ["--non-interactive"]
@@ -856,7 +854,7 @@ def _main(argv=None) -> None:
                 check=True,
             )
         record["ready"] = True
-        if mode == "shared":
+        if mode in {"shared", "personal"}:
             from nro.site.shared_installation import publish
 
             publish(ROOT, shared_registry, installation=record)
@@ -868,12 +866,6 @@ def _main(argv=None) -> None:
             )
         else:
             write_record(record_path, record)
-            if mode == "personal":
-                installation_layers.prune_environments(
-                    ROOT,
-                    Path(record["environment"]),
-                    active_application=Path(record["application"]),
-                )
         connect_user(
             record,
             bin_dir=args.bin_dir,

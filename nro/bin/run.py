@@ -512,7 +512,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     values = site.settings()[0]
     branch_execution = (
-        record.get("mode") == "branch" or implementation_path(Path(values["registry"])).is_file()
+        record.get("mode") in {"personal", "shared", "branch"}
+        or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution and not args.local and os.environ.get("NRO_REMOTE_PLANNER") != "1":
         from nro.orchestration.execution_cache import cache_lock

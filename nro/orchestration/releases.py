@@ -44,7 +44,7 @@ def tagged_source(checkout: Path) -> tuple[str, str, str, str, str]:
     """Return the exact annotated release at a clean main checkout."""
     checkout = Path(checkout).expanduser().resolve()
     if _git(checkout, "symbolic-ref", "--short", "HEAD") != "main":
-        raise ValueError("A shared installation must use the main Git branch")
+        raise ValueError("A production installation must use the main Git branch")
     commit, tree, version = _source(checkout)
     tag = f"v{version}"
     try:
@@ -297,17 +297,17 @@ class ReleaseStore:
             if len(matches) != 1:
                 raise ValueError("Main source has no matching installed release record")
         if check_head and _git(checkout, "rev-parse", "HEAD") != expected["commit"]:
-            raise ValueError("Main checkout changed; rerun shared installation maintenance")
+            raise ValueError("Main checkout changed; rerun installation maintenance")
         return matches[0]
 
     def require_installed(self, checkout: Path, installation: dict) -> dict:
-        """Validate the release pinned by a ready static shared installation."""
+        """Validate the release pinned by a ready static production installation."""
         checkout = Path(checkout).expanduser().resolve()
         if (
-            installation.get("mode") != "shared"
+            installation.get("mode") not in {"shared", "personal"}
             or not installation.get("ready")
             or installation.get("checkout") != str(checkout)
             or not isinstance(installation.get("release"), dict)
         ):
-            raise ValueError("A ready shared installation with a recorded release is required")
+            raise ValueError("A ready production installation with a recorded release is required")
         return self.require_recorded(checkout, installation["release"])

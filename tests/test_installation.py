@@ -47,6 +47,23 @@ def test_setup_resource_terms_can_be_declined(monkeypatch, response):
 
 
 @pytest.fixture
+def personal_publication(monkeypatch):
+    from nro.orchestration import registry, releases
+
+    monkeypatch.setattr(site_setup, "migrate_site_configuration", lambda path: None)
+    monkeypatch.setattr(releases, "tagged_source", lambda root: None)
+    monkeypatch.setattr(registry.Registry, "for_project", lambda *args, **kwargs: object())
+    monkeypatch.setattr(shared_installation, "prepare_pool", lambda *args, **kwargs: None)
+
+    def publish(root, registry, *, installation):
+        assert installation["mode"] == "personal"
+        assert installation["ready"]
+        bootstrap.write_record(root / bootstrap.RECORD, installation)
+
+    monkeypatch.setattr(shared_installation, "publish", publish)
+
+
+@pytest.fixture
 def isolated_site(tmp_path, monkeypatch):
     path = tmp_path / "site.toml"
     path.write_text("")
@@ -349,21 +366,24 @@ def test_interactive_paths_display_and_save_proposals(
     assert not (tmp_path / "home").exists()
 
 
-def test_shared_site_ignores_personal_environment(isolated_site, monkeypatch):
+@pytest.mark.parametrize("mode", ["personal", "shared"])
+def test_production_site_ignores_personal_environment(isolated_site, monkeypatch, mode):
     save_settings(isolated_site, {"bids": "/shared/BIDS"})
     monkeypatch.setattr(
-        site, "installation_record", lambda: {"mode": "shared", "site": str(isolated_site)}
+        site, "installation_record", lambda: {"mode": mode, "site": str(isolated_site)}
     )
     monkeypatch.setattr("nro.site.setup.installation_record", site.installation_record)
     assert site.settings()[0]["bids"] == "/shared/BIDS"
-    with pytest.raises(ValueError, match="maintain"):
-        edit_settings(["bids=/other"])
+    if mode == "shared":
+        with pytest.raises(ValueError, match="maintain"):
+            edit_settings(["bids=/other"])
     monkeypatch.setenv("NRO_SITE_CONFIG", "/other/site.toml")
-    with pytest.raises(ValueError, match="shared installation"):
+    with pytest.raises(ValueError, match=f"{mode} installation"):
         site.site_file()
 
 
-def test_verified_execution_snapshot_uses_pinned_site(isolated_site, tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
+def test_verified_execution_snapshot_uses_pinned_site(isolated_site, tmp_path, monkeypatch, mode):
     configured = tmp_path / "configured.toml"
     configured.write_text("")
     snapshot = tmp_path / "execution-site.toml"
@@ -371,7 +391,7 @@ def test_verified_execution_snapshot_uses_pinned_site(isolated_site, tmp_path, m
     monkeypatch.setattr(
         site,
         "installation_record",
-        lambda: {"mode": "shared", "site": str(configured)},
+        lambda: {"mode": mode, "site": str(configured)},
     )
     monkeypatch.setenv("NRO_SITE_CONFIG", str(snapshot))
     monkeypatch.setenv("NRO_EXECUTION_SOURCE_ROOT", str(tmp_path / "source"))
@@ -715,6 +735,7 @@ def test_shared_dependencies_adopt_the_verified_active_environment(tmp_path, mon
 def test_personal_setup_installs_selected_extras(
     tmp_path,
     monkeypatch,
+    personal_publication,
     without_oslom,
     existing,
     without_marss,
@@ -795,7 +816,9 @@ def test_personal_setup_installs_selected_extras(
     assert Path(installed["application"]) == application_root
 
 
-def test_definition_adoption_runs_in_staged_application(tmp_path, monkeypatch):
+def test_definition_adoption_runs_in_staged_application(
+    tmp_path, monkeypatch, personal_publication
+):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
     (root / ".nro-bootstrap/bin/uv").write_text("uv")
@@ -859,7 +882,7 @@ def test_definition_adoption_runs_in_staged_application(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("existing", [False, True])
 def test_failed_personal_candidate_never_replaces_active_installation(
-    tmp_path, monkeypatch, existing
+    tmp_path, monkeypatch, existing, personal_publication
 ):
     root = tmp_path / "personal"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)

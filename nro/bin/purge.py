@@ -422,7 +422,7 @@ def _purge_cache(args) -> None:
     values = settings()[0]
     bids_root = Path(values["bids"]).resolve()
     remote = (
-        installation_record().get("mode") == "branch"
+        installation_record().get("mode") in {"personal", "shared", "branch"}
         or implementation_path(Path(values["registry"])).is_file()
     )
     registry = None if remote else Registry.for_project("", bids_root=bids_root)
@@ -617,7 +617,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.purge") -> None:
 
     values = settings()[0]
     if (
-        installation_record().get("mode") == "branch"
+        installation_record().get("mode") in {"personal", "shared", "branch"}
         or implementation_path(Path(values["registry"])).is_file()
     ):
         _branch_purge(args, selection, values=values, checkout=CHECKOUT)

@@ -157,6 +157,15 @@ def prepare_pool(
         registry.initialize()
         _cancel_orphaned_scheduler_requests(registry)
         activity = registry.worker_pool_activity()
+        from nro.orchestration.worker_control import active_pool_members
+
+        workers, jobs = active_pool_members(activity)
+        if not workers and not jobs and (activity["workers"] or activity["submissions"]):
+            shutdown = registry.request_worker_shutdown(all_users=True)
+            registry.confirm_worker_shutdown(row["id"] for row in shutdown["worker_rows"])
+            for submission in activity["submissions"]:
+                registry.update_submission(submission["id"], state="cancelled")
+            activity = registry.worker_pool_activity()
         if activity["workers"] or activity["submissions"]:
             raise RuntimeError(
                 "An unmanaged worker pool is still active; stop it before scheduler activation"
@@ -306,10 +315,14 @@ def publish(checkout: Path, registry: Registry, *, installation: dict | None = N
     from nro.site.configuration import installation_record
 
     installation = dict(installation or installation_record(checkout))
-    if installation.get("mode") != "shared" or installation.get("checkout") != str(checkout):
-        raise ValueError("Shared publication requires a matching installation candidate")
+    if installation.get("mode") not in {"shared", "personal"} or installation.get(
+        "checkout"
+    ) != str(checkout):
+        raise ValueError(
+            "Publication requires a matching personal or shared installation candidate"
+        )
     if not installation.get("ready"):
-        raise ValueError("Shared publication requires a validated installation candidate")
+        raise ValueError("Publication requires a validated installation candidate")
     installation["release"] = release
     record_path = checkout / RECORD
     binding_path = implementation_path(registry.paths.control)
