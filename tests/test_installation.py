@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from nro.definitions.store import ConfigStore
+from nro.engine.templates import FSAVERAGE_VERTEX_COUNTS
 from nro.site import (
     bootstrap,
     bootstrap_dependencies,
@@ -172,6 +173,33 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
     assert functional["container"]["bind"] == clean["container"]["bind"] == []
     assert functional["synbold_disco_license"] == str(tmp_path / "license")
     assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
+
+
+def test_template_catalog_covers_host_template_inputs():
+    catalog = {Path(path) for path in dependencies.template_catalog()}
+    configured = Path(site.DERIVED["mni_template"][1])
+    required = {
+        configured,
+        Path(str(configured).replace("_T1w.nii.gz", "_desc-brain_T1w.nii.gz")),
+        Path(str(configured).replace("_T1w.nii.gz", "_desc-brain_mask.nii.gz")),
+        Path(str(configured).replace("_T1w.nii.gz", "_label-GM_probseg.nii.gz")),
+    }
+    assert required <= catalog
+
+    installed = set(catalog)
+    for hemisphere in ("L", "R"):
+        installed.add(
+            Path(f"tpl-fsaverage/tpl-fsaverage_hemi-{hemisphere}_den-41k_midthickness.surf.gii")
+        )
+    densities = {163842: "164k", 40962: "41k"}
+    for vertices in FSAVERAGE_VERTEX_COUNTS.values():
+        density = densities[vertices]
+        required = {
+            Path(f"tpl-fsaverage/tpl-fsaverage_hemi-{hemisphere}_den-{density}_{surface}.surf.gii")
+            for hemisphere in ("L", "R")
+            for surface in ("white", "pial", "midthickness", "sphere")
+        }
+        assert required <= installed
 
 
 def test_invalid_path_update_is_atomic(isolated_site):
