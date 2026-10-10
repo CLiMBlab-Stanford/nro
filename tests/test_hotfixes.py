@@ -254,10 +254,45 @@ def test_personal_scheduler_hotfix_adopts_failed_legacy_work_item(tmp_path: Path
         assert row["artifact_state"] == "missing"
         assert (row["state"], row["error_message"]) == ("error", "missing runtime")
         binding = database.execute(
-            "SELECT logical_key FROM branch_work_items WHERE registry_id=? AND work_item_id=?",
+            """SELECT logical_key,scientific_contract_json FROM branch_work_items
+               WHERE registry_id=? AND work_item_id=?""",
             (owner, work_item_id),
         ).fetchone()
         assert binding["logical_key"] == key
+        assert (
+            database.execute(
+                "SELECT 1 FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                (owner, key),
+            ).fetchone()
+            is None
+        )
+        database.execute(
+            "INSERT INTO compiled_revisions VALUES (?,?,1,?)",
+            (owner, key, fingerprint(json.loads(binding["scientific_contract_json"]))),
+        )
+
+    repair_preview = apply(
+        registry,
+        identifier=PERSONAL_SCHEDULER_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert repair_preview.records == 1
+    repair = apply(
+        registry,
+        identifier=PERSONAL_SCHEDULER_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert repair.records == 1
+    with registry.connection(write=True) as database:
+        assert (
+            database.execute(
+                "SELECT 1 FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                (owner, key),
+            ).fetchone()
+            is None
+        )
 
         scientific = branches.registry("main")
         current = scientific.register_workflow(workflow)
