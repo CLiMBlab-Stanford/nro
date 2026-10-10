@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import shlex
 import shutil
 import ssl
@@ -105,6 +106,24 @@ WORKBENCH_IMAGE_URL = (
 WORKBENCH_IMAGE_SHA256 = "04df826d74fb71c6c873216707563b1dd1df280d495413f9cd70d1e7fe2421cd"
 OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
+MANAGED_RUNTIME = {
+    "name": "apptainer",
+    "version": "1.4.5-1",
+    "distribution": "el8",
+    "architecture": "x86_64",
+    "artifact": "apptainer-1.4.5-1-el8-x86_64.tar.gz",
+    "sha256": "cd6c28a45e32dc1dc365dc8c0b2eb94ae1ebde15be2b52d46f9a4032163bf939",
+    "source": (
+        "https://github.com/CLiMBlab-Stanford/nro/releases/download/"
+        "resources-apptainer-1.4.5-1-el8-x86_64-v1/"
+        "apptainer-1.4.5-1-el8-x86_64.tar.gz"
+    ),
+    "upstream_installer_sha256": (
+        "33d416ca870fdfcfc6b5fd8791f02bf041d742a5b718d015a9a1cf61aa1b30dd"
+    ),
+    "upstream_rpm_sha256": ("d63fffcce94e472a838de6d0eef1e44b6ecb6265656768e087f3799adb36b356"),
+}
+RUNTIME_MANIFEST = ".nro-runtime.json"
 
 
 def template_catalog() -> dict:
@@ -161,51 +180,170 @@ def ensure_fsaverage6_midthickness(root: Path) -> None:
             nib.save(result, str(staged))
 
 
+def _runtime_root(values: dict) -> Path:
+    identity = MANAGED_RUNTIME["sha256"][:16]
+    return (
+        Path(values["images"]).expanduser().resolve().parent
+        / "runtimes"
+        / f"apptainer-{MANAGED_RUNTIME['version']}-{MANAGED_RUNTIME['architecture']}-{identity}"
+    )
+
+
+def _runtime_inventory(root: Path) -> dict[str, str]:
+    """Return checksums for regular files in a managed runtime tree."""
+    return {
+        str(path.relative_to(root)): sha256(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.is_symlink() and path.name != RUNTIME_MANIFEST
+    }
+
+
+def _validate_runtime_tree(root: Path, *, complete: bool, verify_inventory: bool = False) -> dict:
+    """Validate a managed runtime and return its completion manifest."""
+    executable = root / "bin/apptainer"
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise RuntimeError(
+            f"Managed Apptainer executable is missing or not executable: {executable}"
+        )
+    manifest_path = root / RUNTIME_MANIFEST
+    if not manifest_path.is_file():
+        if complete:
+            raise RuntimeError(f"Managed Apptainer installation is incomplete: {root}")
+        manifest = {}
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Invalid managed Apptainer manifest: {manifest_path}") from error
+    expected = {
+        "format": 1,
+        "specification": MANAGED_RUNTIME,
+        "executable": "bin/apptainer",
+    }
+    if complete and any(manifest.get(key) != value for key, value in expected.items()):
+        raise RuntimeError(f"Managed Apptainer identity differs from this nro release: {root}")
+    if complete:
+        executable_digest = manifest.get("executable_sha256")
+        if not isinstance(executable_digest, str) or sha256(executable) != executable_digest:
+            raise RuntimeError(f"Managed Apptainer executable failed verification: {executable}")
+        if verify_inventory and manifest.get("inventory") != _runtime_inventory(root):
+            raise RuntimeError(f"Managed Apptainer file inventory failed verification: {root}")
+    output = run_probe([str(executable), "--version"])
+    if "1.4.5" not in output:
+        raise RuntimeError(f"Managed Apptainer returned an unexpected version: {output}")
+    return {**expected, "executable_sha256": sha256(executable), "probe": output}
+
+
+def validate_managed_runtime(executable: str | Path) -> None:
+    """Verify a managed runtime when the executable belongs to one."""
+    path = Path(executable).expanduser()
+    if not path.is_absolute():
+        return
+    manifest = path.parent.parent / RUNTIME_MANIFEST
+    if manifest.exists():
+        _validate_runtime_tree(manifest.parent, complete=True)
+
+
+def runtime_diagnostic(value: str) -> str:
+    """Describe why a configured container executable cannot be used."""
+    host = platform.node() or "unknown host"
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        if path.is_symlink() and not path.exists():
+            detail = "a broken symbolic link"
+        elif not path.exists():
+            detail = "missing"
+        elif not path.is_file():
+            detail = "not a regular file"
+        elif not os.access(path, os.X_OK):
+            detail = "not executable"
+        else:
+            detail = "present but unavailable to the process"
+        return f"Container runtime {path} is {detail} on {host}"
+    return f"Container runtime {value!r} is not on PATH on {host}"
+
+
+def _extract_runtime(archive: Path, destination: Path) -> None:
+    """Extract a verified runtime archive without accepting unsafe members."""
+    destination.mkdir(parents=True)
+    with tarfile.open(archive, "r:gz") as stream:
+        stream.extractall(destination, filter="data")
+
+
+def _seal_runtime_tree(root: Path) -> None:
+    """Make a completed runtime readable and executable but not mutable in place."""
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(0o755)
+        elif path.is_file():
+            path.chmod(0o755 if os.access(path, os.X_OK) else 0o644)
+    root.chmod(0o755)
+
+
 def install_runtime(*, offline=False) -> None:
-    """Reuse a host runtime or install unprivileged Apptainer when supported."""
-    from nro.site.configuration import CHECKOUT, read_overrides, site_file
+    """Select an explicit external runtime or install managed Apptainer."""
+    from nro.site.configuration import read_overrides, site_file
     from nro.site.setup import save_settings
 
     values, _ = settings()
-    if shutil.which(values["runtime"]):
+    configured = values["runtime"]
+    configured_path = Path(configured).expanduser()
+    if configured_path.is_absolute():
+        resolved = shutil.which(str(configured_path))
+        if resolved is None:
+            raise RuntimeError(runtime_diagnostic(configured))
+        validate_managed_runtime(resolved)
+        print(f"Reuse container runtime: {resolved}")
         return
-    found = next(
-        (shutil.which(name) for name in ("apptainer", "singularity") if shutil.which(name)), None
-    )
-    if found is None:
-        if offline:
-            raise RuntimeError("No container runtime available for offline setup")
-        missing = [name for name in ("curl", "rpm2cpio", "cpio") if not shutil.which(name)]
-        if missing:
+    if configured not in {"apptainer", "singularity"}:
+        resolved = shutil.which(configured)
+        if resolved is None:
+            raise RuntimeError(runtime_diagnostic(configured))
+        found = str(Path(resolved).resolve())
+        print(f"Selected external container runtime: {found}")
+    else:
+        if platform.system() != "Linux" or platform.machine() != MANAGED_RUNTIME["architecture"]:
             raise RuntimeError(
-                "Automatic unprivileged Apptainer installation requires "
-                + ", ".join(missing)
-                + ". Ask the cluster administrator to supply these or load a Singularity/Apptainer module."
+                "Managed Apptainer supports Linux x86_64; configure execution.runtime "
+                "with an absolute external executable on this platform"
             )
-        root = CHECKOUT / ".nro-runtime"
+        root = _runtime_root(values)
+        artifact = root.parent / "artifacts" / MANAGED_RUNTIME["artifact"]
         with resource_lock(root):
-            if not (root / "bin/apptainer").is_file():
-                if root.exists():
-                    raise RuntimeError(f"Incomplete runtime directory requires inspection: {root}")
-                with tempfile.TemporaryDirectory(dir=CHECKOUT, prefix=".apptainer-") as temporary:
-                    temporary = Path(temporary)
-                    script = temporary / "install.sh"
+            if root.exists():
+                _validate_runtime_tree(root, complete=True, verify_inventory=True)
+            else:
+                if not artifact.is_file() or sha256(artifact) != MANAGED_RUNTIME["sha256"]:
+                    if offline:
+                        raise RuntimeError(
+                            "Offline setup cannot obtain managed Apptainer artifact: "
+                            + str(artifact)
+                        )
+                    print(f"Downloading managed Apptainer {MANAGED_RUNTIME['version']}", flush=True)
                     download(
-                        "https://raw.githubusercontent.com/apptainer/apptainer/v1.4.5/tools/install-unprivileged.sh",
-                        script,
-                        checksum="33d416ca870fdfcfc6b5fd8791f02bf041d742a5b718d015a9a1cf61aa1b30dd",
+                        MANAGED_RUNTIME["source"],
+                        artifact,
+                        checksum=MANAGED_RUNTIME["sha256"],
                     )
-                    staged = temporary / "runtime"
-                    subprocess.run(
-                        ["bash", str(script), "-e", "-v", "1.4.5", str(staged)], check=True
-                    )
-                    run_probe([str(staged / "bin/apptainer"), "--version"])
+                with tempfile.TemporaryDirectory(
+                    dir=root.parent, prefix=".apptainer-stage-"
+                ) as temporary:
+                    staged = Path(temporary) / "runtime"
+                    _extract_runtime(artifact, staged)
+                    manifest = _validate_runtime_tree(staged, complete=False)
+                    manifest["inventory"] = _runtime_inventory(staged)
+                    atomic_write_json(staged / RUNTIME_MANIFEST, manifest)
+                    _validate_runtime_tree(staged, complete=True, verify_inventory=True)
+                    _seal_runtime_tree(staged)
                     staged.rename(root)
-            found = str(root / "bin/apptainer")
+                    _validate_runtime_tree(root, complete=True, verify_inventory=True)
+        found = str(root / "bin/apptainer")
+        print(f"Selected managed container runtime: {found}")
     overrides = read_overrides(site_file())
     overrides["runtime"] = found
     save_settings(site_file(), overrides)
-    print(f"Selected container runtime: {found}")
 
 
 @contextmanager

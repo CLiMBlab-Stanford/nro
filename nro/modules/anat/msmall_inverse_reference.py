@@ -15,7 +15,7 @@ def create_inverse_reference(
     output: Path,
     *,
     resolution_mm: float = 2.0,
-    margin_mm: float = 4.0,
+    margin_mm: float = 32.0,
 ) -> None:
     """Write an isotropic grid that encloses the source image's full voxel extent."""
     image = nib.load(str(source))
@@ -61,7 +61,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resolution-mm", type=float, default=2.0)
-    parser.add_argument("--margin-mm", type=float, default=4.0)
+    parser.add_argument("--margin-mm", type=float, default=32.0)
     arguments = parser.parse_args()
     create_inverse_reference(
         arguments.source,

@@ -192,6 +192,103 @@ def test_resource_changes_propagate_to_all_configurations(isolated_site, tmp_pat
     assert anatomy["mni_template"].startswith(str(tmp_path / "templates"))
 
 
+def test_install_runtime_acquires_and_reuses_verified_managed_tree(
+    isolated_site, tmp_path, monkeypatch
+):
+    import hashlib
+    import tarfile
+
+    source = tmp_path / "source"
+    executable = source / "bin/apptainer"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\necho apptainer version 1.4.5-1\n", encoding="utf-8")
+    executable.chmod(0o755)
+    archive = tmp_path / "runtime.tar.gz"
+    with tarfile.open(archive, "w:gz") as stream:
+        stream.add(source / "bin", arcname="bin")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    specification = {
+        **dependencies.MANAGED_RUNTIME,
+        "artifact": archive.name,
+        "sha256": digest,
+        "source": "https://example.test/runtime.tar.gz",
+    }
+    monkeypatch.setattr(dependencies, "MANAGED_RUNTIME", specification)
+    monkeypatch.setattr(
+        dependencies,
+        "run_probe",
+        lambda command, **_kwargs: "apptainer version 1.4.5-1",
+    )
+    images = tmp_path / "resources/images"
+    save_settings(isolated_site, {"images": str(images), "runtime": "singularity"})
+    artifact = images.parent / "runtimes/artifacts" / archive.name
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(archive.read_bytes())
+
+    dependencies.install_runtime(offline=True)
+    runtime = Path(site.settings()[0]["runtime"])
+    manifest = json.loads((runtime.parent.parent / dependencies.RUNTIME_MANIFEST).read_text())
+
+    assert runtime.is_file()
+    assert manifest["specification"] == specification
+    assert manifest["inventory"]["bin/apptainer"] == dependencies.sha256(runtime)
+    dependencies.install_runtime(offline=True)
+    runtime.write_text("corrupt\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="failed verification"):
+        dependencies.install_runtime(offline=True)
+
+
+def test_install_runtime_offline_reports_missing_managed_artifact(
+    isolated_site, tmp_path, monkeypatch
+):
+    images = tmp_path / "resources/images"
+    save_settings(isolated_site, {"images": str(images), "runtime": "singularity"})
+    monkeypatch.setattr(
+        dependencies,
+        "run_probe",
+        lambda command, **_kwargs: "apptainer version 1.4.5-1",
+    )
+
+    with pytest.raises(RuntimeError, match="Offline setup cannot obtain managed Apptainer"):
+        dependencies.install_runtime(offline=True)
+
+
+def test_install_runtime_preserves_explicit_external_executable(
+    isolated_site, tmp_path, monkeypatch
+):
+    executable = tmp_path / "external/apptainer"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    save_settings(isolated_site, {"runtime": str(executable)})
+    monkeypatch.setattr(
+        dependencies,
+        "_runtime_root",
+        lambda _values: pytest.fail("explicit external runtime must not install a managed tree"),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "run_probe",
+        lambda command, **_kwargs: "external runtime",
+    )
+
+    dependencies.install_runtime(offline=True)
+
+    assert site.settings()[0]["runtime"] == str(executable)
+
+
+def test_runtime_diagnostic_distinguishes_absolute_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(dependencies.platform, "node", lambda: "compute01")
+    path = tmp_path / "missing/apptainer"
+
+    assert dependencies.runtime_diagnostic(str(path)) == (
+        f"Container runtime {path} is missing on compute01"
+    )
+    assert dependencies.runtime_diagnostic("apptainer") == (
+        "Container runtime 'apptainer' is not on PATH on compute01"
+    )
+
+
 def test_template_catalog_covers_host_template_inputs():
     catalog = {Path(path) for path in dependencies.template_catalog()}
     configured = Path(site.DERIVED["mni_template"][1])

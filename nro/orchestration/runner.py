@@ -110,8 +110,14 @@ class Runner:
         self._step_log_separator = step_log_separator
         if self._container is None:
             return
-        if shutil.which(self._container.engine) is None:
-            raise SystemExit(f"Container engine not found on PATH: {self._container.engine!r}")
+        resolved_engine = shutil.which(self._container.engine)
+        if resolved_engine is None:
+            from nro.site.dependencies import runtime_diagnostic
+
+            raise SystemExit(runtime_diagnostic(self._container.engine))
+        from nro.site.dependencies import validate_managed_runtime
+
+        validate_managed_runtime(resolved_engine)
         if not self._container.image.exists():
             raise SystemExit(f"Container image not found: {self._container.image}")
 

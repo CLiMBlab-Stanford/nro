@@ -281,6 +281,22 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     postfreesurfer = by_name["MSMAll PostFreeSurfer"]
     assert any("/msmall/structural/" in str(path) for path in postfreesurfer.inputs)
     assert any("/msmall/study/" in str(path) for path in postfreesurfer.outputs)
+    dedrift = by_name["MSMAll Dedrift and Resample"]
+    canonical_spheres = [
+        path for path in dedrift.outputs if ".sphere.32k_fs_LR.surf.gii" in path.name
+    ]
+    removable_outputs = [
+        path
+        for path in dedrift.outputs
+        if path not in canonical_spheres and path.suffix != ".complete"
+    ]
+    for path in (*canonical_spheres, *removable_outputs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test", encoding="utf-8")
+    assert dedrift.prepare is not None
+    dedrift.prepare()
+    assert all(path.exists() for path in canonical_spheres)
+    assert all(not path.exists() for path in removable_outputs)
 
     structural_configuration_step = next(
         step for step in runner._graph.steps if step.name == "Write MSMAll Structural Configuration"
@@ -361,7 +377,19 @@ def test_msmall_driver_uses_subject_space_inverse_warp_reference() -> None:
 
     assert 'inverse_reference_builder="$implementation_dir/msmall_inverse_reference.py"' in driver
     assert '--source "$t1_dir/T1w_acpc_dc_restore.nii.gz"' in driver
+    assert "--resolution-mm 2 --margin-mm 32" in driver
     assert '-r "$staging/xfms/acpc_inverse_reference_2mm.nii.gz"' in driver
+
+
+def test_msmall_inverse_reference_default_has_surface_safety_margin(tmp_path: Path) -> None:
+    source = tmp_path / "source.nii.gz"
+    output = tmp_path / "inverse_reference.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((10, 10, 10), dtype=np.uint8), np.eye(4)), source)
+
+    create_inverse_reference(source, output)
+
+    reference = nib.load(output)
+    assert reference.shape == (37, 37, 37)
 
 
 def test_msmall_planning_uses_long_cpu_profile(tmp_path: Path, monkeypatch) -> None:
