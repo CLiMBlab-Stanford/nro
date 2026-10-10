@@ -156,6 +156,7 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
     synthstrip = tmp_path / "synthstrip"
 
     step = anat_steps._brain_extract_anat_copy(
+        "/shared/runtime/bin/apptainer",
         synthstrip,
         env={},
         source=source,
@@ -164,7 +165,13 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
         force=False,
     )
 
-    assert step.command[2] == str(source)
+    assert step.command[:4] == (
+        "/shared/runtime/bin/apptainer",
+        "run",
+        "--cleanenv",
+        str(synthstrip),
+    )
+    assert step.command[5] == str(source)
     assert step.inputs == (source,)
     assert step.outputs == (destination, mask)
     assert step.prepare is not None
