@@ -7,7 +7,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+from nro.definitions.store import ConfigStore, fingerprint
 from nro.orchestration.artifact_records import file_record
+from nro.orchestration.branch_admission import _workflow
+from nro.orchestration.branch_store import BranchStore
+from nro.orchestration.compiled_request import export_workflow
+from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.hotfixes import apply, available
 from nro.orchestration.hotfixes.v0278_private_portable_metadata import HOTFIX_ID
 from nro.orchestration.hotfixes.v0286_msmall_runner_stages import (
@@ -37,8 +42,12 @@ from nro.orchestration.hotfixes.v0307_msmall_inverse_warp import (
 from nro.orchestration.hotfixes.v0317_msmall_stage_inputs import (
     HOTFIX_ID as MSMALL_STAGE_INPUTS_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0319_personal_scheduler_adoption import (
+    HOTFIX_ID as PERSONAL_SCHEDULER_HOTFIX_ID,
+)
 from nro.orchestration.ownership import ownership_record_fingerprint
 from nro.orchestration.planning_context import work_item_key
+from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.runner_graph import RunnerGraph, Step
 
 
@@ -169,6 +178,111 @@ def test_hotfix_registry_discovers_release_scoped_repairs() -> None:
     assert MSMALL_BRAIN_MASK_HOTFIX_ID in available()
     assert DUPLICATE_RECEIPT_HOTFIX_ID in available()
     assert PYCICADA_RECEIPT_HOTFIX_ID in available()
+    assert PERSONAL_SCHEDULER_HOTFIX_ID in available()
+
+
+def test_personal_scheduler_hotfix_adopts_failed_legacy_work_item(tmp_path: Path) -> None:
+    bids = tmp_path / "BIDS"
+    (bids / "demo").mkdir(parents=True)
+    registry = Registry.for_project("demo", bids_root=bids)
+    registry.initialize()
+    branches = BranchStore(registry.paths.control)
+    topology = branches.initialize().topology
+    owner = topology.records["main"].registry_id
+    workflow = ConfigStore().resolve("main")
+    legacy = registry.register_workflow(workflow)
+    lineage_fingerprint = legacy.lineage_fingerprints["anat"]
+    output = bids / "demo/derivatives/nro/anat/main/sub-01/anat/sub-01_T1w.nii.gz"
+    key = work_item_key("demo", "anat", lineage_fingerprint, "01", {})
+    spec = WorkItemSpec.create(
+        key=key,
+        module="anat",
+        project="demo",
+        participant="01",
+        entities={},
+        scope="subject",
+        module_lineage_id=legacy.lineages["anat"],
+        config_fingerprint="science",
+        directory_label=legacy.directories["anat"],
+        runtime_config=registry.runtime_config_path(legacy, "anat"),
+        command=("python", "-m", "nro.modules.anat"),
+        dependencies=(),
+        input_paths=(),
+        output_root=output.parent,
+        output_prefix="sub-01",
+        expected_outputs=(output,),
+        resource_class="small",
+    )
+    work_item_id = registry.register_work_items((spec,))[key]
+    with registry.connection(write=True) as database:
+        database.execute(
+            """INSERT INTO attempts(
+                   work_item_id,state,revision_fingerprint,memory_gb,
+                   error_type,error_message,created_at
+               ) VALUES (?, 'error', ?, 32, 'ContainerError', 'missing runtime', ?)""",
+            (work_item_id, spec.revision_fingerprint, utcnow()),
+        )
+
+    preview = apply(
+        registry,
+        identifier=PERSONAL_SCHEDULER_HOTFIX_ID,
+        projects=("demo",),
+        execute=False,
+    )
+    assert preview.records == 1
+
+    result = apply(
+        registry,
+        identifier=PERSONAL_SCHEDULER_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert result.records == 1
+    with registry.connection(write=True) as database:
+        row = database.execute(
+            """SELECT item.module_lineage_id,lineage.lineage_fingerprint,
+                      item.artifact_state,attempt.state,attempt.error_message
+               FROM work_items item
+               JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
+               JOIN attempts attempt ON attempt.work_item_id=item.id
+               WHERE item.id=?""",
+            (work_item_id,),
+        ).fetchone()
+        assert row["lineage_fingerprint"] == fingerprint(
+            {"owner": owner, "lineage": lineage_fingerprint}
+        )
+        assert row["artifact_state"] == "missing"
+        assert (row["state"], row["error_message"]) == ("error", "missing runtime")
+        binding = database.execute(
+            "SELECT logical_key FROM branch_work_items WHERE registry_id=? AND work_item_id=?",
+            (owner, work_item_id),
+        ).fetchone()
+        assert binding["logical_key"] == key
+
+        scientific = branches.registry("main")
+        current = scientific.register_workflow(workflow)
+        _revision, mapping = _workflow(
+            database,
+            export_workflow(scientific, current),
+            owner,
+            required_lineages={current.lineages["anat"]},
+        )
+        assert mapping[current.lineages["anat"]] == row["module_lineage_id"]
+        updated = spec.evolve(module_lineage_id=row["module_lineage_id"])
+        registry._upsert_work_item_graph_locked(
+            database,
+            ((updated, updated.as_record()),),
+            now=utcnow(),
+            owner_branch="main",
+        )
+
+    repeated = apply(
+        registry,
+        identifier=PERSONAL_SCHEDULER_HOTFIX_ID,
+        projects=("demo",),
+        execute=True,
+    )
+    assert repeated.records == 0
 
 
 def _ownership_receipt(key: str, *, fingerprint: str, output: str = "manifest.json") -> dict:
