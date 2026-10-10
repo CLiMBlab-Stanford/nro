@@ -496,6 +496,7 @@ def build_module(
         )
         runner.add_step(
             _brain_extract_anat_copy(
+                opts.container_runtime,
                 opts.synthstrip_image,
                 env=env,
                 source=n4_input,
@@ -624,6 +625,7 @@ def build_module(
             )
             runner.add_step(
                 _brain_extract_anat_copy(
+                    opts.container_runtime,
                     opts.synthstrip_image,
                     env=env,
                     source=lesion_raw_t1_selected,

@@ -100,6 +100,15 @@ def _normalized_command(command: Sequence[str]) -> list[str]:
             normalized.extend((option, value))
         else:
             normalized.append(token)
+    if (
+        len(normalized) >= 4
+        and Path(normalized[0]).name in {"apptainer", "singularity"}
+        and normalized[1:3] == ["run", "--cleanenv"]
+        and normalized[3].endswith(".sif")
+    ):
+        # Executable SIF files use the host's run-singularity shebang helper.
+        # An explicit runtime invocation is the portable form of the same runscript.
+        normalized = normalized[3:]
     return [
         _contract_path(Path(token)) if Path(token).is_absolute() else token for token in normalized
     ]

@@ -11,7 +11,22 @@ from nro.engine.execution import allocated_cpus, collect_bind_directories, threa
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.resource_handoff import RESOURCE_HANDOFF_EXIT
 from nro.orchestration.runner import ContainerSpec, Runner
-from nro.orchestration.runner_graph import NodeState, RunnerGraph, Step, artifact_decision
+from nro.orchestration.runner_graph import (
+    NodeState,
+    RunnerGraph,
+    Step,
+    _normalized_command,
+    artifact_decision,
+)
+
+
+def test_command_signature_treats_explicit_runtime_as_executable_sif_run() -> None:
+    image = "/shared/images/synthstrip.sif"
+    arguments = ["-i", "/input.nii.gz", "-o", "/output.nii.gz"]
+
+    assert _normalized_command(
+        ["/shared/runtimes/apptainer/bin/apptainer", "run", "--cleanenv", image, *arguments]
+    ) == _normalized_command([image, *arguments])
 
 
 def test_each_runner_owns_an_independent_step_counter() -> None:

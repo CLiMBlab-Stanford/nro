@@ -321,6 +321,7 @@ def _plan_session_anatomicals(
 
 
 def _brain_extract_anat_copy(
+    runtime: str,
     synthstrip_image: Path,
     *,
     env: dict[str, str],
@@ -330,6 +331,9 @@ def _brain_extract_anat_copy(
     force: bool,
 ) -> Step:
     cmd = [
+        runtime,
+        "run",
+        "--cleanenv",
         str(synthstrip_image),
         "-i",
         str(source),
