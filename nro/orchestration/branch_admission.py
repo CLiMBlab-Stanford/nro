@@ -127,18 +127,16 @@ def _repair_renamed_work_item_identities(db, *, items, registry_id: str) -> int:
     return len(repairs)
 
 
-def _workflow(
-    db, payload: dict, owner: str, *, required_lineages: set[int] | None = None
-) -> tuple[int, dict[int, int]]:
-    """Import a workflow and any auxiliary lineages used by its work-item graph."""
-    revision = payload["revision"]
-    lineages, bindings, dependencies = (
-        payload[key] for key in ("lineages", "bindings", "dependencies")
-    )
-    needed = {
-        *(row["module_lineage_id"] for row in bindings),
-        *(required_lineages or ()),
-    }
+def _import_lineages(
+    db,
+    *,
+    lineages: list[dict],
+    dependencies: list[dict],
+    owner: str,
+    required_lineages: set[int],
+) -> dict[int, int]:
+    """Import an owner-scoped lineage closure and return its central IDs."""
+    needed = set(required_lineages)
     while True:
         expanded = needed | {
             row["upstream_module_lineage_id"]
@@ -185,6 +183,27 @@ def _workflow(
                     row["role"],
                 ),
             )
+    return mapping
+
+
+def _workflow(
+    db, payload: dict, owner: str, *, required_lineages: set[int] | None = None
+) -> tuple[int, dict[int, int]]:
+    """Import a workflow and any auxiliary lineages used by its work-item graph."""
+    revision = payload["revision"]
+    lineages, bindings, dependencies = (
+        payload[key] for key in ("lineages", "bindings", "dependencies")
+    )
+    mapping = _import_lineages(
+        db,
+        lineages=lineages,
+        dependencies=dependencies,
+        owner=owner,
+        required_lineages={
+            *(row["module_lineage_id"] for row in bindings),
+            *(required_lineages or ()),
+        },
+    )
     name = owner + ":" + revision["workflow_id"]
     current = db.execute(
         """SELECT id FROM workflow_revisions
