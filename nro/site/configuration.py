@@ -256,7 +256,7 @@ def _require_no_pending_conversion(record: dict) -> None:
 
 
 def site_file() -> Path:
-    """Resolve the site TOML path, enforcing the recorded path for shared installations."""
+    """Resolve the site TOML path, enforcing it for installed production modes."""
     record = installation_record()
     _require_no_pending_conversion(record)
     selected = os.environ.get("NRO_SITE_CONFIG")
@@ -266,7 +266,7 @@ def site_file() -> Path:
     # the shared installation's protected site configuration.
     if selected and "NRO_EXECUTION_SOURCE_ROOT" in os.environ:
         return Path(selected).expanduser().resolve()
-    if record.get("mode") in {"shared", "branch"}:
+    if record.get("mode") in {"personal", "shared", "branch"}:
         required = Path(record["site"]).expanduser().resolve()
         if selected and Path(selected).expanduser().resolve() != required:
             raise ValueError(f"This {record['mode']} installation uses {required}")
@@ -623,7 +623,7 @@ def settings(*, path: Path | None = None) -> tuple[dict, dict]:
         # the latter without consulting mutable definitions.
         values.update(overrides)
         sources.update({key: str(path) for key in overrides})
-    if installation_record().get("mode") not in {"shared", "branch"}:
+    if installation_record().get("mode") not in {"personal", "shared", "branch"}:
         for variable, key in ENVIRONMENT_KEYS.items():
             if os.environ.get(variable):
                 values[key] = os.environ[variable]

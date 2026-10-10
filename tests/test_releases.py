@@ -129,12 +129,12 @@ def test_static_installation_uses_its_recorded_release_without_reading_git(relea
     "change",
     (
         {"ready": False},
-        {"mode": "personal"},
+        {"mode": "branch"},
         {"checkout": "/another/checkout"},
         {"release": None},
     ),
 )
-def test_installed_release_requires_a_ready_matching_shared_record(release, change):
+def test_installed_release_requires_a_ready_matching_production_record(release, change):
     root, store = release
     row = store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
     installation = {
@@ -145,7 +145,7 @@ def test_installed_release_requires_a_ready_matching_shared_record(release, chan
         **change,
     }
 
-    with pytest.raises(ValueError, match="ready shared installation"):
+    with pytest.raises(ValueError, match="ready production installation"):
         store.require_installed(root, installation)
 
 

@@ -99,8 +99,8 @@ def activate(
 
     checkout = Path(checkout).expanduser().resolve()
     installation = dict(installation or installation_record(checkout))
-    if installation.get("mode") != "shared" or not installation.get("ready"):
-        raise ValueError("Scheduler activation requires a ready shared installation")
+    if installation.get("mode") not in {"shared", "personal"} or not installation.get("ready"):
+        raise ValueError("Scheduler activation requires a ready personal or shared installation")
     python = Path(installation["environment"]) / "bin/python"
     site = Path(installation["site"])
     values = settings(path=site)[0]
@@ -199,10 +199,8 @@ def capture_worker_implementation(control: Path, bids_root: Path, *, check_check
     """
     path = implementation_path(control)
     if not path.exists():
-        if installation_record().get("mode") == "branch":
-            raise ValueError(
-                "No central scheduler is active; activate an approved main installation"
-            )
+        if installation_record().get("mode") in {"personal", "shared", "branch"}:
+            raise ValueError("No scheduler installation is bound; rerun ./install to activate it")
         from nro.orchestration.execution_pins import capture_execution
 
         source, site = capture_execution(control, bids_root)
@@ -228,7 +226,7 @@ def capture_worker_implementation(control: Path, bids_root: Path, *, check_check
     checkout = Path(record["checkout"])
     installed = installation_record(checkout)
     if (
-        installed.get("mode") != "shared"
+        installed.get("mode") not in {"shared", "personal"}
         or not installed.get("ready")
         or str(Path(installed["environment"]) / "bin/python") != record["python"]
         or installed["site"] != record["site"]
@@ -266,20 +264,20 @@ def capture_maintenance_implementation(control: Path, bids_root: Path, checkout:
     record = json.loads(path.read_text())
     checkout = checkout.resolve()
     if checkout != Path(record.get("checkout", "")).resolve():
-        raise ValueError("Only the active shared checkout may maintain its installation")
+        raise ValueError("Only the active production checkout may maintain its installation")
     installed = installation_record(checkout)
     if (
-        installed.get("mode") != "shared"
+        installed.get("mode") not in {"shared", "personal"}
         or installed.get("site") != record.get("site")
         or str(Path(installed.get("environment", "")) / "bin/python") != record.get("python")
     ):
-        raise ValueError("The active shared installation is unavailable")
+        raise ValueError("The active production installation is unavailable")
     values = settings(path=Path(record["site"]))[0]
     if (
         Path(values["registry"]).resolve() != Path(control).resolve()
         or Path(values["bids"]).resolve() != Path(bids_root).resolve()
     ):
-        raise ValueError("The shared installation belongs to another site")
+        raise ValueError("The production installation belongs to another site")
     source = SourceStore(ControlPaths(control).implementations).capture(checkout)
     site = capture_site(ControlPaths(control).execution_sites, values)
     python = Path(record["python"])

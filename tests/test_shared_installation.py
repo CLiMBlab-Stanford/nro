@@ -50,6 +50,27 @@ def test_pool_drain_requires_confirmation_before_mutation(tmp_path, monkeypatch)
     assert [operation for operation, _ in operations] == ["installation_activity"]
 
 
+@pytest.mark.parametrize("terminal", [False, True])
+def test_initial_activation_checks_recorded_worker_allocations(tmp_path, monkeypatch, terminal):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    registry.register_worker("old-worker", resource_class="small", slurm_job_id="101")
+    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda job_id: terminal)
+
+    if not terminal:
+        with pytest.raises(RuntimeError, match="unmanaged worker pool"):
+            shared_installation.prepare_pool(
+                registry, checkout=tmp_path / "main", confirm=lambda activity: None
+            )
+        assert registry.worker_pool_activity()["workers"]
+        return
+
+    shared_installation.prepare_pool(
+        registry, checkout=tmp_path / "main", confirm=lambda activity: None
+    )
+    assert not registry.worker_pool_activity()["workers"]
+
+
 def test_in_place_migration_releases_only_its_repair_barrier(tmp_path):
     registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
     registry.initialize()
@@ -454,7 +475,8 @@ def test_installation_stop_waits_for_confirmed_allocation_exit(tmp_path, monkeyp
         )
 
 
-def test_publish_records_release_in_installation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["shared", "personal"])
+def test_publish_records_release_in_installation(tmp_path, monkeypatch, mode):
     root = tmp_path / "checkout"
     root.mkdir()
     (root / "pyproject.toml").write_text('[project]\nname="example"\nversion="1.2.3"\n')
@@ -477,7 +499,7 @@ def test_publish_records_release_in_installation(tmp_path, monkeypatch):
     site = root / "site.toml"
     site.write_text("")
     installation = {
-        "mode": "shared",
+        "mode": mode,
         "checkout": str(root),
         "environment": str(environment.parent),
         "site": str(site),

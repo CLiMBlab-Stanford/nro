@@ -62,8 +62,8 @@ def test_cancellation_ignores_checkout_head_drift(monkeypatch, tmp_path):
     ]
 
 
-@pytest.fixture
-def central(tmp_path):
+@pytest.fixture(params=["shared", "personal"])
+def central(tmp_path, request):
     root = tmp_path / "main"
     support = root / "nro/orchestration"
     support.mkdir(parents=True)
@@ -107,7 +107,7 @@ def central(tmp_path):
     (root / ".nro-installation.json").write_text(
         json.dumps(
             dict(
-                mode="shared",
+                mode=request.param,
                 ready=True,
                 checkout=str(root),
                 environment=str(environment),
@@ -317,9 +317,12 @@ def test_worker_import_does_not_load_scientific_modules():
     subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
-def test_branch_cannot_fall_back_to_its_own_worker_without_activation(tmp_path, monkeypatch):
-    monkeypatch.setattr(implementation, "installation_record", lambda: {"mode": "branch"})
-    with pytest.raises(ValueError, match="No central scheduler"):
+@pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
+def test_installation_cannot_fall_back_to_its_own_worker_without_activation(
+    tmp_path, monkeypatch, mode
+):
+    monkeypatch.setattr(implementation, "installation_record", lambda: {"mode": mode})
+    with pytest.raises(ValueError, match="No scheduler installation is bound"):
         implementation.capture_worker_implementation(tmp_path / "control", tmp_path / "BIDS")
 
 

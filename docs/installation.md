@@ -4,6 +4,12 @@ Run `./install` from a Linux checkout. The script finds its own checkout even
 when invoked from another directory. First setup asks for `personal`, `shared`,
 or `branch` mode and saves that role in the untracked `.nro-installation.json`.
 
+Personal and shared installations both publish the scheduler implementation.
+Ordinary `run` commands start or join the scheduler and planning broker; personal
+mode does not plan or submit scientific workers directly from the calling process.
+Installation maintenance alone may access the registry before that binding exists.
+Install a tagged main release in either mode; use branch mode for development.
+
 The bootstrap requires Python 3.11 or newer with `venv` and pip support.
 It installs uv 0.8.22 and PyYAML 6.0.3 in `.nro-bootstrap`, then uses `uv.lock`
 to create an environment from uv-managed CPython 3.12. This interpreter supplies
@@ -283,8 +289,9 @@ Shared installations default to `.nro-site.toml` beside the checkout. The
 locator contains only the definitions repository path and is not the source of
 durable settings. Choose another locator with
 `./install --site /absolute/site.toml` during first setup.
-`NRO_SITE_CONFIG` selects one for an unregistered or personal installation;
-shared installations enforce their recorded path.
+`NRO_SITE_CONFIG` selects one before an installation is registered. Personal,
+shared, and branch installations enforce their recorded path so every command
+reaches the scheduler and registry configured during installation.
 
 The path editor displays all proposed paths before asking for changes. It
 offers lab defaults when `/juice6/u/nlp/climblab` is readable and traversable.
