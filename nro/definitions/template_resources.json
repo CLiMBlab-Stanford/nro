@@ -2,6 +2,8 @@
   "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_label-GM_probseg.nii.gz": ["66e5d662e1dbafc52099b4aadc608454", "i1IcwQvVoa1ZjpH0ww66LXBDOiaRT6xb"],
   "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-02_label-GM_probseg.nii.gz": ["9e38c9dbb352625abc89e23449114705", "6bKxZYLIrAQwNW6PjLnlr.46CZq.uOeP"],
   "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz": ["6c64ebf985fe30d93e49a4baa41b9278", "TRRzRhgxEMxpNQDW_CZbInvRiTIUPlV5"],
+  "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_desc-brain_T1w.nii.gz": ["ed4c3780e65f38ed87ffd85da3acb46c", "s5KgUHF7AhdIeQtgdGgff6nFNhPxR_Ip"],
+  "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_desc-brain_mask.nii.gz": ["dc727a2781ca720df0385f9501ace07d", "XQ.H8wamCA.Jsnx6J4qdA.gMJbEXWP7i"],
   "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_midthickness.surf.gii": ["83b5c62111e850fe8c6b51cae6115a54", "MDNeHzqbS_XO0bm0Bl8BLjdOMlmId8NX"],
   "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_pial.surf.gii": ["98e85e9c4e2c2cff9bf52118d431f311", "UkH6Ywz3GOCh77m_dKLO80byn3_AFfRV"],
   "tpl-fsaverage/tpl-fsaverage_hemi-L_den-164k_white.surf.gii": ["e5d71290333498558020ec3b2bf0cdf2", "qDtvWTVD0_lZHptP3y8qCRCl_tlyeRSU"],
