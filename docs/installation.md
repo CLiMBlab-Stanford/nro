@@ -435,11 +435,19 @@ surface deterministically from its pinned white and pial surfaces. It downloads
 only these selected files. The TemplateFlow Python client is not needed at
 runtime or setup.
 
-The runtime installer reuses Singularity or Apptainer when available. Otherwise
-it can install unprivileged Apptainer 1.4.5 using the upstream installer, whose
-script checksum is pinned. This requires `curl`, `rpm2cpio`, `cpio`, and host
-support for unprivileged containers. It cannot change kernel or cluster policy.
-See the [Apptainer installation guide](https://apptainer.org/docs/admin/1.4/installation.html).
+The default `singularity` or `apptainer` setting selects nro's managed,
+unprivileged Apptainer 1.4.5-1 bundle. Setup verifies the bundle checksum,
+installs its complete relocatable tree beside the image directory, records a
+file inventory, and stores the absolute executable in the site definition.
+Compute nodes therefore do not need a system Singularity or Apptainer command.
+Offline setup reuses the verified tree or its cached bundle and reports the
+missing artifact otherwise.
+
+Set `execution.runtime` to an absolute executable to select an administrator-
+provided runtime instead. Setup preserves that choice and does not fall back to
+the managed bundle. Both modes require host support for unprivileged containers;
+nro cannot change kernel or cluster security policy. See the
+[Apptainer installation guide](https://apptainer.org/docs/admin/1.4/installation.html).
 
 Review the [QuNex access terms](https://qunex.yale.edu/access/). Supply your
 [FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html);

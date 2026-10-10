@@ -14,8 +14,8 @@ before setup. The default OSLOM installation also needs a C++ compiler.
 Cluster installations need Slurm commands on `PATH`. Their data, work,
 registry, installation, and processing resources must be visible at the same
 paths on login and compute nodes. A local installation can omit Slurm. The host
-must provide Singularity or Apptainer or support the installer's unprivileged
-Apptainer setup.
+must permit unprivileged containers; nro installs a managed Apptainer runtime by
+default.
 
 ## Install
 
@@ -49,7 +49,8 @@ every setting. In particular:
 - `images`, `templates`, and `oslom` contain processing resources. `workbench`
   contains the optional native scene viewer and renderer.
 - `license` must name an existing FreeSurfer license.
-- `runtime` selects Singularity or Apptainer.
+- `runtime` selects managed Apptainer by its default bare name. An absolute path
+  selects an administrator-provided Singularity or Apptainer executable.
 - `partition` and `account` must match the Slurm site. Enter `-` for no account.
 - `viewing_partition` selects the Slurm partition for X11 scene-viewing jobs.
 - `flywheel_server` and `flywheel_project` may select the usual ingestion

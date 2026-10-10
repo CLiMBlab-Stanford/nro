@@ -205,7 +205,7 @@ repair_atlas_registration() {
     /opt/fsl/fsl/bin/python "$inverse_reference_builder" \
         --source "$t1_dir/T1w_acpc_dc_restore.nii.gz" \
         --output "$staging/xfms/acpc_inverse_reference_2mm.nii.gz" \
-        --resolution-mm 2 --margin-mm 4
+        --resolution-mm 2 --margin-mm 32
     invwarp -w "$staging/xfms/acpc_dc2standard.nii.gz" \
         -o "$staging/xfms/standard2acpc_dc.nii.gz" \
         -r "$staging/xfms/acpc_inverse_reference_2mm.nii.gz"

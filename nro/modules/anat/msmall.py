@@ -839,7 +839,10 @@ def add_msmall_plan(
         outputs=final_outputs,
         surface_stage=True,
         calibration_stage=True,
-        cleanup=final_outputs,
+        # The canonical low-resolution spheres are PostFreeSurfer inputs that
+        # DeDrift also retains as outputs. Deleting them here makes HCP fail
+        # before it can resample the MSMAll surfaces.
+        cleanup=(*hcp_native.values(), *hcp_atlas_surfaces.values()),
         parameters={
             key: calibration.parameters[key]
             for key in (

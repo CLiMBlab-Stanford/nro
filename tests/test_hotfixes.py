@@ -34,6 +34,9 @@ from nro.orchestration.hotfixes.v0303_obsolete_pycicada_receipts import (
 from nro.orchestration.hotfixes.v0307_msmall_inverse_warp import (
     HOTFIX_ID as MSMALL_INVERSE_WARP_HOTFIX_ID,
 )
+from nro.orchestration.hotfixes.v0317_msmall_stage_inputs import (
+    HOTFIX_ID as MSMALL_STAGE_INPUTS_HOTFIX_ID,
+)
 from nro.orchestration.ownership import ownership_record_fingerprint
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.runner_graph import RunnerGraph, Step
@@ -792,6 +795,74 @@ def test_msmall_inverse_warp_hotfix_preserves_independent_stages(tmp_path: Path)
         execute=False,
     )
     assert repeated.records == 0
+
+
+def test_msmall_stage_inputs_hotfix_preserves_valid_expensive_stages(tmp_path: Path) -> None:
+    registry, _ = _registry(tmp_path)
+    (registry.paths.bids_root / "demo").mkdir(parents=True)
+
+    for participant, post_complete, expected in (
+        ("01", True, {"ordinary", "prefree", "atlas", "freesurfer"}),
+        ("02", False, {"ordinary", "prefree", "freesurfer"}),
+    ):
+        event = (
+            registry.paths.control
+            / f"branches/main/events/demo/anat/sub-{participant}/sub-{participant}/digest/runner-contract.json"
+        )
+        event.parent.mkdir(parents=True)
+        root = tmp_path / f"WORK/demo/derivatives/nro/anat/main/sub-{participant}/msmall"
+        stages = root / "stages"
+
+        def node(identifier: str, stage: str | None, dependencies: list[str]) -> dict:
+            outputs = [str(root / f"{identifier}.nii.gz")]
+            if stage is not None:
+                outputs.append(str(stages / f"{stage}.complete"))
+            return {
+                "id": identifier,
+                "name": identifier,
+                "kind": "command",
+                "inputs": [],
+                "outputs": outputs,
+                "dependencies": dependencies,
+            }
+
+        ordinary = node("ordinary", None, [])
+        prefree = node("prefree", "prefreesurfer", ["ordinary"])
+        atlas = node("atlas", "masked_atlas", ["prefree"])
+        freesurfer = node("freesurfer", "freesurfer", ["prefree"])
+        post = node("post", "postfreesurfer", ["atlas", "freesurfer"])
+        dedrift = node("dedrift", "dedrift", ["post"])
+        nodes = [ordinary, prefree, atlas, freesurfer, post, dedrift]
+        event.write_text(
+            json.dumps(
+                {
+                    "version": 4,
+                    "module": "Anatomical Module",
+                    "signature": "old",
+                    "topology": nodes,
+                    "nodes": nodes,
+                }
+            ),
+            encoding="utf-8",
+        )
+        if post_complete:
+            stages.mkdir(parents=True)
+            (stages / "postfreesurfer.complete").write_text("complete\n", encoding="utf-8")
+
+        report = apply(
+            registry,
+            identifier=MSMALL_STAGE_INPUTS_HOTFIX_ID,
+            projects=("demo",),
+            execute=True,
+        )
+
+        assert report.records == 1
+        repaired = json.loads(event.read_text(encoding="utf-8"))
+        retained = {item["id"] for item in repaired["nodes"]}
+        assert retained == expected
+        for item in repaired["nodes"]:
+            if item["id"] != "ordinary":
+                assert item["accept_relocated_signatures"] is True
 
 
 def test_msmall_brain_mask_hotfix_invalidates_only_msmall_nodes(tmp_path: Path) -> None:
