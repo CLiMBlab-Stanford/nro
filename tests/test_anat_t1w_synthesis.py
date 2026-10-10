@@ -1,7 +1,13 @@
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
+
 from nro.modules.anat.policy import t1w_synthesis_contract
-from nro.modules.anat.t1w_synthesis import create_t1w_synthesis_step
+from nro.modules.anat.t1w_synthesis import (
+    create_t1w_support_mask_step,
+    create_t1w_synthesis_step,
+)
 
 
 def test_t1w_synthesis_uses_pinned_cpu_synthsr_contract(tmp_path: Path) -> None:
@@ -48,3 +54,33 @@ def test_t1w_synthesis_uses_pinned_cpu_synthsr_contract(tmp_path: Path) -> None:
         "env": {"OMP_NUM_THREADS": "3"},
         "discard_stdout": True,
     }
+
+
+def test_synthetic_t1w_mask_uses_t2w_support_not_synthetic_background(tmp_path: Path) -> None:
+    t2w = tmp_path / "selected_T2w.nii.gz"
+    synthetic_t1w = tmp_path / "synthetic_T1w.nii.gz"
+    output = tmp_path / "synthetic_T1w_mask.nii.gz"
+
+    source_data = np.zeros((7, 7, 7), dtype=np.float32)
+    source_data[2:5, 1:6, 2:5] = 10
+    nib.save(nib.Nifti1Image(source_data, np.eye(4)), t2w)
+    synthetic_data = np.full((9, 9, 9), 0.01, dtype=np.float32)
+    nib.save(nib.Nifti1Image(synthetic_data, np.eye(4)), synthetic_t1w)
+
+    step = create_t1w_support_mask_step(
+        t2w=t2w,
+        synthetic_t1w=synthetic_t1w,
+        output=output,
+        force=False,
+    )
+    assert step.action is not None
+    step.action()
+
+    mask = nib.load(output)
+    values = np.asarray(mask.dataobj)
+    assert mask.shape == synthetic_data.shape
+    assert np.array_equal(mask.affine, np.eye(4))
+    assert set(np.unique(values)) == {0, 1}
+    assert int(values.sum()) == 45
+    assert not np.any(values[0])
+    assert step.inputs == (t2w, synthetic_t1w)
