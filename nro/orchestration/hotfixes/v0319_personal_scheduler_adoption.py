@@ -102,6 +102,72 @@ def _candidates(database, projects: tuple[str, ...]) -> tuple[dict, ...]:
     return tuple(result)
 
 
+def _seeded_revision_candidates(
+    database,
+    projects: tuple[str, ...],
+    owner: str,
+) -> tuple[dict, ...]:
+    """Return revision rows written by the original form of this hotfix."""
+    legacy_ids = _legacy_lineage_ids(database)
+    if not legacy_ids:
+        return ()
+    lineages = {
+        int(row["id"]): dict(row) for row in database.execute("SELECT * FROM module_lineages")
+    }
+    legacy_by_scoped = {
+        fingerprint(
+            {"owner": owner, "lineage": lineages[lineage_id]["lineage_fingerprint"]}
+        ): lineages[lineage_id]
+        for lineage_id in legacy_ids
+    }
+    placeholders = ",".join("?" for _project in projects)
+    rows = database.execute(
+        f"""SELECT item.*,lineage.lineage_fingerprint,lineage.configuration_class,
+                   lineage.config_id,lineage.directory_label,binding.scientific_contract_json,
+                   revision.revision,revision.fingerprint AS seeded_fingerprint
+            FROM work_items item
+            JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
+            JOIN branch_work_items binding
+              ON binding.work_item_id=item.id AND binding.registry_id=?
+            JOIN compiled_revisions revision
+              ON revision.registry_id=binding.registry_id
+             AND revision.logical_key=binding.logical_key
+            WHERE item.project IN ({placeholders})
+              AND binding.logical_key=item.work_item_key
+              AND revision.revision=1
+              AND NOT EXISTS(
+                  SELECT 1 FROM work_item_execution execution
+                  WHERE execution.work_item_id=item.id
+              )
+            ORDER BY item.id""",
+        (owner, *projects),
+    ).fetchall()
+    result = []
+    for source in rows:
+        row = dict(source)
+        legacy = legacy_by_scoped.get(str(row["lineage_fingerprint"]))
+        if legacy is None:
+            continue
+        if any(
+            row[name] != legacy[name]
+            for name in ("configuration_class", "config_id", "directory_label")
+        ):
+            continue
+        expected_key = work_item_key(
+            str(row["project"]),
+            str(row["module"]),
+            str(legacy["lineage_fingerprint"]),
+            str(row["participant"]),
+            json.loads(row["entities_json"]),
+        )
+        if row["work_item_key"] != expected_key:
+            continue
+        contract = json.loads(row["scientific_contract_json"])
+        if row["seeded_fingerprint"] == fingerprint(contract):
+            result.append(row)
+    return tuple(result)
+
+
 def run(registry, *, projects: tuple[str, ...], execute: bool) -> HotfixReport:
     """Move exact legacy personal records into the current scheduler namespace."""
     selected = tuple(sorted(set(projects)))
@@ -116,7 +182,8 @@ def run(registry, *, projects: tuple[str, ...], execute: bool) -> HotfixReport:
         raise ValueError("Hotfix requires an active main installation")
     with registry.connection(write=execute) as database:
         candidates = _candidates(database, selected)
-        if execute and candidates:
+        seeded_revisions = _seeded_revision_candidates(database, selected, main.registry_id)
+        if execute and (candidates or seeded_revisions):
             placeholders = ",".join("?" for _project in selected)
             active = database.execute(
                 f"""SELECT COUNT(*) FROM attempts attempt
@@ -160,15 +227,15 @@ def run(registry, *, projects: tuple[str, ...], execute: bool) -> HotfixReport:
                     "INSERT INTO branch_work_items VALUES (?,?,?,?)",
                     (main.registry_id, row["work_item_key"], work_item_id, serialized),
                 )
-                database.execute(
-                    "INSERT OR IGNORE INTO compiled_revisions VALUES (?,?,?,?)",
-                    (main.registry_id, row["work_item_key"], 1, fingerprint(contract)),
-                )
+            database.executemany(
+                "DELETE FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
+                ((main.registry_id, row["work_item_key"]) for row in seeded_revisions),
+            )
     return HotfixReport(
         identifier=HOTFIX_ID,
         summary=SUMMARY,
         projects=selected,
         paths=(),
-        records=len(candidates),
+        records=len(candidates) + len(seeded_revisions),
         applied=execute,
     )
