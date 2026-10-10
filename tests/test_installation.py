@@ -1040,7 +1040,18 @@ def test_prepared_shared_setup_verifies_its_installation_barrier(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "scheduler", ["ended", "RUNNING", "PENDING", "COMPLETING", "failed", "timeout", "missing"]
+    "scheduler",
+    [
+        "ended",
+        "invalid",
+        "mixed",
+        "RUNNING",
+        "PENDING",
+        "COMPLETING",
+        "failed",
+        "timeout",
+        "missing",
+    ],
 )
 def test_maintenance_checks_slurm_without_mutating_registry(tmp_path, monkeypatch, scheduler):
     control = tmp_path / "registry"
@@ -1062,20 +1073,34 @@ def test_maintenance_checks_slurm_without_mutating_registry(tmp_path, monkeypatc
     save_settings(config, {"registry": str(control)})
 
     def query(command, **kwargs):
-        assert command == ["squeue", "--noheader", "--jobs", "123,124", "--format", "%T"]
-        assert kwargs["check"] and kwargs["timeout"] == 15
+        assert command[:3] == ["squeue", "--noheader", "--jobs"]
+        assert command[4:] == ["--format", "%T"]
+        assert not kwargs["check"] and kwargs["timeout"] == 15
         if scheduler == "failed":
             raise subprocess.CalledProcessError(1, command)
         if scheduler == "timeout":
             raise subprocess.TimeoutExpired(command, 15)
         if scheduler == "missing":
             raise FileNotFoundError("squeue")
+        if scheduler == "invalid":
+            return subprocess.CompletedProcess(
+                command, 1, stdout="", stderr="slurm_load_jobs error: Invalid job id specified\n"
+            )
+        if scheduler == "mixed":
+            if "," in command[3] or command[3] == "123":
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="slurm_load_jobs error: Invalid job id specified\n",
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="RUNNING\n")
         return subprocess.CompletedProcess(
             command, 0, stdout="" if scheduler == "ended" else scheduler + "\n"
         )
 
     monkeypatch.setattr(bootstrap.subprocess, "run", query)
-    if scheduler == "ended":
+    if scheduler in {"ended", "invalid"}:
         bootstrap.check_workers(config)
     else:
         with pytest.raises(RuntimeError):

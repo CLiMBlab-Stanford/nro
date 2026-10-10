@@ -129,20 +129,38 @@ def check_workers(site: Path) -> None:
             "Stop or drain the shared worker pool before maintaining this installation."
         )
     job_ids = sorted({str(row["slurm_job_id"]) for row in records})
-    try:
-        result = subprocess.run(
-            ["squeue", "--noheader", "--jobs", ",".join(job_ids), "--format", "%T"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
+
+    def allocation_active(ids: list[str]) -> bool | None:
+        try:
+            result = subprocess.run(
+                ["squeue", "--noheader", "--jobs", ",".join(ids), "--format", "%T"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode == 0:
+            return bool(result.stdout.strip())
+        message = (result.stderr + result.stdout).lower()
+        if len(ids) == 1 and "invalid job id" in message:
+            return False
+        return None
+
+    active_allocation = allocation_active(job_ids)
+    if active_allocation is None:
+        individual_states = [allocation_active([job_id]) for job_id in job_ids]
+        if any(state is True for state in individual_states):
+            active_allocation = True
+        elif all(state is False for state in individual_states):
+            active_allocation = False
+    if active_allocation is None:
         raise RuntimeError(
             "Cannot confirm that recorded Slurm allocations have ended; "
             "maintenance is blocked. Check scheduler access and retry."
-        ) from error
-    if result.stdout.strip():
+        )
+    if active_allocation:
         raise RuntimeError(
             "Stop or drain the shared worker pool before maintaining this installation."
         )
