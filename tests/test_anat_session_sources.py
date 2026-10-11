@@ -294,6 +294,81 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path, monke
     assert calls[3][calls[3].index("-rng-seed") + 1] == "1234"
     assert "-noskullstrip" in calls[3]
     assert step.scientific_signature
+    record = read_json(subject_dir / "scripts" / "nro-reconstruction-seed.json")
+    assert record["InitialNormalization"] == "standard"
+
+
+def test_recon_all_retries_control_point_failure_with_gentle_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
+    t1w = tmp_path / "input" / "sub-1_T1w.nii.gz"
+    t1w.parent.mkdir()
+    t1w.write_bytes(b"image")
+    brain_mask = tmp_path / "input" / "sub-1_mask.nii.gz"
+    brain_mask.write_bytes(b"mask")
+    image = tmp_path / "freesurfer.sif"
+    image.write_bytes(b"container")
+    license_file = tmp_path / "license.txt"
+    license_file.write_text("license")
+    subjects_dir = tmp_path / "subjects"
+    subject_dir = subjects_dir / "sub-1"
+    calls: list[list[str]] = []
+    monkeypatch.setattr(anat_steps, "ensure_portable_fsaverage", lambda **_kwargs: None)
+
+    def run_child(command, **_kwargs):
+        command = list(command)
+        calls.append(command)
+        if "-autorecon1" in command:
+            log = subject_dir / "scripts" / "recon-all.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(
+                "#@# Intensity Normalization\n"
+                "MRInormFindControlPoints: could not find enough control points\n"
+                "recon-all -s sub-1 exited with ERRORS\n"
+            )
+            raise SystemExit("normalization failed")
+        if "mri_vol2vol" in command:
+            path = subject_dir / "mri" / "brainmask.external.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "mri_mask" in command:
+            path = subject_dir / "mri" / "brainmask.auto.mgz"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"mask")
+        if "-autorecon3" in command:
+            (subject_dir / "scripts" / "recon-all.done").write_text("done")
+            for path in anat_steps._recon_required_outputs(subject_dir):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"output")
+
+    step = anat_steps._create_recon_all_step(
+        run_child=run_child,
+        env={},
+        t1w=t1w,
+        t2w=None,
+        brain_mask=brain_mask,
+        subjects_dir=subjects_dir,
+        fs_subject="sub-1",
+        runtime="singularity",
+        image=image,
+        license_file=license_file,
+        force=False,
+    )
+    assert step.action is not None
+    step.action()
+
+    assert len(calls) == 5
+    gentle = calls[1]
+    assert "mri_normalize" in gentle
+    assert "-mprage" in gentle
+    assert "-gentle" in gentle
+    assert gentle[gentle.index("-seed") + 1] == "1234"
+    assert gentle[-2:] == [
+        "/subjects/sub-1/mri/nu.mgz",
+        "/subjects/sub-1/mri/T1.mgz",
+    ]
+    record = read_json(subject_dir / "scripts" / "nro-reconstruction-seed.json")
+    assert record["InitialNormalization"] == "gentle_fallback"
 
 
 def test_recon_all_retries_topology_failure_with_fallback_seed(tmp_path: Path, monkeypatch) -> None:

@@ -896,6 +896,7 @@ def add_msmall_plan(
                 outputs=(baseline,),
                 env=env,
                 force=force,
+                prepare=lambda path=baseline: path.parent.mkdir(parents=True, exist_ok=True),
             )
         )
         runner.add_step(
@@ -913,6 +914,7 @@ def add_msmall_plan(
                 outputs=(forward,),
                 env=env,
                 force=force,
+                prepare=lambda path=forward: path.parent.mkdir(parents=True, exist_ok=True),
             )
         )
         atlas_output = (
