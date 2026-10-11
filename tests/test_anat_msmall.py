@@ -281,6 +281,15 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     postfreesurfer = by_name["MSMAll PostFreeSurfer"]
     assert any("/msmall/structural/" in str(path) for path in postfreesurfer.inputs)
     assert any("/msmall/study/" in str(path) for path in postfreesurfer.outputs)
+    bridge = by_name["Bridge Hemisphere L fsnative to fsLR"]
+    assert bridge.prepare is not None
+    assert not bridge.outputs[0].parent.exists()
+    bridge.prepare()
+    assert bridge.outputs[0].parent.is_dir()
+    final_bridge = by_name["Bridge Hemisphere L fsnative to MSMAll"]
+    assert final_bridge.prepare is not None
+    final_bridge.prepare()
+    assert final_bridge.outputs[0].parent.is_dir()
     dedrift = by_name["MSMAll Dedrift and Resample"]
     canonical_spheres = [
         path for path in dedrift.outputs if ".sphere.32k_fs_LR.surf.gii" in path.name

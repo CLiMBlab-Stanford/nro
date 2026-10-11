@@ -13,6 +13,7 @@ from nro.modules.anat.steps import (
     _create_recon_all_step,
     _freesurfer_progress,
     _FreeSurferProgressMonitor,
+    _recon_failed_during_initial_normalization,
     _recon_failed_during_topology,
 )
 
@@ -140,6 +141,23 @@ def test_freesurfer_retry_classification_rejects_other_failures(tmp_path: Path) 
     log.write_text("#@# Talairach\nrecon-all -s sub-1 exited with ERRORS\n")
 
     assert not _recon_failed_during_topology(tmp_path)
+
+
+def test_freesurfer_normalization_retry_requires_specific_failure(tmp_path: Path) -> None:
+    log = tmp_path / "scripts" / "recon-all.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "#@# Intensity Normalization\n"
+        "MRInormFindControlPoints: could not find enough control points\n"
+        "recon-all -s sub-1 exited with ERRORS\n"
+    )
+
+    assert _recon_failed_during_initial_normalization(tmp_path)
+
+    log.write_text(
+        "#@# Intensity Normalization\nsome other error\nrecon-all -s sub-1 exited with ERRORS\n"
+    )
+    assert not _recon_failed_during_initial_normalization(tmp_path)
 
 
 def test_metric_conversion_normalizes_freesurfer_prefixed_output(tmp_path: Path) -> None:

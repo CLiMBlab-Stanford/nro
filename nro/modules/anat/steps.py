@@ -928,6 +928,27 @@ def _recon_failed_during_topology(subject_dir: Path) -> bool:
     return False
 
 
+def _recon_failed_during_initial_normalization(subject_dir: Path) -> bool:
+    """Return whether first-pass normalization lacked enough control points."""
+    log = subject_dir / "scripts" / "recon-all.log"
+    try:
+        with log.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 131_072))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    if not any("exited with ERRORS" in line for line in lines[-20:]):
+        return False
+    message = "MRInormFindControlPoints: could not find enough control points"
+    if not any(message in line for line in lines):
+        return False
+    for line in reversed(lines):
+        if line.startswith("#@# "):
+            return "intensity normalization" in line.lower()
+    return False
+
+
 def _create_recon_all_step(
     *,
     run_child: Callable[..., Optional[str]],
@@ -1018,7 +1039,7 @@ def _create_recon_all_step(
         primary = t1w or t2w
         assert primary is not None
 
-        def reconstruct(seed: int) -> None:
+        def reconstruct(seed: int) -> bool:
             first = [
                 "recon-all",
                 "-sd",
@@ -1032,8 +1053,37 @@ def _create_recon_all_step(
                 "-autorecon1",
                 "-noskullstrip",
             ]
+            gentle_normalization = False
             with _FreeSurferProgressMonitor(subject_dir) as progress:
-                run_child(container_command(first), direct=True, env=env, discard_stdout=True)
+                try:
+                    run_child(container_command(first), direct=True, env=env, discard_stdout=True)
+                except SystemExit:
+                    if not _recon_failed_during_initial_normalization(subject_dir):
+                        raise
+                    logging.getLogger("anat").warning(
+                        "FreeSurfer could not find enough first-pass normalization control "
+                        "points; retrying that normalization in gentle mode"
+                    )
+                    mri_dir = f"/subjects/{fs_subject}/mri"
+                    run_child(
+                        container_command(
+                            [
+                                "mri_normalize",
+                                "-g",
+                                "1",
+                                "-seed",
+                                str(seed),
+                                "-mprage",
+                                "-gentle",
+                                f"{mri_dir}/nu.mgz",
+                                f"{mri_dir}/T1.mgz",
+                            ]
+                        ),
+                        direct=True,
+                        env=env,
+                        discard_stdout=True,
+                    )
+                    gentle_normalization = True
                 progress.report(2, "applying external brain mask")
                 mask_arg = f"NRO:{brain_mask}"
                 conformed_mask = f"/subjects/{fs_subject}/mri/brainmask.external.mgz"
@@ -1082,12 +1132,14 @@ def _create_recon_all_step(
                     second += ["-T2", f"NRO:{t2w}", "-T2pial"]
                 second += ["-autorecon2", "-autorecon3", "-noskullstrip"]
                 run_child(container_command(second), direct=True, env=env, discard_stdout=True)
+            return gentle_normalization
 
         seeds = (FREESURFER_PRIMARY_SEED, *FREESURFER_TOPOLOGY_FALLBACK_SEEDS)
         successful_seed: int | None = None
+        gentle_normalization = False
         for attempt, seed in enumerate(seeds):
             try:
-                reconstruct(seed)
+                gentle_normalization = reconstruct(seed)
             except SystemExit:
                 if attempt == len(seeds) - 1 or not _recon_failed_during_topology(subject_dir):
                     raise
@@ -1111,6 +1163,7 @@ def _create_recon_all_step(
                 "PrimarySeed": FREESURFER_PRIMARY_SEED,
                 "TopologyFailureFallbackSeeds": list(FREESURFER_TOPOLOGY_FALLBACK_SEEDS),
                 "SuccessfulSeed": successful_seed,
+                "InitialNormalization": ("gentle_fallback" if gentle_normalization else "standard"),
             },
             sort_keys=True,
         )
