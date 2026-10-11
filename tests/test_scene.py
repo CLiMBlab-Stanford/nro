@@ -153,6 +153,60 @@ def test_viewer_broker_requires_x11_only_when_starting(monkeypatch, tmp_path: Pa
         )
 
 
+def test_viewer_in_existing_allocation_checks_startup(monkeypatch, tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    viewer = tmp_path / "wb_view"
+    scene.touch()
+    viewer.touch()
+    child = SimpleNamespace(pid=456)
+    calls = []
+    monkeypatch.setenv("SLURM_JOB_ID", "123")
+    monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setattr(viewer_broker, "state_directory", lambda _control: tmp_path)
+    monkeypatch.setattr(
+        viewer_broker,
+        "_start_viewer",
+        lambda selected_viewer, selected_scene, root: (
+            calls.append((selected_viewer, selected_scene, root)) or child
+        ),
+    )
+
+    assert (
+        viewer_broker.open_viewer(
+            scene,
+            viewer=viewer,
+            partition="interactive",
+            account=None,
+            control=tmp_path / "control",
+        )
+        == 456
+    )
+    assert calls == [(viewer, scene, tmp_path)]
+
+
+def test_viewer_startup_reports_the_captured_error(monkeypatch, tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    viewer = tmp_path / "wb_view"
+    scene.touch()
+    viewer.touch()
+
+    class FailedProcess:
+        pid = 456
+
+        @staticmethod
+        def poll():
+            return 127
+
+    def fail(command, **options):
+        Path(options["stdout"].name).write_text("display unavailable\n", encoding="utf-8")
+        return FailedProcess()
+
+    monkeypatch.setattr(viewer_broker.subprocess, "Popen", fail)
+
+    with pytest.raises(ValueError, match="display unavailable"):
+        viewer_broker._start_viewer(viewer, scene, tmp_path)
+
+
 def test_viewer_broker_reuses_a_live_allocation(monkeypatch, tmp_path: Path) -> None:
     scene = tmp_path / "example.scene"
     viewer = tmp_path / "wb_view"

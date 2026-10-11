@@ -1547,7 +1547,11 @@ def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeyp
     subprocess.run(["bash", "-n", str(viewer)], check=True)
     assert "wb_command" in command.read_text()
     assert "wb_view" in viewer.read_text()
-    assert "APPTAINERENV_XAUTHORITY" in viewer.read_text()
+    launcher = viewer.read_text()
+    assert "XAUTHORITY=/run/nro/xauthority" in launcher
+    assert "$HOME/.Xauthority" in launcher
+    assert "LIBGL_ALWAYS_SOFTWARE=1" in launcher
+    assert "QT_X11_NO_MITSHM=1" in launcher
     assert str(tmp_path) in command.read_text()
     receipt = json.loads((command.parent.parent / "nro-workbench-container.json").read_text())
     assert receipt["sha256"] == dependencies.WORKBENCH_IMAGE_SHA256

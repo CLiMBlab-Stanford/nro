@@ -19,11 +19,12 @@ from typing import Iterator
 
 from nro.engine.io import atomic_write_json, read_json
 
-PROTOCOL = 1
+PROTOCOL = 2
 VIEWER_HOURS = 12
 VIEWER_MEMORY_GB = 32
 VIEWER_CPUS = 2
 _MAX_MESSAGE_BYTES = 64 * 1024
+_VIEWER_STARTUP_SECONDS = 5.0
 
 
 def state_directory(control: Path) -> Path:
@@ -230,6 +231,44 @@ def _await_start(process: subprocess.Popen, root: Path, token: str, log: Path) -
         raise ValueError("Viewer allocation cancelled") from None
 
 
+def _log_tail(path: Path, *, limit: int = 20) -> str:
+    """Return a short diagnostic suffix from a viewer log."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    text = "\n".join(lines[-limit:]).strip()
+    return f"\n{text}" if text else ""
+
+
+def _start_viewer(viewer: Path, scene: Path, root: Path) -> subprocess.Popen:
+    """Start Workbench and reject failures during its initial display setup."""
+    child_log = root / f"viewer-{uuid.uuid4().hex}.log"
+    log_stream = child_log.open("a", encoding="utf-8")
+    try:
+        child = subprocess.Popen(
+            [str(viewer), "-scene-load-hd", str(scene), "1"],
+            stdin=subprocess.DEVNULL,
+            stdout=log_stream,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise ValueError(f"Could not start Workbench: {error}") from error
+    finally:
+        log_stream.close()
+    deadline = time.monotonic() + _VIEWER_STARTUP_SECONDS
+    while time.monotonic() < deadline:
+        status = child.poll()
+        if status is not None:
+            raise ValueError(
+                f"Workbench viewer exited during startup with status {status}; "
+                f"see {child_log}{_log_tail(child_log)}"
+            )
+        time.sleep(0.1)
+    return child
+
+
 def open_viewer(
     scene: Path,
     *,
@@ -253,9 +292,7 @@ def open_viewer(
             raise ValueError(
                 "This Slurm allocation has no X11 display; reconnect with SSH X forwarding"
             )
-        return subprocess.Popen(
-            [str(viewer), "-scene-load-hd", str(scene), "1"], start_new_session=True
-        ).pid
+        return _start_viewer(viewer, scene, state_directory(control)).pid
 
     root = state_directory(control)
     for attempt in range(2):
@@ -391,18 +428,7 @@ def serve(root: Path, token: str, viewer: Path) -> None:
                                 scene = Path(str(request.get("scene") or ""))
                                 if not scene.is_absolute() or not scene.is_file():
                                     raise ValueError("Requested Workbench scene is unavailable")
-                                child_log = root / f"viewer-{uuid.uuid4().hex}.log"
-                                log_stream = child_log.open("a", encoding="utf-8")
-                                try:
-                                    child = subprocess.Popen(
-                                        [str(viewer), "-scene-load-hd", str(scene), "1"],
-                                        stdin=subprocess.DEVNULL,
-                                        stdout=log_stream,
-                                        stderr=subprocess.STDOUT,
-                                        start_new_session=True,
-                                    )
-                                finally:
-                                    log_stream.close()
+                                child = _start_viewer(viewer, scene, root)
                                 children.append(child)
                                 response = {"ok": True, "pid": child.pid}
                         else:
