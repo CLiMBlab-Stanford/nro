@@ -881,17 +881,24 @@ def _workbench_launcher(values: dict, program: str) -> str:
     executable = shlex.quote(program)
     return f"""#!/usr/bin/env bash
 set -euo pipefail
-export APPTAINERENV_DISPLAY="${{DISPLAY:-}}"
-export SINGULARITYENV_DISPLAY="${{DISPLAY:-}}"
-export APPTAINERENV_XAUTHORITY="${{XAUTHORITY:-}}"
-export SINGULARITYENV_XAUTHORITY="${{XAUTHORITY:-}}"
 arguments=({command})
-if [[ -n "${{XAUTHORITY:-}}" && -e "$XAUTHORITY" ]]; then
-    arguments+=(--bind "$XAUTHORITY:$XAUTHORITY:ro")
+if [[ -n "${{DISPLAY:-}}" ]]; then
+    arguments+=(--env "DISPLAY=$DISPLAY")
+fi
+xauthority="${{XAUTHORITY:-}}"
+if [[ -z "$xauthority" && -f "$HOME/.Xauthority" ]]; then
+    xauthority="$HOME/.Xauthority"
+fi
+if [[ -n "$xauthority" && -f "$xauthority" ]]; then
+    arguments+=(--bind "$xauthority:/run/nro/xauthority:ro")
+    arguments+=(--env "XAUTHORITY=/run/nro/xauthority")
 fi
 if [[ -d /tmp/.X11-unix ]]; then
     arguments+=(--bind /tmp/.X11-unix:/tmp/.X11-unix)
 fi
+arguments+=(--env "LIBGL_ALWAYS_SOFTWARE=1")
+arguments+=(--env "QT_X11_NO_MITSHM=1")
+arguments+=(--env "WORKBENCH_PLATFORMTHEME=")
 exec "${{arguments[@]}}" {image} {executable} "$@"
 """
 
