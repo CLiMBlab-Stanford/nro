@@ -290,6 +290,10 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     assert final_bridge.prepare is not None
     final_bridge.prepare()
     assert final_bridge.outputs[0].parent.is_dir()
+    valid_mask = by_name["Create Hemisphere L MSMAll Valid Mask"]
+    assert valid_mask.command[:2] == ("bash", "-c")
+    assert "-column 1" in valid_mask.command[2]
+    assert "-select" not in valid_mask.command[2]
     dedrift = by_name["MSMAll Dedrift and Resample"]
     canonical_spheres = [
         path for path in dedrift.outputs if ".sphere.32k_fs_LR.surf.gii" in path.name

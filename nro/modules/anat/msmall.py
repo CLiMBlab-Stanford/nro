@@ -971,11 +971,11 @@ def add_msmall_plan(
             Step.command_step(
                 [
                     "bash",
-                    "-lc",
-                    'wb_command -surface-coordinates-to-metric "$0" "$1.tmp" && '
-                    'wb_command -metric-math "x*0+1" "$1" -var x "$1.tmp" '
-                    "-select x 1 && "
-                    'rm -f "$1.tmp"',
+                    "-c",
+                    'wb_command -surface-coordinates-to-metric "$0" "$1.tmp.shape.gii" && '
+                    'wb_command -metric-math "x*0+1" "$1" '
+                    '-var x "$1.tmp.shape.gii" -column 1 && '
+                    'rm -f "$1.tmp.shape.gii"',
                     str(atlas_output),
                     str(valid),
                 ],
