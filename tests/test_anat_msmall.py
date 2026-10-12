@@ -295,6 +295,7 @@ def test_msmall_plan_declares_runner_stages_and_publication(tmp_path: Path, monk
     assert "-column 1" in valid_mask.command[2]
     assert "-select" not in valid_mask.command[2]
     dedrift = by_name["MSMAll Dedrift and Resample"]
+    assert dedrift.freshness_marker == tmp_path / "work/msmall/stages/dedrift.complete"
     canonical_spheres = [
         path for path in dedrift.outputs if ".sphere.32k_fs_LR.surf.gii" in path.name
     ]

@@ -191,6 +191,7 @@ def artifact_decision(
     force: bool,
     *,
     inputs: Iterable[Optional[Path]] = (),
+    freshness_marker: Optional[Path] = None,
 ) -> tuple[bool, str]:
     """Apply the shared file-artifact freshness rule."""
     output_paths = [Path(path) for path in outputs]
@@ -210,10 +211,17 @@ def artifact_decision(
     missing = [str(path) for path in output_paths if not path.exists() or path.stat().st_size == 0]
     if missing:
         return True, "Missing or empty outputs: " + ", ".join(missing)
+    freshness_path = Path(freshness_marker) if freshness_marker is not None else None
+    if freshness_path is not None and freshness_path not in output_paths:
+        raise ValueError("A freshness marker must also be a declared output.")
     input_paths = [Path(path) for path in inputs if path is not None and Path(path).exists()]
     if not input_paths:
         return False, "Output(s) exist and are up to date."
-    oldest_output = min(path_mtime(path) for path in output_paths)
+    oldest_output = (
+        path_mtime(freshness_path)
+        if freshness_path is not None
+        else min(path_mtime(path) for path in output_paths)
+    )
     stale_inputs = [str(path) for path in input_paths if path_mtime(path) > oldest_output]
     if stale_inputs:
         return True, "Re-running because inputs are newer than outputs: " + ", ".join(stale_inputs)
@@ -246,6 +254,7 @@ class Step:
     completion_boundary: bool = False
     scientific_signature: str = ""
     resource_class: str | None = field(default=None, compare=False)
+    freshness_marker: Optional[Path] = field(default=None, compare=False)
 
     @staticmethod
     def _scientific_signature(parameters: object | None) -> str:
@@ -314,6 +323,7 @@ class Step:
         direct: bool = False,
         prepare: Optional[Action] = None,
         finalize: Optional[Action] = None,
+        freshness_marker: Optional[Path] = None,
         parameters: object | None = None,
         resource_class: str | None = None,
     ) -> "Step":
@@ -337,6 +347,7 @@ class Step:
             direct=bool(direct),
             prepare=prepare,
             finalize=finalize,
+            freshness_marker=(None if freshness_marker is None else Path(freshness_marker)),
             scientific_signature=cls._scientific_signature(parameters),
             resource_class=resource_class,
         )
@@ -481,7 +492,17 @@ class RunnerGraph:
             id=step.id or self._node_id(step.outputs),
             inputs=tuple(Path(path) for path in step.inputs),
             outputs=tuple(Path(path) for path in step.outputs),
+            freshness_marker=(
+                None if step.freshness_marker is None else Path(step.freshness_marker)
+            ),
         )
+        if (
+            normalized.freshness_marker is not None
+            and normalized.freshness_marker not in normalized.outputs
+        ):
+            raise ValueError(
+                f"Step {normalized.name!r} has a freshness marker that is not a declared output."
+            )
         if normalized.id in self._by_id:
             raise ValueError(f"Duplicate step id in module DAG: {normalized.id}")
         self._steps.append(normalized)

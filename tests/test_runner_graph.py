@@ -38,6 +38,55 @@ def test_missing_inputs_are_ignored_but_existing_private_changes_are_not(
     assert artifact_decision((output,), False, inputs=(missing_work,))[0] is True
 
 
+def test_completion_marker_governs_freshness_for_retained_outputs(tmp_path: Path) -> None:
+    retained = tmp_path / "retained"
+    generated = tmp_path / "generated"
+    source = tmp_path / "source"
+    marker = tmp_path / "stage.complete"
+    for path in (retained, generated, source, marker):
+        path.write_text(path.name)
+    os.utime(retained, (1, 1))
+    os.utime(generated, (2, 2))
+    os.utime(source, (3, 3))
+    os.utime(marker, (4, 4))
+
+    should_run, reason = artifact_decision(
+        (retained, generated, marker),
+        False,
+        inputs=(source,),
+        freshness_marker=marker,
+    )
+
+    assert should_run is False
+    assert reason == "Output(s) exist and are up to date."
+
+
+def test_completion_marker_must_be_a_declared_output(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    marker = tmp_path / "stage.complete"
+    output.write_text("output")
+    marker.write_text("complete")
+
+    with pytest.raises(ValueError, match="must also be a declared output"):
+        artifact_decision((output,), False, freshness_marker=marker)
+
+
+def test_completion_marker_does_not_change_the_scientific_contract(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    marker = tmp_path / "stage.complete"
+    outputs = (output, marker)
+    without_marker = RunnerGraph("test")
+    without_marker.add(Step.command_step(("true",), outputs=outputs))
+    without_marker.freeze()
+    with_marker = RunnerGraph("test")
+    with_marker.add(Step.command_step(("true",), outputs=outputs, freshness_marker=marker))
+    with_marker.freeze()
+
+    assert with_marker.contract_payload(signature="same") == without_marker.contract_payload(
+        signature="same"
+    )
+
+
 def test_frozen_graph_infers_dependencies_from_all_declared_producers(
     tmp_path: Path,
 ) -> None:
