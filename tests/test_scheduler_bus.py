@@ -1,6 +1,7 @@
 """Test scheduler transport, recovery records, and launch election."""
 
 import json
+import socket
 import subprocess
 import threading
 import time
@@ -1027,3 +1028,194 @@ def test_worker_event_replay_is_idempotent_and_older_events_are_rejected(tmp_pat
             registry,
             {**event, "action": "shutdown_requested", "sequence": 0},
         )
+
+
+def test_worker_checkin_batch_commits_valid_events_together(tmp_path):
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    registrations = []
+    for index in range(2):
+        registration = {
+            "action": "register",
+            "worker_id": f"worker-{index}",
+            "worker_token": f"token-{index}",
+            "sequence": 1,
+            "resource_class": "large",
+            "memory_gb": 32,
+            "slurm_job_id": None,
+            "user_name": "worker-user",
+            "hostname": "worker-host",
+            "pid": 12345 + index,
+        }
+        scheduler_service.worker_operation(registry, registration)
+        registrations.append(registration)
+
+    responses = scheduler_service._apply_worker_checkin_batch(
+        registry,
+        (
+            {
+                **registrations[0],
+                "action": "heartbeat",
+                "sequence": 2,
+                "state": "running",
+            },
+            {
+                **registrations[1],
+                "action": "check_in",
+                "sequence": 2,
+                "state": "running",
+                "attempt_id": None,
+            },
+        ),
+    )
+
+    assert responses == [
+        {"result": None},
+        {
+            "result": {
+                "shutdown_requested": False,
+                "attempt_cancel_requested": False,
+            }
+        },
+    ]
+    with registry.connection() as db:
+        states = db.execute("SELECT id,state FROM workers ORDER BY id").fetchall()
+        sequences = db.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE 'worker_sequence:%' ORDER BY key"
+        ).fetchall()
+    assert [tuple(row) for row in states] == [
+        ("worker-0", "running"),
+        ("worker-1", "running"),
+    ]
+    assert [tuple(row) for row in sequences] == [
+        ("worker_sequence:worker-0", "2"),
+        ("worker_sequence:worker-1", "2"),
+    ]
+
+
+def test_worker_checkin_batch_isolates_a_fenced_event(tmp_path):
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    registration = {
+        "action": "register",
+        "worker_id": "worker",
+        "worker_token": "token",
+        "sequence": 1,
+        "resource_class": "large",
+        "memory_gb": 32,
+        "slurm_job_id": None,
+        "user_name": "worker-user",
+        "hostname": "worker-host",
+        "pid": 12345,
+    }
+    scheduler_service.worker_operation(registry, registration)
+
+    responses = scheduler_service._apply_worker_checkin_batch(
+        registry,
+        (
+            {
+                **registration,
+                "action": "heartbeat",
+                "worker_token": "obsolete",
+                "sequence": 2,
+                "state": "running",
+            },
+            {
+                **registration,
+                "action": "heartbeat",
+                "sequence": 2,
+                "state": "idle",
+            },
+        ),
+    )
+
+    assert responses[0]["error_type"] == "ValueError"
+    assert "obsolete" in responses[0]["error"]
+    assert responses[1] == {"result": None}
+    with registry.connection() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='worker'").fetchone()[0] == "idle"
+        assert (
+            db.execute("SELECT value FROM metadata WHERE key='worker_sequence:worker'").fetchone()[
+                0
+            ]
+            == "2"
+        )
+
+
+def test_worker_checkin_batcher_coalesces_waiting_events(monkeypatch):
+    batches = []
+
+    def apply(_registry, messages):
+        batches.append(messages)
+        return [{"result": message["worker_id"]} for message in messages]
+
+    monkeypatch.setattr(scheduler_service, "_apply_worker_checkin_batch", apply)
+    batcher = scheduler_service._WorkerCheckinBatcher(object(), interval=0.1)
+    try:
+        futures = [
+            batcher.submit(
+                scheduler_bus.create_message(
+                    {
+                        "operation": "worker",
+                        "action": "heartbeat",
+                        "worker_id": f"worker-{index}",
+                    },
+                    kind="worker",
+                )
+            )
+            for index in range(4)
+        ]
+        assert [future.result(timeout=1) for future in futures] == [
+            {"result": f"worker-{index}"} for index in range(4)
+        ]
+    finally:
+        batcher.close()
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 4
+
+
+def test_scheduler_routes_worker_and_command_ingress_separately():
+    class RecordingPool:
+        def __init__(self):
+            self.calls = []
+
+        def submit(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    worker_pool = RecordingPool()
+    command_pool = RecordingPool()
+    options = {
+        "values": {},
+        "token": "scheduler-token",
+        "coordinator": object(),
+        "executors": {},
+        "ingress": {"worker": worker_pool, "command": command_pool},
+        "checkins": object(),
+        "changed": scheduler_service._ActivitySignal(),
+        "request_activity": scheduler_service._ActivitySignal(),
+    }
+
+    for kind, payload in (
+        ("worker", {"operation": "worker", "action": "heartbeat"}),
+        ("command", {"operation": "purge"}),
+    ):
+        server, client = socket.socketpair()
+        try:
+            scheduler_rpc.send(
+                client,
+                {
+                    "protocol": scheduler_bus.PROTOCOL,
+                    "token": "scheduler-token",
+                    "generation": 1,
+                    "durable": kind == "command",
+                    "record": scheduler_bus.create_message(payload, kind=kind),
+                },
+            )
+            scheduler_service._handle_connection(server, object(), **options)
+        finally:
+            client.close()
+            server.close()
+
+    assert len(worker_pool.calls) == 1
+    assert len(command_pool.calls) == 1
