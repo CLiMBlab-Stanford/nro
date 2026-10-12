@@ -55,12 +55,11 @@ def test_run_cpu_override() -> None:
 
 @pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
 def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys, mode) -> None:
-    from nro.orchestration import execution_pins, planner_client, scheduler_client
+    from nro.orchestration import planner_client, scheduler_client, source_snapshots
     from nro.site import configuration as site
 
     source = SimpleNamespace(root=tmp_path / "source", digest="digest")
-    execution_site = tmp_path / "execution-site.toml"
-    endpoint = object()
+    endpoint = SimpleNamespace(source=source)
     calls = []
     monkeypatch.setattr(
         site,
@@ -69,12 +68,13 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
             "mode": mode,
             "ready": True,
             "site": os.environ["NRO_SITE_CONFIG"],
+            **({"application_digest": "digest"} if mode != "branch" else {}),
         },
     )
     monkeypatch.setattr(
-        execution_pins,
-        "capture_execution",
-        lambda *_args, **_kwargs: (source, execution_site),
+        source_snapshots,
+        "source_fingerprint",
+        lambda _root: "branch-digest",
     )
     monkeypatch.setattr(
         scheduler_client,
@@ -106,6 +106,12 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
     assert calls[1] == ("ensure", endpoint)
     assert calls[2][0:2] == ("exchange", endpoint)
     assert calls[2][2]["operation"] == "plan_run"
+    assert calls[2][2]["request"]["execution"]["kind"] == (
+        "checkout" if mode == "branch" else "installed"
+    )
+    assert calls[2][2]["request"]["execution"]["digest"] == (
+        "branch-digest" if mode == "branch" else "digest"
+    )
     assert calls[2][2]["request"]["argv"] == [
         "-P",
         "demo",

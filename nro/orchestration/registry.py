@@ -3173,6 +3173,14 @@ class Registry(WorkflowRegistry):
                 )
         return len(changes)
 
+    def abandon_prepared_submissions(self) -> int:
+        """Release reservations left by a previous scheduler process."""
+        with self.connection(write=True) as db:
+            cursor = db.execute(
+                "UPDATE scheduler_submissions SET state='error' WHERE state='prepared'"
+            )
+            return cursor.rowcount
+
     def reconcile_attempt_timeouts(self) -> int:
         """Classify SIGTERM failures whose Slurm allocations reached wall time."""
         with self.connection() as db:

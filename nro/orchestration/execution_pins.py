@@ -34,6 +34,7 @@ def capture_execution(
     control: Path,
     bids_root: Path,
     *,
+    source_root: Path | None = None,
     expected_source: str | None = None,
     site_values: dict | None = None,
 ) -> tuple[SourceSnapshot, Path]:
@@ -45,7 +46,7 @@ def capture_execution(
     paths = ControlPaths(control)
     paths.require_current_layout()
     source = SourceStore(paths.implementations).capture(
-        execution_source_root(), expected_digest=expected_source
+        source_root or execution_source_root(), expected_digest=expected_source
     )
     if expected_source is not None and source.digest != expected_source:
         raise ValueError("Source changed during planning; retry the request after edits finish")
