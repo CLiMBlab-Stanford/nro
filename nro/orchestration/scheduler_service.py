@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import json
 import os
+import queue
 import signal
 import socket
 import sqlite3
@@ -12,7 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -52,6 +53,8 @@ MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
 STATUS_MAX_STALENESS_SECONDS = 5.0
 BACKGROUND_QUIET_SECONDS = 2.0
+WORKER_CHECKIN_BATCH_SECONDS = 0.5
+WORKER_CHECKIN_BATCH_LIMIT = 256
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
 
 
@@ -352,52 +355,167 @@ def _admit(
             return publish(topology, db, candidates_locked(db, context.project))
 
 
-def _validate_worker_event(registry, message: dict, *, registering: bool = False) -> None:
-    """Fence stale workers and reject events older than the last applied sequence."""
+def _validate_worker_event_locked(db, message: dict, *, registering: bool = False) -> None:
+    """Validate one worker event through an existing registry transaction."""
     worker_id = str(message["worker_id"])
     token = str(message["worker_token"])
     sequence = int(message["sequence"])
     token_key = f"worker_token:{worker_id}"
     sequence_key = f"worker_sequence:{worker_id}"
+    current_token = db.execute("SELECT value FROM metadata WHERE key=?", (token_key,)).fetchone()
+    current_sequence = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (sequence_key,)
+    ).fetchone()
+    if registering:
+        if current_token is not None and current_token[0] != token:
+            worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if worker is not None and worker[0] not in {"exited", "terminated", "lost"}:
+                raise ValueError("Worker identity is already owned by another process")
+        previous = 0
+    else:
+        if current_token is None or current_token[0] != token:
+            raise ValueError("Worker fencing token is obsolete")
+        previous = int(current_sequence[0]) if current_sequence else 0
+    if sequence < previous:
+        raise ValueError("Worker event sequence predates its applied predecessor")
+
+
+def _validate_worker_event(registry, message: dict, *, registering: bool = False) -> None:
+    """Fence stale workers and reject events older than the last applied sequence."""
     with registry.connection(write=True) as db:
-        current_token = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (token_key,)
-        ).fetchone()
-        current_sequence = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (sequence_key,)
-        ).fetchone()
-        if registering:
-            if current_token is not None and current_token[0] != token:
-                worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
-                if worker is not None and worker[0] not in {"exited", "terminated", "lost"}:
-                    raise ValueError("Worker identity is already owned by another process")
-            previous = 0
-        else:
-            if current_token is None or current_token[0] != token:
-                raise ValueError("Worker fencing token is obsolete")
-            previous = int(current_sequence[0]) if current_sequence else 0
-        if sequence < previous:
-            raise ValueError("Worker event sequence predates its applied predecessor")
+        _validate_worker_event_locked(db, message, registering=registering)
+
+
+def _commit_worker_event_locked(db, message: dict) -> None:
+    """Advance one worker sequence through an existing registry transaction."""
+    worker_id = str(message["worker_id"])
+    token = str(message["worker_token"])
+    sequence = int(message["sequence"])
+    token_key = f"worker_token:{worker_id}"
+    sequence_key = f"worker_sequence:{worker_id}"
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (token_key, token),
+    )
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (sequence_key, str(sequence)),
+    )
 
 
 def _commit_worker_event(registry, message: dict) -> None:
     """Advance a worker sequence only after its operation has succeeded."""
-    worker_id = str(message["worker_id"])
-    token = str(message["worker_token"])
-    sequence = int(message["sequence"])
-    token_key = f"worker_token:{worker_id}"
-    sequence_key = f"worker_sequence:{worker_id}"
     with registry.connection(write=True) as db:
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES (?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (token_key, token),
-        )
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES (?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (sequence_key, str(sequence)),
-        )
+        _commit_worker_event_locked(db, message)
+
+
+def _apply_worker_checkin_batch(registry, messages: tuple[dict, ...]) -> list[dict]:
+    """Commit coalescible worker lease traffic in one transaction."""
+    from nro.orchestration.registry import utcnow
+
+    responses: list[dict] = []
+    lease_expires_at = time.time() + 120.0
+    updated_at = utcnow()
+    with registry.connection(write=True) as db:
+        for message in messages:
+            try:
+                _validate_worker_event_locked(db, message)
+            except ValueError as error:
+                responses.append({"error": str(error), "error_type": type(error).__name__})
+                continue
+            worker_id = str(message["worker_id"])
+            db.execute(
+                """UPDATE workers
+                   SET state=CASE WHEN state='shutdown_requested' THEN state ELSE ? END,
+                       lease_expires_at=?, updated_at=? WHERE id=?""",
+                (message["state"], lease_expires_at, updated_at, worker_id),
+            )
+            result = None
+            if message["action"] == "check_in":
+                worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+                attempt_id = message.get("attempt_id")
+                attempt = (
+                    db.execute(
+                        "SELECT state FROM attempts WHERE id=?", (int(attempt_id),)
+                    ).fetchone()
+                    if attempt_id is not None
+                    else None
+                )
+                result = {
+                    "shutdown_requested": bool(worker and worker["state"] == "shutdown_requested"),
+                    "attempt_cancel_requested": bool(
+                        attempt and attempt["state"] == "cancel_requested"
+                    ),
+                }
+            _commit_worker_event_locked(db, message)
+            responses.append({"result": result})
+    return responses
+
+
+class _WorkerCheckinBatcher:
+    """Combine worker lease renewals without blocking socket handlers."""
+
+    _STOP = object()
+
+    def __init__(
+        self,
+        registry,
+        *,
+        interval: float = WORKER_CHECKIN_BATCH_SECONDS,
+        limit: int = WORKER_CHECKIN_BATCH_LIMIT,
+    ) -> None:
+        self.registry = registry
+        self.interval = interval
+        self.limit = limit
+        self._queue: queue.Queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, name="scheduler-checkin-batcher")
+        self._thread.start()
+
+    def submit(self, record: dict) -> Future:
+        """Queue one check-in and return its eventual scheduler response."""
+        future: Future = Future()
+        self._queue.put((record, future))
+        return future
+
+    def close(self) -> None:
+        """Flush accepted check-ins and stop the batch thread."""
+        self._queue.put(self._STOP)
+        self._thread.join()
+
+    def _run(self) -> None:
+        stopping = False
+        while not stopping:
+            first = self._queue.get()
+            if first is self._STOP:
+                break
+            pending = [first]
+            deadline = time.monotonic() + self.interval
+            while len(pending) < self.limit:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    item = self._queue.get(timeout=remaining)
+                except queue.Empty:
+                    break
+                if item is self._STOP:
+                    stopping = True
+                    break
+                pending.append(item)
+            records = [record for record, _future in pending]
+            try:
+                responses = _apply_worker_checkin_batch(
+                    self.registry,
+                    tuple(record["payload"] for record in records),
+                )
+            except BaseException as error:
+                responses = [
+                    {"error": str(error), "error_type": type(error).__name__} for _record in records
+                ]
+            for (_record, future), response in zip(pending, responses, strict=True):
+                future.set_result(response)
 
 
 def _worker_script(registry, *, resource_class: str, memory_gb: int, profile: str | None) -> Path:
@@ -1368,6 +1486,79 @@ def _submit_durable(record: dict, coordinator, executor, changed: _ActivitySigna
         return {"pending": record["id"]}
 
 
+def _send_connection_response(connection: socket.socket, response: dict) -> None:
+    """Send one response and release its connection."""
+    from nro.orchestration.scheduler_rpc import send
+
+    with connection:
+        try:
+            send(connection, response)
+        except (ConnectionError, OSError):
+            pass
+
+
+def _complete_connection(
+    connection: socket.socket,
+    future: Future,
+    *,
+    record: dict,
+    changed: _ActivitySignal,
+) -> None:
+    """Translate an asynchronous operation result into one RPC response."""
+    try:
+        response = future.result()
+    except BaseException as error:
+        response = {"error": str(error), "error_type": type(error).__name__}
+    if not _quiet_message(record):
+        changed.set()
+    _send_connection_response(connection, response)
+
+
+def _dispatch_connection(
+    connection: socket.socket,
+    record: dict,
+    durable: bool,
+    registry,
+    *,
+    values: dict,
+    coordinator,
+    executors: dict[str, ThreadPoolExecutor],
+    checkins: _WorkerCheckinBatcher,
+    changed: _ActivitySignal,
+) -> None:
+    """Schedule validated work without retaining an ingress thread."""
+    try:
+        executor = _executor_for(record, executors, durable=durable)
+        payload = record["payload"]
+        if (
+            not durable
+            and payload.get("operation") == "worker"
+            and payload.get("action") in {"heartbeat", "check_in"}
+        ):
+            future = checkins.submit(record)
+        elif durable:
+            response = _submit_durable(record, coordinator, executor, changed)
+            if "pending" not in response and not _quiet_message(record):
+                changed.set()
+            _send_connection_response(connection, response)
+            return
+        else:
+            future = executor.submit(_message_response, registry, record, values=values)
+        future.add_done_callback(
+            lambda completed: _complete_connection(
+                connection,
+                completed,
+                record=record,
+                changed=changed,
+            )
+        )
+    except BaseException as error:
+        _send_connection_response(
+            connection,
+            {"error": str(error), "error_type": type(error).__name__},
+        )
+
+
 def _handle_connection(
     connection: socket.socket,
     registry,
@@ -1376,34 +1567,38 @@ def _handle_connection(
     token: str,
     coordinator,
     executors: dict[str, ThreadPoolExecutor],
+    ingress: dict[str, ThreadPoolExecutor],
+    checkins: _WorkerCheckinBatcher,
     changed: _ActivitySignal,
     request_activity: _ActivitySignal,
 ) -> None:
-    """Validate one connection and hand its work to the appropriate pool."""
-    from nro.orchestration.scheduler_rpc import receive, send, validate_request
+    """Parse one connection and hand it to an isolated ingress pool."""
+    from nro.orchestration.scheduler_rpc import receive, validate_request
 
-    with connection:
-        connection.settimeout(60.0)
-        try:
-            envelope = receive(connection)
-            record, durable = validate_request(envelope, token=token)
-            if not _quiet_message(record):
-                request_activity.set()
-            executor = _executor_for(record, executors, durable=durable)
-            if durable:
-                response = _submit_durable(record, coordinator, executor, changed)
-            else:
-                response = executor.submit(
-                    _message_response, registry, record, values=values
-                ).result()
-            if "pending" not in response and not _quiet_message(record):
-                changed.set()
-        except BaseException as error:
-            response = {"error": str(error), "error_type": type(error).__name__}
-        try:
-            send(connection, response)
-        except (ConnectionError, OSError):
-            pass
+    connection.settimeout(60.0)
+    try:
+        envelope = receive(connection)
+        record, durable = validate_request(envelope, token=token)
+        if not _quiet_message(record):
+            request_activity.set()
+        pool = ingress["worker" if record["payload"].get("operation") == "worker" else "command"]
+        pool.submit(
+            _dispatch_connection,
+            connection,
+            record,
+            durable,
+            registry,
+            values=values,
+            coordinator=coordinator,
+            executors=executors,
+            checkins=checkins,
+            changed=changed,
+        )
+    except BaseException as error:
+        _send_connection_response(
+            connection,
+            {"error": str(error), "error_type": type(error).__name__},
+        )
 
 
 def _accept_connections(
@@ -1623,7 +1818,14 @@ def serve(
             max_workers=2, thread_name_prefix="scheduler-maintenance"
         ),
     }
-    readers = ThreadPoolExecutor(max_workers=16, thread_name_prefix="scheduler-rpc")
+    readers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-rpc-reader")
+    ingress = {
+        "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker-ingress"),
+        "command": ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="scheduler-command-ingress"
+        ),
+    }
+    checkins = _WorkerCheckinBatcher(registry)
     changed_event = _ActivitySignal()
     capacity_event = _ActivitySignal()
     request_activity = _ActivitySignal()
@@ -1695,6 +1897,8 @@ def serve(
             "token": launch_token,
             "coordinator": coordinator,
             "executors": executors,
+            "ingress": ingress,
+            "checkins": checkins,
             "changed": changed_event,
         },
     )
@@ -1790,6 +1994,9 @@ def serve(
         listener_thread.join()
         listener.close()
         readers.shutdown(wait=True, cancel_futures=False)
+        for pool in ingress.values():
+            pool.shutdown(wait=True, cancel_futures=False)
+        checkins.close()
         for executor in executors.values():
             executor.shutdown(wait=True, cancel_futures=False)
         try:
