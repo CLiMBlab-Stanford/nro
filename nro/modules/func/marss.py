@@ -550,6 +550,11 @@ def create_marss_step(
         import nibabel as nib
 
         image = nib.load(str(source_bold))
+        if len(image.shape) != 4 or int(image.shape[3]) < 3:
+            volumes = int(image.shape[3]) if len(image.shape) == 4 else 1
+            raise ValueError(
+                f"MARSS diagnostics require at least three volumes ({volumes} found): {source_bold}"
+            )
         try:
             grouping = derive_slice_grouping(metadata, image.shape[:3])
         except ValueError as error:

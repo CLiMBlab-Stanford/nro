@@ -15,6 +15,7 @@ from nro.definitions.runtime import configure
 configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.func import module as func
+from nro.modules.func.config import functional_config_payload
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext, InputBinding
 from nro.orchestration.runner import ContainerSpec
@@ -207,6 +208,33 @@ def test_cicada_classifier_is_fixed_in_functional_graph(functional_case):
     assert "Run CICADA Component Classification" in names
     assert "Regress Shared CICADA Components in T1w" in names
     assert "Run ICA-AROMA Classification and Denoising" not in names
+
+
+def test_functional_scientific_payload_excludes_container_runtime(functional_case):
+    _inputs, options, _context, _manifest, _image = functional_case
+
+    payload = functional_config_payload(options)
+
+    assert "synbold_disco_engine" not in payload
+
+
+def test_functional_configuration_accepts_legacy_runtime_path(functional_case):
+    inputs, options, context, _manifest, _image = functional_case
+    job = func.build_module(inputs, options, execution_context=context)
+    steps = job._graph.freeze().steps
+    initialize = next(step for step in steps if step.name == "Initialize Functional Outputs")
+    configure_step = next(step for step in steps if step.name == "Write Functional Configuration")
+    assert initialize.action is not None
+    assert configure_step.action is not None
+    assert configure_step.validate is not None
+    initialize.action()
+    configure_step.action()
+    snapshot = configure_step.outputs[0]
+    legacy = json.loads(snapshot.read_text())
+    legacy["configuration"]["synbold_disco_engine"] = "/site/bin/apptainer"
+    snapshot.write_text(json.dumps(legacy))
+
+    assert configure_step.validate()[0]
 
 
 def test_functional_graph_reads_raw_fieldmap_geometry_before_gradient_steps(

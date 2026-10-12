@@ -536,6 +536,9 @@ def scientific_values(kind: str, values: dict) -> dict:
         }
     result = select(schema, values)
     if kind == "func":
+        # Runtime selection never changes the scientific operation. Discard the
+        # legacy snapshot field so existing functional steps remain reusable.
+        result.pop("synbold_disco_engine", None)
         classifier = result.get("ica_classifier")
         if classifier == "none":
             result.pop("ica_regression", None)

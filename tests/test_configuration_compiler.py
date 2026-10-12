@@ -354,6 +354,14 @@ def test_marss_cutoff_is_scientific_only_when_auto_mode_uses_it(store):
     assert diagnose.scientific_fingerprint == changed_diagnose.scientific_fingerprint
 
 
+def test_legacy_functional_runtime_path_is_not_scientific(store):
+    functional = store.load_configuration("func", "main").values
+
+    assert scientific_values(
+        "func", {**functional, "synbold_disco_engine": "/site/bin/apptainer"}
+    ) == scientific_values("func", functional)
+
+
 def test_bids_filter_sets_normalize_without_losing_absence_semantics(store):
     from nro.engine.bids import matches_filter
 

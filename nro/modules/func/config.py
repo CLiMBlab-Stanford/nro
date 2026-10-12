@@ -126,7 +126,6 @@ def functional_config_payload(
         ),
         "sdc_method": opts.sdc_method,
         "synbold_disco_image": str(opts.synbold_disco_image),
-        "synbold_disco_engine": opts.synbold_disco_engine,
         "synbold_overlap_erosion_voxels": int(opts.synbold_overlap_erosion_voxels),
         "synbold_min_overlap_voxels": int(opts.synbold_min_overlap_voxels),
         "synbold_max_rigid_translation_mm": float(opts.synbold_max_rigid_translation_mm),

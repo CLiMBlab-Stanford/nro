@@ -277,6 +277,31 @@ def test_auto_mode_passes_through_when_diagnostic_metadata_are_unavailable(tmp_p
     assert all(path.exists() for path in step.outputs)
 
 
+def test_marss_rejects_three_dimensional_bold_before_metadata_fallback(tmp_path):
+    bold = tmp_path / "source.nii.gz"
+    motion = tmp_path / "motion.par"
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 5), dtype=np.float32), np.eye(4)), bold)
+    np.savetxt(motion, np.zeros((1, 6)))
+
+    step, _outputs = create_marss_step(
+        run_child=lambda *args, **kwargs: pytest.fail("MARSS was invoked"),
+        source_bold=bold,
+        metadata={},
+        motion_parameters=motion,
+        work_dir=tmp_path / "work",
+        artifact_dir=tmp_path / "public",
+        run_stem="sub-01_task-rest",
+        mode="auto",
+        min_multiband_factor=6,
+        chunk_volumes=8,
+        force=False,
+    )
+
+    assert step.action is not None
+    with pytest.raises(ValueError, match=r"at least three volumes \(1 found\)"):
+        step.action()
+
+
 def test_auto_correction_runs_inside_the_declared_marss_step(tmp_path, monkeypatch):
     rng = np.random.default_rng(12)
     bold = tmp_path / "source.nii.gz"

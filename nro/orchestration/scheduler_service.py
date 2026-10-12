@@ -974,6 +974,19 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             "records": report.records,
             "applied": report.applied,
         }
+    elif message["operation"] == "freshen":
+        from nro.orchestration.freshen import execute, preview
+
+        arguments = {
+            "checkout": Path(message["checkout"]),
+            "site_values": values,
+            "selection": message["selection"],
+        }
+        result = (
+            execute(registry, approved=message["approved"], **arguments)
+            if message["execute"]
+            else preview(registry, **arguments)
+        )
     elif message["operation"] == "cache":
         BranchStore(registry.paths.control).read().topology.registered_checkout(
             Path(message["checkout"])
@@ -1246,6 +1259,7 @@ _MAINTENANCE_OPERATIONS = {
     "cache",
     "gc",
     "hotfix",
+    "freshen",
     "promotion_publish",
     "publish",
     "purge",
