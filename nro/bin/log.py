@@ -265,7 +265,7 @@ def _page_logs(
     if less is None:
         raise SystemExit("Cannot browse logs because 'less' is not available in PATH")
     try:
-        subprocess.run([less, "-R", "--", *(str(path) for path in paths)], check=False)
+        subprocess.run([less, "-R", "-S", "--", *(str(path) for path in paths)], check=False)
     except KeyboardInterrupt:
         pass
 

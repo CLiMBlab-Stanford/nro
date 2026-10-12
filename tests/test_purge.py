@@ -775,5 +775,5 @@ def test_purge_plan_uses_pager_for_interactive_output(monkeypatch) -> None:
     page_text("planned paths\n")
 
     assert calls == [
-        (["/usr/bin/less", "-R"], {"input": "planned paths\n", "text": True, "check": False})
+        (["/usr/bin/less", "-R", "-S"], {"input": "planned paths\n", "text": True, "check": False})
     ]
