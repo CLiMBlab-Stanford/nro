@@ -215,6 +215,7 @@ class Runner:
                 boundary.outputs,
                 boundary.force,
                 inputs=boundary.inputs,
+                freshness_marker=boundary.freshness_marker,
             )
             if not boundary_run and boundary.validate is not None:
                 valid, validation_reason = boundary.validate()
@@ -258,6 +259,7 @@ class Runner:
                 or upstream_dirty
                 or contract_change is not None,
                 inputs=step.inputs,
+                freshness_marker=step.freshness_marker,
             )
             if missing_outputs:
                 reason = "Missing or empty outputs: " + ", ".join(missing_outputs)

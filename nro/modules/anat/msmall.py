@@ -602,6 +602,7 @@ def add_msmall_plan(
                 force=force,
                 prepare=prepare(stage, *cleanup, globs=cleanup_globs),
                 finalize=finalize(stage),
+                freshness_marker=marker(stage),
                 parameters={
                     "scientific": parameters,
                     "implementation_sha256": {
