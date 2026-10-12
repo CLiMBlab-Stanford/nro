@@ -817,6 +817,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             )
         }
     elif message["operation"] == "plan_run":
+        from nro.orchestration.control_paths import ControlPaths
         from nro.orchestration.execution_pins import capture_execution, capture_site
         from nro.orchestration.planner_client import ensure as ensure_planner
         from nro.orchestration.planner_client import execute as execute_plan
@@ -853,7 +854,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 raise ValueError("Installed planner source changed before scheduling")
             source = endpoint.source
             site = capture_site(
-                registry.paths.execution_sites,
+                ControlPaths(registry.paths.control).execution_sites,
                 {
                     **execution["site_values"],
                     "bids": str(registry.paths.bids_root.resolve()),

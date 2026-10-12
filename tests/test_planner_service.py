@@ -212,6 +212,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
     endpoint = SimpleNamespace(source=source)
     calls = []
     phases = []
+    site_roots = []
     implementation = tmp_path / "implementation.json"
     checkout = tmp_path / "checkout"
     implementation.write_text(json.dumps({"checkout": str(checkout)}))
@@ -231,7 +232,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(
         "nro.orchestration.execution_pins.capture_site",
-        lambda _root, _values: tmp_path / "site.toml",
+        lambda root, _values: site_roots.append(root) or tmp_path / "site.toml",
     )
     monkeypatch.setattr(
         planner_client,
@@ -274,7 +275,6 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         paths=SimpleNamespace(
             control=tmp_path / "control",
             bids_root=tmp_path / "BIDS",
-            execution_sites=tmp_path / "sites",
         )
     )
 
@@ -343,6 +343,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         "Registering requested work",
         "Reconciling worker pool",
     ]
+    assert site_roots == [tmp_path / "control/shared/cache/execution-sites"]
 
 
 def test_planner_script_requests_small_persistent_service(tmp_path):
