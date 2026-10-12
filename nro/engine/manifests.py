@@ -24,19 +24,20 @@ def create_json_step(
     """Create a JSON-output step with an optional scientific identity subset."""
 
     identity = payload if identity_payload is None else identity_payload
-    stored_identity = manifest_value(portable_public_payload(path, identity))
+
+    def stored_identity() -> dict[str, Any]:
+        return manifest_value(portable_public_payload(path, identity))
 
     def validate() -> tuple[bool, str]:
         try:
             current = read_json(path)
         except (OSError, ValueError):
             return False, "Metadata is missing or invalid JSON."
+        expected = stored_identity()
         current_identity = (
-            current
-            if identity_payload is None
-            else {key: current.get(key) for key in stored_identity}
+            current if identity_payload is None else {key: current.get(key) for key in expected}
         )
-        if current_identity != stored_identity:
+        if current_identity != expected:
             return False, "Metadata content does not match the current module configuration."
         return True, "Metadata matches the current module configuration."
 
