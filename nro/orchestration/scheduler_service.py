@@ -458,12 +458,12 @@ def _submit_reserved(
     """Run sbatch outside a registry transaction and finalize its reserved intent."""
     from nro.orchestration.scheduler_implementation import validate_worker_script
 
-    validate_worker_script(registry.paths.control, script)
     command = ["sbatch", "--parsable"]
     if dependency:
         command.append(f"--dependency=afterany:{dependency}")
     command.append(str(script))
     try:
+        validate_worker_script(registry.paths.control, script)
         result = subprocess.run(command, check=True, text=True, capture_output=True)
         job_id = result.stdout.strip().split(";", 1)[0]
         if not job_id:
@@ -514,15 +514,37 @@ def _pending_pool_expansions(registry) -> list[tuple[str, str, dict]]:
 
 def _supply_requested_pool(registry, payload: dict) -> list[str]:
     """Supply all worker classes that currently need another allocation."""
+    from nro.orchestration.scheduler_implementation import validate_worker_script
+
     submitted = []
     for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
         lower_memory = 0
-        for memory_gb, script in _worker_script_tiers(
+        tiers = _worker_script_tiers(
             registry,
             resource_class=resource_class,
             minimum_memory_gb=1,
             profile=payload.get("profile"),
-        ):
+        )
+        valid_tiers = []
+        for memory_gb, script in tiers:
+            try:
+                validate_worker_script(registry.paths.control, script)
+            except ValueError:
+                continue
+            valid_tiers.append((memory_gb, script))
+        if not valid_tiers and payload.get("profile") is not None:
+            for memory_gb, script in _worker_script_tiers(
+                registry,
+                resource_class=resource_class,
+                minimum_memory_gb=1,
+                profile=None,
+            ):
+                try:
+                    validate_worker_script(registry.paths.control, script)
+                except ValueError:
+                    continue
+                valid_tiers.append((memory_gb, script))
+        for memory_gb, script in valid_tiers:
             reservations = registry.reserve_worker_submissions(
                 request_id=None,
                 resource_class=resource_class,
@@ -795,10 +817,12 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             )
         }
     elif message["operation"] == "plan_run":
+        from nro.orchestration.execution_pins import capture_execution, capture_site
         from nro.orchestration.planner_client import ensure as ensure_planner
         from nro.orchestration.planner_client import execute as execute_plan
         from nro.orchestration.scheduler_bus import publish_progress
         from nro.orchestration.scheduler_client import command
+        from nro.orchestration.scheduler_implementation import implementation_path
 
         def progress(phase: str) -> None:
             publish_progress(
@@ -809,11 +833,49 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
                 total=0,
             )
 
+        request = dict(message["request"])
+        execution = request.pop("execution", None)
+        if (
+            not isinstance(execution, dict)
+            or set(execution) != {"kind", "digest", "site_values"}
+            or execution["kind"] not in {"installed", "checkout"}
+            or not isinstance(execution["digest"], str)
+            or not isinstance(execution["site_values"], dict)
+        ):
+            raise ValueError("Planner request has an invalid execution source")
+        checkout = Path(request["checkout"])
         endpoint = command(registry.paths.control, registry.paths.bids_root)
+        if execution["kind"] == "installed":
+            installed = json.loads(implementation_path(registry.paths.control).read_text())
+            if checkout.resolve() != Path(installed["checkout"]).resolve():
+                raise ValueError("Installed planner source belongs to another checkout")
+            if execution["digest"] != endpoint.source.digest:
+                raise ValueError("Installed planner source changed before scheduling")
+            source = endpoint.source
+            site = capture_site(
+                registry.paths.execution_sites,
+                {
+                    **execution["site_values"],
+                    "bids": str(registry.paths.bids_root.resolve()),
+                    "registry": str(registry.paths.control.resolve()),
+                },
+            )
+        else:
+            BranchStore(registry.paths.control).read().topology.registered_checkout(checkout)
+            progress("Capturing branch source")
+            source, site = capture_execution(
+                registry.paths.control,
+                registry.paths.bids_root,
+                source_root=checkout,
+                expected_source=execution["digest"],
+                site_values=execution["site_values"],
+            )
+        request["source"] = {"root": str(source.root), "digest": source.digest}
+        request["site"] = str(site)
         ensure_planner(endpoint)
         planned = execute_plan(
             registry.paths.control,
-            message["request"],
+            request,
             progress=progress,
         )
         required = {
@@ -1505,6 +1567,10 @@ def serve(
         registry_session_open = True
         publish_startup_progress(control, launch_token, "Validating scheduler registry")
         registry.initialize()
+        # A stopped scheduler cannot finish reservations made between the
+        # database insert and sbatch. No submission task exists yet in this
+        # new process, so every remaining prepared row is abandoned.
+        registry.abandon_prepared_submissions()
         with registry.connection(write=True) as db:
             row = db.execute(
                 "SELECT value FROM metadata WHERE key='scheduler_generation'"

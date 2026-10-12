@@ -208,9 +208,13 @@ def test_scheduler_routes_plan_run_to_single_planner_lane():
 
 
 def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch):
-    endpoint = object()
+    source = SimpleNamespace(root=tmp_path / "source", digest="digest")
+    endpoint = SimpleNamespace(source=source)
     calls = []
     phases = []
+    implementation = tmp_path / "implementation.json"
+    checkout = tmp_path / "checkout"
+    implementation.write_text(json.dumps({"checkout": str(checkout)}))
     monkeypatch.setattr(
         "nro.orchestration.scheduler_bus.publish_progress",
         lambda _control, _message_id, *, phase, completed, total: phases.append(
@@ -220,6 +224,14 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "nro.orchestration.scheduler_client.command",
         lambda control, bids_root: calls.append(("command", control, bids_root)) or endpoint,
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.implementation_path",
+        lambda _control: implementation,
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.execution_pins.capture_site",
+        lambda _root, _values: tmp_path / "site.toml",
     )
     monkeypatch.setattr(
         planner_client,
@@ -259,15 +271,28 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         ),
     )
     registry = SimpleNamespace(
-        paths=SimpleNamespace(control=tmp_path / "control", bids_root=tmp_path / "BIDS")
+        paths=SimpleNamespace(
+            control=tmp_path / "control",
+            bids_root=tmp_path / "BIDS",
+            execution_sites=tmp_path / "sites",
+        )
     )
 
     result = scheduler_service.dispatch(
         registry,
         {
             "operation": "plan_run",
-            "checkout": str(tmp_path / "checkout"),
-            "request": {"argv": ["-P", "demo"]},
+            "checkout": str(checkout),
+            "request": {
+                "execution": {
+                    "kind": "installed",
+                    "digest": "digest",
+                    "site_values": {},
+                },
+                "checkout": str(checkout),
+                "python": "/python",
+                "argv": ["-P", "demo"],
+            },
         },
         values={},
         message_id="message",
@@ -285,7 +310,17 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
     assert calls == [
         ("command", registry.paths.control, registry.paths.bids_root),
         ("ensure", endpoint),
-        ("execute", registry.paths.control, {"argv": ["-P", "demo"]}),
+        (
+            "execute",
+            registry.paths.control,
+            {
+                "checkout": str(checkout),
+                "python": "/python",
+                "argv": ["-P", "demo"],
+                "source": {"root": str(source.root), "digest": "digest"},
+                "site": str(tmp_path / "site.toml"),
+            },
+        ),
         (
             "admit",
             [{"project": "demo", "payload": {}}],

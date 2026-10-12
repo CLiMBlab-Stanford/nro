@@ -184,6 +184,12 @@ def _wait_notice(frame: int, message: str) -> bool:
     return True
 
 
+def startup_notice(message: str) -> None:
+    """Report work that precedes the scheduler exchange loop."""
+    if sys.stderr.isatty():
+        print(f"• {message}", file=sys.stderr, flush=True)
+
+
 def _progress_notice(record: dict | None, fallback: str) -> str:
     """Render one bounded progress record for the interactive wait line."""
     if record is None:

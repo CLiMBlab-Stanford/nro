@@ -516,20 +516,21 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution and not args.local and os.environ.get("NRO_REMOTE_PLANNER") != "1":
-        from nro.orchestration.execution_cache import cache_lock
-        from nro.orchestration.execution_pins import capture_execution
         from nro.orchestration.planner_client import ensure as ensure_planner
         from nro.orchestration.scheduler_bus import read_active
-        from nro.orchestration.scheduler_client import command, exchange
+        from nro.orchestration.scheduler_client import command, exchange, startup_notice
+        from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
         control = Path(values["registry"])
+        startup_notice("Preparing scheduler request...")
         endpoint = command(control, bids_root)
-        with cache_lock(control):
-            source, execution_site = capture_execution(
-                control,
-                bids_root,
-                site_values=dict(values),
-            )
+        installed_source = record.get("application_digest")
+        if installed_source:
+            source_digest = str(installed_source)
+            source_kind = "installed"
+        else:
+            source_digest = source_fingerprint(execution_source_root())
+            source_kind = "checkout"
         # Submit both services without serial queue latency when neither exists.
         # A live scheduler owns planner lifecycle for subsequent invocations.
         if read_active(control) is None:
@@ -540,8 +541,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 "operation": "plan_run",
                 "checkout": str(site.CHECKOUT),
                 "request": {
-                    "source": {"root": str(source.root), "digest": source.digest},
-                    "site": str(execution_site),
+                    "execution": {
+                        "kind": source_kind,
+                        "digest": source_digest,
+                        "site_values": dict(values),
+                    },
                     "python": sys.executable,
                     "checkout": str(site.CHECKOUT),
                     "argv": raw_argv,

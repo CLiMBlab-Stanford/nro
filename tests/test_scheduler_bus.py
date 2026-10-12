@@ -529,6 +529,56 @@ def test_failed_capacity_drain_leaves_request_for_retry(tmp_path, monkeypatch) -
     assert len(scheduler_service._pending_pool_expansions(registry)) == 1
 
 
+def test_capacity_expansion_falls_back_from_obsolete_worker_profile(tmp_path, monkeypatch) -> None:
+    obsolete = tmp_path / "obsolete.sbatch"
+    current = tmp_path / "current.sbatch"
+    calls = []
+
+    class FakeRegistry:
+        paths = SimpleNamespace(control=tmp_path)
+
+        def reserve_worker_submissions(self, **options):
+            calls.append(options)
+            return []
+
+    def tiers(_registry, *, resource_class, minimum_memory_gb, profile):
+        calls.append((resource_class, minimum_memory_gb, profile))
+        return ((32, obsolete if profile else current),)
+
+    def validate(_control, script):
+        if script == obsolete:
+            raise ValueError("obsolete implementation")
+
+    monkeypatch.setattr(scheduler_service, "_worker_script_tiers", tiers)
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.validate_worker_script", validate
+    )
+
+    assert (
+        scheduler_service._supply_requested_pool(FakeRegistry(), {"profile": "old-profile"}) == []
+    )
+    assert ("large", 1, "old-profile") in calls
+    assert ("large", 1, None) in calls
+    assert any(isinstance(call, dict) for call in calls)
+
+
+def test_failed_worker_script_validation_releases_reserved_capacity(tmp_path, monkeypatch) -> None:
+    updates = []
+    registry = SimpleNamespace(
+        paths=SimpleNamespace(control=tmp_path),
+        update_submission=lambda submission_id, **values: updates.append((submission_id, values)),
+    )
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.validate_worker_script",
+        lambda *_args: (_ for _ in ()).throw(ValueError("obsolete implementation")),
+    )
+
+    with pytest.raises(ValueError, match="obsolete implementation"):
+        scheduler_service._submit_reserved(registry, 17, tmp_path / "worker.sbatch")
+
+    assert updates == [(17, {"state": "error"})]
+
+
 def test_scheduler_progress_is_atomic_and_transient(tmp_path):
     control = tmp_path / ".nro"
     scheduler_bus.prepare(control)

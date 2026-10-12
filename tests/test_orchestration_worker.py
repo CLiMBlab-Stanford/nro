@@ -2157,6 +2157,30 @@ def test_reconciliation_releases_only_confirmed_expired_worker_slots(
         )
 
 
+def test_scheduler_startup_releases_only_unsubmitted_reservations(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registry.initialize()
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO scheduler_submissions"
+            "(intent_token,resource_class,memory_gb,state,created_at) "
+            "VALUES ('prepared','large',32,'prepared','now')"
+        )
+        db.execute(
+            "INSERT INTO scheduler_submissions"
+            "(intent_token,resource_class,memory_gb,state,created_at,slurm_job_id) "
+            "VALUES ('submitted','large',32,'submitted','now','123')"
+        )
+
+    assert registry.abandon_prepared_submissions() == 1
+    with registry.connection() as db:
+        states = {
+            row["intent_token"]: row["state"]
+            for row in db.execute("SELECT intent_token,state FROM scheduler_submissions")
+        }
+    assert states == {"prepared": "error", "submitted": "submitted"}
+
+
 def test_worker_reservations_follow_current_dag_width(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
