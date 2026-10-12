@@ -8,8 +8,8 @@ from typing import Any, Sequence
 from nro.orchestration.runner_graph import Step
 
 from .execution import require_existing_path
-from .io import read_public_json, write_public_json
-from .references import resolve_public_payload
+from .io import manifest_value, read_json, write_public_json
+from .references import portable_public_payload, resolve_public_payload
 
 
 def create_json_step(
@@ -24,18 +24,19 @@ def create_json_step(
     """Create a JSON-output step with an optional scientific identity subset."""
 
     identity = payload if identity_payload is None else identity_payload
+    stored_identity = manifest_value(portable_public_payload(path, identity))
 
     def validate() -> tuple[bool, str]:
         try:
-            current = read_public_json(path)
+            current = read_json(path)
         except (OSError, ValueError):
             return False, "Metadata is missing or invalid JSON."
         current_identity = (
             current
             if identity_payload is None
-            else {key: current.get(key) for key in identity_payload}
+            else {key: current.get(key) for key in stored_identity}
         )
-        if current_identity != identity:
+        if current_identity != stored_identity:
             return False, "Metadata content does not match the current module configuration."
         return True, "Metadata matches the current module configuration."
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nro.engine.io import read_public_json, write_public_json
+from nro.engine.manifests import create_json_step
 from nro.engine.references import (
     ReferenceRoots,
     absolute_path_values,
@@ -207,6 +208,29 @@ def test_public_document_resolves_against_moved_project(tmp_path: Path) -> None:
     assert document == {
         "source": str(second / source.relative_to(first)),
         "output": str(second / output.relative_to(first)),
+    }
+
+
+def test_json_step_validates_the_stored_portable_document(tmp_path: Path) -> None:
+    project = tmp_path / "BIDS/demo"
+    source = project / "sub-01/anat/sub-01_T1w.nii.gz"
+    manifest = project / "derivatives/nro/anat/main/sub-01/anat/manifest.json"
+    step = create_json_step(
+        step_name="Write manifest",
+        path=manifest,
+        payload={"source": source, "outputs": {"manifest": str(manifest)}},
+        inputs=(source,),
+        force=False,
+    )
+
+    assert step.action is not None
+    assert step.validate is not None
+    step.action()
+
+    assert step.validate() == (True, "Metadata matches the current module configuration.")
+    assert json.loads(manifest.read_text(encoding="utf-8")) == {
+        "source": "bids:raw:sub-01/anat/sub-01_T1w.nii.gz",
+        "outputs": {"manifest": "bids::anat/main/sub-01/anat/manifest.json"},
     }
 
 
