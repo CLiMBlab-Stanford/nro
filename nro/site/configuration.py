@@ -123,6 +123,15 @@ DERIVED = {
         "tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz",
     ),
 }
+CONTAINER_VERSIONS = {
+    "qunex": "1.5.1",
+    "synthstrip": "1.7",
+    "synbold": "1.4",
+    "gradient_unwarp": "1.0.3_4.3.0",
+    "freesurfer": "7.4.1",
+    "fastsurfer": "2.5.4",
+    "workbench_image": "2.2.1-7",
+}
 PATH_KEYS = {
     "definitions",
     "bids",

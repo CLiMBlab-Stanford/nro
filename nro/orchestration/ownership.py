@@ -39,15 +39,29 @@ LEGACY_OWNERSHIP_VERSION = 4
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
 _SITE_SETTING = "$nro_site_setting"
+_CONTAINER_RESOURCE = "$nro_container"
 
 
 def _portable_configuration_values(value: object, roots: ReferenceRoots) -> object:
     """Replace host execution settings before encoding public paths."""
 
+    from nro.site.configuration import CONTAINER_VERSIONS
+
+    container_paths = {
+        path: {"name": name, "version": version}
+        for name, version in CONTAINER_VERSIONS.items()
+        if (path := roots.site.get(name)) is not None
+    }
+
     def replace_site_settings(item: object) -> object:
+        if isinstance(item, (str, Path)) and Path(item).is_absolute():
+            identity = container_paths.get(Path(item).expanduser().absolute())
+            if identity is not None:
+                return {_CONTAINER_RESOURCE: identity}
         if isinstance(item, Mapping):
             converted = {key: replace_site_settings(member) for key, member in item.items()}
             if "engine" in item and "bind" in item:
+                converted["engine"] = {_SITE_SETTING: "runtime"}
                 converted["bind"] = {_SITE_SETTING: "binds"}
             return converted
         if isinstance(item, (list, tuple)):
@@ -62,13 +76,30 @@ def _portable_configuration_values(value: object, roots: ReferenceRoots) -> obje
 def _resolve_configuration_values(value: object) -> object:
     """Expand site-setting references for local execution and recovery."""
     if isinstance(value, Mapping):
+        if set(value) == {_CONTAINER_RESOURCE}:
+            identity = value[_CONTAINER_RESOURCE]
+            if not isinstance(identity, Mapping) or set(identity) != {"name", "version"}:
+                raise ValueError("Invalid portable container identity")
+            name = str(identity["name"])
+            version = str(identity["version"])
+            from nro.site.configuration import CONTAINER_VERSIONS, settings
+
+            if CONTAINER_VERSIONS.get(name) != version:
+                raise ValueError(f"Unsupported container identity {name!r} version {version!r}")
+            current = settings()[0]
+            if name not in current:
+                raise ValueError(f"Container resource {name!r} is not configured")
+            return str(current[name])
         if set(value) == {_SITE_SETTING}:
             name = value[_SITE_SETTING]
-            if name != "binds":
+            if name not in {"binds", "runtime"}:
                 raise ValueError(f"Unknown portable site setting {name!r}")
             from nro.site.configuration import settings
 
-            return list(settings()[0].get("binds", ()))
+            current = settings()[0]
+            if name == "binds":
+                return list(current.get("binds", ()))
+            return str(current["runtime"])
         return {key: _resolve_configuration_values(member) for key, member in value.items()}
     if isinstance(value, list):
         return [_resolve_configuration_values(member) for member in value]

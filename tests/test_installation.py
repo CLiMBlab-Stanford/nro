@@ -30,6 +30,11 @@ from nro.site import (
 from nro.site.setup import edit_settings, save_settings
 
 
+def test_container_versions_match_managed_resource_names() -> None:
+    for name, version in site.CONTAINER_VERSIONS.items():
+        assert version in site.DERIVED[name][1]
+
+
 @pytest.mark.parametrize("response", ["", "y", "Y", "yes", "YES"])
 def test_setup_resource_terms_default_to_accept(monkeypatch, response):
     from nro.bin import setup

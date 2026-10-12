@@ -248,8 +248,12 @@ def test_public_document_converts_path_valued_mapping_keys(tmp_path: Path) -> No
     assert read_public_json(manifest) == {str(source): {"action": "already_corrected"}}
 
 
-def test_portable_ownership_uses_site_setting_for_container_binds(tmp_path: Path) -> None:
-    roots = _roots(tmp_path)
+def test_portable_ownership_records_container_names_and_versions(tmp_path: Path) -> None:
+    qunex = tmp_path / "images/qunex_suite-1.5.1.sif"
+    roots = ReferenceRoots.for_project(
+        tmp_path / "BIDS/demo",
+        site_roots={"qunex": qunex},
+    )
     record = {
         "record_version": 5,
         "owner": "nro",
@@ -260,6 +264,7 @@ def test_portable_ownership_uses_site_setting_for_container_binds(tmp_path: Path
             "resolved": {
                 "container": {
                     "engine": "singularity",
+                    "image": str(qunex),
                     "bind": ["/host:/container"],
                 }
             },
@@ -268,6 +273,7 @@ def test_portable_ownership_uses_site_setting_for_container_binds(tmp_path: Path
             "runtime_configuration": {
                 "container": {
                     "engine": "singularity",
+                    "image": str(qunex),
                     "bind": ["/host:/container"],
                 }
             }
@@ -276,7 +282,15 @@ def test_portable_ownership_uses_site_setting_for_container_binds(tmp_path: Path
 
     converted = normalize_portable_ownership_record(record, roots=roots)
 
-    expected = {"$nro_site_setting": "binds"}
-    assert converted["configuration"]["resolved"]["container"]["bind"] == expected
-    assert converted["execution"]["runtime_configuration"]["container"]["bind"] == expected
+    expected_engine = {"$nro_site_setting": "runtime"}
+    expected_binds = {"$nro_site_setting": "binds"}
+    expected_image = {"$nro_container": {"name": "qunex", "version": "1.5.1"}}
+    configured = converted["configuration"]["resolved"]["container"]
+    runtime = converted["execution"]["runtime_configuration"]["container"]
+    assert configured["engine"] == expected_engine
+    assert configured["image"] == expected_image
+    assert configured["bind"] == expected_binds
+    assert runtime["engine"] == expected_engine
+    assert runtime["image"] == expected_image
+    assert runtime["bind"] == expected_binds
     assert "/host" not in json.dumps(converted)

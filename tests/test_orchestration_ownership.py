@@ -181,6 +181,12 @@ def test_current_ownership_records_are_portable_and_survive_project_move(
     assert receipt["artifact_contract"]["output"]["root"].startswith("bids::")
     assert "command" not in receipt["execution"]
     assert receipt["execution"]["module_argv"][0] == "nro.modules.anat"
+    assert receipt["execution"]["runtime_configuration"]["container"]["engine"] == {
+        "$nro_site_setting": "runtime"
+    }
+    assert receipt["execution"]["runtime_configuration"]["container"]["image"] == {
+        "$nro_container": {"name": "qunex", "version": "1.5.1"}
+    }
     assert str(tmp_path) not in receipt_path.read_text()
 
     moved = tmp_path / "second" / "bids"
@@ -196,6 +202,16 @@ def test_current_ownership_records_are_portable_and_survive_project_move(
     ]
     assert restored["artifact_contract"]["output"]["root"].startswith(
         str(moved / "demo/derivatives/nro")
+    )
+    from nro.site.configuration import settings
+
+    assert (
+        restored["execution"]["runtime_configuration"]["container"]["engine"]
+        == settings()[0]["runtime"]
+    )
+    assert (
+        restored["execution"]["runtime_configuration"]["container"]["image"]
+        == settings()[0]["qunex"]
     )
 
 
