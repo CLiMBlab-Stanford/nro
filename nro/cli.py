@@ -17,6 +17,7 @@ COMMAND_HELP = {
     "bidsify": "Download, review, convert, and approve BIDS sessions.",
     "def": "Edit, list, remove, and validate definitions.",
     "find": "List source BIDS images that match entity selectors.",
+    "freshen": "Re-attest unchanged derivatives after an erroneous rebuild.",
     "fw": "Manage private Flywheel credentials for configured servers.",
     "get": "Read site settings (compatibility alias for `nro site get`).",
     "hotfix": "Apply a release-scoped repair for an identified historical defect.",

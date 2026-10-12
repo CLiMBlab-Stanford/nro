@@ -2518,7 +2518,7 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.31.18"
+version = "0.32.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

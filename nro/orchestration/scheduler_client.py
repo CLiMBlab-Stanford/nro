@@ -48,6 +48,7 @@ _OPERATION_NOTICES = {
     "purge_snapshot": "Preparing purge...",
     "gc": "Scanning derivative namespaces...",
     "hotfix": "Inspecting historical repair candidates...",
+    "freshen": "Validating unchanged derivatives...",
     "cache": "Cleaning execution cache...",
     "repair_prepare": "Preparing registry repair...",
     "repair_finish": "Finalizing registry repair...",
@@ -872,6 +873,7 @@ def maintenance(
         "purge",
         "gc",
         "hotfix",
+        "freshen",
         "cache",
         "repair_prepare",
         "repair_finish",
@@ -898,6 +900,7 @@ def maintenance(
             "publish",
             "project_rename",
             "hotfix",
+            "freshen",
             "dataset_migration",
         }
         else MAINTENANCE_RPC_TIMEOUT_SECONDS

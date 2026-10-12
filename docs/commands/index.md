@@ -37,10 +37,10 @@ and `nro fw removekey SERVER` removes one. See [bidsification](bidsify.md).
 
 ## Shared selectors
 
-`run`, `status`, `stop`, `log`, `purge`, `gc`, `promote`, `scene`, and `render` use the
-common selector engine. Their remaining options are command-specific. `find`
-uses the project, participant, run, and task subset to inspect source BIDS
-images.
+`run`, `status`, `stop`, `log`, `purge`, `gc`, `freshen`, `promote`, `scene`,
+and `render` use the common selector engine. Their remaining options are
+command-specific. `find` uses the project, participant, run, and task subset to
+inspect source BIDS images.
 
 | Option | Meaning |
 | --- | --- |

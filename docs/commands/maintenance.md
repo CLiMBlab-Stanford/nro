@@ -174,6 +174,32 @@ lineages and unmatched files in shared directories but does not remove an
 unrecognized file placed inside an owned directory tree. Control records, logs,
 and executable caches are outside this command's scope.
 
+## `nro freshen`
+
+Recover completed derivatives after an erroneous upstream rebuild without rerunning
+scientifically unchanged work:
+
+```bash
+nro freshen -P climb -p c001 -m func clean --dry-run
+nro freshen -P climb -p c001 -m func clean
+```
+
+The command validates matching work items in dependency order. It accepts only stale
+items whose current scientific contract, direct-input fingerprints, dependency set,
+and recorded artifacts are unchanged. It refuses missing or corrupt artifacts,
+changed contracts or inputs, and active attempts. A rejected upstream also rejects
+its selected descendants.
+
+For accepted items, `freshen` advances output timestamps past their validated inputs
+and rebinds completion records to the current upstream generations. It does not
+advance artifact generations or change file contents. This is an explicit recovery
+operation for incorrect invalidation; it is not a substitute for rerunning work after
+a scientific change.
+
+The default command pages through the validation report and asks for confirmation.
+Use `--dry-run` to stop after the preview, `-f`/`--force` to skip confirmation, or
+`--json` with either noninteractive mode for structured output.
+
 ## `nro project rename`
 
 Rename a BIDS project after stopping its demand and active work:
