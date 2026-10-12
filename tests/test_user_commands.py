@@ -774,7 +774,9 @@ def test_status_report_pages_only_interactive_output(monkeypatch, capsys) -> Non
         lambda command, **kwargs: calls.append((command, kwargs)),
     )
     page_text(report, use_pager=True)
-    assert calls == [(["/usr/bin/less", "-R"], {"input": report, "text": True, "check": False})]
+    assert calls == [
+        (["/usr/bin/less", "-R", "-S"], {"input": report, "text": True, "check": False})
+    ]
 
 
 @pytest.mark.parametrize(
@@ -782,9 +784,9 @@ def test_status_report_pages_only_interactive_output(monkeypatch, capsys) -> Non
     [
         (
             "  --header N    keep N header lines",
-            ["/usr/bin/less", "-R", "--header", "1"],
+            ["/usr/bin/less", "-R", "-S", "--header", "1"],
         ),
-        ("classic less help", ["/usr/bin/less", "-R"]),
+        ("classic less help", ["/usr/bin/less", "-R", "-S"]),
     ],
 )
 def test_status_pager_uses_sticky_header_only_when_less_supports_it(

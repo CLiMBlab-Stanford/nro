@@ -40,6 +40,7 @@ from nro.orchestration.resource_handoff import RESOURCE_HANDOFF_EXIT
 from nro.orchestration.resources import WORKER_COMPATIBILITY
 from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_implementation import validate_worker_script
+from nro.orchestration.service_relief import await_service_relief
 from nro.site.paths import BIDS_PATH
 
 COMPATIBLE = WORKER_COMPATIBILITY
@@ -345,6 +346,24 @@ class Worker:
         )
         self.launcher = launcher or SubprocessExecutionLauncher()
         self.stop_requested = False
+        self.service_relief: str | None = None
+
+    def _retire_for_service(self) -> bool:
+        """Retire this idle allocation when it directly blocks a control service."""
+        service = await_service_relief(
+            self.registry.paths.control,
+            worker_id=self.worker_id,
+            worker_memory_gb=self.memory_gb,
+            poll_seconds=self.poll_interval,
+        )
+        if service is None:
+            return False
+        self.service_relief = service.name
+        self._log(
+            f"retiring idle allocation for pending {service.name} job {service.job_id} "
+            f"({service.reason})"
+        )
+        return True
 
     def _allocation_timed_out(self, return_code: int) -> bool:
         """Identify SIGTERM delivered at the worker allocation deadline."""
@@ -1094,6 +1113,8 @@ class Worker:
         """
         signal.signal(signal.SIGTERM, self._signal)
         signal.signal(signal.SIGINT, self._signal)
+        if self._retire_for_service():
+            return 0
         self.registry.register_worker(
             self.worker_id,
             resource_class=self.resource_class,
@@ -1109,6 +1130,8 @@ class Worker:
         idle_announced = False
         try:
             while not self.stop_requested:
+                if self._retire_for_service():
+                    break
                 if self.registry.worker_shutdown_requested(self.worker_id):
                     self.stop_requested = True
                     self._log("shutdown requested by owning user")
@@ -1198,8 +1221,9 @@ class Worker:
             raise
         finally:
             final_state = "terminated" if self.stop_requested else "exited"
-            self.registry.close_worker(self.worker_id, state=final_state)
-            if not self.stop_requested:
+            if self.service_relief != "scheduler":
+                self.registry.close_worker(self.worker_id, state=final_state)
+            if not self.stop_requested and self.service_relief is None:
                 try:
                     self._expand_ready_pool()
                 except BaseException as error:
@@ -1208,10 +1232,11 @@ class Worker:
                         file=sys.stderr,
                     )
             self._log(f"stopped (state={final_state})")
-            if hasattr(self.registry, "cleanup_cache"):
-                self.registry.cleanup_cache()
-            else:
-                cleanup_cache(self.registry)
+            if self.service_relief != "scheduler":
+                if hasattr(self.registry, "cleanup_cache"):
+                    self.registry.cleanup_cache()
+                else:
+                    cleanup_cache(self.registry)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -192,7 +192,7 @@ def test_main_opens_all_matching_logs_in_one_less_session(tmp_path: Path, monkey
         ]
     )
 
-    assert commands == [["/usr/bin/less", "-R", "--", str(func_work_item.resolve())]]
+    assert commands == [["/usr/bin/less", "-R", "-S", "--", str(func_work_item.resolve())]]
 
 
 def test_worker_option_opens_matching_worker_logs(tmp_path: Path, monkeypatch) -> None:
@@ -212,7 +212,7 @@ def test_worker_option_opens_matching_worker_logs(tmp_path: Path, monkeypatch) -
     )
     log_cli.main(["-P", "demo", "-m", "func", "-i", f"func/{directory}", "--worker"])
 
-    assert commands == [["/usr/bin/less", "-R", "--", str(func_worker.resolve())]]
+    assert commands == [["/usr/bin/less", "-R", "-S", "--", str(func_worker.resolve())]]
 
 
 def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, monkeypatch) -> None:
@@ -241,7 +241,7 @@ def test_bidsify_module_selector_opens_matching_ingestion_logs(tmp_path: Path, m
 
     log_cli.main(["-m", "bidsify", "-P", "demo", "-p", "01", "-r", "ses=visit1"])
 
-    assert commands == [["/usr/bin/less", "-R", "--", str(request_log.resolve())]]
+    assert commands == [["/usr/bin/less", "-R", "-S", "--", str(request_log.resolve())]]
     selection = core_selection(log_cli.build_parser().parse_args(["-m", "bidsify"]))
     assert log_cli.collect_bidsify_log_paths(registry, selection) == [request_log.resolve()]
     assert log_cli.collect_bidsify_log_paths(registry, selection, running_only=True) == []

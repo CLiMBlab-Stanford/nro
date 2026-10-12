@@ -243,7 +243,7 @@ def page_text(
     if less is None:
         sys.stdout.write(text)
         return
-    command = [less, "-R"]
+    command = [less, "-R", "-S"]
     if header_lines > 0 and _less_supports_header(less):
         command.extend(("--header", str(header_lines)))
     try:
