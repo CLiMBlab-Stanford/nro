@@ -52,9 +52,7 @@ def _write(path: Path, content: str = "x") -> None:
 def test_functional_memory_uses_field_strength_and_image_size(
     tmp_path: Path, monkeypatch, shape, field_strength, expected
 ) -> None:
-    monkeypatch.setattr(
-        func_planning.nib, "load", lambda _path: type("Image", (), {"shape": shape})()
-    )
+    monkeypatch.setattr(func_planning, "_image_shape", lambda _path: shape)
 
     assert (
         func_planning.functional_memory_gb(

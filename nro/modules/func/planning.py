@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-import nibabel as nib
-
 from nro.definitions.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.functional_references import (
@@ -21,8 +19,11 @@ from nro.engine.paths import functional_manifest_path, module_subject_dir
 from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.func.contract import final_resampling_contract
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
-from nro.orchestration.resources import memory_tiers
+from nro.orchestration.planning_context import (
+    SubjectPlanningContext,
+    planning_memory_tier,
+    work_item_key,
+)
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
@@ -31,6 +32,16 @@ if TYPE_CHECKING:
 _SEVEN_TESLA_MINIMUM_MEMORY_GB = 64
 _FLOAT32_BYTES = 4
 _FUNCTIONAL_WORKING_ARRAYS = 5
+
+
+def _image_shape(path: Path) -> tuple[int, ...]:
+    from nibabel import load
+    from nibabel.filebasedimages import ImageFileError
+
+    try:
+        return tuple(int(extent) for extent in load(str(path)).shape)
+    except ImageFileError as error:
+        raise ValueError(str(error)) from error
 
 
 def functional_memory_gb(
@@ -49,18 +60,15 @@ def functional_memory_gb(
     if field_strength >= 6.5:
         required = max(required, _SEVEN_TESLA_MINIMUM_MEMORY_GB)
     try:
-        shape = nib.load(str(bold)).shape
+        shape = _image_shape(bold)
         voxels = 1
         for extent in shape:
             voxels *= int(extent)
         estimated_bytes = voxels * _FLOAT32_BYTES * _FUNCTIONAL_WORKING_ARRAYS
         required = max(required, (estimated_bytes + (1024**3 - 1)) // 1024**3)
-    except (OSError, ValueError, nib.filebasedimages.ImageFileError):
+    except (OSError, ValueError):
         pass
-    for tier in memory_tiers(initial_gb, maximum_gb):
-        if tier >= required:
-            return tier
-    return maximum_gb
+    return planning_memory_tier(required, initial_gb, maximum_gb)
 
 
 def load_session_inventory(run: BidsRun, *, markup=None) -> ReferenceInventory:
