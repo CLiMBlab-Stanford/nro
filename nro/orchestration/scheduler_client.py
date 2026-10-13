@@ -184,10 +184,59 @@ def _wait_notice(frame: int, message: str) -> bool:
     return True
 
 
-def startup_notice(message: str) -> None:
-    """Report work that precedes the scheduler exchange loop."""
-    if sys.stderr.isatty():
-        print(f"• {message}", file=sys.stderr, flush=True)
+class _ProgressNotice:
+    """Render replaceable scheduler progress throughout a command lifecycle."""
+
+    def __init__(self, *, interval: float = 0.5) -> None:
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._message = ""
+        self._frame = 0
+        self._thread: threading.Thread | None = None
+
+    def update(self, message: str) -> None:
+        """Start the display or replace its current message in place."""
+        if not sys.stderr.isatty():
+            return
+        with self._lock:
+            self._message = message
+            if self._thread is not None:
+                return
+            _wait_notice(self._frame, self._message)
+            self._frame += 1
+            self._thread = threading.Thread(
+                target=self._animate,
+                name="scheduler-client-progress",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def _animate(self) -> None:
+        while not self._stop.wait(self._interval):
+            with self._lock:
+                _wait_notice(self._frame, self._message)
+                self._frame += 1
+
+    def clear(self) -> None:
+        """Stop rendering and remove the transient terminal line."""
+        with self._lock:
+            thread = self._thread
+            if thread is None:
+                return
+            self._stop.set()
+        thread.join(timeout=max(1.0, self._interval * 2))
+        with self._lock:
+            sys.stderr.write(_CLEAR)
+            sys.stderr.flush()
+            self._thread = None
+
+
+def startup_notice(message: str) -> _ProgressNotice:
+    """Begin replaceable progress before the scheduler exchange loop."""
+    notice = _ProgressNotice()
+    notice.update(message)
+    return notice
 
 
 def _progress_notice(record: dict | None, fallback: str) -> str:
@@ -423,10 +472,11 @@ def start(
     return {"state": "starting", "job_id": str((launching or {}).get("job_id") or "")}
 
 
-def exchange(
+def _exchange(
     endpoint: SchedulerEndpoint,
     message: dict,
     *,
+    notice: _ProgressNotice,
     descriptors: tuple[int, ...] = (),
     timeout: float | None = DEFAULT_RPC_TIMEOUT_SECONDS,
     require_service: bool = False,
@@ -466,8 +516,6 @@ def exchange(
     last_recovery_check = started
     active_token: str | None = None
     active_started: float | None = None
-    frame = 0
-    notice = False
     attempted_endpoint: tuple[str, int] | None = None
     direct_attempt: _DirectAttempt | None = None
     pending_poll_seconds = PENDING_REQUEST_INITIAL_POLL_SECONDS
@@ -479,9 +527,6 @@ def exchange(
             launch_token = str(launch.get("token") or "")
             startup_error = read_startup_error(endpoint.control, launch_token)
             if startup_error is not None:
-                if notice:
-                    sys.stderr.write(_CLEAR)
-                    sys.stderr.flush()
                 raise SchedulerError(
                     "Central scheduler could not start: " + str(startup_error["error"])
                 )
@@ -534,9 +579,6 @@ def exchange(
                             pending_poll_seconds * 2.0,
                         )
                         continue
-                    if notice:
-                        sys.stderr.write(_CLEAR)
-                        sys.stderr.flush()
                     return _response_result(response)
         elif active_token is not None:
             launch_token = str(launch.get("token") or "") if launch is not None else ""
@@ -555,9 +597,6 @@ def exchange(
         else:
             timed_elapsed = now - started
         if timeout is not None and timed_elapsed is not None and timed_elapsed >= timeout:
-            if notice:
-                sys.stderr.write(_CLEAR)
-                sys.stderr.flush()
             disposition = (
                 f"request {message_id} remains recorded"
                 if durable
@@ -575,9 +614,6 @@ def exchange(
             if not service_available and not require_service:
                 response = _run_once(endpoint, record, durable=durable)
                 if response is not None:
-                    if notice:
-                        sys.stderr.write(_CLEAR)
-                        sys.stderr.flush()
                     return _response_result(response)
             last_recovery_check = now
             attempted_endpoint = None
@@ -595,9 +631,36 @@ def exchange(
                 else "Connecting to the scheduler..."
             )
             message_text = _progress_notice(progress, fallback)
-            notice = _wait_notice(frame, message_text) or notice
-            frame += 1
+            notice.update(message_text)
         time.sleep(0.1 if elapsed < 2 else 0.5)
+
+
+def exchange(
+    endpoint: SchedulerEndpoint,
+    message: dict,
+    *,
+    descriptors: tuple[int, ...] = (),
+    timeout: float | None = DEFAULT_RPC_TIMEOUT_SECONDS,
+    require_service: bool = False,
+    start_epoch: bool = False,
+    durable: bool = True,
+    progress: _ProgressNotice | None = None,
+) -> dict:
+    """Send one request while maintaining a single transient progress line."""
+    notice = progress or _ProgressNotice()
+    try:
+        return _exchange(
+            endpoint,
+            message,
+            notice=notice,
+            descriptors=descriptors,
+            timeout=timeout,
+            require_service=require_service,
+            start_epoch=start_epoch,
+            durable=durable,
+        )
+    finally:
+        notice.clear()
 
 
 def _cached_status(control: Path, checkout: Path) -> dict:

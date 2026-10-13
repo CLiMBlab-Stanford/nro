@@ -125,13 +125,16 @@ def delete_definition(
         return backup
 
 
-def _private_directory(path: Path) -> None:
-    """Require a real directory owned by this user and inaccessible to others."""
+def _draft_directory(path: Path) -> None:
+    """Require an owned, group-maintainable directory with no public access."""
     if path.is_symlink() or not path.is_dir():
-        raise ValueError(f"Invalid private definition-draft directory: {path}")
+        raise ValueError(f"Invalid definition-draft directory: {path}")
     status = path.stat()
-    if status.st_uid != os.geteuid() or stat.S_IMODE(status.st_mode) & 0o077:
-        raise ValueError(f"Definition-draft directory is not private to this user: {path}")
+    permissions = stat.S_IMODE(status.st_mode)
+    if status.st_uid != os.geteuid():
+        raise ValueError(f"Definition-draft directory belongs to another user: {path}")
+    if permissions & 0o007 or permissions & 0o070 != 0o070:
+        raise ValueError(f"Definition-draft directory has unsafe permissions: {path}")
 
 
 def definition_draft_path(path: Path, store_root: Path) -> Path:
@@ -158,19 +161,19 @@ def definition_draft_path(path: Path, store_root: Path) -> Path:
 
     private = shared / f"user-{os.geteuid()}"
     try:
-        private.mkdir(mode=0o700)
-        private.chmod(0o700)
+        private.mkdir(mode=0o2770)
+        private.chmod(0o2770)
     except FileExistsError:
-        _private_directory(private)
+        _draft_directory(private)
 
     parent = private
     for component in relative.parts[1:-1]:
         parent = parent / component
         try:
-            parent.mkdir(mode=0o700)
-            parent.chmod(0o700)
+            parent.mkdir(mode=0o2770)
+            parent.chmod(0o2770)
         except FileExistsError:
-            _private_directory(parent)
+            _draft_directory(parent)
     return parent / relative.name
 
 
@@ -178,8 +181,8 @@ def definition_draft_path(path: Path, store_root: Path) -> Path:
 def _draft_lock(draft: Path):
     """Prevent two commands from editing one user's saved draft concurrently."""
     lock = draft.with_name(f".{draft.name}.lock")
-    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    os.fchmod(descriptor, 0o600)
+    descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o620)
+    os.fchmod(descriptor, 0o620)
     with os.fdopen(descriptor, "a") as stream:
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -224,7 +227,7 @@ def _prepare_draft(
                 return None
             print("Choose r to recover, s to start over, or q to cancel.")
     draft.write_text(initial, encoding="utf-8")
-    draft.chmod(0o600)
+    draft.chmod(0o620)
     return "fresh"
 
 
@@ -260,12 +263,12 @@ def review_definition(
     store_root: Path | None = None,
     validate_store: Callable[[Path], None] | None = None,
 ) -> bool:
-    """Edit a private draft and publish it after a successful editor write.
+    """Edit a user-specific draft and publish it after a successful editor write.
 
     source supplies a local file instead of opening an editor. Interactive edits
     publish after the editor changes or rewrites the draft; exiting without a
     write leaves the stored definition unchanged. Invalid or interrupted work
-    remains in a private draft and is offered on the next edit.
+    remains in a saved draft and is offered on the next edit.
     """
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if not interactive and source is None:
@@ -310,7 +313,7 @@ def review_definition(
 
                 text = normalize_managed_text(path, text)
                 draft.write_text(text, encoding="utf-8")
-                draft.chmod(0o600)
+                draft.chmod(0o620)
                 try:
                     validate(text)
                 except ValueError as error:
