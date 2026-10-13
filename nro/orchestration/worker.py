@@ -308,6 +308,16 @@ def _looks_like_oom(log_path: Path, return_code: int) -> bool:
         return False
     if "cuda out of memory" in text or "torch.outofmemoryerror" in text:
         return False
+    nested_host_oom = any(
+        marker in text
+        for marker in (
+            "command failed (137)",
+            "return code: 137",
+            "exit code: 137",
+        )
+    )
+    if nested_host_oom:
+        return True
     return any(
         marker in text for marker in ("out of memory", "out_of_memory", "oom_kill", "oom-kill")
     )

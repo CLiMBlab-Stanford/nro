@@ -9,11 +9,20 @@ from typing import Mapping
 from nro.definitions.markup import SubjectMarkup
 from nro.definitions.store import ResolvedWorkflow, fingerprint
 from nro.engine.bids import BidsRun
+from nro.orchestration.resources import memory_tiers
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 
 
 class ParticipantUnavailableError(RuntimeError):
     """The selected participant cannot support any work item of the target."""
+
+
+def planning_memory_tier(required_gb: int, initial_gb: int, maximum_gb: int) -> int:
+    """Return the smallest schedulable memory tier meeting a planning estimate."""
+    for tier in memory_tiers(initial_gb, maximum_gb):
+        if tier >= required_gb:
+            return tier
+    return maximum_gb
 
 
 def work_item_key(

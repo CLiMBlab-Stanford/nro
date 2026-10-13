@@ -70,6 +70,16 @@ def test_host_memory_failure_requests_more_host_memory(tmp_path: Path) -> None:
     assert _looks_like_oom(log, 1)
 
 
+def test_nested_host_memory_failure_requests_more_host_memory(tmp_path: Path) -> None:
+    log = tmp_path / "attempt.log"
+    log.write_text(
+        "applywarp failed with return code: 137\nCommand failed (137): container exec\n",
+        encoding="utf-8",
+    )
+
+    assert _looks_like_oom(log, 1)
+
+
 def test_dag_construction_failure_does_not_request_more_memory(tmp_path: Path) -> None:
     log = tmp_path / "attempt.log"
     log.write_text(
@@ -159,7 +169,7 @@ def _disable_ownership_writes(monkeypatch) -> None:
     monkeypatch.setattr("nro.orchestration.manifests.write_work_item_ownership", replacement)
 
 
-def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Path) -> None:
+def test_worker_resources_do_not_change_scientific_freshness(tmp_path: Path) -> None:
     workflow = ConfigStore().resolve("main")
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     registered = registry.register_workflow(workflow)
@@ -172,7 +182,7 @@ def test_worker_resource_class_does_not_change_scientific_freshness(tmp_path: Pa
         output=tmp_path / "anat.txt",
     )
 
-    gpu = general.evolve(resource_class="gpu")
+    gpu = general.evolve(resource_class="gpu", memory_gb=64, max_memory_gb=512)
 
     assert gpu.contract_fingerprint == general.contract_fingerprint
     assert gpu.work_item_contract == general.work_item_contract

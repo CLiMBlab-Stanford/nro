@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Mapping
 from nro.definitions.hardware import gradient_unwarping_records
 from nro.engine.bids import BidsRun, run_arguments
 from nro.engine.functional_references import (
+    ImageRec,
     ReferenceInventory,
     load_rec,
     load_reference_inventory,
@@ -18,10 +19,56 @@ from nro.engine.paths import functional_manifest_path, module_subject_dir
 from nro.engine.source_metadata import semantic_metadata_snapshot
 from nro.modules.func.contract import final_resampling_contract
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
+from nro.orchestration.planning_context import (
+    SubjectPlanningContext,
+    planning_memory_tier,
+    work_item_key,
+)
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
+
+
+_SEVEN_TESLA_MINIMUM_MEMORY_GB = 64
+_FLOAT32_BYTES = 4
+_FUNCTIONAL_WORKING_ARRAYS = 5
+
+
+def _image_shape(path: Path) -> tuple[int, ...]:
+    from nibabel import load
+    from nibabel.filebasedimages import ImageFileError
+
+    try:
+        return tuple(int(extent) for extent in load(str(path)).shape)
+    except ImageFileError as error:
+        raise ValueError(str(error)) from error
+
+
+def functional_memory_gb(
+    bold: Path,
+    metadata: Mapping[str, object],
+    *,
+    initial_gb: int,
+    maximum_gb: int,
+) -> int:
+    """Choose a worker tier from field strength and native 4D image size."""
+    required = initial_gb
+    try:
+        field_strength = float(metadata.get("MagneticFieldStrength", 0))
+    except (TypeError, ValueError):
+        field_strength = 0.0
+    if field_strength >= 6.5:
+        required = max(required, _SEVEN_TESLA_MINIMUM_MEMORY_GB)
+    try:
+        shape = _image_shape(bold)
+        voxels = 1
+        for extent in shape:
+            voxels *= int(extent)
+        estimated_bytes = voxels * _FLOAT32_BYTES * _FUNCTIONAL_WORKING_ARRAYS
+        required = max(required, (estimated_bytes + (1024**3 - 1)) // 1024**3)
+    except (OSError, ValueError):
+        pass
+    return planning_memory_tier(required, initial_gb, maximum_gb)
 
 
 def load_session_inventory(run: BidsRun, *, markup=None) -> ReferenceInventory:
@@ -39,9 +86,10 @@ def resolved_func_inputs(
     sdc_from_sbref_pair: bool,
     session_inventory: ReferenceInventory,
     markup=None,
+    bold: ImageRec | None = None,
 ) -> tuple[Path, ...]:
     """Mirror functional reference and fieldmap selection for exact inputs."""
-    bold = load_rec(run.path, markup=markup)
+    bold = bold or load_rec(run.path, markup=markup)
     result: list[Path] = [bold.img]
     explicit_references = bold.metadata.get("NROReferencePolicy") == "explicit"
     use_fmaps = explicit_references or not sdc_from_sbref_pair
@@ -84,6 +132,7 @@ def plan_work_items(
     inventories: dict[Path, ReferenceInventory] = {}
     result: list[WorkItemSpec] = []
     for run in context.runs:
+        bold = load_rec(run.path, markup=context.source_markup)
         inventory_key = run.path.parent.parent.resolve()
         if inventory_key not in inventories:
             inventories[inventory_key] = load_session_inventory(run, markup=context.source_markup)
@@ -93,6 +142,7 @@ def plan_work_items(
             sdc_from_sbref_pair=sdc_from_sbref_pair,
             session_inventory=inventories[inventory_key],
             markup=context.source_markup,
+            bold=bold,
         )
         images = [path for path in direct_inputs if path.name.endswith((".nii", ".nii.gz"))]
         gradient_records, gradient_resolutions = gradient_unwarping_records(
@@ -140,7 +190,12 @@ def plan_work_items(
                 output_prefix=run.stem,
                 output_format=descriptor.output_format,
                 resource_class=descriptor.resource_class,
-                memory_gb=context.memory_gb,
+                memory_gb=functional_memory_gb(
+                    bold.img,
+                    bold.metadata,
+                    initial_gb=context.memory_gb,
+                    maximum_gb=context.max_memory_gb,
+                ),
                 max_memory_gb=context.max_memory_gb,
                 expected_outputs=(
                     functional_manifest_path(
