@@ -313,8 +313,27 @@ def test_failed_or_cancelled_edits_preserve_store_and_draft(store, monkeypatch, 
     assert drafts[0].is_file()
     assert drafts[0].is_relative_to(store.root)
     assert ".definition-drafts" in drafts[0].parts
-    assert drafts[0].stat().st_mode & 0o077 == 0
+    permissions = drafts[0].stat().st_mode & 0o777
+    assert permissions & 0o057 == 0
+    assert permissions & 0o020
     assert "Draft retained" in capsys.readouterr().err
+
+
+def test_existing_group_maintainable_draft_directory_is_accepted(store) -> None:
+    target = store.workflow_path("main")[1]
+    draft = definition_editor.definition_draft_path(target, store.root)
+    draft.parent.chmod(0o770)
+
+    assert definition_editor.definition_draft_path(target, store.root) == draft
+
+
+def test_publicly_accessible_draft_directory_is_rejected(store) -> None:
+    target = store.workflow_path("main")[1]
+    draft = definition_editor.definition_draft_path(target, store.root)
+    draft.parent.chmod(0o777)
+
+    with pytest.raises(ValueError, match="unsafe permissions"):
+        definition_editor.definition_draft_path(target, store.root)
 
 
 def test_exiting_editor_without_write_does_not_publish_or_retain_fresh_draft(

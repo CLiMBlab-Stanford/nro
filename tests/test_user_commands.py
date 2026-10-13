@@ -120,7 +120,32 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
         "--no-submit",
         "--json",
     ]
+    progress = calls[2][3].pop("progress")
+    assert isinstance(progress, scheduler_client._ProgressNotice)
     assert calls[2][3] == {"timeout": None, "require_service": True, "start_epoch": True}
+
+
+def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> None:
+    from nro.orchestration import scheduler_client
+
+    class Terminal(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    terminal = Terminal()
+    monkeypatch.setattr(scheduler_client.sys, "stderr", terminal)
+    notice = scheduler_client._ProgressNotice(interval=0.01)
+    notice.update("Preparing scheduler request...")
+    scheduler_client.time.sleep(0.025)
+    notice.update("Waiting for the scheduler allocation...")
+    scheduler_client.time.sleep(0.025)
+    notice.clear()
+
+    rendered = terminal.getvalue()
+    assert "Preparing scheduler request..." in rendered
+    assert "Waiting for the scheduler allocation..." in rendered
+    assert rendered.count(scheduler_client._CLEAR) >= 4
+    assert "\n" not in rendered
 
 
 def test_scheduler_exchange_reports_timeout(monkeypatch, tmp_path) -> None:

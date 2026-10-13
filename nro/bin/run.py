@@ -522,39 +522,43 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
         control = Path(values["registry"])
-        startup_notice("Preparing scheduler request...")
-        endpoint = command(control, bids_root)
-        installed_source = record.get("application_digest")
-        if installed_source:
-            source_digest = str(installed_source)
-            source_kind = "installed"
-        else:
-            source_digest = source_fingerprint(execution_source_root())
-            source_kind = "checkout"
-        # Submit both services without serial queue latency when neither exists.
-        # A live scheduler owns planner lifecycle for subsequent invocations.
-        if read_active(control) is None:
-            ensure_planner(endpoint)
-        result = exchange(
-            endpoint,
-            {
-                "operation": "plan_run",
-                "checkout": str(site.CHECKOUT),
-                "request": {
-                    "execution": {
-                        "kind": source_kind,
-                        "digest": source_digest,
-                        "site_values": dict(values),
-                    },
-                    "python": sys.executable,
+        progress = startup_notice("Preparing scheduler request...")
+        try:
+            endpoint = command(control, bids_root)
+            installed_source = record.get("application_digest")
+            if installed_source:
+                source_digest = str(installed_source)
+                source_kind = "installed"
+            else:
+                source_digest = source_fingerprint(execution_source_root())
+                source_kind = "checkout"
+            # Submit both services without serial queue latency when neither exists.
+            # A live scheduler owns planner lifecycle for subsequent invocations.
+            if read_active(control) is None:
+                ensure_planner(endpoint)
+            result = exchange(
+                endpoint,
+                {
+                    "operation": "plan_run",
                     "checkout": str(site.CHECKOUT),
-                    "argv": raw_argv,
+                    "request": {
+                        "execution": {
+                            "kind": source_kind,
+                            "digest": source_digest,
+                            "site_values": dict(values),
+                        },
+                        "python": sys.executable,
+                        "checkout": str(site.CHECKOUT),
+                        "argv": raw_argv,
+                    },
                 },
-            },
-            timeout=None,
-            require_service=True,
-            start_epoch=True,
-        )
+                timeout=None,
+                require_service=True,
+                start_epoch=True,
+                progress=progress,
+            )
+        finally:
+            progress.clear()
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
