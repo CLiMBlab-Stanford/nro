@@ -40,6 +40,33 @@ def _write(path: Path, content: str = "x") -> None:
     path.write_text(content)
 
 
+@pytest.mark.parametrize(
+    ("shape", "field_strength", "expected"),
+    (
+        ((96, 96, 60, 300), 3, 32),
+        ((96, 96, 60, 300), 7, 64),
+        ((224, 224, 144, 327), 7, 64),
+        ((224, 224, 144, 700), 3, 128),
+    ),
+)
+def test_functional_memory_uses_field_strength_and_image_size(
+    tmp_path: Path, monkeypatch, shape, field_strength, expected
+) -> None:
+    monkeypatch.setattr(
+        func_planning.nib, "load", lambda _path: type("Image", (), {"shape": shape})()
+    )
+
+    assert (
+        func_planning.functional_memory_gb(
+            tmp_path / "bold.nii.gz",
+            {"MagneticFieldStrength": field_strength},
+            initial_gb=32,
+            maximum_gb=256,
+        )
+        == expected
+    )
+
+
 @pytest.fixture
 def branch_registry(tmp_path: Path) -> Registry:
     bids = tmp_path / "bids"
