@@ -31,16 +31,31 @@ from nro.site import (
 from nro.site.setup import edit_settings, save_settings
 
 
-def test_marss_greenlet_has_python312_glibc217_wheels() -> None:
+def test_locked_native_dependencies_have_python312_glibc217_wheels() -> None:
     lock = tomllib.loads((Path(__file__).parents[1] / "uv.lock").read_text())
-    greenlet = next(package for package in lock["package"] if package["name"] == "greenlet")
-    wheels = {Path(wheel["url"]).name for wheel in greenlet["wheels"]}
-    for architecture in ("aarch64", "x86_64"):
+    packages = {package["name"]: package for package in lock["package"]}
+    native = {
+        "contourpy",
+        "greenlet",
+        "h5py",
+        "igraph",
+        "leidenalg",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pillow",
+        "pyzmq",
+        "scikit-learn",
+        "scipy",
+        "zstandard",
+    }
+    for name in native:
+        wheels = {Path(wheel["url"]).name for wheel in packages[name]["wheels"]}
         assert any(
-            name.startswith("greenlet-3.2.4-cp312-cp312-manylinux2014_")
-            and name.endswith(f"manylinux_2_17_{architecture}.whl")
-            for name in wheels
-        )
+            ("-cp312-" in wheel or "-abi3-" in wheel)
+            and ("manylinux2014_x86_64" in wheel or "manylinux_2_17_x86_64" in wheel)
+            for wheel in wheels
+        ), name
 
 
 def test_container_versions_match_managed_resource_names() -> None:
