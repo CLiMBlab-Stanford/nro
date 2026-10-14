@@ -444,6 +444,11 @@ def _main(argv=None) -> None:
     parser.add_argument("--site", type=Path)
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument(
+        "--default-parent-dir",
+        type=Path,
+        help="parent for proposed site storage and resource paths during first setup",
+    )
+    parser.add_argument(
         "--default",
         dest="set_default",
         action="store_true",
@@ -514,6 +519,7 @@ def _main(argv=None) -> None:
             args.drain,
             args.site,
             args.bin_dir,
+            args.default_parent_dir,
             args.set_default,
             args.replace_launcher,
             args.convert_to_branch,
@@ -552,6 +558,8 @@ def _main(argv=None) -> None:
         parser.error(
             "This installation record belongs to a different checkout; configure a fresh installation"
         )
+    if existing and args.default_parent_dir is not None:
+        parser.error("--default-parent-dir applies only to a first installation")
     if args.convert_to_branch:
         if not existing or args.mode or args.maintain or args.set_default:
             parser.error(
@@ -598,6 +606,16 @@ def _main(argv=None) -> None:
             else Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nro/site.toml"
         )
     )
+    default_parent_dir = (
+        args.default_parent_dir.expanduser().resolve()
+        if args.default_parent_dir is not None
+        else None
+    )
+    if default_parent_dir is not None and (mode == "branch" or site.exists()):
+        parser.error(
+            "--default-parent-dir requires a first personal or shared installation "
+            "with a new site configuration"
+        )
     branch_name = None
     if mode == "branch":
         if not site.is_file():
@@ -626,6 +644,7 @@ def _main(argv=None) -> None:
 
         def prepare_shared_site(*, migrate: bool) -> None:
             from nro.site.setup import (
+                default_parent_paths,
                 edit_settings,
                 migrate_site_configuration,
                 save_settings,
@@ -633,9 +652,18 @@ def _main(argv=None) -> None:
 
             if not site.exists():
                 if args.non_interactive:
-                    save_settings(site, {})
+                    save_settings(
+                        site,
+                        {}
+                        if default_parent_dir is None
+                        else default_parent_paths(default_parent_dir),
+                    )
                 else:
-                    edit_settings(path=site, maintain=True)
+                    edit_settings(
+                        path=site,
+                        maintain=True,
+                        default_parent_dir=default_parent_dir,
+                    )
                     if not site.exists():
                         raise RuntimeError("Path setup was cancelled")
             if migrate:

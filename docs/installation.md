@@ -314,6 +314,12 @@ These are suggestions, not directories created by the editor. Previously
 configured paths and environment overrides are retained even if unavailable.
 Interactive and noninteractive setup use the same resolved defaults.
 
+Use `./install --default-parent-dir /path/to/parent` during a first personal or
+shared installation to propose `/path/to/parent` instead of `~/nro` for all
+site storage and resource paths. The option does not move the checkout,
+launcher, or site locator, and it cannot modify an existing site or branch
+installation.
+
 The `definitions` locator selects the site-owned repository. It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic

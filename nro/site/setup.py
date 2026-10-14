@@ -15,6 +15,7 @@ from nro.site.configuration import (
     LAB,
     PATH_KEYS,
     _definitions_from_locator,
+    default_parent_paths,
     generic_defaults,
     installation_record,
     read_overrides,
@@ -32,8 +33,10 @@ DESCRIPTIONS = {
 }
 
 
-def interactive_defaults(sources: dict) -> dict:
+def interactive_defaults(sources: dict, *, default_parent_dir: Path | None = None) -> dict:
     """Suggest generic storage when lab storage is unavailable; retain explicit settings."""
+    if default_parent_dir is not None:
+        return default_parent_paths(default_parent_dir)
     if LAB.is_dir() and os.access(LAB, os.R_OK | os.X_OK):
         return {}
     return {
@@ -201,7 +204,15 @@ def migrate_site_configuration(path: Path) -> Path:
     return protected_path
 
 
-def edit_settings(assignments=None, *, maintain=False, path=None, live=False, quiet=False) -> None:
+def edit_settings(
+    assignments=None,
+    *,
+    maintain=False,
+    path=None,
+    live=False,
+    quiet=False,
+    default_parent_dir: Path | None = None,
+) -> None:
     """Edit independent site values interactively or from key=value assignments.
 
     Shared edits require maintenance authorization and an inactive worker pool.
@@ -245,7 +256,7 @@ def edit_settings(assignments=None, *, maintain=False, path=None, live=False, qu
         readline.set_completer(complete)
         readline.parse_and_bind("tab: complete")
         try:
-            proposals = interactive_defaults(sources)
+            proposals = interactive_defaults(sources, default_parent_dir=default_parent_dir)
             values.update(proposals)
             if "binds" in proposals:
                 overrides["binds"] = proposals["binds"]
