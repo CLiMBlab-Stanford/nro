@@ -1,25 +1,261 @@
-#!/usr/bin/env python3
-"""Set up this checkout or connect a user to its shared installation."""
+#!/bin/sh
 
-import os
-import runpy
-import sys
-from pathlib import Path
+set -eu
+umask 022
 
-if sys.version_info < (3, 11):
-    sys.exit("The installer needs Python 3.11 or newer; it installs Python 3.12 for nro.")
-os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
-sys.dont_write_bytecode = True
-root = Path(__file__).resolve().parent
-script = Path(__file__).resolve()
-managed_python = root / ".venv/bin/python"
-if "--rehearse-upgrade" in sys.argv and sys.prefix == sys.base_prefix and managed_python.is_file():
-    os.execv(str(managed_python), [str(managed_python), str(script), *sys.argv[1:]])
-in_rehearsal_environment = (
-    "--rehearse-upgrade" in sys.argv
-    and Path(sys.prefix).resolve() == managed_python.parent.parent.resolve()
-)
-if not in_rehearsal_environment:
-    bootstrap_dependencies = runpy.run_path(str(root / "nro/site/bootstrap_dependencies.py"))
-    bootstrap_dependencies["enter"](root, script, sys.argv[1:])
-runpy.run_path(str(root / "nro/site/bootstrap.py"), run_name="__main__")
+script=$0
+while [ -L "$script" ]; do
+    link=$(readlink "$script")
+    case $link in
+        /*) script=$link ;;
+        *) script=$(dirname "$script")/$link ;;
+    esac
+done
+root=$(CDPATH= cd "$(dirname "$script")" && pwd -P)
+pins=$root/nro/site/bootstrap.pins
+
+rehearse=false
+offline=false
+maintain=false
+for argument do
+    case $argument in
+        --rehearse-upgrade|--rehearse-upgrade=*) rehearse=true ;;
+        --offline) offline=true ;;
+        --maintain) maintain=true ;;
+    esac
+done
+
+if [ "$rehearse" = true ] && [ -x "$root/.venv/bin/python" ]; then
+    cd "$root"
+    exec "$root/.venv/bin/python" -B -m nro.site.bootstrap "$@"
+fi
+
+if [ ! -r "$pins" ]; then
+    echo "Setup incomplete: missing bootstrap pins: $pins" >&2
+    exit 1
+fi
+# This repository-owned file contains only trusted shell assignments.
+. "$pins"
+pin_line=$(sha256sum "$pins")
+pin_digest=${pin_line%% *}
+export NRO_BOOTSTRAP_TARGET="$root/.nro-bootstraps/$pin_digest"
+
+lock=$root/.nro-install.lock.d
+host=$(uname -n)
+acquire_lock() {
+    if mkdir "$lock" 2>/dev/null; then
+        printf '%s %s\n' "$$" "$host" >"$lock/owner"
+        return
+    fi
+    if [ -r "$lock/owner" ]; then
+        read owner_pid owner_host <"$lock/owner" || true
+        if [ "${owner_host:-}" = "$host" ] && ! kill -0 "${owner_pid:-0}" 2>/dev/null; then
+            rm -rf "$lock"
+            mkdir "$lock"
+            printf '%s %s\n' "$$" "$host" >"$lock/owner"
+            return
+        fi
+    fi
+    echo "Setup incomplete: another installation process holds $lock" >&2
+    exit 1
+}
+release_lock() {
+    if [ -n "${temporary:-}" ]; then rm -f "$temporary"; fi
+    if [ -n "${stage:-}" ]; then rm -rf "$stage"; fi
+    rm -rf "$lock"
+}
+acquire_lock
+trap release_lock EXIT
+trap 'release_lock; trap - EXIT HUP INT TERM; exit 1' HUP INT TERM
+
+export UV_PYTHON_INSTALL_DIR="$root/.nro-python"
+export UV_CACHE_DIR="$root/.nro-cache"
+export NRO_BOOTSTRAP_OFFLINE="$offline"
+export PYTHONDONTWRITEBYTECODE=1
+
+active=$root/.nro-bootstrap
+if [ "$maintain" = false ] && [ -d "$active" ] && [ ! -L "$active" ]; then
+    if [ ! -x "$active/bin/python" ]; then
+        echo "Setup incomplete: existing bootstrap is incomplete: $active" >&2
+        exit 1
+    fi
+    cd "$root"
+    "$active/bin/python" -B -m nro.site.bootstrap "$@"
+    exit $?
+fi
+if [ "$maintain" = false ] && [ -L "$active" ]; then
+    active_target=$(readlink "$active")
+    if [ "$active_target" = ".nro-bootstraps/$pin_digest" ]; then
+        if [ ! -x "$active/bin/python" ]; then
+            echo "Setup incomplete: active bootstrap link is broken; rerun maintenance" >&2
+            exit 1
+        fi
+        cd "$root"
+        "$active/bin/python" -B -m nro.site.bootstrap "$@"
+        exit $?
+    fi
+fi
+
+machine=$(uname -m)
+case $machine in
+    x86_64|amd64) architecture=X86_64 ;;
+    aarch64|arm64) architecture=AARCH64 ;;
+    armv7l|armv7) architecture=ARMV7 ;;
+    armv6l|arm) architecture=ARM ;;
+    i386|i486|i586|i686) architecture=I686 ;;
+    ppc64) architecture=POWERPC64 ;;
+    ppc64le) architecture=POWERPC64LE ;;
+    riscv64) architecture=RISCV64GC ;;
+    s390x) architecture=S390X ;;
+    *)
+        echo "Setup incomplete: no pinned uv archive supports Linux architecture $machine" >&2
+        exit 1
+        ;;
+esac
+
+libc=GNU
+if command -v ldd >/dev/null 2>&1; then
+    ldd_output=$(ldd --version 2>&1 || true)
+    case $ldd_output in *musl*) libc=MUSL ;; esac
+elif [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ] || \
+    [ -e /lib/ld-musl-armhf.so.1 ] || [ -e /lib/ld-musl-i386.so.1 ]; then
+    libc=MUSL
+fi
+
+archive_key=UV_ARCHIVE_${architecture}_${libc}
+checksum_key=UV_SHA256_${architecture}_${libc}
+eval "archive_name=\${$archive_key-}"
+eval "archive_checksum=\${$checksum_key-}"
+if [ -z "${archive_name:-}" ] || [ -z "${archive_checksum:-}" ]; then
+    echo "Setup incomplete: no pinned uv archive supports $machine with ${libc} libc" >&2
+    exit 1
+fi
+
+cache=$root/.nro-cache
+tools=$root/.nro-tools
+tool=$tools/uv-$UV_VERSION
+uv=$tool/uv
+archive=$cache/$archive_name
+mkdir -p "$cache" "$tools"
+
+verify_archive() {
+    printf '%s  %s\n' "$archive_checksum" "$archive" | sha256sum -c - >/dev/null 2>&1
+}
+
+uv_ready() {
+    [ -x "$uv" ] && [ "$("$uv" --version 2>/dev/null)" = "uv $UV_VERSION" ]
+}
+
+if ! uv_ready; then
+    rm -rf "$tool"
+    if [ -f "$archive" ] && ! verify_archive; then
+        echo "Setup incomplete: cached uv archive failed checksum verification: $archive" >&2
+        exit 1
+    fi
+    if [ ! -f "$archive" ]; then
+        if [ "$offline" = true ]; then
+            echo "Setup incomplete: offline setup needs cached uv archive $archive" >&2
+            exit 1
+        fi
+        temporary=$archive.tmp.$$
+        url=https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$archive_name
+        if command -v curl >/dev/null 2>&1; then
+            curl -L --fail --show-error --output "$temporary" "$url"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -O "$temporary" "$url"
+        else
+            echo "Setup incomplete: install curl or wget to download the pinned uv archive" >&2
+            exit 1
+        fi
+        if ! printf '%s  %s\n' "$archive_checksum" "$temporary" | sha256sum -c - >/dev/null 2>&1; then
+            rm -f "$temporary"
+            echo "Setup incomplete: downloaded uv archive failed checksum verification" >&2
+            exit 1
+        fi
+        mv "$temporary" "$archive"
+    fi
+    stage=$tools/.uv-$UV_VERSION.tmp.$$
+    rm -rf "$stage"
+    mkdir "$stage"
+    tar -xzf "$archive" -C "$stage"
+    extracted=$stage/${archive_name%.tar.gz}
+    if [ ! -x "$extracted/uv" ]; then
+        rm -rf "$stage"
+        echo "Setup incomplete: pinned uv archive has an unexpected layout" >&2
+        exit 1
+    fi
+    mv "$extracted/uv" "$stage/uv"
+    if [ -x "$extracted/uvx" ]; then mv "$extracted/uvx" "$stage/uvx"; fi
+    rm -rf "$extracted"
+    chmod -R g+rX "$stage"
+    if ! mv "$stage" "$tool" 2>/dev/null; then
+        rm -rf "$stage"
+    fi
+fi
+if ! uv_ready; then
+    echo "Setup incomplete: could not publish standalone uv at $uv" >&2
+    exit 1
+fi
+
+if [ "$offline" = true ]; then
+    if ! "$uv" python install "$PYTHON_VERSION" --offline --no-bin; then
+        echo "Setup incomplete: offline setup needs cached managed CPython $PYTHON_VERSION" >&2
+        exit 1
+    fi
+    managed_python=$("$uv" python find "$PYTHON_VERSION" --managed-python --offline)
+else
+    if ! "$uv" python install "$PYTHON_VERSION" --no-bin; then
+        echo "Setup incomplete: could not install managed CPython $PYTHON_VERSION" >&2
+        exit 1
+    fi
+    managed_python=$("$uv" python find "$PYTHON_VERSION" --managed-python)
+fi
+managed_root=$(dirname "$(dirname "$managed_python")")
+if [ ! -f "$managed_root/.nro-group-access" ]; then
+    chmod -R g+rX "$managed_root"
+    : >"$managed_root/.nro-group-access"
+    chmod g+r "$managed_root/.nro-group-access"
+fi
+
+export NRO_BOOTSTRAP_UV="$uv"
+
+prepare_bootstrap() {
+    if [ "$offline" = true ]; then
+        "$managed_python" -I -B "$root/nro/site/bootstrap_dependencies.py" \
+            --root "$root" --uv "$uv" --offline "$@"
+    else
+        "$managed_python" -I -B "$root/nro/site/bootstrap_dependencies.py" \
+            --root "$root" --uv "$uv" "$@"
+    fi
+}
+
+if [ -d "$active" ] && [ ! -L "$active" ]; then
+    if ! prepare_bootstrap; then
+        echo "Setup incomplete: could not prepare the pinned nro bootstrap" >&2
+        exit 1
+    fi
+    if [ ! -x "$active/bin/python" ]; then
+        echo "Setup incomplete: existing bootstrap is incomplete: $active" >&2
+        exit 1
+    fi
+    bootstrap_python=$NRO_BOOTSTRAP_TARGET/bin/python
+elif [ -L "$active" ]; then
+    if ! prepare_bootstrap; then
+        echo "Setup incomplete: could not prepare the pinned nro bootstrap" >&2
+        exit 1
+    fi
+    if [ ! -x "$active/bin/python" ] && [ "$maintain" = false ]; then
+        echo "Setup incomplete: active bootstrap link is broken: $active" >&2
+        exit 1
+    fi
+    bootstrap_python=$NRO_BOOTSTRAP_TARGET/bin/python
+else
+    if ! prepare_bootstrap --activate; then
+        echo "Setup incomplete: could not prepare the pinned nro bootstrap" >&2
+        exit 1
+    fi
+    bootstrap_python=$active/bin/python
+fi
+
+cd "$root"
+"$bootstrap_python" -B -m nro.site.bootstrap "$@"

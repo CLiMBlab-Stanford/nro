@@ -6,8 +6,7 @@ system. CLIMBLAB members should use the
 
 ## Prepare the host
 
-`nro` needs Linux on x86-64, Git, and Python 3.11 or newer with `venv` and pip
-support. Acquire a
+`nro` needs Linux, Git, `curl` or `wget`, `sha256sum`, and `tar`. Acquire a
 [FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html)
 before setup. The default OSLOM installation also needs a C++ compiler.
 

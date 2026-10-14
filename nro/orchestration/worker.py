@@ -359,11 +359,10 @@ class Worker:
         self.service_relief: str | None = None
 
     def _retire_for_service(self) -> bool:
-        """Retire this idle allocation when it directly blocks a control service."""
+        """Retire this allocation when a control service is waiting for Slurm."""
         service = await_service_relief(
             self.registry.paths.control,
             worker_id=self.worker_id,
-            worker_memory_gb=self.memory_gb,
             poll_seconds=self.poll_interval,
         )
         if service is None:
@@ -746,6 +745,8 @@ class Worker:
                         attempt_id, group
                     ),
                 )
+                if self._retire_for_service():
+                    return
                 cancelled = result.cancelled
                 scheduler_cancelled = result.scheduler_cancelled
                 return_code = result.return_code
@@ -1062,6 +1063,8 @@ class Worker:
                         self.worker_id, state="running"
                     ),
                 )
+            if self._retire_for_service():
+                return
             if result.cancelled:
                 if store is None:
                     self.registry.finish_ingestion(record["id"], branch=branch, state="interrupted")
@@ -1104,8 +1107,9 @@ class Worker:
             else:
                 store.finish(record["id"], self.worker_id, state="failed", changes=changes)
         finally:
-            self.registry.heartbeat_worker(self.worker_id, state="idle")
-            self._expand_ready_pool()
+            if self.service_relief is None:
+                self.registry.heartbeat_worker(self.worker_id, state="idle")
+                self._expand_ready_pool()
 
     def _cancel_failed_descendants(self, work_item: ExecutionEnvelope) -> None:
         cancelled = self.registry.cancel_attempts_downstream_of_failure(work_item.work_item_id)
@@ -1182,6 +1186,8 @@ class Worker:
                         idle_since = None
                         idle_announced = False
                         self._execute_ingestion(ingestion)
+                        if self.service_relief is not None:
+                            break
                         continue
                     required_memory = self.registry.required_memory_above(
                         self.memory_gb,
@@ -1215,6 +1221,8 @@ class Worker:
                 )
                 started_at = time.monotonic()
                 self._execute(work_item)
+                if self.service_relief is not None:
+                    break
                 self._log(
                     f"released {assignment} {work_item.work_item_id} after "
                     f"{time.monotonic() - started_at:.3f}s; {self._attempt_summary(attempt_id)}; "

@@ -19,6 +19,9 @@ def installations(tmp_path, monkeypatch):
     records = []
     for name in ("old", "main"):
         root = tmp_path / name
+        bootstrap_python = root / ".nro-bootstrap/bin/python"
+        bootstrap_python.parent.mkdir(parents=True)
+        bootstrap_python.write_bytes(b"managed bootstrap")
         python = root / ".nro-env/bin/python"
         python.parent.mkdir(parents=True)
         python.write_bytes(b"original environment")

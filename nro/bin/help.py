@@ -105,6 +105,10 @@ TASK_GUIDES = {
 
           nro scene -P PROJECT -p PARTICIPANT -m MODULE --publish
 
+        Open arbitrary Workbench files on an X11 display:
+
+          nro wb_view FILE [FILE ...]
+
         Render matching maps without an interactive viewer:
 
           nro render -P PROJECT -p PARTICIPANT -m MODULE

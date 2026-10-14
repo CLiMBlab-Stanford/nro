@@ -1960,3 +1960,47 @@ def test_long_cpu_worker_script_has_distinct_identity(tmp_path: Path) -> None:
         minimum_memory_gb=1,
         profile=script.stem.rsplit("-", 1)[-1],
     ) == ((64, general),)
+
+
+def test_wb_view_replaces_process_with_configured_viewer(tmp_path: Path, monkeypatch) -> None:
+    import nro.bin.wb_view as wb_view
+
+    viewer = tmp_path / "wb_view"
+    viewer.write_text("#!/bin/sh\n")
+    viewer.chmod(0o755)
+    calls = []
+    monkeypatch.setattr(wb_view, "viewer_path", lambda: viewer)
+    monkeypatch.setattr(wb_view.os, "execv", lambda path, argv: calls.append((path, argv)))
+
+    wb_view.main(["brain.nii.gz", "-logging", "INFO", "--help"])
+
+    assert calls == [(viewer, [str(viewer), "brain.nii.gz", "-logging", "INFO", "--help"])]
+
+
+def test_wb_view_uses_viewer_beside_configured_wb_command(tmp_path: Path, monkeypatch) -> None:
+    import nro.bin.wb_view as wb_view
+    import nro.site.paths as site_paths
+
+    monkeypatch.setattr(site_paths, "WB_COMMAND_PATH", tmp_path / "bin" / "wb_command")
+
+    assert wb_view.viewer_path() == tmp_path / "bin" / "wb_view"
+
+
+def test_wb_view_reports_missing_viewer(tmp_path: Path, monkeypatch) -> None:
+    import nro.bin.wb_view as wb_view
+
+    monkeypatch.setattr(wb_view, "viewer_path", lambda: tmp_path / "wb_view")
+    monkeypatch.setattr(wb_view.os, "execv", lambda *args: pytest.fail("viewer must not run"))
+
+    with pytest.raises(SystemExit, match="viewer is not available"):
+        wb_view.main(["brain.nii.gz"])
+
+
+def test_wb_view_leading_help_describes_wrapper(monkeypatch, capsys) -> None:
+    import nro.bin.wb_view as wb_view
+
+    monkeypatch.setattr(wb_view.os, "execv", lambda *args: pytest.fail("viewer must not run"))
+
+    wb_view.main(["--help"])
+
+    assert "nro wb_view -help" in capsys.readouterr().out

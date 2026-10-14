@@ -54,6 +54,25 @@ through networks. Volume scenes use volume data without carrying surface files.
 needed to display them. See each
 [module's output guide](../modules/index.md).
 
+## `nro wb_view`
+
+```bash
+nro wb_view sub-01_space-T1w_desc-preproc_T1w.nii.gz lh.white.surf.gii
+nro wb_view -help
+```
+
+`nro wb_view` runs the Workbench viewer that `nro scene --open` uses: the
+`wb_view` executable beside the configured `wb_command`. Every argument goes to
+Workbench unchanged, so files and options follow Workbench's own syntax. Only a
+leading `-h` or `--help` prints nro's description of the command; Workbench's
+help option is `-help`.
+
+The viewer runs in the current shell and needs an X11 display. Unlike
+`scene --open`, it does not start or reuse the Slurm viewer broker. Start an X11
+allocation first when the current host should not run interactive programs.
+Workbench reads NIfTI, GIFTI, and CIFTI files. Convert FreeSurfer `.mgz`
+volumes and native surfaces before opening them.
+
 ## `nro render`
 
 `render` creates static images from the same combined views as `scene`:

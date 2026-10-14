@@ -43,6 +43,7 @@ COMMAND_HELP = {
     "stop": "Cancel derivative demand or stop workers.",
     "scene": "Create combined Workbench scenes from completed derivatives.",
     "render": "Render selected Workbench maps as image files.",
+    "wb_view": "Run the site's Workbench viewer with unmodified arguments.",
 }
 
 CENTRAL_ONLY_COMMANDS = frozenset({"hotfix", "migrate", "project", "release"})

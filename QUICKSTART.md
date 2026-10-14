@@ -13,8 +13,8 @@ software.
 
 Before setup, you need:
 
-- Linux on an x86-64 system;
-- Git and Python 3.11 or newer with `venv` and pip support;
+- Linux on an architecture covered by the installer's pinned uv archives;
+- Git, `curl` or `wget`, `sha256sum`, and `tar`;
 - a C++ compiler if you want the default OSLOM installation;
 - enough persistent storage for BIDS data, derivatives, work files, containers,
   and templates;

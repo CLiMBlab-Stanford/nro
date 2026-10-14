@@ -33,7 +33,9 @@ def _queue(monkeypatch, row: str) -> None:
     )
 
 
-def test_job_limit_allows_one_idle_worker_to_relieve_scheduler(monkeypatch, tmp_path) -> None:
+def test_pending_scheduler_allows_one_idle_worker_to_retire_every_five_minutes(
+    monkeypatch, tmp_path
+) -> None:
     control = tmp_path / ".nro"
     _scheduler_launch(control)
     _queue(monkeypatch, "QOSMaxJobsPerUserLimit")
@@ -41,10 +43,6 @@ def test_job_limit_allows_one_idle_worker_to_relieve_scheduler(monkeypatch, tmp_
 
     pending = service_relief.pending_service(
         control,
-        worker_cpus=2,
-        worker_memory_gb=32,
-        worker_partition="sphinx",
-        worker_account="nlp",
         now=now,
     )
 
@@ -53,49 +51,29 @@ def test_job_limit_allows_one_idle_worker_to_relieve_scheduler(monkeypatch, tmp_
     assert pending.job_id == "123"
     assert pending.reason == "QOSMaxJobsPerUserLimit"
     assert service_relief.claim_relief(control, pending, worker_id="worker-1", now=now)
-    assert not service_relief.claim_relief(control, pending, worker_id="worker-2", now=now + 30)
-    assert service_relief.claim_relief(control, pending, worker_id="worker-2", now=now + 61)
+    assert not service_relief.claim_relief(control, pending, worker_id="worker-2", now=now + 299)
+    assert service_relief.claim_relief(control, pending, worker_id="worker-2", now=now + 300)
 
 
-def test_priority_does_not_retire_workers(monkeypatch, tmp_path) -> None:
+def test_any_pending_reason_can_release_capacity(monkeypatch, tmp_path) -> None:
     control = tmp_path / ".nro"
     _scheduler_launch(control)
     _queue(monkeypatch, "Priority")
 
-    assert (
-        service_relief.pending_service(
-            control,
-            worker_cpus=8,
-            worker_memory_gb=64,
-            worker_partition="sphinx",
-            worker_account="nlp",
-            now=1_000_000_000_000.0,
-        )
-        is None
-    )
+    pending = service_relief.pending_service(control, now=1_000_000_000_000.0)
+
+    assert pending is not None
+    assert pending.reason == "Priority"
 
 
-def test_resource_relief_requires_one_compatible_allocation(monkeypatch, tmp_path) -> None:
+def test_resource_relief_does_not_predict_slurm_placement(monkeypatch, tmp_path) -> None:
     control = tmp_path / ".nro"
     _scheduler_launch(control)
     _queue(monkeypatch, "Resources")
-    options = {
-        "control": control,
-        "worker_memory_gb": 32,
-        "worker_partition": "sphinx",
-        "worker_account": "nlp",
-        "now": 1_000_000_000_000.0,
-    }
+    pending = service_relief.pending_service(control, now=1_000_000_000_000.0)
 
-    assert service_relief.pending_service(worker_cpus=2, **options) is None
-    assert service_relief.pending_service(worker_cpus=4, **options) is not None
-    assert (
-        service_relief.pending_service(
-            worker_cpus=4,
-            **{**options, "worker_partition": "other"},
-        )
-        is None
-    )
+    assert pending is not None
+    assert pending.reason == "Resources"
 
 
 def test_elected_worker_exits_before_registration(monkeypatch, tmp_path) -> None:
@@ -114,6 +92,50 @@ def test_elected_worker_exits_before_registration(monkeypatch, tmp_path) -> None
     worker = Worker(Registry(), resource_class="large", worker_id="worker-1")
 
     assert worker.run() == 0
+    assert worker.service_relief == "scheduler"
+
+
+def test_worker_can_retire_immediately_after_scientific_process_finishes(
+    monkeypatch, tmp_path
+) -> None:
+    calls = 0
+
+    def retire(worker) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls != 3:
+            return False
+        worker.service_relief = "scheduler"
+        return True
+
+    class Registry:
+        paths = SimpleNamespace(control=tmp_path / ".nro")
+
+        def register_worker(self, *_args, **_kwargs):
+            return None
+
+        def mark_submission_running(self, *_args, **_kwargs):
+            return None
+
+        def worker_shutdown_requested(self, *_args, **_kwargs):
+            return False
+
+        def claim_ready_work_item(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                attempt_id=7,
+                work_item_id=11,
+                module="anat",
+                participant="01",
+                resource_task_id=None,
+                log_path=tmp_path / "work-item.log",
+            )
+
+    worker = Worker(Registry(), resource_class="large", worker_id="worker-1")
+    monkeypatch.setattr(Worker, "_retire_for_service", retire)
+    monkeypatch.setattr(worker, "_execute", lambda _work_item: worker._retire_for_service())
+
+    assert worker.run() == 0
+    assert calls == 3
     assert worker.service_relief == "scheduler"
 
 

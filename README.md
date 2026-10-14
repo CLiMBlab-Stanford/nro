@@ -74,10 +74,12 @@ alter the active command before maintenance succeeds. The system can use Slurm
 or run workers locally.
 
 The user launcher is installed in `~/.local/bin`; no environment activation is
-needed. The bootstrap requires Python 3.11 or newer with `venv` support and an
-existing FreeSurfer license. Some managed hosts need an administrator to enable
-the container runtime. See [installation details](docs/installation.md) for
-shared deployments, unattended setup, permissions, and dependency acquisition.
+needed. The POSIX shell bootstrap downloads checksum-pinned uv and CPython, so
+the host does not need Python. It does require `curl` or `wget`, `sha256sum`,
+`tar`, and an existing FreeSurfer license. Some managed hosts need an
+administrator to enable the container runtime. See
+[installation details](docs/installation.md) for shared deployments,
+unattended setup, permissions, and dependency acquisition.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"

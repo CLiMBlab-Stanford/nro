@@ -12,10 +12,15 @@ __pycache__/
 /.nro-installation.json
 /.nro-installation-transition.json
 /.nro-install.lock
+/.nro-install.lock.d/
 /.nro-site.toml
 /.nro-env/
 /.nro-environments/
 /.nro-bootstrap/
+/.nro-bootstraps/
+/.nro-bootstrap-transition.json
+/.nro-bootstrap.previous-*/
+/.nro-tools/
 /.nro-python/
 /.nro-cache/
 /.nro-runtime/
