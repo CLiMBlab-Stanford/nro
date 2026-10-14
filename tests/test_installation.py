@@ -79,53 +79,223 @@ def isolated_site(tmp_path, monkeypatch):
     return path
 
 
-def test_installer_enters_bootstrap_environment_before_importing_nro(tmp_path, monkeypatch):
+def test_bootstrap_pins_are_shell_compatible_and_complete(tmp_path):
+    pins = tmp_path / "bootstrap.pins"
+    pins.write_text(
+        "UV_VERSION=1.2.3\n"
+        "PYTHON_VERSION=3.12.11\n"
+        "PYYAML_VERSION=6.0.3\n"
+        f"PYYAML_SHA256={'a' * 64}\n"
+    )
+    assert bootstrap_dependencies.read_pins(pins)["PYTHON_VERSION"] == "3.12.11"
+    pins.write_text("UV_VERSION=1.2.3\n")
+    with pytest.raises(ValueError, match="Missing bootstrap pin"):
+        bootstrap_dependencies.read_pins(pins)
+    pins.write_text(
+        "UV_VERSION=1.2.3\nPYTHON_VERSION=3.12.11\nPYYAML_VERSION=6.0.3\nPYYAML_SHA256=invalid\n"
+    )
+    with pytest.raises(ValueError, match="Invalid SHA-256"):
+        bootstrap_dependencies.read_pins(pins)
+
+
+def test_bootstrap_ready_rejects_host_python(tmp_path, monkeypatch):
+    python = tmp_path / "bootstrap/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    monkeypatch.setattr(
+        bootstrap_dependencies.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"version": [3, 12, 11], "base": "/usr/bin/python3", "yaml": "6.0.3"}
+            ),
+        ),
+    )
+    assert not bootstrap_dependencies._ready(python, root=tmp_path)
+
+
+def test_offline_bootstrap_uses_uv_without_pip(tmp_path, monkeypatch):
     root = tmp_path / "checkout"
     root.mkdir()
-    script = root / "install"
-    script.write_text("")
+    uv = root / "uv"
+    uv.write_text("")
+    states = iter((False, True))
+    monkeypatch.setattr(bootstrap_dependencies, "_ready", lambda *args, **kwargs: next(states))
     commands = []
-
-    def run(command, **options):
-        commands.append((command, options))
-        if command[1:3] == ["-m", "venv"]:
-            python = Path(command[3]) / "bin/python"
-            python.parent.mkdir(parents=True)
-            python.write_text("")
-        return SimpleNamespace(returncode=0)
-
-    class Executed(Exception):
-        pass
-
-    monkeypatch.setattr(bootstrap_dependencies.subprocess, "run", run)
     monkeypatch.setattr(
-        bootstrap_dependencies.os,
-        "execv",
-        lambda executable, arguments: (_ for _ in ()).throw(Executed((executable, arguments))),
+        bootstrap_dependencies.subprocess,
+        "run",
+        lambda command, **options: commands.append(command),
     )
-    monkeypatch.setattr(bootstrap_dependencies.sys, "prefix", str(tmp_path / "system"))
-    monkeypatch.setattr(bootstrap_dependencies.sys, "executable", "/usr/bin/python3")
-
-    with pytest.raises(Executed) as executed:
-        bootstrap_dependencies.enter(root, script, ["--local"])
-
-    python = root / ".nro-bootstrap/bin/python"
-    assert commands[0][0] == ["/usr/bin/python3", "-m", "venv", str(root / ".nro-bootstrap")]
-    assert commands[1][0] == [
-        str(python),
-        "-m",
-        "pip",
-        "install",
-        f"uv=={bootstrap_dependencies.UV_VERSION}",
-        f"PyYAML=={bootstrap_dependencies.PYYAML_VERSION}",
-    ]
-    assert executed.value.args[0] == (str(python), [str(python), str(script), "--local"])
+    target = bootstrap_dependencies.prepare_target(root, uv, offline=True)
+    assert target.parent == root / ".nro-bootstraps"
+    assert commands[0][1:5] == ["venv", str(target), "--python", "3.12.11"]
+    assert "--managed-python" in commands[0] and "--offline" in commands[0]
+    assert commands[1][1] == "pip"
+    assert "--require-hashes" in commands[1] and "--offline" in commands[1]
+    assert all("pip" not in command[:1] for command in commands)
 
 
-def test_offline_installer_requires_complete_bootstrap_environment(tmp_path, monkeypatch):
-    monkeypatch.setattr(bootstrap_dependencies.sys, "prefix", str(tmp_path / "system"))
-    with pytest.raises(RuntimeError, match="Offline setup needs"):
-        bootstrap_dependencies.enter(tmp_path, tmp_path / "install", ["--offline"])
+def test_install_entrypoint_is_valid_posix_shell():
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run(["sh", "-n", str(root / "install")], check=True)
+
+
+def _copy_shell_installer(tmp_path: Path) -> Path:
+    source = Path(__file__).resolve().parents[1]
+    root = tmp_path / "checkout"
+    (root / "nro/site").mkdir(parents=True)
+    (root / "install").write_bytes((source / "install").read_bytes())
+    (root / "nro/site/bootstrap.pins").write_bytes(
+        (source / "nro/site/bootstrap.pins").read_bytes()
+    )
+    return root
+
+
+def _linux_x86_path(tmp_path: Path) -> str:
+    commands = tmp_path / "linux-x86-commands"
+    commands.mkdir()
+    for name, output in (("uname", "x86_64"), ("ldd", "glibc 2.28")):
+        command = commands / name
+        command.write_text(f"#!/bin/sh\necho '{output}'\n")
+        command.chmod(0o755)
+    return f"{commands}:{os.environ['PATH']}"
+
+
+def test_shell_installer_rejects_unsupported_platform(tmp_path):
+    root = _copy_shell_installer(tmp_path)
+    installer = tmp_path / "install-link"
+    installer.symlink_to(root / "install")
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    uname = commands / "uname"
+    uname.write_text("#!/bin/sh\necho sparc64\n")
+    uname.chmod(0o755)
+    result = subprocess.run(
+        ["sh", str(installer), "--offline"],
+        env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert "no pinned uv archive supports Linux architecture sparc64" in result.stderr
+
+
+def test_shell_installer_rejects_bad_cached_archive(tmp_path):
+    root = _copy_shell_installer(tmp_path)
+    pins = bootstrap_dependencies.read_pins(root / "nro/site/bootstrap.pins")
+    archive = root / ".nro-cache" / pins["UV_ARCHIVE_X86_64_GNU"]
+    archive.parent.mkdir()
+    archive.write_bytes(b"not uv")
+    result = subprocess.run(
+        ["sh", str(root / "install")],
+        env={**os.environ, "PATH": _linux_x86_path(tmp_path)},
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert "cached uv archive failed checksum verification" in result.stderr
+
+
+def test_offline_shell_installer_requires_cached_uv(tmp_path):
+    root = _copy_shell_installer(tmp_path)
+    result = subprocess.run(
+        ["sh", str(root / "install"), "--offline"],
+        env={**os.environ, "PATH": _linux_x86_path(tmp_path)},
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert "offline setup needs cached uv archive" in result.stderr
+
+
+def test_offline_shell_installer_requires_cached_python(tmp_path):
+    root = _copy_shell_installer(tmp_path)
+    pins = bootstrap_dependencies.read_pins(root / "nro/site/bootstrap.pins")
+    uv = root / ".nro-tools" / f"uv-{pins['UV_VERSION']}" / "uv"
+    uv.parent.mkdir(parents=True)
+    uv.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = --version ]; then echo 'uv {pins['UV_VERSION']}'; exit 0; fi\n"
+        "exit 1\n"
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        ["sh", str(root / "install"), "--offline"],
+        env={**os.environ, "PATH": _linux_x86_path(tmp_path)},
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert "offline setup needs cached managed CPython 3.12.11" in result.stderr
+
+
+def test_interrupted_bootstrap_cutover_rolls_forward(tmp_path, monkeypatch):
+    target = tmp_path / ".nro-bootstraps/pinned"
+    (target / "bin").mkdir(parents=True)
+    (target / "bin/python").write_text("")
+    backup = tmp_path / ".nro-bootstrap.previous-test"
+    backup.mkdir()
+    journal = {
+        "target": str(target.relative_to(tmp_path)),
+        "backup": str(backup.relative_to(tmp_path)),
+        "phase": "renamed",
+    }
+    (tmp_path / bootstrap_dependencies.TRANSITION).write_text(json.dumps(journal))
+    monkeypatch.setattr(bootstrap_dependencies, "_ready", lambda *args, **kwargs: True)
+
+    bootstrap_dependencies.activate_target(tmp_path, target)
+
+    active = tmp_path / ".nro-bootstrap"
+    assert active.is_symlink()
+    assert active.resolve() == target
+    assert not backup.exists()
+    assert not (tmp_path / bootstrap_dependencies.TRANSITION).exists()
+
+
+def test_failed_bootstrap_cutover_restores_legacy_directory(tmp_path, monkeypatch):
+    target = tmp_path / ".nro-bootstraps/pinned"
+    (target / "bin").mkdir(parents=True)
+    (target / "bin/python").write_text("")
+    active = tmp_path / ".nro-bootstrap"
+    active.mkdir()
+    (active / "legacy").write_text("retained")
+    monkeypatch.setattr(bootstrap_dependencies, "_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        bootstrap_dependencies,
+        "_publish_symlink",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("interrupted")),
+    )
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        bootstrap_dependencies.activate_target(tmp_path, target)
+
+    assert active.is_dir() and not active.is_symlink()
+    assert (active / "legacy").read_text() == "retained"
+    assert not (tmp_path / bootstrap_dependencies.TRANSITION).exists()
+
+
+def test_interrupted_cutover_rolls_back_when_target_is_invalid(tmp_path, monkeypatch):
+    target = tmp_path / ".nro-bootstraps/pinned"
+    target.mkdir(parents=True)
+    backup = tmp_path / ".nro-bootstrap.previous-test"
+    backup.mkdir()
+    (backup / "legacy").write_text("retained")
+    journal = {
+        "target": str(target.relative_to(tmp_path)),
+        "backup": str(backup.relative_to(tmp_path)),
+        "phase": "renamed",
+    }
+    (tmp_path / bootstrap_dependencies.TRANSITION).write_text(json.dumps(journal))
+    monkeypatch.setattr(bootstrap_dependencies, "_ready", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="Rolled back"):
+        bootstrap_dependencies.activate_target(tmp_path, target)
+
+    active = tmp_path / ".nro-bootstrap"
+    assert active.is_dir() and not active.is_symlink()
+    assert (active / "legacy").read_text() == "retained"
 
 
 def test_lab_defaults_select_medium_fsaverage_anatomy(isolated_site):
@@ -504,6 +674,9 @@ def test_verified_execution_snapshot_uses_pinned_site(isolated_site, tmp_path, m
 def test_shared_onboarding_never_syncs_or_mutates_checkout(tmp_path, monkeypatch):
     root = tmp_path / "shared"
     root.mkdir()
+    bootstrap_python = root / ".nro-bootstrap/bin/python"
+    bootstrap_python.parent.mkdir(parents=True)
+    bootstrap_python.write_text("interpreter")
     environment = root / "env"
     (environment / "bin").mkdir(parents=True)
     (environment / "bin/python").write_text("interpreter")
@@ -566,6 +739,11 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
         "prepare_pool",
         lambda registry, **options: events.append(("drain", options["checkout"])),
     )
+    monkeypatch.setattr(
+        bootstrap,
+        "activate_managed_bootstrap",
+        lambda: events.append(("bootstrap", root)),
+    )
 
     def publish(checkout, registry, *, installation):
         events.append(("publish", checkout))
@@ -615,6 +793,7 @@ def test_shared_maintenance_drains_and_publishes_checked_out_release(tmp_path, m
         ("dependencies", root),
         ("application", root),
         ("drain", root),
+        ("bootstrap", root),
         ("publish", root),
     ]
     assert "nro.bin.setup" in commands[0]
@@ -749,6 +928,9 @@ def test_shared_dependencies_are_reused_until_their_inputs_change(tmp_path, monk
     assert "--managed-python" in sync_calls[0]
     assert "--no-install-project" in sync_calls[0]
     assert "--offline" in sync_calls[0]
+    assert bootstrap_dependencies.PYTHON_VERSION in sync_calls[0]
+    marker = json.loads((first / ".nro-dependencies.json").read_text())
+    assert marker["spec"]["python"] == "managed-cpython-3.12.11"
 
     (root / "uv.lock").write_text(
         (root / "uv.lock").read_text().replace('version = "1.0.0"', 'version = "1.0.1"')
@@ -1234,6 +1416,9 @@ def test_maintenance_checks_slurm_without_mutating_registry(tmp_path, monkeypatc
 
 
 def test_launcher_does_not_replace_another_installation(tmp_path):
+    bootstrap_python = tmp_path / ".nro-bootstrap/bin/python"
+    bootstrap_python.parent.mkdir(parents=True)
+    bootstrap_python.write_text("python")
     python = tmp_path / "env/bin/python"
     python.parent.mkdir(parents=True)
     python.write_text("python")
@@ -1584,7 +1769,7 @@ def test_workbench_reuses_an_explicit_native_override(isolated_site, tmp_path, m
 def test_install_help_from_another_working_directory(tmp_path):
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [sys.executable, str(root / "install"), "--help"],
+        [sys.executable, str(root / "nro/site/bootstrap.py"), "--help"],
         cwd=tmp_path,
         text=True,
         capture_output=True,

@@ -1,4 +1,4 @@
-"""Release idle worker allocations that directly block a control service."""
+"""Release idle worker allocations while a control service waits for Slurm."""
 
 from __future__ import annotations
 
@@ -16,57 +16,20 @@ from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.registry import ensure_shared_directory
 
 SERVICE_START_GRACE_SECONDS = 60.0
-RELIEF_INTERVAL_SECONDS = 60.0
+RELIEF_INTERVAL_SECONDS = 5 * 60.0
 
-_RUNNING_JOB_LIMITS = frozenset(
-    {
-        "AssocGrpJobsLimit",
-        "AssocMaxJobsLimit",
-        "QOSGrpJobsLimit",
-        "QOSMaxJobsPerAccountLimit",
-        "QOSMaxJobsPerUserLimit",
-    }
-)
-_MEMORY = re.compile(r"^(?P<value>[0-9]+(?:\.[0-9]+)?)(?P<unit>[KMGTP]?)(?:[cn])?$", re.I)
 _SLURM_JOB_ID = re.compile(r"^[0-9]+(?:_[0-9]+)?$")
 _WORKER_JOB_NAMES = frozenset({"nro-worker", "nro-long-worker", "nro-gpu-worker"})
 
 
 @dataclass(frozen=True)
 class PendingService:
-    """A scheduler or planner allocation that one idle worker can help start."""
+    """A scheduler or planner allocation waiting to start."""
 
     name: str
     token: str
     job_id: str
     reason: str
-
-
-@dataclass(frozen=True)
-class _SlurmJob:
-    state: str
-    reason: str
-    partition: str
-    account: str
-    cpus: int
-    memory_gb: float
-
-
-def _memory_gb(value: str) -> float:
-    match = _MEMORY.fullmatch(value.strip())
-    if match is None:
-        return float("inf")
-    amount = float(match.group("value"))
-    unit = match.group("unit").upper()
-    scale = {
-        "": 1 / 1024**3,
-        "K": 1 / 1024**2,
-        "M": 1 / 1024,
-        "G": 1,
-        "T": 1024,
-        "P": 1024**2,
-    }
-    return amount * scale[unit]
 
 
 def _scontrol_job(job_id: str) -> str:
@@ -90,38 +53,13 @@ def _field(output: str, name: str) -> str:
     return "" if match is None else match.group(1)
 
 
-def _slurm_job(job_id: str) -> _SlurmJob | None:
+def _pending_job_reason(job_id: str) -> str | None:
     output = _scontrol_job(job_id)
     if not output:
         return None
-
-    state = _field(output, "JobState")
-    reason = _field(output, "Reason")
-    partition = _field(output, "Partition")
-    account = _field(output, "Account")
-    cpus_value = _field(output, "NumCPUs")
-    memory = _field(output, "MinMemoryNode")
-    per_cpu = False
-    if not memory:
-        memory = _field(output, "MinMemoryCPU")
-        per_cpu = bool(memory)
-    if not state or not reason or not cpus_value or not memory:
+    if _field(output, "JobState").upper() != "PENDING":
         return None
-    try:
-        cpus = int(cpus_value)
-    except ValueError:
-        return None
-    memory_gb = _memory_gb(memory)
-    if per_cpu:
-        memory_gb *= cpus
-    return _SlurmJob(
-        state=state.upper(),
-        reason=reason.strip().strip("()"),
-        partition=partition,
-        account=account,
-        cpus=cpus,
-        memory_gb=memory_gb,
-    )
+    return _field(output, "Reason").strip().strip("()") or "pending"
 
 
 def cancel_pending_workers(control: Path) -> int:
@@ -206,13 +144,9 @@ def _launches(control: Path) -> tuple[tuple[str, dict], ...]:
 def pending_service(
     control: Path,
     *,
-    worker_cpus: int,
-    worker_memory_gb: int,
-    worker_partition: str,
-    worker_account: str,
     now: float | None = None,
 ) -> PendingService | None:
-    """Return a pending service that this idle allocation can help start."""
+    """Return a control service that has remained pending beyond its grace period."""
     checked_at = time.time() if now is None else now
     for name, launch in _launches(control):
         token = str(launch.get("token") or "")
@@ -221,21 +155,10 @@ def pending_service(
             continue
         if _age_seconds(launch, checked_at) < SERVICE_START_GRACE_SECONDS:
             continue
-        job = _slurm_job(job_id)
-        if job is None or job.state != "PENDING":
+        reason = _pending_job_reason(job_id)
+        if reason is None:
             continue
-        same_account = not job.account or not worker_account or job.account == worker_account
-        if job.reason in _RUNNING_JOB_LIMITS and same_account:
-            return PendingService(name, token, job_id, job.reason)
-        if (
-            job.reason == "Resources"
-            and same_account
-            and job.partition
-            and job.partition == worker_partition
-            and worker_cpus >= job.cpus
-            and worker_memory_gb >= job.memory_gb
-        ):
-            return PendingService(name, token, job_id, job.reason)
+        return PendingService(name, token, job_id, reason)
     return None
 
 
@@ -286,25 +209,14 @@ def await_service_relief(
     control: Path,
     *,
     worker_id: str,
-    worker_memory_gb: int,
     poll_seconds: float = 5.0,
 ) -> PendingService | None:
-    """Wait behind an actionable service launch and retire if elected."""
+    """Wait behind a pending service launch and retire if elected."""
     job_id = os.environ.get("SLURM_JOB_ID")
     if not job_id:
         return None
-    try:
-        worker_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
-    except ValueError:
-        worker_cpus = 1
     while True:
-        service = pending_service(
-            control,
-            worker_cpus=worker_cpus,
-            worker_memory_gb=worker_memory_gb,
-            worker_partition=os.environ.get("SLURM_JOB_PARTITION", ""),
-            worker_account=os.environ.get("SLURM_JOB_ACCOUNT", ""),
-        )
+        service = pending_service(control)
         if service is None:
             return None
         if claim_relief(control, service, worker_id=worker_id):

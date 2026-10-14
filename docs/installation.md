@@ -10,15 +10,25 @@ mode does not plan or submit scientific workers directly from the calling proces
 Installation maintenance alone may access the registry before that binding exists.
 Install a tagged main release in either mode; use branch mode for development.
 
-The bootstrap requires Python 3.11 or newer with `venv` and pip support.
-It installs uv 0.8.22 and PyYAML 6.0.3 in `.nro-bootstrap`, then uses `uv.lock`
-to create an environment from uv-managed CPython 3.12. This interpreter supplies
-SQLite 3.35 or newer; nro does not use the host Python's SQLite library. The system
-Python does not need nro's packages. Personal and shared installations use
-staged, immutable application and dependency layers. A failed or interrupted
-setup leaves the previous installation active; a failed first setup publishes
-no active installation. Pulling a checkout therefore does not change the
-active command before setup completes. Branch environments remain editable. Python
+The bootstrap is a POSIX shell script and does not use the host's Python. It
+selects a checksum-pinned standalone uv archive for the host architecture and
+libc, then installs the repository's exact uv-managed CPython version. The host
+needs `curl` or `wget`, `sha256sum`, and `tar`. A platform without a pinned uv
+archive fails before setup changes the installation.
+
+The bootstrap environment is content-addressed under `.nro-bootstraps/`, and
+the stable `.nro-bootstrap` symlink selects its active version. It contains only
+the pinned bootstrap Python package; the standalone uv binary lives under
+`.nro-tools/`. Application dependency layers use the same exact managed Python
+version and the locked packages in `uv.lock`. The interpreter supplies SQLite
+3.35 or newer, independent of the host's Python and SQLite libraries.
+
+Personal and shared installations use staged, immutable application and
+dependency layers. A failed or interrupted setup leaves the previous
+installation active; a failed first setup publishes no active installation.
+The one-time conversion of a legacy bootstrap directory is journaled and
+recoverable. Pulling a checkout therefore does not change the active command
+before setup completes. Branch environments remain editable. Python
 distributions downloaded by uv stay in `.nro-python`, so a shared environment
 does not depend on the maintainer's home directory. Existing Conda environments
 are not modified.
@@ -475,9 +485,11 @@ For unattended setup, prepare the site file first:
 ```
 
 `--offline` forbids new resource downloads and tells uv to use its cache.
-It requires an existing uv bootstrap, cached Python dependencies, and all
-required external resources. An interrupted setup leaves the installation
-marked incomplete; rerunning resumes from installed resources.
+It requires the cached standalone uv archive, managed interpreter, bootstrap
+package, Python dependencies, and all required external resources. An
+interrupted maintenance run leaves the preceding installation active; rerunning
+recovers any incomplete bootstrap transition and resumes from installed
+resources.
 Ctrl-C exits with a cancellation message and status 130. Interrupted path
 editing leaves the saved settings unchanged. To resume shared setup, use
 `./install --maintain`.

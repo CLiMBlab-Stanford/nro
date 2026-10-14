@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nro.engine.io import atomic_write_json
+from nro.site.bootstrap_dependencies import PYTHON_VERSION
 
 if TYPE_CHECKING:
     from nro.orchestration.source_snapshots import SourceSnapshot
 
-DEPENDENCY_PROTOCOL = 2
+DEPENDENCY_PROTOCOL = 3
 
 
 def _dependency_lock_identity(path: Path) -> str:
@@ -48,7 +49,7 @@ def _dependency_spec(root: Path, options: dict, *, uv_version: str) -> dict:
     return {
         "protocol": DEPENDENCY_PROTOCOL,
         "lock_identity": _dependency_lock_identity(lock),
-        "python": "managed-cpython-3.12",
+        "python": f"managed-cpython-{PYTHON_VERSION}",
         "platform": sys.platform,
         "machine": platform.machine(),
         "libc": list(platform.libc_ver()),
@@ -134,7 +135,7 @@ def _sync_command(uv: Path, options: dict) -> list[str]:
         "--frozen",
         "--managed-python",
         "--python",
-        "3.12",
+        PYTHON_VERSION,
         "--no-install-project",
     ]
     for extra in ("oslom", "bidsify", "lesion", "cicada", "marss"):

@@ -11,6 +11,9 @@ from nro.site import bootstrap, user_launcher
 
 def installation(root, *, branch=None):
     root.mkdir(parents=True)
+    bootstrap_python = root / ".nro-bootstrap/bin/python"
+    bootstrap_python.parent.mkdir(parents=True)
+    bootstrap_python.write_text("interpreter")
     python = root / ".nro-env/bin/python"
     python.parent.mkdir(parents=True)
     python.write_text("interpreter")
@@ -50,6 +53,9 @@ def test_checkout_selection_preserves_default(tmp_path, monkeypatch):
     assert user_launcher.select_installation(index, tmp_path) == main
     assert user_launcher.select_installation(index, tmp_path / "dev/nro/modules/func") == dev
     assert user_launcher.select_installation(index, tmp_path / "main") == main
+    assert (bin_dir / "nro").read_text().splitlines()[0] == (
+        f"#!{dev['checkout']}/.nro-bootstrap/bin/python"
+    )
 
 
 def test_explicit_default_changes_only_outside_checkout_selection(tmp_path, monkeypatch):
@@ -275,6 +281,7 @@ def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monke
     bootstrap.connect_user(main, bin_dir=bin_dir)
     root = tmp_path / "feature"
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
+    (root / ".nro-bootstrap/bin/python").write_text("python")
     (root / ".nro-bootstrap/bin/uv").write_text("uv")
     monkeypatch.setattr(bootstrap, "ROOT", root)
     monkeypatch.setattr(branches, "checkout_identity", lambda _: (root, "feature", "a" * 40))

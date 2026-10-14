@@ -16,7 +16,13 @@ from pathlib import Path
 
 from nro.orchestration.control_paths import ControlPaths
 from nro.site import user_launcher
-from nro.site.bootstrap_dependencies import UV_VERSION
+from nro.site.bootstrap_dependencies import (
+    PYTHON_VERSION,
+    UV_VERSION,
+    activate_target,
+    bootstrap_target,
+    prepare_target,
+)
 from nro.site.configuration import settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -240,6 +246,38 @@ def prepare_branch_definitions(site: Path, record: dict) -> None:
         validate_store_integrity(inherited)
 
 
+def activate_managed_bootstrap() -> None:
+    """Publish the prepared bootstrap after the installation is safe to change."""
+    selected = os.environ.get("NRO_BOOTSTRAP_TARGET")
+    if selected is None:
+        return
+    target = Path(selected)
+    expected = bootstrap_target(ROOT)
+    if target != expected:
+        raise RuntimeError("The prepared nro bootstrap does not match the repository pins")
+    if not (target / "bin/python").is_file():
+        uv = bootstrap_uv()
+        if not uv.is_file():
+            raise RuntimeError("The standalone pinned uv executable is unavailable")
+        target = prepare_target(
+            ROOT,
+            uv,
+            offline=os.environ.get("NRO_BOOTSTRAP_OFFLINE") == "true",
+        )
+    activate_target(ROOT, target)
+
+
+def bootstrap_uv() -> Path:
+    """Return standalone uv, accepting the legacy bootstrap only during migration."""
+    selected = os.environ.get("NRO_BOOTSTRAP_UV")
+    if selected is not None:
+        return Path(selected)
+    standalone = ROOT / f".nro-tools/uv-{UV_VERSION}/uv"
+    if standalone.is_file():
+        return standalone
+    return ROOT / ".nro-bootstrap/bin/uv"
+
+
 def _fixed_launcher_record(text: str) -> dict | None:
     lines = text.splitlines()
     if len(lines) != 5 or lines[:3] != [
@@ -308,10 +346,15 @@ def connect_user(
         raise RuntimeError("The shared interpreter or site configuration is missing.")
     destination = (bin_dir or Path.home() / ".local/bin") / "nro"
     marker = "# nro directory-aware launcher\n"
-    launcher = "#!" + sys.executable + "\n" + marker + Path(user_launcher.__file__).read_text()
     root = str(Path(record["checkout"]).resolve())
     if record["checkout"] != root or record.get("mode") not in {"personal", "shared", "branch"}:
         raise RuntimeError("Invalid installation checkout or role")
+    launcher_python = Path(root) / ".nro-bootstrap/bin/python"
+    if not launcher_python.is_file():
+        raise RuntimeError("The stable nro bootstrap interpreter is missing")
+    launcher = (
+        "#!" + str(launcher_python) + "\n" + marker + Path(user_launcher.__file__).read_text()
+    )
     if json.loads((Path(root) / RECORD).read_text()) != record:
         raise RuntimeError("Installation record changed; reconnect after setup completes")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -518,6 +561,7 @@ def _main(argv=None) -> None:
 
         with maintenance_lock(ROOT, "branch"):
             record = convert_shared(ROOT, default_record, site=args.site)
+            activate_managed_bootstrap()
         connect_user(record, bin_dir=args.bin_dir, replace_launcher=args.replace_launcher)
         return
     if existing and args.mode and args.mode != existing["mode"]:
@@ -672,6 +716,8 @@ def _main(argv=None) -> None:
             )
         if mode == "branch" and existing and environment.exists():
             check_branch_environment(site, environment)
+        if mode == "branch":
+            activate_managed_bootstrap()
         with_viewer = not args.without_viewer
         if mode == "branch" and default_record is not None:
             with_viewer = with_viewer and bool(default_record.get("with_viewer", True))
@@ -695,16 +741,9 @@ def _main(argv=None) -> None:
             record["environment"] = str(environment)
         if mode == "branch":
             write_record(record_path, record)
-        uv_env = ROOT / ".nro-bootstrap"
-        uv = uv_env / "bin/uv"
+        uv = bootstrap_uv()
         if not uv.is_file():
-            if args.offline:
-                raise RuntimeError("Offline setup needs an existing bootstrap environment")
-            subprocess.run([sys.executable, "-m", "venv", str(uv_env)], check=True)
-            subprocess.run(
-                [str(uv_env / "bin/python"), "-m", "pip", "install", f"uv=={UV_VERSION}"],
-                check=True,
-            )
+            raise RuntimeError("The standalone pinned uv executable is unavailable")
         env = {
             **{
                 key: value
@@ -750,7 +789,7 @@ def _main(argv=None) -> None:
                 "--frozen",
                 "--managed-python",
                 "--python",
-                "3.12",
+                PYTHON_VERSION,
             ]
             if record["with_oslom"]:
                 sync += ["--extra", "oslom"]
@@ -789,6 +828,7 @@ def _main(argv=None) -> None:
             (environment / ".nro-checkout").write_text(f"{ROOT}\n", encoding="utf-8")
         if prepare_shared is not None:
             prepare_shared()
+            activate_managed_bootstrap()
         python = str(environment / "bin/python")
         module_command = [python, "-m", "nro.bin.setup", "--resources-only"]
         command = (
