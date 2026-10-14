@@ -603,6 +603,25 @@ def test_interactive_defaults_keep_reachable_lab(isolated_site, tmp_path, monkey
     assert site_setup.interactive_defaults(sources)["binds"] == []
 
 
+def test_explicit_default_parent_rebases_site_paths(isolated_site, tmp_path, monkeypatch):
+    parent = tmp_path / "site-root"
+    values = site.default_parent_paths(parent)
+
+    assert values["definitions"] == str(parent / "definitions")
+    assert values["bids"] == str(parent / "bids")
+    assert values["registry"] == str(parent / ".nro")
+    assert values["qunex"] == str(parent / "images/qunex_suite-1.5.1.sif")
+    assert values["mni_template"] == str(
+        parent / "templateflow/tpl-MNI152NLin2009cAsym/tpl-MNI152NLin2009cAsym_res-01_T1w.nii.gz"
+    )
+    assert "partition" not in values
+    assert "binds" not in values
+
+    monkeypatch.setattr(site_setup, "LAB", tmp_path)
+    proposals = site_setup.interactive_defaults({}, default_parent_dir=parent)
+    assert proposals == values
+
+
 @pytest.mark.parametrize("accept_all", [False, True])
 def test_interactive_paths_display_and_save_proposals(
     isolated_site, tmp_path, monkeypatch, capsys, accept_all

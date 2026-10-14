@@ -217,9 +217,9 @@ SITE_BIDSIFY_KEYS = {
 }
 
 
-def generic_defaults() -> dict:
+def generic_defaults(parent: Path | None = None) -> dict:
     """Return checkout-independent path proposals for a new standalone site."""
-    root = Path.home().resolve() / "nro"
+    root = Path.home().resolve() / "nro" if parent is None else Path(parent).expanduser().resolve()
     return {
         **{
             key: str(root / suffix)
@@ -242,6 +242,14 @@ def generic_defaults() -> dict:
         "viewing_partition": "",
         "account": "",
     }
+
+
+def default_parent_paths(parent: Path) -> dict[str, str]:
+    """Return every site path derived from an explicit installation parent."""
+    values = generic_defaults(parent)
+    for key, (source, suffix) in DERIVED.items():
+        values[key] = str(Path(values[source]) / suffix)
+    return {key: str(values[key]) for key in PATH_KEYS if key in values}
 
 
 def installation_record(root: Path = CHECKOUT) -> dict:
