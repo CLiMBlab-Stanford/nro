@@ -16,10 +16,10 @@ __pycache__/
 /.nro-site.toml
 /.nro-env/
 /.nro-environments/
-/.nro-bootstrap/
+/.nro-bootstrap
 /.nro-bootstraps/
 /.nro-bootstrap-transition.json
-/.nro-bootstrap.previous-*/
+/.nro-bootstrap.previous-*
 /.nro-tools/
 /.nro-python/
 /.nro-cache/

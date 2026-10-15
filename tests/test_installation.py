@@ -58,6 +58,22 @@ def test_locked_native_dependencies_have_python312_glibc217_wheels() -> None:
         ), name
 
 
+def test_managed_bootstrap_symlinks_are_ignored(tmp_path) -> None:
+    root = Path(__file__).parents[1]
+    (tmp_path / ".gitignore").write_bytes((root / ".gitignore").read_bytes())
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / ".nro-bootstraps/target").mkdir(parents=True)
+    (tmp_path / ".nro-bootstrap").symlink_to(".nro-bootstraps/target")
+    (tmp_path / ".nro-bootstrap.previous-test").symlink_to(".nro-bootstraps/target")
+
+    for path in (".nro-bootstrap", ".nro-bootstrap.previous-test"):
+        subprocess.run(
+            ["git", "check-ignore", "--quiet", "--no-index", path],
+            cwd=tmp_path,
+            check=True,
+        )
+
+
 def test_container_versions_match_managed_resource_names() -> None:
     for name, version in site.CONTAINER_VERSIONS.items():
         assert version in site.DERIVED[name][1]
