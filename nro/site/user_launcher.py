@@ -97,12 +97,13 @@ def select_installation(index: dict, cwd: Path, *, allow_incomplete: bool = Fals
 def validate_branch(record: dict) -> None:
     """Check the current Git branch and central binding before selecting its code."""
     result = subprocess.run(
-        ["git", "-C", record["checkout"], "symbolic-ref", "--short", "HEAD"],
+        ["git", "symbolic-ref", "HEAD"],
+        cwd=record["checkout"],
         capture_output=True,
         text=True,
         check=False,
     )
-    if result.returncode or result.stdout.strip() != record["branch"]:
+    if result.returncode or result.stdout.strip() != f"refs/heads/{record['branch']}":
         raise ValueError("Checkout branch changed or HEAD is detached; use the registered branch")
     catalog = json.loads(Path(record["branch_catalog"]).read_text())
     binding = catalog.get(record["branch"], {})

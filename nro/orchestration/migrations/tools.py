@@ -51,7 +51,8 @@ def require_unchanged_baselines(root: Path, base_ref: str) -> None:
     """Reject a PR that rewrites a baseline or an existing migration."""
     relative = "nro/orchestration/migrations/baselines.json"
     result = subprocess.run(
-        ["git", "-C", str(root), "show", f"{base_ref}:{relative}"],
+        ["git", "show", f"{base_ref}:{relative}"],
+        cwd=root,
         capture_output=True,
         text=True,
     )
@@ -68,7 +69,8 @@ def require_unchanged_baselines(root: Path, base_ref: str) -> None:
         "nro/orchestration/migrations/scientific",
     )
     changed = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-status", base_ref, "--", *migration_roots],
+        ["git", "diff", "--name-status", base_ref, "--", *migration_roots],
+        cwd=root,
         check=True,
         capture_output=True,
         text=True,

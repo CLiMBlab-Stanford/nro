@@ -43,7 +43,7 @@ def test_checkout_selection_preserves_default(tmp_path, monkeypatch):
     monkeypatch.setattr(
         user_launcher.subprocess,
         "run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="dev\n"),
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="refs/heads/dev\n"),
     )
     bin_dir = tmp_path / "bin"
     bootstrap.connect_user(main, bin_dir=bin_dir)
@@ -65,7 +65,7 @@ def test_explicit_default_changes_only_outside_checkout_selection(tmp_path, monk
     monkeypatch.setattr(
         user_launcher.subprocess,
         "run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="dev"),
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="refs/heads/dev"),
     )
     bin_dir = tmp_path / "bin"
     for record in (old, main, dev):
@@ -207,7 +207,7 @@ def test_invalid_branch_never_falls_back(tmp_path, monkeypatch, problem):
         "run",
         lambda *a, **kw: SimpleNamespace(
             returncode=1 if problem == "detached" else 0,
-            stdout="other" if problem == "wrong_branch" else "dev",
+            stdout=("refs/heads/other" if problem == "wrong_branch" else "refs/heads/dev"),
         ),
     )
     with pytest.raises(ValueError):

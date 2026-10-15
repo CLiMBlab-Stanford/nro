@@ -42,13 +42,17 @@ def checkout_identity(checkout: Path) -> tuple[Path, str, str]:
     """Read a checkout's root, named branch, and commit; reject detached HEAD."""
 
     def git(*args: str) -> str:
-        result = subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True)
+        result = subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True)
         if result.returncode:
             raise ValueError("Expected a Git checkout on a named branch")
         return result.stdout.strip()
 
     root = Path(git("rev-parse", "--show-toplevel")).resolve()
-    name = git("symbolic-ref", "--short", "HEAD")
+    reference = git("symbolic-ref", "HEAD")
+    prefix = "refs/heads/"
+    if not reference.startswith(prefix):
+        raise ValueError("Expected a Git checkout on a named branch")
+    name = reference[len(prefix) :]
     branch_id(name)
     return root, name, git("rev-parse", "HEAD")
 
@@ -62,20 +66,28 @@ def repository_identity(checkout: Path) -> str | None:
     checkout cannot supply repository metadata.
     """
     checkout = Path(checkout).expanduser().resolve()
-    remote = subprocess.run(
-        ["git", "-C", str(checkout), "remote", "get-url", "origin"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        remote = None
+        for arguments in (
+            ("remote", "get-url", "origin"),
+            ("config", "--get", "remote.origin.url"),
+        ):
+            remote = subprocess.run(
+                ["git", *arguments], cwd=checkout, capture_output=True, text=True
+            )
+            if remote is not None and remote.returncode == 0 and remote.stdout.strip():
+                break
+    except OSError:
+        return None
     if remote is not None and remote.returncode == 0 and remote.stdout.strip():
         return "origin:" + remote.stdout.strip()
-    common = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        capture_output=True,
-        text=True,
-    )
-    if common is not None and common.returncode == 0 and common.stdout.strip():
-        return "git:" + str(Path(common.stdout.strip()).resolve())
+    for arguments in (("rev-parse", "--git-common-dir"), ("rev-parse", "--git-dir")):
+        common = subprocess.run(["git", *arguments], cwd=checkout, capture_output=True, text=True)
+        if common is not None and common.returncode == 0 and common.stdout.strip():
+            path = Path(common.stdout.strip())
+            if not path.is_absolute():
+                path = checkout / path
+            return "git:" + str(path.resolve())
     return None
 
 
