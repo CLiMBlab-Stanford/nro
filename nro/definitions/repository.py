@@ -9,7 +9,6 @@ from pathlib import Path
 
 import yaml
 
-from nro.definitions.events import EventStore, task_key
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
 from nro.engine.io import atomic_write_text
 from nro.site.configuration import (
@@ -49,6 +48,7 @@ def validate_store(
     scientific suitability, credentials, or availability of external resources.
     """
     from nro.bidsify.config import load_config
+    from nro.definitions.events import EventStore, task_key
     from nro.definitions.migrations import validate_store_integrity
     from nro.modules.firstlevels.task_models import load_task_model, scientific_model
 
@@ -280,6 +280,7 @@ def create_store(
     site_values: dict | None = None,
     site_bidsify: dict | None = None,
     inherited_site: Path | None = None,
+    _semantic_validation: bool = True,
 ) -> Path:
     """Publish a new validated starter store; refuse every existing destination.
 
@@ -333,15 +334,23 @@ def create_store(
         from nro.definitions.migrations import migrate_store
 
         inherited = (inherited_site,) if inherited_site is not None else ()
-        migrate_store(
-            staged,
-            validate=lambda candidate: validate_store(
-                candidate,
-                require_site=include_site,
-                inherited_site=inherited_site,
-                inherited_roots=inherited,
-            ),
-        )
+        if _semantic_validation:
+
+            def validate(candidate: Path) -> None:
+                validate_store(
+                    candidate,
+                    require_site=include_site,
+                    inherited_site=inherited_site,
+                    inherited_roots=inherited,
+                )
+
+        else:
+
+            def validate(candidate: Path) -> None:
+                if include_site:
+                    read_site_definition(candidate)
+
+        migrate_store(staged, validate=validate)
         from nro.definitions.migrations import ensure_group_maintainable
 
         ensure_group_maintainable(staged)
@@ -349,7 +358,7 @@ def create_store(
     return destination
 
 
-def complete_starter_store(root: Path) -> Path:
+def complete_starter_store(root: Path, *, _semantic_validation: bool = True) -> Path:
     """Complete an interrupted site-only starter store without masking drift.
 
     Every existing directory and file must match a subset of the complete
@@ -367,6 +376,7 @@ def complete_starter_store(root: Path) -> Path:
             Path(temporary) / "store",
             site_values=site_values,
             site_bidsify=site_bidsify,
+            _semantic_validation=_semantic_validation,
         )
         mutable_metadata = {Path(LOCK), Path(MANIFEST)}
         for existing in sorted(root.rglob("*")):
@@ -406,7 +416,10 @@ def complete_starter_store(root: Path) -> Path:
             durable=True,
         )
     ensure_group_maintainable(root)
-    validate_store(root, require_site=True)
+    if _semantic_validation:
+        validate_store(root, require_site=True)
+    else:
+        read_site_definition(root)
     return root
 
 

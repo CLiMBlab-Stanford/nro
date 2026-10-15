@@ -112,13 +112,18 @@ def migrate_site_configuration(path: Path) -> Path:
 
         values, _ = settings(path=path)
         protected, bidsify = _split_site_values(values)
-        create_store(definitions, site_values=protected, site_bidsify=bidsify)
+        create_store(
+            definitions,
+            site_values=protected,
+            site_bidsify=bidsify,
+            _semantic_validation=False,
+        )
         _write_locator(path, definitions)
         return site_definition_path(definitions)
     if protected_path.is_file() and not (definitions / "workflows/main_workflow.yml").is_file():
         from nro.definitions.repository import complete_starter_store
 
-        complete_starter_store(definitions)
+        complete_starter_store(definitions, _semantic_validation=False)
     if protected_path.is_file():
         # A candidate release may need a newer definitions schema before its
         # site-document reader can interpret the protected settings. This runs

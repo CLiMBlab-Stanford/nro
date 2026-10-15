@@ -149,10 +149,12 @@ or thread counts in third-party software.
 
 An execution change can appear in saved provenance if an artifact is rebuilt.
 It must not alter scientific identity merely because that record differs.
-Timeouts must fail the attempt rather than publish partial results: OSLOM's
-directory completion marker is written only after successful execution and
-output validation. CPU, memory, concurrency, and Slurm routing remain
-orchestration settings, separate from scientific contracts.
+A scientific command's own timeout must fail the attempt rather than publish
+partial results: OSLOM's directory completion marker is written only after
+successful execution and output validation. Expiration of a reusable worker
+allocation instead interrupts the attempt and returns its work to the ready
+queue. CPU, memory, concurrency, and Slurm routing remain orchestration settings,
+separate from scientific contracts.
 
 ## Configuration classes
 

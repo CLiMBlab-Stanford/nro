@@ -280,7 +280,10 @@ worker nor its scientific subprocess can open the scheduler database.
 
 Workers drain before wall-time and request successor capacity from the
 controller. The registry, not queued Slurm count, enforces the independent
-general and GPU concurrency limits.
+general and GPU concurrency limits. If an allocation nevertheless expires while
+running an item or resource step, the scheduler records the interrupted attempt
+and returns that work to the appropriate ready queue. It does not classify the
+work item as timed out or cancel its descendants.
 Confirmed OOMs increase the work-item memory tier geometrically up to the
 request ceiling; higher-tier workers may accept lower-tier work items.
 
