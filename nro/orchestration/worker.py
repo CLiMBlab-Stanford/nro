@@ -787,19 +787,17 @@ class Worker:
             if not scheduler_cancelled and self._allocation_timed_out(return_code):
                 message = (
                     "Worker allocation reached its Slurm wall-time limit; "
-                    "resume this work with a longer --time allocation"
+                    "the work item was returned to the ready queue"
                 )
-                finish(
-                    state="error",
-                    error_type="Timeout",
+                self.registry.interrupt_attempt_for_worker_expiry(
+                    attempt_id,
                     error_message=message,
                 )
-                self._cancel_failed_descendants(work_item)
                 _append_event(
                     self.registry,
                     work_item,
                     {
-                        "event": "attempt_timed_out",
+                        "event": "worker_allocation_expired",
                         "attempt_id": attempt_id,
                         "return_code": return_code,
                         "error": message,

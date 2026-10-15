@@ -1833,7 +1833,8 @@ class Registry(WorkflowRegistry):
                       OR COALESCE((SELECT error_type FROM attempts old
                                    WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
                          IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                             'WorkItemGraphChanged', 'RegistryUnavailable')
+                             'WorkerAllocationExpired', 'WorkItemGraphChanged',
+                             'RegistryUnavailable')
                              OR COALESCE((SELECT error_type FROM attempts old
                                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
                                 = 'ResourcePreconditionChanged'
@@ -2206,6 +2207,57 @@ class Registry(WorkflowRegistry):
                     "UPDATE workers SET state='idle',updated_at=? WHERE id=?",
                     (now, attempt["worker_id"]),
                 )
+
+    @staticmethod
+    def _interrupt_attempt_locked(
+        db: sqlite3.Connection,
+        attempt_id: int,
+        *,
+        error_type: str,
+        error_message: str,
+    ) -> bool:
+        """Release one infrastructure-interrupted attempt for immediate retry."""
+        attempt = db.execute(
+            "SELECT work_item_id,worker_id FROM attempts WHERE id=?", (attempt_id,)
+        ).fetchone()
+        if attempt is None:
+            return False
+        now = utcnow()
+        db.execute(
+            """UPDATE attempts SET state='cancelled',completed_at=COALESCE(completed_at,?),
+                       error_type=?,error_message=?
+               WHERE id=?""",
+            (now, error_type, error_message, attempt_id),
+        )
+        db.execute(
+            """UPDATE resource_step_tasks
+               SET state='pending',worker_id=NULL,attempt_id=NULL,completed_at=NULL,updated_at=?,
+                   error_type=?,error_message=?
+               WHERE attempt_id=? AND state IN ('running','error')""",
+            (now, error_type, error_message, attempt_id),
+        )
+        if attempt["worker_id"]:
+            db.execute(
+                "UPDATE workers SET state='idle',updated_at=? WHERE id=?",
+                (now, attempt["worker_id"]),
+            )
+        return True
+
+    def interrupt_attempt_for_worker_expiry(
+        self,
+        attempt_id: int,
+        *,
+        error_message: str,
+    ) -> None:
+        """Record an expired worker allocation and release its work for retry."""
+        with self.connection(write=True) as db:
+            if not self._interrupt_attempt_locked(
+                db,
+                attempt_id,
+                error_type="WorkerAllocationExpired",
+                error_message=error_message,
+            ):
+                raise KeyError(f"Unknown attempt: {attempt_id}")
 
     def attempt_cancel_requested(self, attempt_id: int) -> bool:
         """Return whether the current attempt has been marked for cancellation."""
@@ -3182,8 +3234,19 @@ class Registry(WorkflowRegistry):
             return cursor.rowcount
 
     def reconcile_attempt_timeouts(self) -> int:
-        """Classify SIGTERM failures whose Slurm allocations reached wall time."""
+        """Release SIGTERM failures whose worker allocations reached wall time."""
         with self.connection() as db:
+            legacy = [
+                dict(row)
+                for row in db.execute(
+                    """
+                    SELECT attempt.id, worker.slurm_job_id
+                    FROM attempts attempt
+                    JOIN workers worker ON worker.id=attempt.worker_id
+                    WHERE attempt.state='error' AND attempt.error_type='Timeout'
+                    """
+                )
+            ]
             candidates = [
                 dict(row)
                 for row in db.execute(
@@ -3198,29 +3261,27 @@ class Registry(WorkflowRegistry):
                     """
                 )
             ]
-        timed_out = [
+        detected = [
             row
             for row in candidates
             if RegistryLock._slurm_timed_out(str(row["slurm_job_id"])) is True
         ]
+        timed_out = {int(row["id"]): row for row in (*legacy, *detected)}.values()
         if not timed_out:
             return 0
         with self.connection(write=True) as db:
-            db.executemany(
-                """
-                UPDATE attempts SET error_type='Timeout', error_message=?
-                WHERE id=? AND error_type='CalledProcessError'
-                """,
-                (
-                    (
+            return sum(
+                self._interrupt_attempt_locked(
+                    db,
+                    int(row["id"]),
+                    error_type="WorkerAllocationExpired",
+                    error_message=(
                         f"Worker allocation {row['slurm_job_id']} reached its Slurm wall-time "
-                        "limit; resume this work with a longer --time allocation",
-                        row["id"],
-                    )
-                    for row in timed_out
-                ),
+                        "limit; the work item was returned to the ready queue"
+                    ),
+                )
+                for row in timed_out
             )
-        return len(timed_out)
 
     def reserve_worker_successor(
         self,
@@ -3460,27 +3521,13 @@ class Registry(WorkflowRegistry):
                         job_id = next(
                             item["slurm_job_id"] for item in expired if item["id"] == worker_id
                         )
-                        db.execute(
-                            """
-                            UPDATE attempts SET state='error', completed_at=?, error_type='Timeout',
-                                error_message=? WHERE id=?
-                            """,
-                            (
-                                utcnow(),
+                        self._interrupt_attempt_locked(
+                            db,
+                            int(attempt["id"]),
+                            error_type="WorkerAllocationExpired",
+                            error_message=(
                                 f"Worker allocation {job_id} reached its Slurm wall-time limit; "
-                                "resume this work with a longer --time allocation",
-                                attempt["id"],
-                            ),
-                        )
-                        db.execute(
-                            """UPDATE resource_step_tasks SET state='error',completed_at=?,updated_at=?,
-                                      error_type='Timeout',error_message=?
-                               WHERE attempt_id=? AND state='running'""",
-                            (
-                                utcnow(),
-                                utcnow(),
-                                f"Worker allocation {job_id} reached its Slurm wall-time limit",
-                                attempt["id"],
+                                "the work item was returned to the ready queue"
                             ),
                         )
                         recovered += 1

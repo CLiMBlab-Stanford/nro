@@ -170,7 +170,8 @@ The pager uses colors and pinned headers when supported.
 
 The `ELAPSED` column reports execution time accumulated by the work item's
 current scientific revision. It includes CPU and GPU attempts, retries, and
-resource handoffs, but excludes time spent queued or waiting on dependencies.
+resource handoffs—including attempts interrupted by worker-allocation expiry—but
+excludes time spent queued or waiting on dependencies.
 JSON output provides the same value as `elapsed_seconds`.
 
 After central activation, `--update` first recompiles registered selections
@@ -193,8 +194,9 @@ work whose dependencies are complete and which is waiting for worker capacity.
 `Waiting` indicates demanded work held behind unfinished dependencies.
 `Blocked` indicates demanded work held behind an upstream error.
 `Running` and `Error` describe current execution or an unresolved failed attempt.
-`Timeout` means Slurm ended the worker allocation at its wall-time limit. Resume
-that work with a larger `--time` value when the same limit would be insufficient.
+`Timeout` is reserved for a work-item execution limit. A reusable worker reaching
+its Slurm wall-time interrupts its current attempt and returns the work item to
+`Queued`; allocation lifetime is not a property of the work item.
 `Stopping` means cancellation is awaiting worker confirmation. `Stopped` means
 the latest attempt ended because a user cancelled its demand; it is not an
 execution failure. A new matching `nro run` request returns that work to the

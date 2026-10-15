@@ -2427,7 +2427,7 @@ def test_cancellation_can_target_one_exact_request(tmp_path: Path) -> None:
     ("launcher_cancelled", "scheduler_timeout"),
     [(False, False), (True, False), (False, True)],
 )
-def test_worker_walltime_sigterm_is_reported_as_timeout(
+def test_worker_walltime_sigterm_returns_work_to_ready_queue(
     tmp_path: Path,
     monkeypatch,
     launcher_cancelled: bool,
@@ -2489,9 +2489,73 @@ def test_worker_walltime_sigterm_is_reported_as_timeout(
     worker._execute(claimed)
 
     row = registry.work_item_status_snapshot()[0]
-    assert row["status"] == "Timeout"
-    assert row["error_type"] == "Timeout"
-    assert "longer --time allocation" in row["error_message"]
+    assert row["status"] == "Queued"
+    assert row["attempt_state"] == "cancelled"
+    assert row["error_type"] == "WorkerAllocationExpired"
+    assert "returned to the ready queue" in row["error_message"]
+    registry.register_worker("successor", resource_class="large")
+    assert registry.claim_ready_work_item("successor", ("large",)) is not None
+
+
+def test_gpu_worker_walltime_returns_resource_step_to_ready_queue(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="anat:" + "t" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "outputs" / "anat.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("cpu", resource_class="large")
+    parent = registry.claim_ready_work_item("cpu", ("large",))
+    assert parent is not None
+    registry.defer_resource_step(
+        parent.attempt_id,
+        step_id="inpainting",
+        resource_class="gpu",
+    )
+    registry.register_worker("gpu", resource_class="gpu")
+    claimed = registry.claim_resource_step("gpu", resource_class="gpu", memory_gb=32)
+    assert claimed is not None
+
+    class TimedOutLauncher:
+        def terminate(self) -> None:
+            pass
+
+        def run(self, *args, **kwargs) -> ExecutionResult:
+            return ExecutionResult(-signal.SIGTERM, True, False)
+
+    worker = Worker(
+        registry,
+        resource_class="gpu",
+        launcher=TimedOutLauncher(),
+        worker_id="gpu",
+        walltime_seconds=1,
+    )
+    worker.deadline = time.monotonic()
+    worker._execute(claimed)
+
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Queued"
+    assert row["waiting_resource_class"] == "gpu"
+    registry.register_worker("gpu-successor", resource_class="gpu")
+    assert (
+        registry.claim_resource_step("gpu-successor", resource_class="gpu", memory_gb=32)
+        is not None
+    )
 
 
 def test_worker_checkin_renews_lease_and_preserves_shutdown(tmp_path: Path) -> None:
@@ -2513,7 +2577,7 @@ def test_worker_checkin_renews_lease_and_preserves_shutdown(tmp_path: Path) -> N
     }
 
 
-def test_status_update_can_reconcile_an_existing_slurm_timeout(tmp_path: Path, monkeypatch) -> None:
+def test_status_update_requeues_an_existing_slurm_timeout(tmp_path: Path, monkeypatch) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     workflow = ConfigStore().resolve("main")
@@ -2549,8 +2613,101 @@ def test_status_update_can_reconcile_an_existing_slurm_timeout(tmp_path: Path, m
     assert registry.reconcile_attempt_timeouts() == 1
     assert registry.reconcile_attempt_timeouts() == 0
     row = registry.work_item_status_snapshot()[0]
-    assert row["status"] == "Timeout"
-    assert row["error_type"] == "Timeout"
+    assert row["status"] == "Queued"
+    assert row["attempt_state"] == "cancelled"
+    assert row["error_type"] == "WorkerAllocationExpired"
+    registry.register_worker("successor", resource_class="large")
+    assert registry.claim_ready_work_item("successor", ("large",)) is not None
+
+
+def test_status_update_requeues_legacy_timeout_record(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "7" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("worker", resource_class="large", slurm_job_id="123")
+    claimed = registry.claim_ready_work_item("worker", ("large",))
+    assert claimed is not None
+    registry.finish_attempt(
+        claimed.attempt_id,
+        state="error",
+        error_type="Timeout",
+        error_message="Worker allocation reached its Slurm wall-time limit",
+    )
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE attempts SET started_at=?,completed_at=? WHERE id=?",
+            (
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:01:00+00:00",
+                claimed.attempt_id,
+            ),
+        )
+
+    assert registry.reconcile_attempt_timeouts() == 1
+
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Queued"
+    assert row["attempt_state"] == "cancelled"
+    assert row["error_type"] == "WorkerAllocationExpired"
+    assert row["elapsed_seconds"] == pytest.approx(60, abs=0.01)
+
+
+def test_orphan_recovery_requeues_work_from_expired_allocation(tmp_path: Path, monkeypatch) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "8" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("expired", resource_class="large", slurm_job_id="123")
+    assert registry.claim_ready_work_item("expired", ("large",)) is not None
+    with registry.connection(write=True) as db:
+        db.execute("UPDATE workers SET pid=999999999,lease_expires_at=0 WHERE id='expired'")
+    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: True)
+    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda job_id: job_id == "123")
+
+    assert registry.recover_orphaned_attempts() == 1
+
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Queued"
+    assert row["attempt_state"] == "cancelled"
+    assert row["error_type"] == "WorkerAllocationExpired"
+    registry.register_worker("successor", resource_class="large")
+    assert registry.claim_ready_work_item("successor", ("large",)) is not None
 
 
 def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -> None:

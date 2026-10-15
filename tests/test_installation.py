@@ -633,6 +633,51 @@ def test_first_install_creates_complete_definitions_store(isolated_site, tmp_pat
     assert validate_store(definitions, require_site=True)["workflows"] == 4
 
 
+def test_first_install_defers_semantic_definition_validation(isolated_site, tmp_path, monkeypatch):
+    from nro.definitions import repository
+
+    definitions = tmp_path / "definitions"
+    save_settings(
+        isolated_site,
+        {"definitions": str(definitions), "bids": str(tmp_path / "BIDS")},
+    )
+    monkeypatch.setattr(
+        repository,
+        "validate_store",
+        lambda *args, **kwargs: pytest.fail("bootstrap invoked semantic validation"),
+    )
+
+    destination = site_setup.migrate_site_configuration(isolated_site)
+
+    assert destination == definitions / "site/site.yml"
+    assert (definitions / "workflows/main_workflow.yml").is_file()
+    assert (definitions / "bidsify/main.yml").is_file()
+
+
+def test_early_site_migration_imports_without_numpy() -> None:
+    script = """
+import builtins
+
+original_import = builtins.__import__
+
+def reject_numpy(name, *args, **kwargs):
+    if name == "numpy" or name.startswith("numpy."):
+        raise ModuleNotFoundError("numpy is unavailable during bootstrap")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = reject_numpy
+import nro.site.setup
+import nro.definitions.repository
+"""
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_first_install_recovers_site_only_definitions_store(isolated_site, tmp_path):
     from nro.definitions.repository import validate_store
     from nro.site.configuration import write_site_definition
