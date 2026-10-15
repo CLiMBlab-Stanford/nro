@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.33.9"
+version = "0.33.10"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -68,7 +68,7 @@ nro = "nro.cli:main"
 include = ["nro*"]
 
 [tool.setuptools.package-data]
-"nro.site" = ["bootstrap.pins"]
+"nro.site" = ["bootstrap.pins", "resources/*.lock"]
 "nro.definitions" = [
     "starters/configs/*/*.yml",
     "starters/workflows/*.yml",
