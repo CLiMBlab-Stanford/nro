@@ -108,20 +108,20 @@ OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
 MANAGED_RUNTIME = {
     "name": "apptainer",
-    "version": "1.4.5-1",
-    "distribution": "el8",
+    "version": "1.4.5",
+    "distribution": "conda-forge",
     "architecture": "x86_64",
-    "artifact": "apptainer-1.4.5-1-el8-x86_64.tar.gz",
-    "sha256": "cd6c28a45e32dc1dc365dc8c0b2eb94ae1ebde15be2b52d46f9a4032163bf939",
+    "minimum_glibc": "2.17",
+    "artifact": "apptainer-1.4.5-conda-glibc217-x86_64.tar.gz",
+    "sha256": "6659c298aacfaf5ada67f2358ee97468aa685cc4c1d76bd75da08bb6e2dca4f6",
     "source": (
         "https://github.com/CLiMBlab-Stanford/nro/releases/download/"
-        "resources-apptainer-1.4.5-1-el8-x86_64-v1/"
-        "apptainer-1.4.5-1-el8-x86_64.tar.gz"
+        "resources-apptainer-1.4.5-conda-glibc217-x86_64-v1/"
+        "apptainer-1.4.5-conda-glibc217-x86_64.tar.gz"
     ),
-    "upstream_installer_sha256": (
-        "33d416ca870fdfcfc6b5fd8791f02bf041d742a5b718d015a9a1cf61aa1b30dd"
-    ),
-    "upstream_rpm_sha256": ("d63fffcce94e472a838de6d0eef1e44b6ecb6265656768e087f3799adb36b356"),
+    "upstream_package": "conda-forge::apptainer=1.4.5=h6ccafba_0",
+    "environment_lock_sha256": ("83b6dfc6510caaf6280370f6187971a0a94d799af3a402051bf084022f216a05"),
+    "archive_builder": "conda-pack=0.9.2",
 }
 RUNTIME_MANIFEST = ".nro-runtime.json"
 
@@ -270,6 +270,31 @@ def _extract_runtime(archive: Path, destination: Path) -> None:
         stream.extractall(destination, filter="data")
 
 
+def _require_runtime_platform() -> None:
+    """Require the OS, architecture, and libc ABI supported by the managed runtime."""
+    architecture = MANAGED_RUNTIME["architecture"]
+    if platform.system() != "Linux" or platform.machine() != architecture:
+        raise RuntimeError(
+            f"Managed Apptainer supports Linux {architecture}; configure execution.runtime "
+            "with an absolute external executable on this platform"
+        )
+    minimum = MANAGED_RUNTIME.get("minimum_glibc")
+    if minimum is None:
+        return
+    library, version = platform.libc_ver()
+    try:
+        actual = tuple(int(part) for part in version.split("."))
+        required = tuple(int(part) for part in minimum.split("."))
+    except ValueError as error:
+        raise RuntimeError(f"Cannot determine host glibc compatibility from {version!r}") from error
+    if library != "glibc" or not version or actual < required:
+        label = f"{library} {version}".strip() or "an unknown C library"
+        raise RuntimeError(
+            f"Managed Apptainer requires glibc {minimum} or newer; this host reports {label}. "
+            "Configure execution.runtime with a compatible absolute external executable"
+        )
+
+
 def _seal_runtime_tree(root: Path) -> None:
     """Make a completed runtime readable and executable but not mutable in place."""
     for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
@@ -290,25 +315,38 @@ def install_runtime(*, offline=False) -> None:
     values, _ = settings()
     configured = values["runtime"]
     configured_path = Path(configured).expanduser()
+    managed = configured in {"apptainer", "singularity"}
     if configured_path.is_absolute():
-        resolved = shutil.which(str(configured_path))
-        if resolved is None:
-            raise RuntimeError(runtime_diagnostic(configured))
-        validate_managed_runtime(resolved)
-        print(f"Reuse container runtime: {resolved}")
-        return
-    if configured not in {"apptainer", "singularity"}:
+        manifest_path = configured_path.parent.parent / RUNTIME_MANIFEST
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    f"Invalid managed Apptainer manifest: {manifest_path}"
+                ) from error
+            if manifest.get("specification") == MANAGED_RUNTIME:
+                _require_runtime_platform()
+                _validate_runtime_tree(manifest_path.parent, complete=True)
+                print(f"Reuse container runtime: {configured_path}")
+                return
+            managed = True
+            print("Replacing managed container runtime with this nro release's pinned resource")
+        else:
+            resolved = shutil.which(str(configured_path))
+            if resolved is None:
+                raise RuntimeError(runtime_diagnostic(configured))
+            validate_managed_runtime(resolved)
+            print(f"Reuse container runtime: {resolved}")
+            return
+    if not managed:
         resolved = shutil.which(configured)
         if resolved is None:
             raise RuntimeError(runtime_diagnostic(configured))
         found = str(Path(resolved).resolve())
         print(f"Selected external container runtime: {found}")
     else:
-        if platform.system() != "Linux" or platform.machine() != MANAGED_RUNTIME["architecture"]:
-            raise RuntimeError(
-                "Managed Apptainer supports Linux x86_64; configure execution.runtime "
-                "with an absolute external executable on this platform"
-            )
+        _require_runtime_platform()
         root = _runtime_root(values)
         artifact = root.parent / "artifacts" / MANAGED_RUNTIME["artifact"]
         with resource_lock(root):

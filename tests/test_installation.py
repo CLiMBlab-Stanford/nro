@@ -501,6 +501,62 @@ def test_install_runtime_acquires_and_reuses_verified_managed_tree(
         dependencies.install_runtime(offline=True)
 
 
+def test_managed_runtime_supports_oldest_linux_abi(monkeypatch):
+    monkeypatch.setattr(dependencies.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(dependencies.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(dependencies.platform, "libc_ver", lambda: ("glibc", "2.17"))
+
+    dependencies._require_runtime_platform()
+
+    monkeypatch.setattr(dependencies.platform, "libc_ver", lambda: ("glibc", "2.16"))
+    with pytest.raises(RuntimeError, match="requires glibc 2.17 or newer"):
+        dependencies._require_runtime_platform()
+
+
+def test_managed_runtime_environment_lock_matches_specification():
+    path = (
+        Path(__file__).parents[1]
+        / "nro/site/resources/apptainer-1.4.5-conda-glibc217-linux-64.lock"
+    )
+
+    assert dependencies.sha256(path) == dependencies.MANAGED_RUNTIME["environment_lock_sha256"]
+
+
+def test_install_runtime_replaces_prior_managed_specification(isolated_site, tmp_path, monkeypatch):
+    old_root = tmp_path / "runtimes/apptainer-old"
+    old_executable = old_root / "bin/apptainer"
+    old_executable.parent.mkdir(parents=True)
+    old_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    old_executable.chmod(0o755)
+    (old_root / dependencies.RUNTIME_MANIFEST).write_text(
+        json.dumps({"format": 1, "specification": {"version": "old"}}),
+        encoding="utf-8",
+    )
+    current_root = tmp_path / "runtimes/apptainer-current"
+    current_executable = current_root / "bin/apptainer"
+    current_executable.parent.mkdir(parents=True)
+    current_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    current_executable.chmod(0o755)
+    save_settings(isolated_site, {"runtime": str(old_executable)})
+    monkeypatch.setattr(dependencies, "_runtime_root", lambda _values: current_root)
+    monkeypatch.setattr(dependencies, "_require_runtime_platform", lambda: None)
+    monkeypatch.setattr(
+        dependencies,
+        "_validate_runtime_tree",
+        lambda root, **_kwargs: {
+            "format": 1,
+            "specification": dependencies.MANAGED_RUNTIME,
+            "executable": "bin/apptainer",
+            "executable_sha256": dependencies.sha256(root / "bin/apptainer"),
+            "probe": "apptainer version 1.4.5",
+        },
+    )
+
+    dependencies.install_runtime(offline=True)
+
+    assert site.settings()[0]["runtime"] == str(current_executable)
+
+
 def test_install_runtime_offline_reports_missing_managed_artifact(
     isolated_site, tmp_path, monkeypatch
 ):
