@@ -22,7 +22,8 @@ from nro.site.setup import save_settings
 
 def _git(checkout: Path, *arguments: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(checkout), *arguments],
+        ["git", *arguments],
+        cwd=checkout,
         check=True,
         capture_output=True,
         text=True,

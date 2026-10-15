@@ -16,7 +16,7 @@ from nro.versioning import parse_release_version, require_release_advance
 
 
 def _git(checkout: Path, *args: str) -> str:
-    result = subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True)
+    result = subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         suffix = f": {detail[-1]}" if detail else ""
@@ -43,7 +43,7 @@ def _source(checkout: Path) -> tuple[str, str, str]:
 def tagged_source(checkout: Path) -> tuple[str, str, str, str, str]:
     """Return the exact annotated release at a clean main checkout."""
     checkout = Path(checkout).expanduser().resolve()
-    if _git(checkout, "symbolic-ref", "--short", "HEAD") != "main":
+    if _git(checkout, "symbolic-ref", "HEAD") != "refs/heads/main":
         raise ValueError("A production installation must use the main Git branch")
     commit, tree, version = _source(checkout)
     tag = f"v{version}"
