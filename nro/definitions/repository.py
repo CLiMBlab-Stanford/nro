@@ -256,21 +256,36 @@ def validate_store(
 def _publish(staged: Path, destination: Path) -> None:
     # Linux renameat2 prevents replacement even if another creator wins the race.
     library = ctypes.CDLL(None, use_errno=True)
-    rename = library.renameat2
-    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    rename.restype = ctypes.c_int
-    if rename(-100, os.fsencode(staged), -100, os.fsencode(destination), 1):
+    try:
+        rename = library.renameat2
+    except AttributeError:
+        rename = None
+    if rename is not None:
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+    if rename is not None and not rename(
+        -100, os.fsencode(staged), -100, os.fsencode(destination), 1
+    ):
+        return
+    if rename is not None:
         error = ctypes.get_errno()
         if error not in {errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP}:
             raise OSError(error, os.strerror(error), str(destination))
-        # Some shared filesystems lack RENAME_NOREPLACE. Reserve the directory
-        # exclusively and mark it incomplete until every child has been moved.
-        destination.mkdir(mode=0o755)
-        marker = destination / ".nro-incomplete"
-        marker.touch(exist_ok=False)
-        for path in staged.iterdir():
-            path.rename(destination / path.name)
-        marker.unlink()
+    # Older C libraries and some shared filesystems lack RENAME_NOREPLACE.
+    # Reserve the directory exclusively and mark it incomplete until every
+    # child has been moved.
+    destination.mkdir(mode=0o755)
+    marker = destination / ".nro-incomplete"
+    marker.touch(exist_ok=False)
+    for path in staged.iterdir():
+        path.rename(destination / path.name)
+    marker.unlink()
 
 
 def create_store(
