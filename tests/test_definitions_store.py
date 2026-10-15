@@ -220,8 +220,7 @@ def test_setup_creates_selected_store_and_preserves_edits(tmp_path, monkeypatch)
     from nro.site.setup import save_settings
 
     root = tmp_path / "definitions"
-    license_file = tmp_path / "license"
-    license_file.write_text("test fixture")
+    license_file = tmp_path / "missing-license"
     save_settings(site.site_file(), {"definitions": str(root), "license": str(license_file)})
     monkeypatch.setattr("nro.site.bootstrap.check_workers", lambda path: None)
     for name in ("install_runtime", "install_images", "install_workbench", "install_templates"):
@@ -236,6 +235,7 @@ def test_setup_creates_selected_store_and_preserves_edits(tmp_path, monkeypatch)
         "--local",
     ]
     setup.main(args)
+    assert not license_file.exists()
     assert validate_store(root)["models"] == 0
     path = root / "configs/clean/development_clean.yml"
     update_store(root, {path.relative_to(root): b"standardize: false\n"})

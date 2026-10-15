@@ -3,7 +3,8 @@
 ## `./install` and `nro setup`
 
 Both use the same installer. First setup accepts `--mode personal`,
-`--mode shared`, or `--mode branch`, or asks interactively. A new checkout uses
+`--mode shared`, or `--mode branch`; the one-letter forms `p`, `s`, and `b` are
+also accepted. The interactive prompt accepts the same values. A new checkout uses
 branch mode automatically when the user's dispatcher has a default installation.
 An existing shared checkout connects
 the caller's launcher unless `--maintain` is given. See the

@@ -432,9 +432,23 @@ def connect_user(
     return destination
 
 
+def _installation_mode(value: str) -> str:
+    """Normalize an installation role or its one-letter abbreviation."""
+    selected = value.strip().lower()
+    aliases = {"p": "personal", "s": "shared", "b": "branch"}
+    selected = aliases.get(selected, selected)
+    if selected not in {"personal", "shared", "branch"}:
+        raise argparse.ArgumentTypeError("Choose personal (p), shared (s), or branch (b)")
+    return selected
+
+
 def _main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="./install", description=__doc__)
-    parser.add_argument("--mode", choices=("personal", "shared", "branch"))
+    parser.add_argument(
+        "--mode",
+        type=_installation_mode,
+        metavar="{personal,shared,branch}",
+    )
     parser.add_argument("--maintain", action="store_true")
     parser.add_argument(
         "--drain",
@@ -590,9 +604,10 @@ def _main(argv=None) -> None:
     if not mode:
         if args.non_interactive or not sys.stdin.isatty():
             parser.error("First installation requires --mode personal, shared, or branch")
-        mode = input("Installation role [personal/shared/branch]: ").strip().lower()
-        if mode not in {"personal", "shared", "branch"}:
-            parser.error("Choose personal, shared, or branch")
+        try:
+            mode = _installation_mode(input("Installation role [[p]ersonal/[s]hared/[b]ranch]: "))
+        except argparse.ArgumentTypeError as error:
+            parser.error(str(error))
     site = (
         Path(existing["site"])
         if existing

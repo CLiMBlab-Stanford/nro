@@ -10,7 +10,6 @@ from pathlib import Path
 from nro.site.bootstrap import cancel_setup
 from nro.site.configuration import CHECKOUT, installation_record, settings, site_file
 from nro.site.dependencies import (
-    LICENSE_HELP,
     QUNEX_TERMS,
     check_installation,
     install_images,
@@ -72,7 +71,8 @@ def _main(argv=None, *, prog="nro setup"):
             slurm=not args.local,
         )
         for result in results:
-            print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
+            status = "OK" if result["ok"] else "FAIL" if result["required"] else "OPTIONAL"
+            print(f"{status} {result['name']}: {result['detail']}")
         if any(not result["ok"] and result["required"] for result in results):
             parser.exit(
                 1, "Shared resources are unavailable; ask the site maintainer to check them.\n"
@@ -111,8 +111,6 @@ def _main(argv=None, *, prog="nro setup"):
         site, _ = settings()
         print(f"Definitions: {definitions}", flush=True)
         print(f"Using {path}\nQuNex terms: {QUNEX_TERMS}", flush=True)
-        if not Path(site["license"]).is_file():
-            raise RuntimeError(LICENSE_HELP)
         if (
             args.non_interactive
             and not args.offline
@@ -165,7 +163,8 @@ def _main(argv=None, *, prog="nro setup"):
             with_viewer=not args.without_viewer,
         )
         for result in results:
-            print(f"{'OK' if result['ok'] else 'FAIL'} {result['name']}: {result['detail']}")
+            status = "OK" if result["ok"] else "FAIL" if result["required"] else "OPTIONAL"
+            print(f"{status} {result['name']}: {result['detail']}")
         if any(not r["ok"] and r["required"] for r in results):
             if any(r["name"] == "Workbench" and not r["ok"] for r in results):
                 raise RuntimeError(

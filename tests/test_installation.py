@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import os
@@ -77,6 +78,49 @@ def test_managed_bootstrap_symlinks_are_ignored(tmp_path) -> None:
 def test_container_versions_match_managed_resource_names() -> None:
     for name, version in site.CONTAINER_VERSIONS.items():
         assert version in site.DERIVED[name][1]
+
+
+def test_missing_freesurfer_license_is_optional_during_setup(tmp_path, monkeypatch) -> None:
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    templates = tmp_path / "templates"
+    for relative in (
+        "tpl-fsaverage/tpl-fsaverage_hemi-L_den-41k_midthickness.surf.gii",
+        "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_midthickness.surf.gii",
+    ):
+        path = templates / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("template")
+    mni = templates / "tpl-MNI152NLin2009cAsym/template.nii.gz"
+    mni.parent.mkdir(parents=True)
+    mni.write_text("template")
+    bids = tmp_path / "BIDS"
+    bids.mkdir()
+    values = {
+        "definitions": str(definitions),
+        "runtime": "/bin/true",
+        "license": str(tmp_path / "missing-license.txt"),
+        "mni_template": str(mni),
+        "templates": str(templates),
+        "bids": str(bids),
+        "work": str(tmp_path / "WORK"),
+        "registry": str(tmp_path / "registry"),
+        "oslom": "/bin/true",
+    }
+    monkeypatch.setattr(dependencies, "settings", lambda: (values, tmp_path / "site.toml"))
+    monkeypatch.setattr(dependencies, "required_images", lambda: {})
+
+    results = dependencies.check_installation(
+        quick=True,
+        with_oslom=False,
+        slurm=False,
+        with_viewer=False,
+    )
+
+    license_check = next(row for row in results if row["name"] == "FreeSurfer license")
+    assert license_check["ok"] is False
+    assert license_check["required"] is False
+    assert "Register at" in license_check["detail"]
 
 
 @pytest.mark.parametrize("response", ["", "y", "Y", "yes", "YES"])
@@ -2116,6 +2160,26 @@ def test_bootstrap_propagates_child_cancellation(monkeypatch):
     with pytest.raises(SystemExit) as error:
         bootstrap.main([])
     assert error.value.code == 130
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("p", "personal"),
+        ("personal", "personal"),
+        ("s", "shared"),
+        ("shared", "shared"),
+        ("b", "branch"),
+        ("branch", "branch"),
+    ],
+)
+def test_installation_role_abbreviations(value, expected):
+    assert bootstrap._installation_mode(value) == expected
+
+
+def test_invalid_installation_role_is_rejected():
+    with pytest.raises(argparse.ArgumentTypeError, match="personal \\(p\\)"):
+        bootstrap._installation_mode("invalid")
 
 
 @pytest.mark.parametrize("entry", ["bootstrap", "setup"])
