@@ -202,9 +202,9 @@ def test_dirty_source_cannot_be_approved_or_used(release, dirty):
     store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
     path = root / ("pyproject.toml" if dirty == "tracked" else "new.py")
     path.write_text("changed")
-    with pytest.raises(ValueError, match="clean"):
+    with pytest.raises(ValueError, match=f"clean checkout: .*{path.name}"):
         store.require_approved(root)
-    with pytest.raises(ValueError, match="clean"):
+    with pytest.raises(ValueError, match=f"clean checkout: .*{path.name}"):
         store.approve(root, "0.0.1", pr="example#1", attest_merged=True)
 
 

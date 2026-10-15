@@ -35,8 +35,13 @@ def _source_at(checkout: Path, ref: str) -> tuple[str, str, str]:
 
 
 def _source(checkout: Path) -> tuple[str, str, str]:
-    if _git(checkout, "status", "--porcelain", "--untracked-files=all"):
-        raise ValueError("Main release requires a clean checkout")
+    dirty = _git(checkout, "status", "--porcelain", "--untracked-files=all")
+    if dirty:
+        entries = dirty.splitlines()
+        detail = "; ".join(entries[:5])
+        if len(entries) > 5:
+            detail += f"; and {len(entries) - 5} more"
+        raise ValueError(f"Main release requires a clean checkout: {detail}")
     return _source_at(checkout, "HEAD")
 
 
