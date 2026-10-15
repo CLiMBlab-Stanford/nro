@@ -82,6 +82,20 @@ def _write_locator(path: Path, definitions: Path) -> None:
     atomic_write_text(path, text, mode=0o644, durable=True)
 
 
+def _split_site_values(values: dict) -> tuple[dict, dict]:
+    """Separate protected site settings from bidsification defaults."""
+    protected = {
+        key: value
+        for key, value in values.items()
+        if key not in {"definitions", "flywheel_server", "flywheel_project"}
+    }
+    bidsify = {
+        "default_server": values.get("flywheel_server") or None,
+        "default_project": values.get("flywheel_project") or None,
+    }
+    return protected, bidsify
+
+
 def migrate_site_configuration(path: Path) -> Path:
     """Move legacy deployment and source-system settings into definitions.
 
@@ -93,6 +107,18 @@ def migrate_site_configuration(path: Path) -> Path:
     legacy = read_overrides(path)
     definitions = _definitions_from_locator(path, legacy)
     protected_path = site_definition_path(definitions)
+    if not definitions.exists():
+        from nro.definitions.repository import create_store
+
+        values, _ = settings(path=path)
+        protected, bidsify = _split_site_values(values)
+        create_store(definitions, site_values=protected, site_bidsify=bidsify)
+        _write_locator(path, definitions)
+        return site_definition_path(definitions)
+    if protected_path.is_file() and not (definitions / "workflows/main_workflow.yml").is_file():
+        from nro.definitions.repository import complete_starter_store
+
+        complete_starter_store(definitions)
     if protected_path.is_file():
         # A candidate release may need a newer definitions schema before its
         # site-document reader can interpret the protected settings. This runs
@@ -124,15 +150,7 @@ def migrate_site_configuration(path: Path) -> Path:
                 "Legacy site settings differ from site/site.yml: " + ", ".join(sorted(conflicts))
             )
     else:
-        protected = {
-            key: value
-            for key, value in values.items()
-            if key not in {"definitions", "flywheel_server", "flywheel_project"}
-        }
-        bidsify = {
-            "default_server": values.get("flywheel_server") or None,
-            "default_project": values.get("flywheel_project") or None,
-        }
+        protected, bidsify = _split_site_values(values)
     migrated_profiles = {}
     for profile_path in sorted((definitions / "bidsify").glob("*.yml")):
         profile = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}

@@ -11,6 +11,7 @@ import yaml
 
 from nro.definitions.events import EventStore, task_key
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
+from nro.engine.io import atomic_write_text
 from nro.site.configuration import (
     DERIVED,
     definitions_root,
@@ -346,6 +347,67 @@ def create_store(
         ensure_group_maintainable(staged)
         _publish(staged, destination)
     return destination
+
+
+def complete_starter_store(root: Path) -> Path:
+    """Complete an interrupted site-only starter store without masking drift.
+
+    Every existing directory and file must match a subset of the complete
+    starter store generated from the protected site definition. The manifest
+    and lock are installation metadata and may reflect the interrupted state.
+    """
+    from nro.definitions.migrations import LOCK, MANIFEST, ensure_group_maintainable
+
+    root = Path(root).expanduser().absolute()
+    site_values, site_bidsify = read_site_definition(root)
+    with tempfile.TemporaryDirectory(
+        prefix=".nro-definitions-recovery-", dir=root.parent
+    ) as temporary:
+        candidate = create_store(
+            Path(temporary) / "store",
+            site_values=site_values,
+            site_bidsify=site_bidsify,
+        )
+        mutable_metadata = {Path(LOCK), Path(MANIFEST)}
+        for existing in sorted(root.rglob("*")):
+            relative = existing.relative_to(root)
+            if relative in mutable_metadata:
+                continue
+            expected = candidate / relative
+            if existing.is_symlink() or not expected.exists():
+                raise ValueError(
+                    "Incomplete definitions store contains content that is not part of "
+                    f"the starter store: {existing}"
+                )
+            if existing.is_dir() != expected.is_dir():
+                raise ValueError(f"Incomplete definitions store conflicts with starter: {existing}")
+            if existing.is_file() and existing.read_bytes() != expected.read_bytes():
+                raise ValueError(f"Incomplete definitions store conflicts with starter: {existing}")
+
+        for directory in sorted(
+            (path for path in candidate.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+        ):
+            (root / directory.relative_to(candidate)).mkdir(parents=True, exist_ok=True)
+        for source in sorted(path for path in candidate.rglob("*") if path.is_file()):
+            relative = source.relative_to(candidate)
+            if relative in mutable_metadata:
+                continue
+            atomic_write_text(
+                root / relative,
+                source.read_text(encoding="utf-8"),
+                mode=source.stat().st_mode & 0o777,
+                durable=True,
+            )
+        atomic_write_text(
+            root / MANIFEST,
+            (candidate / MANIFEST).read_text(encoding="utf-8"),
+            mode=0o664,
+            durable=True,
+        )
+    ensure_group_maintainable(root)
+    validate_store(root, require_site=True)
+    return root
 
 
 def ensure_store(root: Path | None = None) -> Path:

@@ -617,6 +617,58 @@ def test_installation_migrates_legacy_site_and_bidsify_settings(isolated_site, t
     assert "servers" not in migrated_profile
 
 
+def test_first_install_creates_complete_definitions_store(isolated_site, tmp_path):
+    from nro.definitions.repository import validate_store
+
+    definitions = tmp_path / "definitions"
+    save_settings(
+        isolated_site,
+        {"definitions": str(definitions), "bids": str(tmp_path / "BIDS")},
+    )
+
+    destination = site_setup.migrate_site_configuration(isolated_site)
+
+    assert destination == definitions / "site/site.yml"
+    assert site.read_overrides(isolated_site) == {"definitions": str(definitions)}
+    assert validate_store(definitions, require_site=True)["workflows"] == 4
+
+
+def test_first_install_recovers_site_only_definitions_store(isolated_site, tmp_path):
+    from nro.definitions.repository import validate_store
+    from nro.site.configuration import write_site_definition
+
+    definitions = tmp_path / "definitions"
+    save_settings(
+        isolated_site,
+        {"definitions": str(definitions), "bids": str(tmp_path / "BIDS")},
+    )
+    values, _ = site.settings(path=isolated_site)
+    protected, bidsify = site_setup._split_site_values(values)
+    write_site_definition(definitions, protected, bidsify=bidsify)
+
+    destination = site_setup.migrate_site_configuration(isolated_site)
+
+    assert destination == definitions / "site/site.yml"
+    assert validate_store(definitions, require_site=True)["bidsify"] == 1
+
+
+def test_first_install_does_not_overwrite_unrecognized_partial_store(isolated_site, tmp_path):
+    from nro.site.configuration import write_site_definition
+
+    definitions = tmp_path / "definitions"
+    save_settings(isolated_site, {"definitions": str(definitions)})
+    values, _ = site.settings(path=isolated_site)
+    protected, bidsify = site_setup._split_site_values(values)
+    write_site_definition(definitions, protected, bidsify=bidsify)
+    unexpected = definitions / "notes.txt"
+    unexpected.write_text("keep me\n")
+
+    with pytest.raises(ValueError, match="not part of the starter store"):
+        site_setup.migrate_site_configuration(isolated_site)
+
+    assert unexpected.read_text() == "keep me\n"
+
+
 @pytest.mark.parametrize("shared", [False, True])
 def test_interactive_generic_defaults_preserve_explicit_paths(
     isolated_site, tmp_path, monkeypatch, shared
