@@ -179,6 +179,17 @@ def test_shared_filesystem_publication(tmp_path, monkeypatch):
         _publish(tmp_path / "anything", root)
 
 
+def test_publication_without_renameat2_symbol(tmp_path, monkeypatch):
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace())
+
+    root = create_store(tmp_path / "store")
+
+    assert validate_store(root)["configs"] == 3
+    assert not (root / ".nro-incomplete").exists()
+    with pytest.raises(FileExistsError):
+        _publish(tmp_path / "anything", root)
+
+
 def test_incomplete_publication_is_rejected(tmp_path, monkeypatch):
     root = create_store(tmp_path / "store")
     (root / ".nro-incomplete").touch()
