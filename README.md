@@ -76,8 +76,9 @@ or run workers locally.
 The user launcher is installed in `~/.local/bin`; no environment activation is
 needed. The POSIX shell bootstrap downloads checksum-pinned uv and CPython, so
 the host does not need Python. It does require `curl` or `wget`, `sha256sum`,
-`tar`, and an existing FreeSurfer license. Some managed hosts need an
-administrator to enable the container runtime. See
+and `tar`. A FreeSurfer license is required when FreeSurfer-dependent processing
+runs, but not during installation. Some managed hosts need an administrator to
+enable the container runtime. See
 [installation details](docs/installation.md) for shared deployments,
 unattended setup, permissions, and dependency acquisition.
 

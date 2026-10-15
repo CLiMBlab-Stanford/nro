@@ -467,7 +467,9 @@ nro cannot change kernel or cluster security policy. See the
 
 Review the [QuNex access terms](https://qunex.yale.edu/access/). Supply your
 [FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html);
-setup does not request credentials or register on your behalf.
+setup reports a missing license as optional and does not request credentials or
+register on your behalf. FreeSurfer-dependent work fails before execution until
+the configured license file exists.
 
 Setup includes OSLOM, `igraph`, and `leidenalg` by default. If `oslom_undir` is absent,
 setup downloads the official [OSLOM source](http://www.oslom.org/software.htm),

@@ -6,9 +6,10 @@ system. CLIMBLAB members should use the
 
 ## Prepare the host
 
-`nro` needs Linux, Git, `curl` or `wget`, `sha256sum`, and `tar`. Acquire a
-[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html)
-before setup. The default OSLOM installation also needs a C++ compiler.
+`nro` needs Linux, Git, `curl` or `wget`, `sha256sum`, and `tar`. The default
+OSLOM installation also needs a C++ compiler. A
+[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html) is
+required before running FreeSurfer-dependent processing, but not for setup.
 
 Cluster installations need Slurm commands on `PATH`. Their data, work,
 registry, installation, and processing resources must be visible at the same
@@ -47,7 +48,8 @@ every setting. In particular:
   protected site settings, workflows, configurations, models, and event files.
 - `images`, `templates`, and `oslom` contain processing resources. `workbench`
   contains the optional native scene viewer and renderer.
-- `license` must name an existing FreeSurfer license.
+- `license` names the FreeSurfer license used by processing commands. The file
+  may be added after installation.
 - `runtime` selects managed Apptainer by its default bare name. An absolute path
   selects an administrator-provided Singularity or Apptainer executable.
 - `partition` and `account` must match the Slurm site. Enter `-` for no account.

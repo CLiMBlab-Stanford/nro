@@ -620,7 +620,14 @@ def check_installation(
     images = required_images()
     for key in images:
         check(key, lambda key=key: file(key))
-    check("FreeSurfer license", lambda: file("license"))
+
+    def freesurfer_license():
+        try:
+            return file("license")
+        except RuntimeError as error:
+            raise RuntimeError(f"{error}. {LICENSE_HELP}") from error
+
+    check("FreeSurfer license", freesurfer_license, required=False)
     if with_viewer:
         check("Workbench", lambda: run_probe([executable(values["workbench"]), "-version"]))
     check("MNI template", lambda: file("mni_template"))
@@ -728,8 +735,11 @@ def check_installation(
                 "wb_command",
             )
         )
+        license_file = Path(values["license"])
+        has_license = license_file.is_file() and bool(license_file.stat().st_size)
         script = (
-            "test -s /nro-license && source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1 || exit 1; "
+            ("test -s /nro-license || exit 1; " if has_license else "")
+            + "source /opt/qunex/env/qunex_environment.sh >/dev/null 2>&1 || exit 1; "
             "for tool in " + tools + ' msm octave; do command -v "$tool" || exit 1; done; '
             'test -x "$HCPPIPEDIR/MSMAll/MSMAllPipeline.sh"; '
             'test -x "$HCPPIPEDIR/DeDriftAndResample/DeDriftAndResamplePipeline.sh"; '
@@ -741,6 +751,7 @@ def check_installation(
             'assert any(needle in path.read_bytes() for path in root.rglob("*") '
             "if path.is_file())'"
         )
+        license_bind = ["--bind", f"{license_file}:/nro-license:ro"] if has_license else []
         check(
             "QuNex execution",
             lambda: run_container_probe(
@@ -748,8 +759,7 @@ def check_installation(
                     values["runtime"],
                     "exec",
                     "--cleanenv",
-                    "--bind",
-                    values["license"] + ":/nro-license:ro",
+                    *license_bind,
                     values["qunex"],
                     "bash",
                     "-c",

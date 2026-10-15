@@ -18,7 +18,6 @@ Before setup, you need:
 - a C++ compiler if you want the default OSLOM installation;
 - enough persistent storage for BIDS data, derivatives, work files, containers,
   and templates;
-- a [FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html);
 - Slurm commands on `PATH` for cluster execution, or permission to process on
   the local host; and
 - Singularity or Apptainer, or a host that supports the installer's unprivileged
@@ -69,7 +68,7 @@ The main settings are:
 | `definitions` | Version-controlled site settings, workflows, module configurations, task models, and event files. |
 | `development` | Isolated outputs for development branches. |
 | `images`, `templates`, `workbench`, `oslom` | Installed processing resources. |
-| `license` | Existing FreeSurfer `license.txt`. |
+| `license` | FreeSurfer `license.txt`; the file may be added after setup. |
 | `runtime` | Singularity or Apptainer command or absolute executable path. |
 | `partition`, `account` | Slurm submission settings. Enter `-` for no account. |
 | `viewing_partition` | Slurm partition for X11 scene-viewing jobs. |
@@ -78,9 +77,12 @@ The installer saves these values in `site/site.yml` inside the definitions
 repository. Keep that repository under version control. The local site TOML is
 only a generated pointer to the repository and can be recreated by setup.
 
-Enter the path to your existing FreeSurfer license when prompted. For Slurm,
-replace the proposed partition and account with values for your cluster. The
-partition and account are unused with `--local`.
+Enter the path where your
+[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html) is or
+will be stored. Its absence does not block setup, but FreeSurfer-dependent
+processing will not start without it. For Slurm, replace the proposed partition
+and account with values for your cluster. The partition and account are unused
+with `--local`.
 
 Review the linked QuNex terms before approving downloads. Setup creates a locked
 Python environment in `.nro-env`, downloads missing resources, checks them, and
