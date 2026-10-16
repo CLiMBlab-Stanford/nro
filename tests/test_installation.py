@@ -1774,24 +1774,57 @@ def test_container_pull_is_verbose_and_uses_node_local_build_directory(
     assert build_directories and not build_directories[0].exists()
 
 
-def test_pinned_image_rejects_a_conflicting_receipt(tmp_path, monkeypatch) -> None:
+def test_pinned_image_rejects_an_outdated_receipt_offline(tmp_path, monkeypatch) -> None:
     target = tmp_path / "image.sif"
     target.write_bytes(b"container")
     receipt = target.with_name(target.name + ".receipt.json")
-    receipt.write_text(json.dumps({"sha256": "different"}))
+    receipt.write_text(
+        json.dumps({"sha256": dependencies.hashlib.sha256(b"container").hexdigest()})
+    )
     monkeypatch.setattr(
         dependencies,
         "settings",
         lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
     )
 
-    with pytest.raises(RuntimeError, match="wrong identity"):
+    with pytest.raises(RuntimeError, match="cannot replace outdated"):
         dependencies._install_image(
             "test_image",
             "https://example.org/image.sif",
             offline=True,
-            checksum=dependencies.hashlib.sha256(b"container").hexdigest(),
+            checksum=dependencies.hashlib.sha256(b"new container").hexdigest(),
         )
+
+
+def test_pinned_image_update_atomically_replaces_an_old_release(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    old = b"old container"
+    new = b"new container"
+    target.write_bytes(old)
+    receipt = target.with_name(target.name + ".receipt.json")
+    receipt.write_text(json.dumps({"sha256": dependencies.hashlib.sha256(old).hexdigest()}))
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
+    monkeypatch.setattr(
+        dependencies,
+        "download",
+        lambda _source, destination, *, checksum: destination.write_bytes(new),
+    )
+    monkeypatch.setattr(dependencies, "run_probe", lambda _command: None)
+
+    dependencies._install_image(
+        "test_image",
+        "https://example.org/image.sif",
+        offline=False,
+        checksum=dependencies.hashlib.sha256(new).hexdigest(),
+    )
+
+    assert target.read_bytes() == new
+    assert json.loads(receipt.read_text())["sha256"] == dependencies.hashlib.sha256(new).hexdigest()
 
 
 def test_fastsurfer_image_is_standard() -> None:
@@ -1978,9 +2011,7 @@ def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeyp
     assert "XAUTHORITY=/run/nro/xauthority" in launcher
     assert "$HOME/.Xauthority" in launcher
     assert "LIBGL_ALWAYS_SOFTWARE=1" in launcher
-    assert (
-        "LD_LIBRARY_PATH=/opt/workbench/libs_linux64:/opt/workbench/libs_linux64/osmesa" in launcher
-    )
+    assert "LD_LIBRARY_PATH=" not in launcher
     assert "QT_X11_NO_MITSHM=1" in launcher
     assert f'export PATH={runtime.parent}:"$PATH"' in launcher
     assert str(tmp_path) in command.read_text()

@@ -78,9 +78,9 @@ LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html
 QUNEX_TERMS = "https://qunex.yale.edu/access/"
 WORKBENCH_IMAGE_URL = (
     "https://github.com/CLiMBlab-Stanford/nro-workbench/releases/download/"
-    "v2.2.1-7/nro-workbench.sif"
+    "v2.2.1-9/nro-workbench.sif"
 )
-WORKBENCH_IMAGE_SHA256 = "04df826d74fb71c6c873216707563b1dd1df280d495413f9cd70d1e7fe2421cd"
+WORKBENCH_IMAGE_SHA256 = "78dcb84ddfd839e666fc53a237a9fb2d90c26841e8a2449125bfb5c91baa98bc"
 OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
 MANAGED_RUNTIME = {
@@ -797,6 +797,11 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
     values, _ = settings()
     path = Path(values[key])
 
+    def outdated() -> bool:
+        if offline:
+            raise RuntimeError(f"Offline setup cannot replace outdated {key}: {path}")
+        return False
+
     def reuse_existing() -> bool:
         if not path.is_file() or not path.stat().st_size:
             return False
@@ -804,11 +809,30 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
             receipt = path.with_name(path.name + ".receipt.json")
             if receipt.is_file():
                 document = json.loads(receipt.read_text(encoding="utf-8"))
-                if document.get("sha256") != checksum:
-                    raise RuntimeError(f"Installed image has the wrong identity: {path}")
-                verify_image_receipt(path, receipt)
+                recorded = document.get("sha256")
+                if recorded == checksum:
+                    verify_image_receipt(path, receipt)
+                else:
+                    installed = sha256(path)
+                    if installed == checksum:
+                        atomic_write_json(
+                            receipt,
+                            {
+                                "source": source,
+                                "sha256": checksum,
+                                "file_identity": _file_identity(path),
+                                "verification": "Pinned SHA-256 verified after interrupted receipt update",
+                            },
+                        )
+                    elif installed == recorded:
+                        return outdated()
+                    else:
+                        raise RuntimeError(
+                            f"Installed image differs from its acquisition receipt: {path}"
+                        )
             else:
-                verify_sha256(path, checksum, key)
+                if sha256(path) != checksum:
+                    return outdated()
                 atomic_write_json(
                     receipt,
                     {
@@ -832,7 +856,8 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
     with resource_lock(path):
         if reuse_existing():
             return
-        print(f"Downloading {key} from {source}", flush=True)
+        action = "Updating" if path.is_file() else "Downloading"
+        print(f"{action} {key} from {source}", flush=True)
         with atomic_output_path(path) as staged:
             if source.startswith("docker://"):
                 # OCI extraction needs ordinary extended-attribute support. Some
@@ -916,7 +941,6 @@ if [[ -d /tmp/.X11-unix ]]; then
     arguments+=(--bind /tmp/.X11-unix:/tmp/.X11-unix)
 fi
 arguments+=(--env "LIBGL_ALWAYS_SOFTWARE=1")
-arguments+=(--env "LD_LIBRARY_PATH=/opt/workbench/libs_linux64:/opt/workbench/libs_linux64/osmesa")
 arguments+=(--env "QT_X11_NO_MITSHM=1")
 arguments+=(--env "WORKBENCH_PLATFORMTHEME=")
 exec "${{arguments[@]}}" {image} {executable} "$@"
