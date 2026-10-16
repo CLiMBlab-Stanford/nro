@@ -916,6 +916,7 @@ if [[ -d /tmp/.X11-unix ]]; then
     arguments+=(--bind /tmp/.X11-unix:/tmp/.X11-unix)
 fi
 arguments+=(--env "LIBGL_ALWAYS_SOFTWARE=1")
+arguments+=(--env "LD_LIBRARY_PATH=/opt/workbench/libs_linux64:/opt/workbench/libs_linux64/osmesa")
 arguments+=(--env "QT_X11_NO_MITSHM=1")
 arguments+=(--env "WORKBENCH_PLATFORMTHEME=")
 exec "${{arguments[@]}}" {image} {executable} "$@"
