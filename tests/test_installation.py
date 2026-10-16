@@ -1978,9 +1978,7 @@ def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeyp
     assert "XAUTHORITY=/run/nro/xauthority" in launcher
     assert "$HOME/.Xauthority" in launcher
     assert "LIBGL_ALWAYS_SOFTWARE=1" in launcher
-    assert (
-        "LD_LIBRARY_PATH=/opt/workbench/libs_linux64:/opt/workbench/libs_linux64/osmesa" in launcher
-    )
+    assert "LD_LIBRARY_PATH=" not in launcher
     assert "QT_X11_NO_MITSHM=1" in launcher
     assert f'export PATH={runtime.parent}:"$PATH"' in launcher
     assert str(tmp_path) in command.read_text()

@@ -78,9 +78,9 @@ LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html
 QUNEX_TERMS = "https://qunex.yale.edu/access/"
 WORKBENCH_IMAGE_URL = (
     "https://github.com/CLiMBlab-Stanford/nro-workbench/releases/download/"
-    "v2.2.1-7/nro-workbench.sif"
+    "v2.2.1-9/nro-workbench.sif"
 )
-WORKBENCH_IMAGE_SHA256 = "04df826d74fb71c6c873216707563b1dd1df280d495413f9cd70d1e7fe2421cd"
+WORKBENCH_IMAGE_SHA256 = "78dcb84ddfd839e666fc53a237a9fb2d90c26841e8a2449125bfb5c91baa98bc"
 OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
 MANAGED_RUNTIME = {
@@ -916,7 +916,6 @@ if [[ -d /tmp/.X11-unix ]]; then
     arguments+=(--bind /tmp/.X11-unix:/tmp/.X11-unix)
 fi
 arguments+=(--env "LIBGL_ALWAYS_SOFTWARE=1")
-arguments+=(--env "LD_LIBRARY_PATH=/opt/workbench/libs_linux64:/opt/workbench/libs_linux64/osmesa")
 arguments+=(--env "QT_X11_NO_MITSHM=1")
 arguments+=(--env "WORKBENCH_PLATFORMTHEME=")
 exec "${{arguments[@]}}" {image} {executable} "$@"
