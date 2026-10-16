@@ -14,7 +14,6 @@ from nro.site.dependencies import (
     check_installation,
     install_images,
     install_lesion_resources,
-    install_neurolit_checkpoints,
     install_oslom,
     install_runtime,
     install_synthstroke_model,
@@ -140,7 +139,6 @@ def _main(argv=None, *, prog="nro setup"):
         install_images(offline=args.offline)
         if args.with_lesion:
             install_synthstroke_model(offline=args.offline)
-            install_neurolit_checkpoints(offline=args.offline)
         if not args.without_viewer:
             try:
                 install_workbench(offline=args.offline)

@@ -108,7 +108,7 @@ bidsify:
 ```
 
 `qunex`, `synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`,
-`fastsurfer_data`, and `mni_template` are
+`synthstroke_data`, and `mni_template` are
 optional resource overrides. When omitted, nro derives them from `images` or
 `templates`. The optional `lesion` Python extra supplies automatic
 stroke-lesion masking. An empty account is valid for Slurm sites that do not use

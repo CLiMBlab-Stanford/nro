@@ -22,8 +22,6 @@ freesurfer_container: site:freesurfer
 fastsurfer_container: site:fastsurfer
 lesion:
   masker_command: null
-  fastsurfer_image: site:fastsurfer
-  use_gpu: true
 msmall:
   enabled: true
   high_resolution_mesh: 164

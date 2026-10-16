@@ -41,22 +41,18 @@ Ordinary setup acquires pinned FreeSurfer 7.4.1 and FastSurfer 2.5.4 images for
 the selectable anatomical reconstruction engines.
 Pass `--with-lesion` to install PyTorch, MONAI, safetensors, and SOCKS proxy
 support used by lesion-aware anatomy. It also acquires the pinned SynthStroke
-model and three NeuroLIT 0.6.1 checkpoints. The
-SynthStroke model lives in `synthstroke_data`; the NeuroLIT checkpoints total
-about 711 MiB and live in `fastsurfer_data`. Both are site-managed paths rather
-than user caches. Setup verifies every model file against a pinned SHA-256, and
-workers perform no model downloads. This optional stack is omitted from
-ordinary installations. Shared installations use
+model under the site-managed `synthstroke_data` path. Setup verifies every
+model file against a pinned SHA-256, and workers perform no model downloads.
+The lesion scaffold is synthesized on a CPU with `mri_synthsr` from the pinned
+FreeSurfer image, so it requires no separate checkpoint download or lesion-only
+GPU allocation. This optional stack is omitted from ordinary installations.
+Shared installations use
 `./install --maintain --with-lesion`; development branches use
 `./install --with-lesion` from their checkout.
 
 Pass `--with-cicada` to install the pinned pycicada classifier. CICADA is an
 optional functional-processing backend; installations that do not request it
 do not install its package or validate its availability.
-When lesion GPU execution is enabled, the scheduler submits a dedicated worker
-with `--gres=gpu:1` only when the NeuroLIT step is ready. The cluster must
-provide a GPU through that generic Slurm resource. GPU workers do not remain
-idle after their ready lesion work ends.
 The installer includes the pinned official MARSS package. Pass `--without-marss`
 to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
 it whenever the multiband-factor threshold calls for correction.
@@ -364,7 +360,7 @@ state before initializing the current layout. Installation and repair never adop
 `nro site ls` lists storage, resources, execution policy, Slurm profiles, and
 bidsification defaults with their effective values and application lifecycle.
 `workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
-`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `fastsurfer_data`, and
+`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `synthstroke_data`, and
 `mni_template` can override
 individual resources otherwise derived from their parent directories. `binds`
 is a TOML list.
@@ -423,11 +419,11 @@ provenance for pre-existing resources.
 
 Setup obtains FastSurfer 2.5.4 from its pinned OCI digest for the optional
 anatomical reconstruction engine. With `--with-lesion`, it additionally obtains
-the pinned SynthStroke model revision from Hugging Face and NeuroLIT 0.6.1
-checkpoints from the official Zenodo record. Every file is checked
-against a pinned SHA-256 before publication. Workers use these site-managed
-resources read-only, so a scientific job never downloads or silently replaces
-model weights.
+the pinned SynthStroke model revision from Hugging Face. Every model file is
+checked against a pinned SHA-256 before publication. Workers use these
+site-managed resources read-only, so a scientific job never downloads or
+silently replaces model weights. Lesion scaffold synthesis uses the `mri_synthsr`
+model bundled with the pinned FreeSurfer image.
 
 Workbench 2.2.1 is installed from the checksum-pinned
 [`nro-workbench`](https://github.com/CLiMBlab-Stanford/nro-workbench)

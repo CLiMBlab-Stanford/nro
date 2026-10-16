@@ -120,20 +120,20 @@ atlas vertex counts or topology.
 MSMAll calibration is currently limited to FreeSurfer anatomy and is mutually
 exclusive with lesion-aware reconstruction.
 
-For a participant marked `lesion: true`, nro adds inpainting before the same
-surface-reconstruction backend used by ordinary anatomy. nro's SynthStroke
-adapter estimates a stroke-lesion mask on the
-selected, bias-corrected T1w image. A separately extracted brain mask
-supports pose registration. NeuroLIT receives an otherwise matched source
-image before N4 bias correction, as required by its input contract.
-Mechanical checks reject an empty, nonfinite,
-misregistered, or implausibly large mask and report overlap with the nonzero
-anatomical support for review. NeuroLIT inpaints the mask. The configured
-`surface_reconstruction_engine` then reconstructs an intact scaffold from that
-image using the ordinary FreeSurfer or FastSurfer runner. FreeSurfer applies the
-whole-brain SynthStrip mask to the inpainted image; NeuroLIT's conformed lesion
-mask remains a lesion definition and is never used for skull stripping. nro
-records the selected backend in the lesion-impact summary and then
+For a participant marked `lesion: true`, nro synthesizes an intact scaffold
+before the same surface-reconstruction backend used by ordinary anatomy. nro's
+SynthStroke adapter independently estimates a stroke-lesion mask on the
+selected, bias-corrected T1w image. A separately extracted brain mask supports
+pose registration. FreeSurfer's `mri_synthsr` all-purpose model receives the
+matched pose-normalized source image before N4 correction and synthesizes the
+whole brain at 1 mm resolution. It does not receive the lesion mask. Mechanical
+checks reject an empty, nonfinite, misregistered, or implausibly large mask and
+report overlap with the nonzero anatomical support for review. The configured
+`surface_reconstruction_engine` then reconstructs an intact scaffold from the
+synthetic T1w using the ordinary FreeSurfer or FastSurfer runner. Reconstruction
+uses the whole-brain SynthStrip mask; the SynthStroke mask remains a lesion
+definition and is never used for skull stripping. nro records the synthesis and
+reconstruction methods in the lesion-impact summary and then
 projects the mask through the white-to-pial ribbon, removes every triangle that
 touches the lesion, removes unused vertices, and applies the same compact
 vertex mapping to every published surface, sphere, and metric. The complete
@@ -143,8 +143,8 @@ such as `bbregister`, while
 scenes and surface-based analyses use the cut public meshes.
 
 Most anatomical tools use the default QuNex container. SynthStrip, FreeSurfer,
-and FastSurfer use separate pinned official images. NeuroLIT runs from the
-pinned FastSurfer 2.5.4 image independently of the selected reconstruction
+and FastSurfer use separate pinned official images. SynthSR runs on a CPU from
+the pinned FreeSurfer image independently of the selected reconstruction
 backend. Host and
 container paths are translated through `Runner`, and the configured FreeSurfer
 license is bound into processing. Linked scenes refer to these surfaces directly;
@@ -162,7 +162,7 @@ It also records the pose transforms, grid and registration checks, and the
 separate T1w-to-MNI transforms.
 
 Lesion-aware artifacts additionally contain the T1w-grid mask and
-probability image, an explicitly labeled synthetic inpainted T1w alternative,
+probability image, an explicitly labeled synthetic SynthSR T1w alternative,
 labeled GIFTI copies of the intact synthetic scaffold, a three-plane mask-overlay
 image, and one public-to-scaffold vertex table per hemisphere. Anatomical scenes
 load these diagnostic files while retaining the cut surfaces as their display
@@ -170,7 +170,7 @@ geometry. Each hemisphere also has a validity summary with its scaffold and
 public vertex and face counts. The mask metadata records connected-component
 sizes, lesion volume, laterality, model hashes, and overlap with nonzero
 anatomical support. An nro-generated reconstruction summary records the
-inpainting method and selected reconstruction backend. When FastSurfer is
+scaffold-synthesis method and selected reconstruction backend. When FastSurfer is
 selected, it also records any voxels restored to the FastSurfer mask from its
 segmentation. The ordinary T1w reference remains
 the primary anatomy. Published surfaces contain surviving cortex only.
@@ -189,7 +189,7 @@ output.
 
 The functional module reads this public anatomical-domain contract. For
 lesion-aware anatomy, registration tools that assume an intact brain use the
-synthetic inpainted T1w and complete FreeSurfer scaffold. Functional sampling
+synthetic SynthSR T1w and complete FreeSurfer scaffold. Functional sampling
 and publication still use the observed anatomical grid and cut public surfaces.
 When native functional data are resampled to fsaverage, Workbench also emits a
 valid-output ROI from the cut native registration sphere. nro masks the
@@ -234,11 +234,11 @@ the HCP mesh densities, functional resolution, smoothing, registration modes,
 ICA dimension, high-pass setting, FIX threshold and model, and Octave execution
 mode. Changing these values affects only an enabled MSMAll branch. Historical
 and ordinary anatomicals inherit an empty calibration set and remain compatible.
-The initial lesion method pins the SynthStroke model, source and model revisions,
-model hashes, 1 mm inference grid, sliding-window settings, probability
-threshold, test-time augmentation, NeuroLIT version, and surface-boundary policy
-in code. Reconstruction parameters come from the selected surface backend;
-lesion detection and the public lesion mask retain the source anatomical grid.
+The lesion method pins the SynthStroke model, source and model revisions, model
+hashes, 1 mm inference grid, sliding-window settings, probability threshold,
+test-time augmentation, SynthSR model, and surface-boundary policy in code.
+Reconstruction parameters come from the selected surface backend; lesion
+detection and the public lesion mask retain the source anatomical grid.
 Install the optional Python stack
 with `./install --with-lesion`.
 When `masker_command` is `null`, anatomy runs its built-in adapter with the
@@ -246,21 +246,12 @@ installed Python environment and the checksum-verified model in
 `synthstroke_data`. The worker never contacts Hugging Face. An override must
 implement the same adapter interface:
 `--input`, `--probability`, `--mask`, `--model`, `--revision`, `--threshold`,
-`--device`, and optional `--tta`. The lesion block's `fastsurfer_image` may
-override the ordinary FastSurfer container with an image that includes NeuroLIT
-0.6.1 support. The image, its source revision, and all three inpainting
-checkpoint hashes are pinned. Site setup stores the checkpoints under
-`fastsurfer_data` and workers mount them read-only. The SynthStroke model is
-stored separately under `synthstroke_data`. The override, image path,
-and `use_gpu` are the lesion block's only configuration fields and are execution
-settings. SynthStroke runs on the general CPU worker. When `use_gpu` is true,
-the runner yields only NeuroLIT inpainting to a one-GPU worker; FastSurfer
-segmentation and surface reconstruction then resume on a general CPU worker.
-Containerized NeuroLIT preserves Slurm's assigned CUDA device and uses its
-version-pinned default batch size of eight slices. A GPU worker cannot claim
-complete work items and exits when no GPU step is ready. If `use_gpu` is false,
-NeuroLIT also runs on the general worker. Scheduling choices remain outside the
-scientific artifact contract.
+`--device`, and optional `--tta`. The SynthStroke model is stored under
+`synthstroke_data`. `masker_command` is the lesion block's only configuration
+field and is an execution setting. SynthStroke and SynthSR run on the general
+CPU worker. Selecting FastSurfer as the ordinary reconstruction backend still
+yields its segmentation phase to the scheduler's GPU pool; that scheduling
+choice remains outside the scientific artifact contract.
 The pinned scientific policy
 enters the work-item contract only for lesion-marked participants, so adding the
 feature does not rename or stale the ordinary anatomical lineage.

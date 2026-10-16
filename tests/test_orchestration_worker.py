@@ -290,7 +290,7 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     assert parent is not None
     task_id = registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=32,
     )
@@ -303,7 +303,7 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     task = registry.claim_resource_step("gpu", resource_class="gpu", memory_gb=32)
     assert task is not None
     assert task.resource_task_id == task_id
-    assert task.target_step_id == "neurolit-inpainting"
+    assert task.target_step_id == "gpu-inference"
     assert registry.work_item_status_snapshot()[0]["status"] == "Running"
     registry.finish_resource_step(task_id, task.attempt_id, state="success")
     assert registry.work_item_status_snapshot()[0]["status"] == "Queued"
@@ -311,7 +311,7 @@ def test_resource_step_handoff_releases_parent_and_resumes_after_gpu(
     resumed = registry.claim_ready_work_item("cpu", ("large",))
     assert resumed is not None
     assert resumed.work_item_id == parent.work_item_id
-    assert resumed.completed_resource_steps == ("neurolit-inpainting",)
+    assert resumed.completed_resource_steps == ("gpu-inference",)
     with registry.connection(write=True) as database:
         attempts = database.execute(
             "SELECT id FROM attempts WHERE work_item_id=? ORDER BY id",
@@ -357,7 +357,7 @@ def test_user_cancelled_resource_step_reports_stopped(tmp_path: Path) -> None:
     assert parent is not None
     registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=32,
     )
@@ -537,7 +537,7 @@ def test_general_and_gpu_capacity_are_reserved_independently(tmp_path: Path) -> 
     assert parent is not None
     registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=32,
     )
@@ -631,7 +631,7 @@ def test_higher_memory_gpu_work_is_visible_to_initial_supply(tmp_path: Path) -> 
     assert parent is not None
     registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=64,
     )
@@ -669,7 +669,7 @@ def test_pending_lower_memory_gpu_does_not_create_higher_tier_demand(tmp_path: P
     assert parent is not None
     registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=32,
     )
@@ -3088,7 +3088,7 @@ def test_recovered_gpu_step_oom_does_not_inflate_parent_memory(tmp_path: Path, m
     assert parent is not None
     registry.defer_resource_step(
         parent.attempt_id,
-        step_id="neurolit-inpainting",
+        step_id="gpu-inference",
         resource_class="gpu",
         memory_gb=32,
     )

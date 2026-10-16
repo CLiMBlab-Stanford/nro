@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from nro.definitions.store import ConfigStore, configuration_fingerprint
+from nro.modules.anat.lesion_policy import synthsr_scaffold_contract
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.contract_migrations import (
     INDETERMINATE,
@@ -39,21 +40,61 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
 
     assert configuration is not None
     assert configuration["lesion"]["masker_command"] is None
-    assert configuration["lesion"]["fastsurfer_image"] is None
+    assert "fastsurfer_image" not in configuration["lesion"]
+    assert "use_gpu" not in configuration["lesion"]
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 13
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 14
     assert configuration["t1w_fallback"] == "synthesize_from_t2w"
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert migrated["processing"]["source_markup"]["msmall"] == {"rest": []}
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=13), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=14), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
     assert configuration["t1w_fallback"] == "synthesize_from_t2w"
+
+
+def test_synthsr_scaffold_migration_invalidates_only_lesion_anatomy() -> None:
+    historical = _anat_contract(version=13, lesion=True)
+    historical["processing"]["lesion_reconstruction"] = {
+        "pipeline": "inpainting_surface_reconstruction_excision",
+        "neurolit_version": "0.6.1",
+        "neurolit_record": "https://doi.org/10.5281/zenodo.14510136",
+        "neurolit_checkpoint_sha256": {"model_axial.pt": "digest"},
+    }
+    current = _anat_contract(version=14, lesion=True)
+    current["processing"]["lesion_reconstruction"] = {
+        "pipeline": "inpainting_surface_reconstruction_excision",
+        "strategy": "whole_brain_synthesis_surface_reconstruction_excision",
+        "scaffold_synthesis": synthsr_scaffold_contract(),
+    }
+
+    migrated_historical, historical_configuration = migrate_contract(historical, {})
+    migrated_current, current_configuration = migrate_contract(current, {})
+    migrated_ordinary_v13, _ = migrate_contract(_anat_contract(version=13, lesion=False))
+    migrated_ordinary_v14, _ = migrate_contract(_anat_contract(version=14, lesion=False))
+
+    assert migrated_historical != migrated_current
+    assert (
+        migrated_historical["processing"]["lesion_reconstruction"]["scaffold_synthesis"]["backend"]
+        == "NeuroLIT"
+    )
+    assert (
+        migrated_current["processing"]["lesion_reconstruction"]["scaffold_synthesis"]
+        == synthsr_scaffold_contract()
+    )
+    assert (
+        migrated_historical["processing"]["lesion_reconstruction"]["strategy"]
+        == "mask_conditioned_inpainting_surface_reconstruction_excision"
+    )
+    assert migrated_ordinary_v13 == migrated_ordinary_v14
+    assert historical_configuration == current_configuration
+    assert "fastsurfer_image" not in current_configuration["lesion"]
+    assert "use_gpu" not in current_configuration["lesion"]
 
 
 def test_t2w_synthesis_contract_invalidates_historical_direct_t2w_anatomy() -> None:

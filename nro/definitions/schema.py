@@ -161,8 +161,6 @@ SCHEMAS = {
         "fastsurfer_container": Field("str", nonempty=True, execution=True),
         "lesion": {
             "masker_command": Field("str", nullable=True, nonempty=True, execution=True),
-            "fastsurfer_image": Field("str", nullable=True, nonempty=True, execution=True),
-            "use_gpu": Field("bool", execution=True),
         },
         "msmall": {
             # These scientific values enter only an enabled MSMAll branch's

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import nibabel as nib
 import numpy as np
 import pytest
@@ -10,17 +8,17 @@ from nro.modules.anat.contract import anatomical_output_contract
 from nro.modules.anat.lesion_policy import (
     MASKER_MODEL,
     MASKER_REVISION,
-    NEUROLIT_CHECKPOINTS,
     lesion_reconstruction_contract,
+    synthsr_scaffold_contract,
 )
 from nro.modules.anat.lesions import (
     create_cut_surfaces_step,
-    create_inpainted_metadata_step,
     create_lesion_excluded_mask_step,
     create_lesion_mask_step,
     create_lesion_qc_step,
     create_lesion_reconstruction_summary_step,
-    create_neurolit_inpainting_plan,
+    create_synthetic_scaffold_metadata_step,
+    create_synthsr_scaffold_plan,
     retained_surface_vertices,
     validate_lesion_mask,
     validate_lesion_probability,
@@ -174,61 +172,51 @@ def test_builtin_lesion_adapter_runs_as_a_python_module(tmp_path) -> None:
     assert step.validate is not None and step.validate()[0]
 
 
-def test_neurolit_inpainting_uses_pinned_read_only_model_data(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
-    image = tmp_path / "fastsurfer.sif"
+def test_synthsr_scaffold_runs_on_cpu_and_clips_negative_intensities(tmp_path) -> None:
+    image = tmp_path / "freesurfer.sif"
+    license_file = tmp_path / "license.txt"
     t1w = tmp_path / "input" / "t1.nii.gz"
-    lesion = tmp_path / "input" / "lesion.nii.gz"
-    data = tmp_path / "models"
-    for path in (image, t1w, lesion):
+    output = tmp_path / "output" / "synthsr.nii.gz"
+    for path in (image, license_file, t1w):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("test")
-    for name in NEUROLIT_CHECKPOINTS:
-        checkpoint = data / "LIT" / "weights" / name
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint.write_text("model")
     calls = []
 
     def run_child(command, **options):
         calls.append((command, options))
-        for output in plan.step.outputs:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text("result")
-            os.utime(output, (1, 1))
+        target = output.parent / command[command.index("--o") + 1].split("/")[-1]
+        _nifti(target, np.asarray([[[-2.0, 3.0]]]))
 
-    plan = create_neurolit_inpainting_plan(
+    plan = create_synthsr_scaffold_plan(
         run_child=run_child,
         runtime="singularity",
         image=image,
-        data_directory=data,
+        license_file=license_file,
         t1w=t1w,
-        lesion_mask=lesion,
-        subjects_dir=tmp_path / "subjects",
-        subject="sub-test",
-        use_gpu=True,
+        output=output,
+        threads=4,
+        env={"OMP_NUM_THREADS": "4"},
         force=False,
     )
     plan.step.action()
 
-    inpaint, inpaint_options = calls[0]
-    assert inpaint[:3] == ["singularity", "exec", "--nv"]
-    assert f"{data}:/nro-lit-data:ro" in inpaint
-    assert "XDG_DATA_HOME=/nro-lit-data" in inpaint
-    assert inpaint[inpaint.index("--device") + 1] == "cuda"
-    assert inpaint[inpaint.index("--batch_size") + 1] == "8"
-    assert "CUDA_VISIBLE_DEVICES=3" in inpaint
-    assert "--lesion_mask" in inpaint
-    assert inpaint_options == {"direct": True, "stream_output": True}
-    assert set(data / "LIT" / "weights" / name for name in NEUROLIT_CHECKPOINTS).issubset(
-        plan.step.inputs
-    )
-    assert plan.step.resource_class == "gpu"
+    synthsr, options = calls[0]
+    assert synthsr[:3] == ["singularity", "exec", "--cleanenv"]
+    assert "mri_synthsr" in synthsr
+    assert synthsr[synthsr.index("--threads") + 1] == "4"
+    assert "--cpu" in synthsr
+    assert options == {
+        "direct": True,
+        "env": {"OMP_NUM_THREADS": "4"},
+        "discard_stdout": True,
+    }
+    assert plan.step.inputs == (t1w, image, license_file)
+    assert plan.step.resource_class is None
     assert plan.step.validate is not None and plan.step.validate()[0]
-    assert all(output.stat().st_mtime_ns >= t1w.stat().st_mtime_ns for output in plan.step.outputs)
-    assert plan.image.name == "inpainted.lit.nii.gz"
-    assert plan.conformed_lesion_mask.name == "mask.lit.nii.gz"
-    assert lesion_reconstruction_contract()["pipeline"] == (
-        "inpainting_surface_reconstruction_excision"
+    assert np.asanyarray(nib.load(str(output)).dataobj).tolist() == [[[0.0, 3.0]]]
+    assert synthsr_scaffold_contract()["model"] == "all-purpose"
+    assert lesion_reconstruction_contract()["strategy"] == (
+        "whole_brain_synthesis_surface_reconstruction_excision"
     )
 
 
@@ -250,10 +238,14 @@ def test_lesion_reconstruction_summary_is_separate_from_fastsurfer_outputs(tmp_p
     )
     lesion_mask = tmp_path / "lesion.nii.gz"
     lesion_mask.write_text("mask", encoding="utf-8")
+    scaffold_image = tmp_path / "synthsr.nii.gz"
+    scaffold_image.write_text("synthsr", encoding="utf-8")
     summary = tmp_path / "lesion-reconstruction.yaml"
     step = create_lesion_reconstruction_summary_step(
         subject_dir=subject_dir,
         lesion_mask=lesion_mask,
+        scaffold_image=scaffold_image,
+        scaffold_synthesis=synthsr_scaffold_contract(),
         surface_reconstruction={"backend": "FastSurfer", "version": "2.5.4"},
         output=summary,
         force=False,
@@ -330,30 +322,29 @@ def test_metric_structure_assignment_preserves_values(tmp_path) -> None:
     assert step.validate is not None and step.validate()[0]
 
 
-def test_inpainted_metadata_binds_synthetic_image_to_mask(tmp_path) -> None:
-    image = tmp_path / "inpainted.nii.gz"
-    observed = tmp_path / "observed.nii.gz"
-    mask = tmp_path / "mask.nii.gz"
-    lesion_metadata = tmp_path / "mask.json"
-    output = tmp_path / "inpainted.json"
-    for path in (image, observed, mask):
+def test_synthsr_metadata_identifies_synthetic_scaffold(tmp_path) -> None:
+    image = tmp_path / "synthsr.nii.gz"
+    source = tmp_path / "source.nii.gz"
+    synthesis_input = tmp_path / "pose-normalized-pre-n4.nii.gz"
+    output = tmp_path / "synthsr.json"
+    for path in (image, source, synthesis_input):
         path.write_bytes(b"image")
-    lesion_metadata.write_text(
-        '{"Model": "example", "ModelRevision": "revision"}', encoding="utf-8"
-    )
 
-    step = create_inpainted_metadata_step(
+    step = create_synthetic_scaffold_metadata_step(
         image=image,
-        observed_t1w=observed,
-        lesion_mask=mask,
-        lesion_metadata=lesion_metadata,
+        source_t1w=source,
+        synthesis_input=synthesis_input,
         output=output,
         force=False,
     )
     step.action()
 
     assert step.validate is not None and step.validate()[0]
-    assert '"LesionMaskSHA256"' in output.read_text(encoding="utf-8")
+    document = output.read_text(encoding="utf-8")
+    assert '"Method": "FreeSurfer mri_synthsr"' in document
+    assert '"SyntheticTissue": true' in document
+    assert "LesionMask" not in document
+    assert step.inputs == (image, source, synthesis_input)
 
 
 def test_lesion_output_contract_extends_only_lesion_artifacts() -> None:

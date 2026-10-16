@@ -366,7 +366,7 @@ def test_lesion_manifest_excludes_incompatible_intact_surfaces(tmp_path: Path) -
     assert tuple(source.path for source in diagnostics) == (lesion, inpainted)
     assert tuple(source.role for source in diagnostics) == (
         "lesion_mask",
-        "inpainted_anatomical",
+        "synthetic_anatomical",
     )
 
 

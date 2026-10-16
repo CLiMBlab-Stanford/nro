@@ -16,7 +16,7 @@ from .steps import _create_recon_all_step
 class SurfaceReconstructionInputs:
     """Scientific inputs available to a surface-reconstruction backend.
 
-    Upstream anatomy determines whether ``t1w`` is observed or lesion-inpainted.
+    Upstream anatomy determines whether ``t1w`` is observed or synthetic.
     Backend adapters declare only the paths they actually consume on their DAG
     steps, so an unused auxiliary input cannot affect step freshness.
     """

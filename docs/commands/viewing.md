@@ -44,7 +44,7 @@ Surface scenes provide white, pial, midthickness, and inflated geometry.
 Inflated is the default view. The cerebral montage places the left lateral,
 left medial, right medial, and right lateral views in one row.
 For lesion-aware anatomy, `nro scene -m anat` also loads the lesion mask, the
-synthetic inpainted T1w image, and a surface family labeled as the intact
+synthetic SynthSR T1w image, and a surface family labeled as the intact
 synthetic scaffold. The cut surfaces remain the scene's primary display
 geometry.
 Dynamic-connectivity scenes expose Workbench's on-demand correlation layer over

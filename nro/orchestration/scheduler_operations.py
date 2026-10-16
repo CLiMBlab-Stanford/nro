@@ -52,7 +52,7 @@ def supply(registry, request_ids: list[str], options: dict, *, checkout: Path) -
     submitted = []
     if options["local"]:
         for resource_class, label in (
-            (GPU_RESOURCE_CLASS, "Lesion-aware GPU anatomy"),
+            (GPU_RESOURCE_CLASS, "GPU scientific step"),
             (LONG_CPU_RESOURCE_CLASS, "MSMAll anatomy"),
         ):
             lower_memory = 0

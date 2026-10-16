@@ -12,7 +12,6 @@ configure({"common": {"qunex_container": "/tmp/qunex.sif"}})
 
 from nro.modules.anat import module as anat
 from nro.modules.anat.inputs import AnatImage
-from nro.modules.anat.lesion_policy import NEUROLIT_CHECKPOINTS
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import ContainerSpec, Runner
@@ -261,11 +260,6 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     masker.write_bytes(b"command")
     license_file = tmp_path / "license.txt"
     license_file.write_text("license")
-    fastsurfer_data = tmp_path / "fastsurfer-data"
-    for name in NEUROLIT_CHECKPOINTS:
-        checkpoint = fastsurfer_data / "LIT" / "weights" / name
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint.write_text("model")
     monkeypatch.setattr(
         anat,
         "neuroimaging_environment",
@@ -298,7 +292,6 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
         lesion=True,
         lesion_masker_command=masker,
         fastsurfer_image=image,
-        fastsurfer_data=fastsurfer_data,
     )
 
     graph = anat.build_module(
@@ -308,28 +301,31 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     )._graph.freeze()
     names = {step.name for step in graph.steps}
 
-    assert "NeuroLIT Lesion Inpainting" in names
+    assert "Synthesize Intact Lesion Reconstruction Scaffold" in names
     assert "FastSurfer Lesion Reconstruction" not in names
     assert "FreeSurfer Recon-All" in names
     assert "Automatic Lesion Masking" in names
     assert "Render Lesion Mask QC" in names
     assert "Cut Lesion from Cortical Surfaces" in names
     mask_step = next(step for step in graph.steps if step.name == "Automatic Lesion Masking")
-    inpainting_step = next(
-        step for step in graph.steps if step.name == "NeuroLIT Lesion Inpainting"
+    scaffold_step = next(
+        step
+        for step in graph.steps
+        if step.name == "Synthesize Intact Lesion Reconstruction Scaffold"
     )
     assert "desc-preproc_T1w" in mask_step.inputs[0].name
-    assert "desc-inpaintingInput_T1w" in inpainting_step.inputs[0].name
-    assert inpainting_step.scientific_signature
+    assert "desc-synthsrInput_T1w" in scaffold_step.inputs[0].name
+    assert scaffold_step.scientific_signature
+    assert scaffold_step.resource_class is None
     reconstruction = next(step for step in graph.steps if step.name == "FreeSurfer Recon-All")
-    assert any(path.name == "inpainted.lit.nii.gz" for path in reconstruction.inputs)
+    assert any(path.name.endswith("desc-synthsr_T1w.nii.gz") for path in reconstruction.inputs)
     assert any(path.name.endswith("desc-brain_mask.nii.gz") for path in reconstruction.inputs)
     assert not any(path.name == "mask.lit.nii.gz" for path in reconstruction.inputs)
     assert any(
         "selectedBiasCorrected" in path.name for step in graph.steps for path in step.outputs
     )
     manifest = next(step for step in graph.steps if step.completion_boundary)
-    assert any("desc-inpainted_T1w" in str(path) for path in manifest.inputs)
+    assert any("desc-synthsr_T1w" in str(path) for path in manifest.inputs)
     assert any("desc-lesionQC.png" in str(path) for path in manifest.inputs)
     assert any("surfaceVertexMapping" in str(path) for path in manifest.inputs)
     assert any("surfaceValidity" in str(path) for path in manifest.inputs)
@@ -352,4 +348,6 @@ def test_lesion_anatomical_graph_is_fixed_and_uses_cut_public_surfaces(
     fastsurfer_segmentation = next(
         step for step in fastsurfer_graph.steps if step.name == "FastSurferVINN Segmentation"
     )
-    assert any(path.name == "inpainted.lit.nii.gz" for path in fastsurfer_segmentation.inputs)
+    assert any(
+        path.name.endswith("desc-synthsr_T1w.nii.gz") for path in fastsurfer_segmentation.inputs
+    )
