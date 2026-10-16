@@ -894,9 +894,13 @@ def _workbench_launcher(values: dict, program: str) -> str:
     command = " ".join(shlex.quote(str(argument)) for argument in arguments)
     image = shlex.quote(str(values["workbench_image"]))
     executable = shlex.quote(program)
+    runtime = Path(values["runtime"]).expanduser()
+    runtime_path = ""
+    if runtime.is_absolute():
+        runtime_path = f'export PATH={shlex.quote(str(runtime.parent))}:"$PATH"\n'
     return f"""#!/usr/bin/env bash
 set -euo pipefail
-arguments=({command})
+{runtime_path}arguments=({command})
 if [[ -n "${{DISPLAY:-}}" ]]; then
     arguments+=(--env "DISPLAY=$DISPLAY")
 fi

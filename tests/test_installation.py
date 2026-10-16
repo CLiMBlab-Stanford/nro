@@ -1940,9 +1940,14 @@ def test_branch_setup_acquires_only_explicit_lesion_resources(monkeypatch) -> No
 
 def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeypatch):
     command = tmp_path / "workbench/bin_linux64/wb_command"
+    runtime = tmp_path / "runtime/bin/apptainer"
     save_settings(
         isolated_site,
-        {"workbench": str(command), "binds": [str(tmp_path) + ":" + str(tmp_path)]},
+        {
+            "workbench": str(command),
+            "runtime": str(runtime),
+            "binds": [str(tmp_path) + ":" + str(tmp_path)],
+        },
     )
     acquisitions = []
     probes = []
@@ -1974,6 +1979,7 @@ def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeyp
     assert "$HOME/.Xauthority" in launcher
     assert "LIBGL_ALWAYS_SOFTWARE=1" in launcher
     assert "QT_X11_NO_MITSHM=1" in launcher
+    assert f'export PATH={runtime.parent}:"$PATH"' in launcher
     assert str(tmp_path) in command.read_text()
     receipt = json.loads((command.parent.parent / "nro-workbench-container.json").read_text())
     assert receipt["sha256"] == dependencies.WORKBENCH_IMAGE_SHA256
