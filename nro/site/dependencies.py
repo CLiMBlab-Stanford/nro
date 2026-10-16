@@ -845,7 +845,7 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
                     environment["APPTAINER_TMPDIR"] = build_tmp
                     environment["SINGULARITY_TMPDIR"] = build_tmp
                     subprocess.run(
-                        [values["runtime"], "pull", str(staged), source],
+                        [values["runtime"], "--verbose", "pull", str(staged), source],
                         check=True,
                         env=environment,
                     )
