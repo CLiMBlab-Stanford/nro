@@ -242,6 +242,27 @@ def test_schema_six_moves_slurm_and_pool_defaults_into_site_policy(tmp_path):
     }
 
 
+def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    config = root / "configs/anat/main_anat.yml"
+    starter = Path(__file__).parents[1] / "nro/definitions/starters/configs/anat/main_anat.yml"
+    value = yaml.safe_load(starter.read_text())
+    value["lesion"].update(
+        fastsurfer_image="/shared/fastsurfer-lit.sif",
+        use_gpu=True,
+    )
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 6))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    lesion = yaml.safe_load(config.read_text())["lesion"]
+    assert lesion == {"masker_command": None}
+
+
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):
     root = create_store(tmp_path / "definitions")
     relative = Path("configs/clean/alternative_clean.yml")

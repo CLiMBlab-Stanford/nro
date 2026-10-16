@@ -142,7 +142,7 @@ def _collect(
                         role = (
                             "lesion_mask"
                             if "_desc-lesion_mask." in path.name
-                            else "inpainted_anatomical"
+                            else "synthetic_anatomical"
                         )
                         lesion_qc.append(_source(row, path, role=role))
                     continue

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from nro.engine.artifact_metadata import validate_metadata_fields
+from nro.modules.anat.lesion_policy import synthsr_scaffold_contract as synthsr_scaffold_contract
 from nro.modules.anat.policy import FASTSURFER_VOXEL_SIZE_MM
 from nro.modules.anat.policy import (
     bias_correction_contract as bias_correction_contract,

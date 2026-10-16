@@ -28,7 +28,6 @@ from nro.modules.anat.lesion_policy import (
     MASKER_MODEL,
     MASKER_RESOURCES,
     MASKER_REVISION,
-    NEUROLIT_CHECKPOINTS,
 )
 from nro.modules.anat.policy import FASTSURFER_OCI_DIGEST
 from nro.site.configuration import settings
@@ -41,10 +40,6 @@ IMAGES = {
     "gradient_unwarp": GRADIENT_UNWARP_IMAGE,
     "freesurfer": "docker://freesurfer/freesurfer@sha256:10b6468cbd9fcd2db3708f4651d59ad75d4da849a2c5d8bb6dba217f08b8c46b",
     "fastsurfer": FASTSURFER_IMAGE,
-}
-NEUROLIT_URLS = {
-    name: f"https://zenodo.org/api/records/14510136/files/{name}/content"
-    for name in NEUROLIT_CHECKPOINTS
 }
 SYNTHSTROKE_URLS = {
     name: f"https://huggingface.co/{MASKER_MODEL}/resolve/{MASKER_REVISION}/{name}?download=true"
@@ -59,24 +54,6 @@ def required_images() -> dict[str, str]:
     if not gradient_unwarping_configured():
         images.pop("gradient_unwarp")
     return images
-
-
-def install_neurolit_checkpoints(*, offline: bool = False) -> None:
-    """Acquire and verify the pinned NeuroLIT inpainting checkpoints."""
-    values, _ = settings()
-    root = Path(values["fastsurfer_data"]) / "LIT" / "weights"
-    for name, expected in NEUROLIT_CHECKPOINTS.items():
-        target = root / name
-        if target.is_file() and sha256(target) == expected:
-            print(f"Reuse NeuroLIT checkpoint: {target}")
-            continue
-        if offline:
-            raise RuntimeError(f"Offline setup cannot obtain NeuroLIT checkpoint: {target}")
-        with resource_lock(target):
-            if target.is_file() and sha256(target) == expected:
-                continue
-            print(f"Downloading NeuroLIT checkpoint {name}", flush=True)
-            download(NEUROLIT_URLS[name], target, checksum=expected)
 
 
 def install_synthstroke_model(*, offline: bool = False) -> None:
@@ -678,15 +655,6 @@ def check_installation(
                     resource, expected, "SynthStroke resource"
                 ),
             )
-        for name, expected in NEUROLIT_CHECKPOINTS.items():
-            checkpoint = Path(values["fastsurfer_data"]) / "LIT" / "weights" / name
-
-            check(
-                f"NeuroLIT checkpoint {name}",
-                lambda checkpoint=checkpoint, expected=expected: verify_sha256(
-                    checkpoint, expected, "NeuroLIT checkpoint"
-                ),
-            )
     if deep:
         check(
             "FreeSurfer container identity",
@@ -911,7 +879,6 @@ def install_images(*, offline: bool = False) -> None:
 def install_lesion_resources(*, offline: bool = False) -> None:
     """Install only the pinned resources selected by the lesion feature."""
     install_synthstroke_model(offline=offline)
-    install_neurolit_checkpoints(offline=offline)
 
 
 def _workbench_launcher(values: dict, program: str) -> str:

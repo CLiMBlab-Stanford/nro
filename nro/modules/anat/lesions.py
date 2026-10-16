@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +14,7 @@ import numpy as np
 import yaml
 
 from nro.engine.io import atomic_write_text
+from nro.engine.manifests import create_json_step
 from nro.modules.anat.lesion_policy import (
     MASKER_CONFIG_SHA256,
     MASKER_PATCH_SIZE,
@@ -23,8 +22,7 @@ from nro.modules.anat.lesion_policy import (
     MASKER_VOXEL_SIZE_MM,
     MASKER_WEIGHTS_SHA256,
     MASKER_WINDOW_OVERLAP,
-    NEUROLIT_CHECKPOINTS,
-    NEUROLIT_VERSION,
+    synthsr_scaffold_contract,
 )
 from nro.orchestration.runner_graph import Step
 
@@ -328,132 +326,107 @@ def create_lesion_excluded_mask_step(
 
 
 @dataclass(frozen=True)
-class LesionInpaintingPlan:
-    """Describe NeuroLIT inpainting and its reusable private products."""
+class LesionScaffoldPlan:
+    """Describe whole-brain SynthSR synthesis and its private image."""
 
     step: Step
     image: Path
-    conformed_lesion_mask: Path
-    original_mask: Path
 
 
-def create_neurolit_inpainting_plan(
+def create_synthsr_scaffold_plan(
     *,
     run_child: Callable[..., Any],
     runtime: str,
     image: Path,
-    data_directory: Path,
+    license_file: Path,
     t1w: Path,
-    lesion_mask: Path,
-    subjects_dir: Path,
-    subject: str,
-    use_gpu: bool,
+    output: Path,
+    threads: int,
+    env: Mapping[str, str],
     force: bool,
-) -> LesionInpaintingPlan:
-    """Create NeuroLIT inpainting without selecting a surface backend."""
-    inpaint_dir = subjects_dir / ".nro-inpainting" / subject
-    inpainted = inpaint_dir / "mri" / "inpainted.lit.nii.gz"
-    inpaint_mask = inpaint_dir / "mri" / "mask.lit.nii.gz"
-    original_mask = inpaint_dir / "mri" / "orig" / "mask.lit.nii.gz"
-    checkpoints = tuple(data_directory / "LIT" / "weights" / name for name in NEUROLIT_CHECKPOINTS)
+) -> LesionScaffoldPlan:
+    """Create a CPU SynthSR scaffold without selecting a surface backend."""
 
-    def container_prefix() -> list[str]:
-        subjects_dir.mkdir(parents=True, exist_ok=True)
-        container = [runtime, "exec"]
-        if use_gpu:
-            container.append("--nv")
-            visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-            if not visible_devices:
-                raise RuntimeError(
-                    "GPU lesion inpainting requires a Slurm-assigned CUDA_VISIBLE_DEVICES value"
-                )
-        else:
-            visible_devices = None
-        container.extend(
-            [
-                "--cleanenv",
-                "--bind",
-                f"{t1w.parent}:/input:ro",
-                "--bind",
-                f"{lesion_mask.parent}:/lesion:ro",
-                "--bind",
-                f"{subjects_dir}:/output",
-                "--bind",
-                f"{data_directory}:/nro-lit-data:ro",
-                "--env",
-                "XDG_DATA_HOME=/nro-lit-data",
-            ]
-        )
-        if visible_devices is not None:
-            container.extend(["--env", f"CUDA_VISIBLE_DEVICES={visible_devices}"])
-        container.append(str(image))
-        return container
+    def action() -> None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        raw = output.with_name(f".raw-{output.name}")
+        clipped = output.with_name(f".partial-{output.name}")
+        raw.unlink(missing_ok=True)
+        clipped.unlink(missing_ok=True)
+        try:
+            run_child(
+                [
+                    runtime,
+                    "exec",
+                    "--cleanenv",
+                    "--bind",
+                    f"{t1w.parent}:/input:ro,{output.parent}:/output,{license_file}:/license.txt:ro",
+                    str(image),
+                    "bash",
+                    "-lc",
+                    (
+                        "export FREESURFER_HOME=/usr/local/freesurfer; "
+                        "export FS_LICENSE=/license.txt; "
+                        'source "$FREESURFER_HOME/SetUpFreeSurfer.sh" >/dev/null; exec "$@"'
+                    ),
+                    "bash",
+                    "mri_synthsr",
+                    "--i",
+                    f"/input/{t1w.name}",
+                    "--o",
+                    f"/output/{raw.name}",
+                    "--threads",
+                    str(max(1, threads)),
+                    "--cpu",
+                ],
+                direct=True,
+                env=dict(env),
+                discard_stdout=True,
+            )
+            source = nib.load(str(raw))
+            values = np.asarray(source.dataobj, dtype=np.float32)
+            if len(source.shape) != 3 or not np.isfinite(values).all():
+                raise ValueError("SynthSR must produce one finite 3D image")
+            if not np.allclose(source.header.get_zooms()[:3], 1.0, atol=1e-3):
+                raise ValueError("SynthSR must produce a 1 mm isotropic image")
+            values = np.maximum(values, 0)
+            header = source.header.copy()
+            header.set_data_dtype(np.float32)
+            result = nib.Nifti1Image(values, source.affine, header=header)
+            result.set_qform(source.get_qform(), int(source.header["qform_code"]))
+            result.set_sform(source.get_sform(), int(source.header["sform_code"]))
+            nib.save(result, str(clipped))
+            os.replace(clipped, output)
+        finally:
+            raw.unlink(missing_ok=True)
+            clipped.unlink(missing_ok=True)
 
-    def inpaint_action() -> None:
-        if inpaint_dir.exists():
-            shutil.rmtree(inpaint_dir)
-        device = "cuda" if use_gpu else "cpu"
-        run_child(
-            [
-                *container_prefix(),
-                "python3",
-                "-s",
-                "-m",
-                "neurolit.cli",
-                "--input_image",
-                f"/input/{t1w.name}",
-                "--lesion_mask",
-                f"/lesion/{lesion_mask.name}",
-                "--sd",
-                f"/output/.nro-inpainting/{subject}",
-                "--fastsurfer_dir",
-                "--device",
-                device,
-                "--batch_size",
-                "8",
-            ],
-            direct=True,
-            stream_output=True,
-        )
-        # NeuroLIT may preserve the source timestamp on copied mask products.
-        # Mark every realized product at step completion so runner freshness
-        # reflects this execution rather than the copied file's source age.
-        for output in (inpainted, inpaint_mask, original_mask):
-            if output.is_file():
-                output.touch()
+    def validate() -> tuple[bool, str]:
+        try:
+            synthesized = nib.load(str(output))
+            values = np.asarray(synthesized.dataobj)
+        except (OSError, ValueError) as error:
+            return False, f"SynthSR scaffold is absent or invalid: {error}"
+        if len(synthesized.shape) != 3 or not np.isfinite(values).all():
+            return False, "SynthSR scaffold must be one finite 3D image."
+        if not np.allclose(synthesized.header.get_zooms()[:3], 1.0, atol=1e-3):
+            return False, "SynthSR scaffold must use a 1 mm isotropic grid."
+        if float(values.min()) < 0:
+            return False, "SynthSR scaffold contains unclipped negative intensities."
+        return True, "SynthSR scaffold is finite and nonnegative."
 
-    def inpaint_valid() -> tuple[bool, str]:
-        missing = [
-            str(path)
-            for path in (inpainted, inpaint_mask, original_mask)
-            if not path.is_file() or path.stat().st_size == 0
-        ]
-        if missing:
-            return False, "NeuroLIT outputs are incomplete: " + ", ".join(missing)
-        return True, "NeuroLIT inpainting outputs are complete."
-
-    inpainting_scientific = {
-        "backend": "NeuroLIT",
-        "neurolit_version": NEUROLIT_VERSION,
-        "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
-        "neurolit_batch_size": 8,
-        "stage": "inpainting",
-    }
-    return LesionInpaintingPlan(
+    return LesionScaffoldPlan(
         step=Step.python(
-            id="neurolit-inpainting",
-            name="NeuroLIT Lesion Inpainting",
-            inputs=(t1w, lesion_mask, image, *checkpoints),
-            outputs=(inpainted, inpaint_mask, original_mask),
-            action=inpaint_action,
-            validate=inpaint_valid,
+            id="synthsr-lesion-scaffold",
+            name="Synthesize Intact Lesion Reconstruction Scaffold",
+            inputs=(t1w, image, license_file),
+            outputs=(output,),
+            action=action,
+            validate=validate,
             force=force,
-            resource_class="gpu" if use_gpu else None,
-            parameters=inpainting_scientific,
+            parameters=synthsr_scaffold_contract(),
         ),
-        image=inpainted,
-        conformed_lesion_mask=inpaint_mask,
-        original_mask=original_mask,
+        image=output,
     )
 
 
@@ -461,6 +434,8 @@ def create_lesion_reconstruction_summary_step(
     *,
     subject_dir: Path,
     lesion_mask: Path,
+    scaffold_image: Path,
+    scaffold_synthesis: Mapping[str, object],
     surface_reconstruction: Mapping[str, object],
     output: Path,
     force: bool,
@@ -478,6 +453,8 @@ def create_lesion_reconstruction_summary_step(
         result: dict[str, object] = {
             "Type": "synthetic intact surface scaffold",
             "SurfaceReconstruction": dict(surface_reconstruction),
+            "ScaffoldSynthesis": dict(scaffold_synthesis),
+            "SyntheticT1w": str(scaffold_image),
             "LesionMask": str(lesion_mask),
             "CompleteScaffold": True,
         }
@@ -498,7 +475,7 @@ def create_lesion_reconstruction_summary_step(
             return False, "Lesion reconstruction summary differs from its source evidence."
         return True, "Lesion reconstruction summary matches its source evidence."
 
-    inputs = (*required, lesion_mask)
+    inputs = (*required, lesion_mask, scaffold_image)
     if surface_reconstruction.get("backend") == "FastSurfer":
         inputs = (*inputs, reconciliation)
     return Step.python(
@@ -508,67 +485,44 @@ def create_lesion_reconstruction_summary_step(
         action=action,
         validate=validate,
         force=force,
-        parameters={"surface_reconstruction": dict(surface_reconstruction)},
+        parameters={
+            "scaffold_synthesis": dict(scaffold_synthesis),
+            "surface_reconstruction": dict(surface_reconstruction),
+        },
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def create_inpainted_metadata_step(
+def create_synthetic_scaffold_metadata_step(
     *,
     image: Path,
-    observed_t1w: Path,
-    lesion_mask: Path,
-    lesion_metadata: Path,
+    source_t1w: Path,
+    synthesis_input: Path,
     output: Path,
     force: bool,
 ) -> Step:
-    """Describe the synthetic image and bind it to its exact lesion mask."""
-
-    def payload() -> dict[str, object]:
-        mask_record = json.loads(lesion_metadata.read_text(encoding="utf-8"))
-        return {
-            "Type": "synthetic lesion-inpainted anatomical image",
-            "Sources": [str(observed_t1w), str(lesion_mask)],
-            "SyntheticTissue": True,
-            "Method": "NeuroLIT",
-            "SoftwareVersion": NEUROLIT_VERSION,
-            "LesionMaskSHA256": _sha256(lesion_mask),
-            "LesionMaskModel": mask_record.get("Model"),
-            "LesionMaskModelRevision": mask_record.get("ModelRevision"),
-            "Description": (
-                "Intact-brain computational alternative for registration and surface "
-                "reconstruction; not observed anatomy."
-            ),
-        }
-
-    def action() -> None:
-        atomic_write_text(output, json.dumps(payload(), indent=2, sort_keys=True) + "\n")
-
-    def validate() -> tuple[bool, str]:
-        try:
-            current = json.loads(output.read_text(encoding="utf-8"))
-            expected = payload()
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-            return False, f"Inpainted-anatomy metadata is absent or invalid: {error}"
-        if current != expected:
-            return False, "Inpainted-anatomy metadata differs from its source evidence."
-        return True, "Inpainted-anatomy metadata matches its source evidence."
-
-    return Step.python(
-        name="Write Inpainted Anatomical Metadata",
-        inputs=(image, observed_t1w, lesion_mask, lesion_metadata),
-        outputs=(output,),
-        action=action,
-        validate=validate,
+    """Describe the whole-brain synthetic image used for reconstruction."""
+    method = synthsr_scaffold_contract()
+    payload = {
+        "Type": "synthetic intact anatomical reconstruction scaffold",
+        "Sources": [str(source_t1w)],
+        "SyntheticTissue": True,
+        "Method": method["backend"],
+        "SoftwareVersion": method["version"],
+        "SoftwareBuild": method["build"],
+        "Model": method["model"],
+        "OutputResolutionMM": method["output_resolution_mm"],
+        "NegativeIntensityPolicy": method["negative_intensity_policy"],
+        "Description": (
+            "Whole-brain computational alternative for registration and surface "
+            "reconstruction. This image is synthetic, not observed anatomy."
+        ),
+    }
+    return create_json_step(
+        step_name="Write SynthSR Anatomical Metadata",
+        path=output,
+        payload=payload,
+        inputs=(image, source_t1w, synthesis_input),
         force=force,
-        parameters={"method": "NeuroLIT", "synthetic_tissue": True},
     )
 
 

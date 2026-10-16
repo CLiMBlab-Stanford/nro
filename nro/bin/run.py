@@ -901,7 +901,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 memory_gb=tier,
                 minimum_memory_gb=lower_memory,
             ):
-                raise SystemExit("Lesion-aware GPU anatomy requires a scheduled GPU worker")
+                raise SystemExit("GPU scientific steps require a scheduled GPU worker")
             lower_memory = tier
         run_local_worker(
             registry,

@@ -1791,40 +1791,9 @@ def test_pinned_image_rejects_a_conflicting_receipt(tmp_path, monkeypatch) -> No
         )
 
 
-def test_fastsurfer_image_is_standard_and_lesion_checkpoints_are_explicit(
-    tmp_path, monkeypatch
-) -> None:
+def test_fastsurfer_image_is_standard() -> None:
     assert "freesurfer/freesurfer@sha256:" in dependencies.required_images()["freesurfer"]
     assert dependencies.required_images()["fastsurfer"].endswith(dependencies.FASTSURFER_OCI_DIGEST)
-
-    payload = b"pinned checkpoint"
-    digest = dependencies.hashlib.sha256(payload).hexdigest()
-    data = tmp_path / "lit-data"
-    monkeypatch.setattr(
-        dependencies,
-        "settings",
-        lambda: ({"fastsurfer_data": str(data)}, {}),
-    )
-    monkeypatch.setattr(dependencies, "NEUROLIT_CHECKPOINTS", {"model.pt": digest})
-    monkeypatch.setattr(
-        dependencies,
-        "NEUROLIT_URLS",
-        {"model.pt": "https://example.org/model.pt"},
-    )
-    calls = []
-
-    def acquire(url, target, *, checksum=None, md5=None):
-        calls.append((url, target, checksum, md5))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(payload)
-
-    monkeypatch.setattr(dependencies, "download", acquire)
-    dependencies.install_neurolit_checkpoints()
-    dependencies.install_neurolit_checkpoints(offline=True)
-
-    target = data / "LIT" / "weights" / "model.pt"
-    assert target.read_bytes() == payload
-    assert calls == [("https://example.org/model.pt", target, digest, None)]
 
 
 def test_container_identity_checks_use_metadata_without_starting_images(

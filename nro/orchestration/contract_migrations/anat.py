@@ -5,6 +5,7 @@ from nro.modules.anat.contract import (
     bias_correction_contract,
     msmall_structural_input_contract,
     surface_reconstruction_contract,
+    synthsr_scaffold_contract,
 )
 
 from .core import (
@@ -32,6 +33,17 @@ _MSMALL_DEFAULT = {
     "fix_threshold": 10.0,
     "fix_training_model": "HCP_Style_Single_Multirun_Dedrift",
     "matlab_run_mode": "octave",
+}
+
+_NEUROLIT_SCAFFOLD = {
+    "backend": "NeuroLIT",
+    "version": "0.6.1",
+    "record": "https://doi.org/10.5281/zenodo.14510136",
+    "checkpoint_sha256": {
+        "model_axial.pt": "f665c8af703032f4604117c5284f1659a2034fc5916484874fc5633d0c2474d2",
+        "model_coronal.pt": "b699ff0c8aa75072fd4c6573247372e7c643bc05035d490009d25aee9975f316",
+        "model_sagittal.pt": "7c9dba74c19212f1201ac7fa05654dcf7adad987a91f8b7d08b7efb1852f7efa",
+    },
 }
 
 CHAIN = ContractMigrationChain(
@@ -212,6 +224,41 @@ CHAIN = ContractMigrationChain(
                     default="synthesize_from_t2w",
                     historical="synthesize_from_t2w",
                 ),
+            ),
+        ),
+        ContractMigration(
+            destination=14,
+            summary="Use whole-brain SynthSR for lesion reconstruction scaffolds",
+            contract=(
+                AddFieldWhen(
+                    "processing.lesion_reconstruction.scaffold_synthesis",
+                    discriminator="processing.source_markup.lesion",
+                    value=True,
+                    default=synthsr_scaffold_contract(),
+                    historical=_NEUROLIT_SCAFFOLD,
+                ),
+                AddFieldWhen(
+                    "processing.lesion_reconstruction.strategy",
+                    discriminator="processing.source_markup.lesion",
+                    value=True,
+                    default="whole_brain_synthesis_surface_reconstruction_excision",
+                    historical="mask_conditioned_inpainting_surface_reconstruction_excision",
+                ),
+                *(
+                    RemoveField(
+                        f"processing.lesion_reconstruction.{field}",
+                        reconstructible=True,
+                    )
+                    for field in (
+                        "neurolit_version",
+                        "neurolit_record",
+                        "neurolit_checkpoint_sha256",
+                    )
+                ),
+            ),
+            configuration=(
+                RemoveField("lesion.fastsurfer_image", reconstructible=True),
+                RemoveField("lesion.use_gpu", reconstructible=True),
             ),
         ),
     ),

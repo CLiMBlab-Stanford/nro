@@ -65,19 +65,18 @@ from .lesion_policy import (
     BOUNDARY_MARGIN_MM,
     MASKER_MODEL,
     MASKER_REVISION,
-    NEUROLIT_CHECKPOINTS,
-    NEUROLIT_VERSION,
     PROBABILITY_THRESHOLD,
     TEST_TIME_AUGMENTATION,
+    synthsr_scaffold_contract,
 )
 from .lesions import (
     create_cut_surfaces_step,
-    create_inpainted_metadata_step,
     create_lesion_excluded_mask_step,
     create_lesion_mask_step,
     create_lesion_qc_step,
     create_lesion_reconstruction_summary_step,
-    create_neurolit_inpainting_plan,
+    create_synthetic_scaffold_metadata_step,
+    create_synthsr_scaffold_plan,
 )
 from .msmall import MsmAllCalibration, add_msmall_plan, resolve_msmall_calibration
 from .policy import (
@@ -166,8 +165,6 @@ class Options:
     lesion_masker_command: Optional[Path] = None
     synthstroke_data: Optional[Path] = None
     fastsurfer_image: Optional[Path] = None
-    fastsurfer_data: Optional[Path] = None
-    lesion_use_gpu: bool = True
     msmall: MsmAllCalibration | None = None
     t1w_fallback: str = T1W_FALLBACK_DEFAULT
 
@@ -227,7 +224,7 @@ def build_module(
         raise SystemExit("No non-excluded T1w image is available and T1w fallback is disabled.")
     if synthetic_t1w and opts.lesion:
         raise SystemExit("Lesion-aware anatomy requires an acquired T1w image.")
-    if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w:
+    if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w or opts.lesion:
         if opts.freesurfer_image is None:
             raise SystemExit("Missing FreeSurfer container path.")
         require_nonempty_file(opts.freesurfer_image, "FreeSurfer container")
@@ -250,16 +247,6 @@ def build_module(
             lesion_masker_module = None
             require_nonempty_file(lesion_masker_command, "lesion masker command")
             synthstroke_data = None
-        if opts.fastsurfer_image is None:
-            raise SystemExit("Lesion-aware anatomy requires the NeuroLIT container image.")
-        require_nonempty_file(opts.fastsurfer_image, "FastSurfer image")
-        if opts.fastsurfer_data is None:
-            raise SystemExit("Lesion-aware anatomy requires configured NeuroLIT data.")
-        for checkpoint in NEUROLIT_CHECKPOINTS:
-            require_nonempty_file(
-                opts.fastsurfer_data / "LIT" / "weights" / checkpoint,
-                f"NeuroLIT checkpoint {checkpoint}",
-            )
     else:
         lesion_masker_command = None
         lesion_masker_module = None
@@ -317,12 +304,9 @@ def build_module(
             lesion_masker_command,
             synthstroke_data,
             opts.freesurfer_image
-            if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w
+            if opts.surface_reconstruction_engine == "freesurfer" or synthetic_t1w or opts.lesion
             else None,
-            opts.fastsurfer_image
-            if opts.lesion or opts.surface_reconstruction_engine == "fastsurfer"
-            else None,
-            opts.fastsurfer_data if opts.lesion else None,
+            opts.fastsurfer_image if opts.surface_reconstruction_engine == "fastsurfer" else None,
             *(opts.msmall.input_paths if opts.msmall is not None else ()),
             Path(__file__).with_name("msmall_driver.sh") if opts.msmall is not None else None,
             Path(__file__).with_name("msmall_validate_atlas.py")
@@ -383,7 +367,7 @@ def build_module(
             "masker_revision": MASKER_REVISION,
             "probability_threshold": PROBABILITY_THRESHOLD,
             "test_time_augmentation": TEST_TIME_AUGMENTATION,
-            "neurolit_version": NEUROLIT_VERSION,
+            "scaffold_synthesis": synthsr_scaffold_contract(),
             "boundary_margin_mm": BOUNDARY_MARGIN_MM,
         }
     configuration_snapshot = opts.work_dir / "configuration.json"
@@ -836,16 +820,16 @@ def build_module(
             force=opts.overwrite,
         )
     )
-    lesion_inpainting_t1: Optional[Path] = None
+    lesion_synthsr_input: Optional[Path] = None
     if opts.lesion:
         assert lesion_raw_t1_selected is not None
-        lesion_inpainting_t1 = reference_work / f"{inputs.sub_id}_desc-inpaintingInput_T1w.nii.gz"
+        lesion_synthsr_input = reference_work / f"{inputs.sub_id}_desc-synthsrInput_T1w.nii.gz"
         runner.add_step(
             _create_pose_resampling_step(
                 source=lesion_raw_t1_selected,
                 reference=reference_grid,
                 transform=source_to_reference,
-                output=lesion_inpainting_t1,
+                output=lesion_synthsr_input,
                 env=env,
                 force=opts.overwrite,
             )
@@ -985,17 +969,16 @@ def build_module(
     lesion_probability: Optional[Path] = None
     lesion_metadata: Optional[Path] = None
     lesion_qc: Optional[Path] = None
-    inpainted_t1: Optional[Path] = None
+    synthetic_scaffold_t1: Optional[Path] = None
     lesion_reconstruction_summary: Optional[Path] = None
     reconstruction_t1 = subj_t1
     reconstruction_t2 = subj_t2
     reconstruction_mask = reference_mask
     if opts.lesion:
         assert subj_t1 is not None
-        assert lesion_inpainting_t1 is not None
+        assert lesion_synthsr_input is not None
         assert lesion_masker_command is not None
-        assert opts.fastsurfer_image is not None
-        assert opts.fastsurfer_data is not None
+        assert opts.freesurfer_image is not None
         lesion_mask = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_mask.nii.gz"
         lesion_probability = (
             opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-lesion_probability.nii.gz"
@@ -1028,54 +1011,40 @@ def build_module(
                 force=opts.overwrite,
             )
         )
-        inpainting = create_neurolit_inpainting_plan(
+        scaffold = create_synthsr_scaffold_plan(
             run_child=runner.run_child,
             runtime=opts.container_runtime,
-            image=opts.fastsurfer_image,
-            data_directory=opts.fastsurfer_data,
-            t1w=lesion_inpainting_t1,
-            lesion_mask=lesion_mask,
-            subjects_dir=opts.freesurfer_subjects_dir,
-            subject=opts.fs_subject,
-            use_gpu=opts.lesion_use_gpu,
+            image=opts.freesurfer_image,
+            license_file=Path(env["FS_LICENSE"]),
+            t1w=lesion_synthsr_input,
+            output=opts.work_dir / "lesion_synthsr" / f"{inputs.sub_id}_desc-synthsr_T1w.nii.gz",
+            threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "2"))),
+            env=env,
             force=opts.overwrite,
         )
-        runner.add_step(inpainting.step)
-        reconstruction_t1 = inpainting.image
+        runner.add_step(scaffold.step)
+        reconstruction_t1 = scaffold.image
         reconstruction_t2 = None
-        # NeuroLIT's mask.lit image is the conformed lesion mask.  FreeSurfer
-        # still needs the full anatomical brain mask when reconstructing the
-        # synthetic intact image.
         reconstruction_mask = reference_mask
-        inpainted_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-inpainted_T1w.nii.gz"
+        synthetic_scaffold_t1 = opts.out_dir / f"{inputs.sub_id}_space-T1w_desc-synthsr_T1w.nii.gz"
         runner.add_step(
-            Step.command_step(
-                [
-                    "mri_vol2vol",
-                    "--mov",
-                    str(inpainting.image),
-                    "--targ",
-                    str(subj_t1),
-                    "--regheader",
-                    "--o",
-                    str(inpainted_t1),
-                    "--no-save-reg",
-                ],
-                name="Publish Inpainted Anatomical Alternative",
-                inputs=(subject_dir / "mri" / "inpainted.lit.nii.gz", subj_t1),
-                outputs=(inpainted_t1,),
-                env=env,
+            create_copy_file_step(
+                src=scaffold.image,
+                dst=synthetic_scaffold_t1,
                 force=opts.overwrite,
-                parameters={"interpolation": "trilinear", "synthetic_tissue": True},
+                step_name="Publish SynthSR Anatomical Alternative",
+                parameters={
+                    "method": synthsr_scaffold_contract(),
+                    "synthetic_tissue": True,
+                },
             )
         )
         runner.add_step(
-            create_inpainted_metadata_step(
-                image=inpainted_t1,
-                observed_t1w=subj_t1,
-                lesion_mask=lesion_mask,
-                lesion_metadata=lesion_metadata,
-                output=inpainted_t1.with_suffix("").with_suffix(".json"),
+            create_synthetic_scaffold_metadata_step(
+                image=synthetic_scaffold_t1,
+                source_t1w=lesion_raw_t1_selected,
+                synthesis_input=lesion_synthsr_input,
+                output=synthetic_scaffold_t1.with_suffix("").with_suffix(".json"),
                 force=opts.overwrite,
             )
         )
@@ -1113,6 +1082,8 @@ def build_module(
             create_lesion_reconstruction_summary_step(
                 subject_dir=subject_dir,
                 lesion_mask=lesion_mask,
+                scaffold_image=synthetic_scaffold_t1,
+                scaffold_synthesis=synthsr_scaffold_contract(),
                 surface_reconstruction=surface_reconstruction_contract(
                     opts.surface_reconstruction_engine
                 ),
@@ -1498,7 +1469,7 @@ def build_module(
                             "Sources": [str(source)],
                             "SpatialReference": "T1w",
                             "SyntheticTissue": True,
-                            "Description": "Intact scaffold reconstructed from the lesion-inpainted T1w image.",
+                            "Description": "Intact scaffold reconstructed from the synthetic SynthSR T1w image.",
                         },
                     )
                 )
@@ -1616,7 +1587,7 @@ def build_module(
                         ],
                         "SpatialReference": "T1w",
                         "SyntheticTissue": True,
-                        "Description": "Intact scaffold reconstructed from the lesion-inpainted T1w image.",
+                        "Description": "Intact scaffold reconstructed from the synthetic SynthSR T1w image.",
                     },
                 )
             )
@@ -2045,7 +2016,7 @@ def build_module(
         assert lesion_probability is not None
         assert lesion_metadata is not None
         assert lesion_qc is not None
-        assert inpainted_t1 is not None
+        assert synthetic_scaffold_t1 is not None
         assert lesion_reconstruction_summary is not None
         manifest["lesion"] = {
             "enabled": True,
@@ -2057,10 +2028,8 @@ def build_module(
                 "test_time_augmentation": TEST_TIME_AUGMENTATION,
             },
             "reconstruction": {
-                "pipeline": "inpainting_surface_reconstruction_excision",
-                "inpainting_backend": "NeuroLIT",
-                "neurolit_version": NEUROLIT_VERSION,
-                "neurolit_checkpoint_sha256": NEUROLIT_CHECKPOINTS,
+                "strategy": "whole_brain_synthesis_surface_reconstruction_excision",
+                "scaffold_synthesis": synthsr_scaffold_contract(),
                 "surface_reconstruction": surface_reconstruction_contract(
                     opts.surface_reconstruction_engine
                 ),
@@ -2072,8 +2041,8 @@ def build_module(
         manifest_outputs = manifest["outputs"]
         assert isinstance(manifest_outputs, dict)
         manifest_outputs.update(
-            inpainted_t1w=str(inpainted_t1),
-            inpainted_t1w_metadata=str(inpainted_t1.with_suffix("").with_suffix(".json")),
+            inpainted_t1w=str(synthetic_scaffold_t1),
+            inpainted_t1w_metadata=str(synthetic_scaffold_t1.with_suffix("").with_suffix(".json")),
             intact_surfaces=intact_surfaces,
             lesion_mask=str(lesion_mask),
             lesion_metadata=str(lesion_metadata),
@@ -2196,12 +2165,6 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--fastsurfer-container", type=Path, default=cfg.fastsurfer_container)
     p.add_argument("--lesion", action="store_true")
     p.add_argument("--lesion-masker-command", type=Path, default=cfg.lesion.masker_command)
-    p.add_argument("--lesion-fastsurfer-image", type=Path, default=cfg.lesion.fastsurfer_image)
-    p.add_argument(
-        "--lesion-use-gpu",
-        action=argparse.BooleanOptionalAction,
-        default=cfg.lesion.use_gpu,
-    )
     p.add_argument("--freesurfer-subjects-dir", type=Path, default=cfg.freesurfer_subjects_dir)
     p.add_argument("--out-dir", type=Path, default=cfg.out_dir)
     p.add_argument("--work-dir", type=Path, default=cfg.work_dir)
@@ -2266,12 +2229,7 @@ def main(
     site, _ = site_settings()
     lesion_masker_command = resolve_project_path(args.lesion_masker_command, project=project)
     ordinary_fastsurfer_image = resolve_project_path(args.fastsurfer_container, project=project)
-    lesion_fastsurfer_image = resolve_project_path(args.lesion_fastsurfer_image, project=project)
-    fastsurfer_image = (
-        (lesion_fastsurfer_image or ordinary_fastsurfer_image)
-        if args.lesion
-        else ordinary_fastsurfer_image
-    )
+    fastsurfer_image = ordinary_fastsurfer_image
     container = build_container(
         ContainerSettings.from_args(args),
         work_directory=work_dir,
@@ -2301,8 +2259,6 @@ def main(
             lesion_masker_command=lesion_masker_command,
             synthstroke_data=Path(site["synthstroke_data"]),
             fastsurfer_image=fastsurfer_image,
-            fastsurfer_data=Path(site["fastsurfer_data"]),
-            lesion_use_gpu=bool(args.lesion_use_gpu),
             msmall=msmall,
             t1w_fallback=str(args.t1w_fallback),
         ),

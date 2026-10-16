@@ -19,7 +19,8 @@ the model format. FitLins is not a dependency.
 | FreeSurfer | Recon-all, segmentations, surfaces, boundary registration. | [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/fswiki/FreeSurferWiki) |
 | SynthStrip | Anatomical brain extraction. | [SynthStrip](https://surfer.nmr.mgh.harvard.edu/docs/synthstrip/) |
 | SynthStroke | Automatic stroke-lesion probability maps. | [SynthStroke](https://github.com/liamchalcroft/SynthStroke) |
-| FastSurfer / NeuroLIT | Optional cortical reconstruction; lesion inpainting. | [FastSurfer](https://github.com/Deep-MI/FastSurfer), [NeuroLIT weights](https://doi.org/10.5281/zenodo.14510136) |
+| FastSurfer | Optional cortical reconstruction. | [FastSurfer](https://github.com/Deep-MI/FastSurfer) |
+| SynthSR | Whole-brain synthetic T1w scaffolds for lesion-aware reconstruction. | [SynthSR](https://doi.org/10.1126/sciadv.add3607) |
 | FSL | MCFLIRT, TOPUP, FLIRT, warp composition, MELODIC. | [FSL](https://fsl.fmrib.ox.ac.uk/fsl/docs/) |
 | AFNI | Composed 4D warping with frame-specific affine transforms. | [3dNwarpApply](https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dNwarpApply.html) |
 | HCP Pipelines | Hardware-specific gradient correction and optional MSMAll surface registration. | [HCP Pipelines](https://github.com/Washington-University/HCPpipelines) |
@@ -66,13 +67,13 @@ masks, expresses each major HCP operation as an ordinary anatomical runner step,
 and publishes only the surface registrations, atlas geometry, QC, and version
 records required to use the resulting space.
 
-Lesion inpainting uses NeuroLIT 0.6.1 from the FastSurfer 2.5.4 image at source
-revision `cdfccea`. The configured FreeSurfer or FastSurfer backend then
-reconstructs the inpainted image through the ordinary reconstruction interface.
-The container and the axial, coronal, and sagittal
-checkpoint files have pinned SHA-256 identities in the anatomical scientific
-policy. The three checkpoints come from the FastSurfer-LIT Zenodo record and
-are mounted read-only during execution.
+Lesion-aware anatomy uses FreeSurfer's `mri_synthsr` all-purpose model to
+synthesize a complete 1 mm T1w scaffold from the pose-normalized source image
+before N4 correction. The model reconstructs the whole brain without receiving
+the SynthStroke lesion mask. Negative synthesized intensities are clipped to
+zero, and the configured FreeSurfer or FastSurfer backend reconstructs the
+synthetic image through the ordinary reconstruction interface. SynthStroke
+remains the independent authority for the lesion mask and the later surface cut.
 
 MARSS is an optional GPLv3 package invoked through a process boundary. nro does
 not copy or modify its implementation. The integration follows Tubiolo,
