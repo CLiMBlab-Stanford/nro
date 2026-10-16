@@ -115,7 +115,7 @@ DERIVED = {
     "gradient_unwarp": ("images", "hcp-base_1.0.3_4.3.0.sif"),
     "freesurfer": ("images", "freesurfer_7.4.1.sif"),
     "fastsurfer": ("images", "fastsurfer-cu118_2.5.4.sif"),
-    "workbench_image": ("images", "nro-workbench_2.2.1-7.sif"),
+    "workbench_image": ("images", "nro-workbench_2.2.1-13.sif"),
     "fastsurfer_data": ("images", "fastsurfer-lit-0.6.1"),
     "synthstroke_data": ("images", "synthstroke-synth-plus-e9774354"),
     "mni_template": (
@@ -130,7 +130,7 @@ CONTAINER_VERSIONS = {
     "gradient_unwarp": "1.0.3_4.3.0",
     "freesurfer": "7.4.1",
     "fastsurfer": "2.5.4",
-    "workbench_image": "2.2.1-7",
+    "workbench_image": "2.2.1-13",
 }
 PATH_KEYS = {
     "definitions",
