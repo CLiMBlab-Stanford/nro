@@ -1744,7 +1744,9 @@ def test_download_combines_system_and_managed_certificate_authorities(tmp_path, 
     assert target.read_bytes() == b"data"
 
 
-def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -> None:
+def test_container_pull_is_verbose_and_uses_node_local_build_directory(
+    tmp_path, monkeypatch
+) -> None:
     target = tmp_path / "image.sif"
     build_directories: list[Path] = []
     monkeypatch.setattr(
@@ -1755,13 +1757,14 @@ def test_container_pull_uses_node_local_build_directory(tmp_path, monkeypatch) -
     monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
 
     def run(command, **kwargs):
-        if command[1] == "pull":
+        if "pull" in command:
+            assert command[1:3] == ["--verbose", "pull"]
             environment = kwargs["env"]
             assert environment["APPTAINER_TMPDIR"] == environment["SINGULARITY_TMPDIR"]
             build_directory = Path(environment["APPTAINER_TMPDIR"])
             assert build_directory.parent == Path("/tmp")
             build_directories.append(build_directory)
-            Path(command[2]).write_bytes(b"container")
+            Path(command[3]).write_bytes(b"container")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(dependencies.subprocess, "run", run)
