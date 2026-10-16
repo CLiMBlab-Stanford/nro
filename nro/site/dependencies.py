@@ -913,7 +913,13 @@ def _workbench_launcher(values: dict, program: str) -> str:
         path = Path(values[key]).expanduser().resolve()
         if path.exists():
             binds.append(f"{path}:{path}")
-    arguments = [values["runtime"], "exec", "--cleanenv"]
+    arguments = [
+        values["runtime"],
+        "exec",
+        "--cleanenv",
+        "--no-mount",
+        "bind-paths",
+    ]
     for bind in dict.fromkeys(binds):
         arguments.extend(("--bind", bind))
     command = " ".join(shlex.quote(str(argument)) for argument in arguments)
@@ -926,6 +932,7 @@ def _workbench_launcher(values: dict, program: str) -> str:
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 {runtime_path}arguments=({command})
+unset APPTAINER_BIND APPTAINER_BINDPATH SINGULARITY_BIND SINGULARITY_BINDPATH
 if [[ -n "${{DISPLAY:-}}" ]]; then
     arguments+=(--env "DISPLAY=$DISPLAY")
 fi
