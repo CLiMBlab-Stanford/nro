@@ -1868,6 +1868,28 @@ def test_oci_image_update_replaces_an_old_pinned_source(tmp_path, monkeypatch) -
     assert document["sha256"] == dependencies.hashlib.sha256(new).hexdigest()
 
 
+def test_oci_image_without_receipt_is_adopted_after_inspection(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    payload = b"existing container"
+    target.write_bytes(payload)
+    calls = []
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies, "run_probe", lambda command: calls.append(command))
+    source = "docker://example/image@sha256:current"
+
+    dependencies._install_image("test_image", source, offline=False)
+
+    receipt = json.loads(target.with_name(target.name + ".receipt.json").read_text())
+    assert target.read_bytes() == payload
+    assert calls == [["singularity", "inspect", str(target)]]
+    assert receipt["source"] == source
+    assert receipt["sha256"] == dependencies.hashlib.sha256(payload).hexdigest()
+
+
 def test_oci_image_rejects_an_old_pinned_source_offline(tmp_path, monkeypatch) -> None:
     target = tmp_path / "image.sif"
     payload = b"container"
@@ -1954,11 +1976,6 @@ def test_container_identity_checks_use_metadata_without_starting_images(
 
     def inspect(command, **_options):
         calls.append(command)
-        digest = (
-            dependencies.FASTSURFER_OCI_DIGEST
-            if len(calls) == 1
-            else dependencies.IMAGES["freesurfer"].rsplit("@", 1)[1]
-        )
         return subprocess.CompletedProcess(
             command,
             0,
@@ -1967,7 +1984,6 @@ def test_container_identity_checks_use_metadata_without_starting_images(
                     "data": {
                         "attributes": {
                             "labels": {
-                                "org.opencontainers.image.base.digest": digest,
                                 "org.opencontainers.image.revision": "cdfccea",
                             }
                         }
@@ -1979,10 +1995,30 @@ def test_container_identity_checks_use_metadata_without_starting_images(
 
     monkeypatch.setattr(dependencies.subprocess, "run", inspect)
 
+    receipt = image.with_name(image.name + ".receipt.json")
+    receipt.write_text(
+        json.dumps(
+            {
+                "source": dependencies.IMAGES["fastsurfer"],
+                "sha256": dependencies.sha256(image),
+                "file_identity": dependencies._file_identity(image),
+            }
+        )
+    )
     dependencies.verify_fastsurfer_image("singularity", image)
+    receipt.write_text(
+        json.dumps(
+            {
+                "source": dependencies.IMAGES["freesurfer"],
+                "sha256": dependencies.sha256(image),
+                "file_identity": dependencies._file_identity(image),
+            }
+        )
+    )
     dependencies.verify_freesurfer_image("singularity", image)
 
-    assert all(command[1:3] == ["inspect", "--json"] for command in calls)
+    assert len(calls) == 1
+    assert calls[0][1:3] == ["inspect", "--json"]
 
 
 def test_image_receipt_caches_and_rechecks_filesystem_identity(tmp_path, monkeypatch) -> None:

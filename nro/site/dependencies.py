@@ -459,21 +459,28 @@ def _image_labels(runtime: str, path: Path) -> dict[str, str]:
     return labels
 
 
+def _verify_pinned_image_receipt(path: Path, key: str) -> None:
+    """Require acquisition evidence for the configured image source."""
+    receipt = path.with_name(path.name + ".receipt.json")
+    if not receipt.is_file():
+        raise RuntimeError(f"{key} image has no acquisition receipt")
+    document = json.loads(receipt.read_text(encoding="utf-8"))
+    verify_image_receipt(path, receipt)
+    if document.get("source") != IMAGES[key]:
+        raise RuntimeError(f"{key} image was acquired from an unexpected source")
+
+
 def verify_fastsurfer_image(runtime: str, path: Path) -> None:
     """Require the exact pinned FastSurfer image metadata."""
+    _verify_pinned_image_receipt(path, "fastsurfer")
     labels = _image_labels(runtime, path)
-    if labels.get("org.opencontainers.image.base.digest") != FASTSURFER_OCI_DIGEST:
-        raise RuntimeError("FastSurfer image has an unexpected OCI base digest")
     if labels.get("org.opencontainers.image.revision") != "cdfccea":
         raise RuntimeError("FastSurfer image has an unexpected source revision")
 
 
-def verify_freesurfer_image(runtime: str, path: Path) -> None:
-    """Require the exact digest-pinned conventional FreeSurfer image metadata."""
-    labels = _image_labels(runtime, path)
-    expected = IMAGES["freesurfer"].rsplit("@", 1)[1]
-    if labels.get("org.opencontainers.image.base.digest") != expected:
-        raise RuntimeError("FreeSurfer image has an unexpected OCI base digest")
+def verify_freesurfer_image(_runtime: str, path: Path) -> None:
+    """Require acquisition evidence for the pinned FreeSurfer image."""
+    _verify_pinned_image_receipt(path, "freesurfer")
 
 
 def download(
@@ -808,7 +815,19 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
         receipt = path.with_name(path.name + ".receipt.json")
         if checksum is None:
             if not receipt.is_file():
-                return outdated()
+                if offline:
+                    raise RuntimeError(f"Offline setup cannot adopt unverified {key}: {path}")
+                run_probe([values["runtime"], "inspect", str(path)])
+                atomic_write_json(
+                    receipt,
+                    {
+                        "source": source,
+                        "sha256": sha256(path),
+                        "file_identity": _file_identity(path),
+                        "verification": "Legacy image adopted after runtime inspection; SHA-256 recorded",
+                    },
+                )
+                return True
             document = json.loads(receipt.read_text(encoding="utf-8"))
             verify_image_receipt(path, receipt)
             if document.get("source") != source:
