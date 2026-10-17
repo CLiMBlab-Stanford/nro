@@ -78,9 +78,9 @@ LICENSE_HELP = "Register at https://surfer.nmr.mgh.harvard.edu/registration.html
 QUNEX_TERMS = "https://qunex.yale.edu/access/"
 WORKBENCH_IMAGE_URL = (
     "https://github.com/CLiMBlab-Stanford/nro-workbench/releases/download/"
-    "v2.2.1-13/nro-workbench.sif"
+    "v2.2.1-14/nro-workbench.sif"
 )
-WORKBENCH_IMAGE_SHA256 = "af87479e1d9f29653aec17d1171bb83eef350666329d3ab67253b7465749f768"
+WORKBENCH_IMAGE_SHA256 = "8a928b6e4b8f9e70a6eddc1af5547beced3890d52dd7478b88862ac9615b25a6"
 OSLOM_SOURCE = "http://www.oslom.org/code/OSLOM2.tar.gz"
 OSLOM_SHA256 = "3d1ff087449dbb715d1f74f37a5e064d0b61bfba29d64411e4f454d407d96d5e"
 MANAGED_RUNTIME = {
