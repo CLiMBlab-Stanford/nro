@@ -245,6 +245,7 @@ def test_schema_six_moves_slurm_and_pool_defaults_into_site_policy(tmp_path):
 def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
     root = create_store(tmp_path / "definitions")
     config = root / "configs/anat/main_anat.yml"
+    inherited = root / "configs/anat/fast_anat.yml"
     starter = Path(__file__).parents[1] / "nro/definitions/starters/configs/anat/main_anat.yml"
     value = yaml.safe_load(starter.read_text())
     value["lesion"].update(
@@ -253,6 +254,7 @@ def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
     )
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    inherited.write_text("surface_reconstruction_engine: fastsurfer\n")
     (root / MANIFEST).write_text(_manifest_text(root, 6))
 
     assert migrate_store(
@@ -261,6 +263,7 @@ def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
 
     lesion = yaml.safe_load(config.read_text())["lesion"]
     assert lesion == {"masker_command": None}
+    assert yaml.safe_load(inherited.read_text()) == {"surface_reconstruction_engine": "fastsurfer"}
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

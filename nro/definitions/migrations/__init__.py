@@ -370,6 +370,8 @@ def _synthsr_lesion_scaffold(root: Path) -> None:
         if not isinstance(document, dict):
             raise ValueError(f"Invalid anatomical configuration: {config}")
         lesion = document.get("lesion")
+        if lesion is None:
+            continue
         if not isinstance(lesion, dict):
             raise ValueError(f"Invalid anatomical lesion configuration: {config}")
         lesion.pop("fastsurfer_image", None)
