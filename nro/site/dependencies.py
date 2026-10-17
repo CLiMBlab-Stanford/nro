@@ -695,7 +695,7 @@ def check_installation(
                 raise RuntimeError(f"Directory cannot be written or created: {path}")
             return path
 
-        check(key, directory_check)
+        check(key, directory_check, required=key != "bids")
     for command in ("sbatch", "squeue", "sacct", "scancel"):
         check(command, lambda command=command: executable(command), required=slurm)
     check("OSLOM", lambda: executable(values["oslom"]), required=with_oslom)
@@ -805,8 +805,25 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
     def reuse_existing() -> bool:
         if not path.is_file() or not path.stat().st_size:
             return False
+        receipt = path.with_name(path.name + ".receipt.json")
+        if checksum is None:
+            if not receipt.is_file():
+                return outdated()
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            verify_image_receipt(path, receipt)
+            if document.get("source") != source:
+                return outdated()
+            verifier = {
+                "freesurfer": verify_freesurfer_image,
+                "fastsurfer": verify_fastsurfer_image,
+            }.get(key)
+            if verifier is not None:
+                try:
+                    verifier(values["runtime"], path)
+                except RuntimeError:
+                    return outdated()
+            return True
         if checksum is not None:
-            receipt = path.with_name(path.name + ".receipt.json")
             if receipt.is_file():
                 document = json.loads(receipt.read_text(encoding="utf-8"))
                 recorded = document.get("sha256")

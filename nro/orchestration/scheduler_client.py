@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from nro.orchestration.errors import SchedulerError
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.scheduler_implementation import (
     capture_worker_implementation,
@@ -62,15 +63,6 @@ _OPERATION_NOTICES = {
     "installation_progress": "Waiting for shared work to stop...",
     "project_rename": "Renaming dataset...",
 }
-
-
-class SchedulerError(RuntimeError):
-    """Report a scheduler transport or service failure."""
-
-    def __init__(self, message: str, *, error_type: str | None = None) -> None:
-        """Preserve the remote error category with its user-facing message."""
-        super().__init__(message)
-        self.error_type = error_type
 
 
 def _response_result(response: dict):
@@ -665,16 +657,9 @@ def exchange(
 
 def _cached_status(control: Path, checkout: Path) -> dict:
     """Select one branch report from the last atomic read model."""
-    from nro.orchestration.branch_store import BranchStore
-    from nro.orchestration.scheduler_bus import read_snapshot
+    from nro.orchestration.scheduler_bus import read_branch_snapshot
 
-    snapshot = read_snapshot(control)
-    if snapshot is None:
-        return {"rows": [], "visible_ids": [], "ingestion": [], "dependencies": []}
-    name = BranchStore(control).read().topology.registered_checkout(checkout)
-    return snapshot["branches"].get(
-        name, {"rows": [], "visible_ids": [], "ingestion": [], "dependencies": []}
-    )
+    return read_branch_snapshot(control, checkout)
 
 
 def _endpoint(

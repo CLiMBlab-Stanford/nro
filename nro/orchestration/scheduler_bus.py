@@ -19,7 +19,6 @@ from typing import Any
 from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text, read_json
 from nro.orchestration.control_paths import ControlPaths
-from nro.orchestration.registry import RegistryLock, ensure_shared_directory, utcnow
 
 PROTOCOL = 1
 HEARTBEAT_SECONDS = 5.0
@@ -71,6 +70,8 @@ def _identifier(value: str, label: str) -> str:
 
 def prepare(control: Path) -> ControlPaths:
     """Create the shared exchange directories without opening the registry."""
+    from nro.orchestration.registry import ensure_shared_directory
+
     paths = ControlPaths(control)
     paths.require_current_layout()
     for path in (paths.service, paths.service_progress):
@@ -100,6 +101,11 @@ def create_message(payload: dict[str, Any], *, kind: str = "command") -> dict[st
         "host": socket.gethostname(),
         "payload": payload,
     }
+
+
+def utcnow() -> str:
+    """Return a sortable UTC timestamp for scheduler exchange records."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def publish_progress(
@@ -291,6 +297,8 @@ def clear_startup_progress(control: Path, token: str) -> None:
 
 def _slurm_terminal(job_id: str) -> bool | None:
     """Return a positive terminal-state result without guessing on scheduler failure."""
+    from nro.orchestration.registry import RegistryLock
+
     return RegistryLock._slurm_terminal(job_id)
 
 
@@ -714,6 +722,36 @@ def read_snapshot(control: Path) -> dict[str, Any] | None:
             # dynamic slots after this reader loaded its manifest.
             continue
     raise ValueError("Scheduler status components changed repeatedly while being read")
+
+
+def _registered_checkout_name(control: Path, checkout: Path) -> str:
+    """Resolve one active checkout from the small branch catalog."""
+    catalog = read_json(ControlPaths(control).catalog)
+    if not isinstance(catalog, dict):
+        raise ValueError("Branch registrations must be an object")
+    root = str(Path(checkout).expanduser().resolve())
+    matches = []
+    for name, entry in catalog.items():
+        if (
+            isinstance(name, str)
+            and isinstance(entry, dict)
+            and isinstance(entry.get("checkouts"), list)
+            and entry.get("retired") is False
+            and root in entry["checkouts"]
+        ):
+            matches.append(name)
+    if len(matches) != 1:
+        raise ValueError("Checkout is not authorized for an active branch")
+    return matches[0]
+
+
+def read_branch_snapshot(control: Path, checkout: Path) -> dict[str, Any]:
+    """Read one branch from the cached status model without loading registry code."""
+    empty = {"rows": [], "visible_ids": [], "ingestion": [], "dependencies": []}
+    snapshot = read_snapshot(control)
+    if snapshot is None:
+        return empty
+    return snapshot["branches"].get(_registered_checkout_name(control, checkout), empty)
 
 
 def publish_shutdown(control: Path, *, token: str, generation: int) -> None:

@@ -1,10 +1,10 @@
 """Read-only ingestion status independent of cloud inventory and derivative discovery."""
 
-from .store import IngestionStore
-
 
 def selected_records(registry, selection) -> list[dict]:
     """Filter unfinished requests using applicable project, participant, and session selectors."""
+    from .store import IngestionStore
+
     return filter_records(IngestionStore(registry).rows(), selection)
 
 

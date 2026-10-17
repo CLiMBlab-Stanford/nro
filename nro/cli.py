@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro") -> None:
             parser.error(
                 f"{command} requires the central/main installation; a development installation does not grant maintenance authority"
             )
-    from nro.orchestration.scheduler_client import SchedulerError
+    from nro.orchestration.errors import SchedulerError
 
     try:
         _command_main(command)(values, prog=f"{prog} {command}")
