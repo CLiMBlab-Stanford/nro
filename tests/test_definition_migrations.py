@@ -263,9 +263,7 @@ def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
 
     lesion = yaml.safe_load(config.read_text())["lesion"]
     assert lesion == {"masker_command": None}
-    assert yaml.safe_load(inherited.read_text()) == {
-        "surface_reconstruction_engine": "fastsurfer"
-    }
+    assert yaml.safe_load(inherited.read_text()) == {"surface_reconstruction_engine": "fastsurfer"}
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):
