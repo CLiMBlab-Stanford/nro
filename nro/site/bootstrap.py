@@ -605,7 +605,7 @@ def _main(argv=None) -> None:
         if args.non_interactive or not sys.stdin.isatty():
             parser.error("First installation requires --mode personal, shared, or branch")
         try:
-            mode = _installation_mode(input("Installation role [[p]ersonal/[s]hared/[b]ranch]: "))
+            mode = _installation_mode(input("Installation role ([p]ersonal/[s]hared/[b]ranch): "))
         except argparse.ArgumentTypeError as error:
             parser.error(str(error))
     site = (

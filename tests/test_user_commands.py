@@ -974,7 +974,7 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     import nro.bin.status as status_command
-    import nro.orchestration.scheduler_client as scheduler_client
+    import nro.orchestration.scheduler_bus as scheduler_bus
     import nro.site.configuration as site
 
     bids = (tmp_path / "bids").resolve()
@@ -1016,8 +1016,8 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
         ),
     )
 
-    def scheduler_status(*_args, **kwargs):
-        calls.append(kwargs["mode"])
+    def cached_status(*_args, **_kwargs):
+        calls.append("cached")
         return {
             "rows": [row, second_row],
             "visible_ids": [1, 2],
@@ -1025,7 +1025,7 @@ def test_branch_status_discovers_projects_from_its_single_scheduler_response(
             "ingestion": [],
         }
 
-    monkeypatch.setattr(scheduler_client, "status", scheduler_status)
+    monkeypatch.setattr(scheduler_bus, "read_branch_snapshot", cached_status)
 
     status_main(["--json"])
 

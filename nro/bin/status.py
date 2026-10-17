@@ -16,10 +16,7 @@ from nro.engine.cli import (
     page_text,
 )
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
-from nro.orchestration.catalog import MODULES
-from nro.orchestration.manifests import assess_registry
-from nro.orchestration.registry import Registry
-from nro.orchestration.selection import selected_projects
+from nro.modules import MODULE_NAMES
 
 _RESET = "\x1b[0m"
 _BOLD = "\x1b[1m"
@@ -31,6 +28,14 @@ _BLUE = "\x1b[94m"
 _MAGENTA = "\x1b[95m"
 _CYAN = "\x1b[96m"
 _GRAY = "\x1b[90m"
+
+
+def selected_projects(bids_root: Path, projects: list[str]) -> list[str]:
+    """Resolve source projects only on paths that require discovery."""
+    from nro.orchestration.selection import selected_projects as resolve_projects
+
+    return resolve_projects(bids_root, projects)
+
 
 _STATUS_COLORS = {
     "Success": _GREEN,
@@ -199,7 +204,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
                 message = str(latest.get("error") or message)
         except (OSError, json.JSONDecodeError):
             pass
-    if not step and log.is_file():
+    if not step and not message and log.is_file():
         try:
             for line in deque(log.open(encoding="utf-8", errors="replace"), maxlen=500):
                 if "Failed Step:" in line:
@@ -267,7 +272,7 @@ def _matches_request(
 def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
     """Construct the status parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    add_core_selection_arguments(parser, module_choices=MODULES)
+    add_core_selection_arguments(parser, module_choices=MODULE_NAMES)
     parser.add_argument(
         "--update",
         action="store_true",
@@ -310,23 +315,23 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
     critical_errors: dict[tuple[str, int], dict] = {}
     from nro.bidsify.status import render as render_ingestion
     from nro.bidsify.status import selected_records
-    from nro.orchestration.scheduler_implementation import implementation_path
 
     values = site.settings()[0]
-    branch_execution = (
-        site.installation_record().get("mode") in {"personal", "shared", "branch"}
-        or implementation_path(Path(values["registry"])).is_file()
-    )
+    branch_execution = site.installation_record().get("mode") in {"personal", "shared", "branch"}
+    if not branch_execution:
+        from nro.orchestration.scheduler_implementation import implementation_path
+
+        branch_execution = implementation_path(Path(values["registry"])).is_file()
     projects = list(dict.fromkeys(selection.projects))
     if not branch_execution:
         projects = selected_projects(bids_root, projects)
     selected_project_set = set(projects)
     visible_ids = None
     if branch_execution:
-        from nro.orchestration.branch_status import refresh
-        from nro.orchestration.scheduler_client import status
-
         if args.update:
+            from nro.orchestration.branch_status import refresh
+            from nro.orchestration.scheduler_client import status
+
             current = status(
                 Path(values["registry"]), bids_root, checkout=site.CHECKOUT, mode="cached"
             )
@@ -335,12 +340,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 refresh([row for row in current["rows"] if row["id"] in visible], selection)
             except (ValueError, RuntimeError, OSError) as error:
                 raise SystemExit(str(error)) from error
-        result = status(
-            Path(values["registry"]),
-            bids_root,
-            checkout=site.CHECKOUT,
-            mode="verify" if args.update else "cached",
-        )
+            result = status(
+                Path(values["registry"]), bids_root, checkout=site.CHECKOUT, mode="verify"
+            )
+        else:
+            from nro.orchestration.scheduler_bus import read_branch_snapshot
+
+            result = read_branch_snapshot(Path(values["registry"]), site.CHECKOUT)
         rows, visible_ids = result["rows"], set(result["visible_ids"])
         if not projects:
             selected_project_set = {str(row["project"]) for row in rows if row["id"] in visible_ids}
@@ -368,11 +374,14 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
 
         ingestion = filter_records(result.get("ingestion", []), selection)
     else:
+        from nro.orchestration.registry import Registry
+
         registry = Registry.for_project("", bids_root=bids_root)
         ingestion = selected_records(registry, selection)
         rows = []
     if not branch_execution and registry.existing_database_path().is_file() and args.update:
         from nro.orchestration.assessment import AssessmentConflict
+        from nro.orchestration.manifests import assess_registry
 
         try:
             assess_registry(registry, projects=projects)

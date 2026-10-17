@@ -13,7 +13,6 @@ import pytest
 
 from nro.engine.io import atomic_write_json
 from nro.orchestration import scheduler_bus, scheduler_client, scheduler_rpc, scheduler_service
-from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.dependency_state import AttemptInvalidated
 from nro.orchestration.registry import Registry
@@ -877,14 +876,18 @@ def test_cached_status_neither_starts_service_nor_opens_database(tmp_path, monke
     control = tmp_path / ".nro"
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    monkeypatch.setattr(
-        BranchStore,
-        "read",
-        lambda _self: SimpleNamespace(
-            topology=SimpleNamespace(registered_checkout=lambda _checkout: "main")
-        ),
-    )
     scheduler_bus.prepare(control)
+    atomic_write_json(
+        ControlPaths(control).catalog,
+        {
+            "main": {
+                "parent": None,
+                "checkouts": [str(checkout.resolve())],
+                "retired": False,
+                "registry_id": "a" * 32,
+            }
+        },
+    )
     atomic_write_json(
         ControlPaths(control).service_snapshot,
         {

@@ -94,8 +94,7 @@ def test_missing_freesurfer_license_is_optional_during_setup(tmp_path, monkeypat
     mni = templates / "tpl-MNI152NLin2009cAsym/template.nii.gz"
     mni.parent.mkdir(parents=True)
     mni.write_text("template")
-    bids = tmp_path / "BIDS"
-    bids.mkdir()
+    bids = tmp_path / "missing-BIDS"
     values = {
         "definitions": str(definitions),
         "runtime": "/bin/true",
@@ -121,6 +120,10 @@ def test_missing_freesurfer_license_is_optional_during_setup(tmp_path, monkeypat
     assert license_check["ok"] is False
     assert license_check["required"] is False
     assert "Register at" in license_check["detail"]
+    bids_check = next(row for row in results if row["name"] == "bids")
+    assert bids_check["ok"] is False
+    assert bids_check["required"] is False
+    assert "BIDS root is not readable" in bids_check["detail"]
 
 
 @pytest.mark.parametrize("response", ["", "y", "Y", "yes", "YES"])
@@ -1825,6 +1828,116 @@ def test_pinned_image_update_atomically_replaces_an_old_release(tmp_path, monkey
 
     assert target.read_bytes() == new
     assert json.loads(receipt.read_text())["sha256"] == dependencies.hashlib.sha256(new).hexdigest()
+
+
+def test_oci_image_update_replaces_an_old_pinned_source(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    old = b"old container"
+    new = b"new container"
+    target.write_bytes(old)
+    receipt = target.with_name(target.name + ".receipt.json")
+    receipt.write_text(
+        json.dumps(
+            {
+                "source": "docker://example/image@sha256:old",
+                "sha256": dependencies.hashlib.sha256(old).hexdigest(),
+            }
+        )
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
+    monkeypatch.setattr(dependencies, "run_probe", lambda _command: None)
+
+    def run(command, **_options):
+        if "pull" in command:
+            Path(command[3]).write_bytes(new)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(dependencies.subprocess, "run", run)
+    source = "docker://example/image@sha256:new"
+
+    dependencies._install_image("test_image", source, offline=False)
+
+    document = json.loads(receipt.read_text())
+    assert target.read_bytes() == new
+    assert document["source"] == source
+    assert document["sha256"] == dependencies.hashlib.sha256(new).hexdigest()
+
+
+def test_oci_image_rejects_an_old_pinned_source_offline(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "image.sif"
+    payload = b"container"
+    target.write_bytes(payload)
+    target.with_name(target.name + ".receipt.json").write_text(
+        json.dumps(
+            {
+                "source": "docker://example/image@sha256:old",
+                "sha256": dependencies.hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot replace outdated"):
+        dependencies._install_image("test_image", "docker://example/image@sha256:new", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("key", "verifier"),
+    [
+        ("freesurfer", "verify_freesurfer_image"),
+        ("fastsurfer", "verify_fastsurfer_image"),
+    ],
+)
+def test_oci_image_update_replaces_an_invalid_pinned_identity(
+    tmp_path, monkeypatch, key, verifier
+) -> None:
+    target = tmp_path / "image.sif"
+    old = b"old container"
+    new = b"new container"
+    source = "docker://example/image@sha256:current"
+    target.write_bytes(old)
+    receipt = target.with_name(target.name + ".receipt.json")
+    receipt.write_text(
+        json.dumps(
+            {
+                "source": source,
+                "sha256": dependencies.hashlib.sha256(old).hexdigest(),
+            }
+        )
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", key: str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
+    monkeypatch.setattr(
+        dependencies,
+        verifier,
+        lambda _runtime, _path: (_ for _ in ()).throw(RuntimeError("unexpected digest")),
+    )
+    monkeypatch.setattr(dependencies, "run_probe", lambda _command: None)
+
+    def run(command, **_options):
+        if "pull" in command:
+            Path(command[3]).write_bytes(new)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(dependencies.subprocess, "run", run)
+
+    dependencies._install_image(key, source, offline=False)
+
+    assert target.read_bytes() == new
+    assert json.loads(receipt.read_text())["source"] == source
 
 
 def test_fastsurfer_image_is_standard() -> None:
