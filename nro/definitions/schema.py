@@ -133,7 +133,7 @@ DENOISING = {
 }
 CONTAINER = {
     "image": OPTIONAL_TEXT,
-    "engine": TEXT,
+    "engine": Field("str", nonempty=True, execution=True),
     "cleanenv": BOOL,
     "bind": STRINGS,
     "home": OPTIONAL_TEXT,

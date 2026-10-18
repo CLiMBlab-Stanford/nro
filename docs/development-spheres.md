@@ -15,7 +15,8 @@ nro dev test --full
 
 The default command reads the Git working tree and selects tests for every changed
 path. It includes downstream spheres where a shared contract can affect consumers.
-An unmapped path selects the full suite. `--dry-run` prints the selection without
+An explicitly selected sphere runs only that sphere and its boundary tests. An
+unmapped path selects the full suite. `--dry-run` prints the selection without
 running it.
 
 The spheres separate scientific modules, the shared scientific engine,
@@ -35,5 +36,6 @@ Static boundary tests also keep scientific modules out of scheduler state, preve
 cross-module implementation imports, restrict orchestration to planner-facing module
 interfaces, and keep the planning catalog independent of array and image libraries.
 
-Focused validation speeds iteration. The full suite and upgrade rehearsal remain
-release requirements.
+Focused validation speeds iteration. Infrastructure spheres use synthetic contracts
+and small boundary cases instead of selecting the scientific module suites. The full
+suite and upgrade rehearsal remain release requirements.
