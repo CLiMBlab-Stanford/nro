@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from nro.definitions.store import ConfigStore, configuration_fingerprint
+from nro.modules import MODULE_NAMES
 from nro.modules.anat.lesion_policy import synthsr_scaffold_contract
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.contract_migrations import (
@@ -58,23 +59,30 @@ def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
     assert configuration["t1w_fallback"] == "synthesize_from_t2w"
 
 
-def test_runtime_reclassification_recomputes_recorded_configuration_fingerprint() -> None:
-    current = ConfigStore().load_configuration("anat", "main").values
-    recorded = _anat_contract(version=14)
-    recorded["configuration"] = "runtime-sensitive-fingerprint"
+@pytest.mark.parametrize("module", MODULE_NAMES)
+def test_runtime_reclassification_recomputes_recorded_configuration_fingerprint(
+    module: str,
+) -> None:
+    current = ConfigStore().load_configuration(module, "main").values
+    recorded = {
+        "contract_schema": current_contract_schema(module) - 1,
+        "module": module,
+        "configuration": "runtime-sensitive-fingerprint",
+        "processing": {},
+    }
 
     migrated = canonical_contract(
         recorded,
         {
             "id": "main",
-            "fingerprint": configuration_fingerprint("anat", "main", current),
+            "fingerprint": configuration_fingerprint(module, "main", current),
             "resolved": current,
         },
     )
 
-    assert migrated["contract_schema"] == 15
+    assert migrated["contract_schema"] == current_contract_schema(module)
     assert migrated["configuration"] == configuration_fingerprint(
-        "anat", "main", current, scientific=True
+        module, "main", current, scientific=True
     )
 
 
