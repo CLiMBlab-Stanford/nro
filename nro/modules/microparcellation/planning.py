@@ -9,10 +9,30 @@ from nro.engine.paths import anatomical_manifest_path, module_derivatives_root
 from nro.engine.targets import is_fsaverage_space, smoothing_entity_value
 from nro.modules.microparcellation.contract import microparcellation_output_paths
 from nro.orchestration.contracts import WorkItemSpec
-from nro.orchestration.planning_context import SubjectPlanningContext, work_item_key
+from nro.orchestration.planning_context import (
+    SubjectPlanningContext,
+    planning_memory_tier,
+    work_item_key,
+)
 
 if TYPE_CHECKING:
     from nro.orchestration.catalog import ModuleDescriptor
+
+_FLOAT32_BYTES = 4
+_SPLIT_HALF_DENSE_MATRICES = 2
+_MEMORY_HEADROOM = 1.5
+
+
+def microparcellation_memory_gb(
+    target_vertices: int,
+    *,
+    initial_gb: int,
+    maximum_gb: int,
+) -> int:
+    """Choose a worker tier for two dense split-half Gram matrices."""
+    dense_bytes = target_vertices**2 * _FLOAT32_BYTES * _SPLIT_HALF_DENSE_MATRICES
+    required_gb = int((dense_bytes * _MEMORY_HEADROOM + (1024**3 - 1)) // 1024**3)
+    return planning_memory_tier(required_gb, initial_gb, maximum_gb)
 
 
 def plan_work_items(
@@ -32,6 +52,13 @@ def plan_work_items(
     base_prefix = context.sub_id
     anat = upstream["anat"][0]
     anat_label = context.registered.directories["anat"]
+    configuration = context.workflow.configuration(descriptor.configuration_class)
+    target_vertices = int(configuration.values["coarsening"]["target_vertices"])
+    memory_gb = microparcellation_memory_gb(
+        target_vertices,
+        initial_gb=context.memory_gb,
+        maximum_gb=context.max_memory_gb,
+    )
     result: list[WorkItemSpec] = []
     for space, smoothing in context.target_pairs:
         entities = {"space": space, "smoothing": str(smoothing)}
@@ -70,9 +97,7 @@ def plan_work_items(
                 entities=entities,
                 scope=descriptor.scope,
                 module_lineage_id=lineage,
-                config_fingerprint=context.workflow.configuration(
-                    descriptor.configuration_class
-                ).scientific_fingerprint,
+                config_fingerprint=configuration.scientific_fingerprint,
                 directory_label=directory_label,
                 runtime_config=context.runtime_config(descriptor.configuration_class),
                 command=(
@@ -94,7 +119,7 @@ def plan_work_items(
                 output_prefix=prefix,
                 output_format=descriptor.output_format,
                 resource_class=descriptor.resource_class,
-                memory_gb=context.memory_gb,
+                memory_gb=memory_gb,
                 max_memory_gb=context.max_memory_gb,
                 expected_outputs=tuple(
                     microparcellation_output_paths(output_root, prefix)[name]

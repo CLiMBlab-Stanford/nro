@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 import nro.modules.func.planning as func_planning
+import nro.modules.microparcellation.planning as microparcellation_planning
 import nro.orchestration.catalog as orchestration_catalog
 import nro.orchestration.manifests as orchestration_manifests
 from nro.definitions.hardware import resolve_gradient_unwarping
@@ -58,6 +59,23 @@ def test_functional_memory_uses_field_strength_and_image_size(
         func_planning.functional_memory_gb(
             tmp_path / "bold.nii.gz",
             {"MagneticFieldStrength": field_strength},
+            initial_gb=32,
+            maximum_gb=256,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_vertices", "expected"),
+    ((40_000, 32), (60_000, 64), (100_000, 128)),
+)
+def test_microparcellation_memory_uses_dense_connectome_size(
+    target_vertices: int, expected: int
+) -> None:
+    assert (
+        microparcellation_planning.microparcellation_memory_gb(
+            target_vertices,
             initial_gb=32,
             maximum_gb=256,
         )
@@ -941,7 +959,12 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         yaml.safe_dump({"microparcellation": "rest"})
     )
     (configs / "configs" / "microparcellation" / "rest_microparcellation.yml").write_text(
-        yaml.safe_dump({"input_filter": {"task": "rest"}})
+        yaml.safe_dump(
+            {
+                "input_filter": {"task": "rest"},
+                "coarsening": {"target_vertices": 60_000},
+            }
+        )
     )
     refresh_manifest(configs)
     store = ConfigStore(configs)
@@ -1040,6 +1063,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
         by_module["anat"][0].key,
     )
     assert by_module["microparcellation"][0].entities == {"space": "fsnative", "smoothing": "2"}
+    assert by_module["microparcellation"][0].memory_gb == 64
     assert by_module["microparcellation"][0].dependencies == (
         by_module["clean"][0].key,
         by_module["anat"][0].key,
