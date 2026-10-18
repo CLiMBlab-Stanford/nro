@@ -33,6 +33,10 @@ def _source_selection_chain(module: str) -> ContractMigrationChain:
                 destination=3,
                 summary="Track inherited source metadata by declared scientific fields",
             ),
+            ContractMigration(
+                destination=4,
+                summary="Treat the host container runtime as execution infrastructure",
+            ),
         ),
     )
 

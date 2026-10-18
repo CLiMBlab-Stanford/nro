@@ -43,19 +43,39 @@ def test_unversioned_anatomy_contract_records_historical_nonlesion_meaning() -> 
     assert "fastsurfer_image" not in configuration["lesion"]
     assert "use_gpu" not in configuration["lesion"]
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
-    assert migrated["contract_schema"] == current_contract_schema("anat") == 14
+    assert migrated["contract_schema"] == current_contract_schema("anat") == 15
     assert configuration["t1w_fallback"] == "synthesize_from_t2w"
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert migrated["processing"]["source_markup"]["msmall"] == {"rest": []}
 
 
 def test_current_anatomy_contract_uses_current_nonlesion_default() -> None:
-    migrated, configuration = migrate_contract(_anat_contract(version=14), {})
+    migrated, configuration = migrate_contract(_anat_contract(version=15), {})
 
     assert migrated["processing"]["source_markup"]["lesion"] is False
     assert configuration is not None
     assert configuration["surface_reconstruction_engine"] == "freesurfer"
     assert configuration["t1w_fallback"] == "synthesize_from_t2w"
+
+
+def test_runtime_reclassification_recomputes_recorded_configuration_fingerprint() -> None:
+    current = ConfigStore().load_configuration("anat", "main").values
+    recorded = _anat_contract(version=14)
+    recorded["configuration"] = "runtime-sensitive-fingerprint"
+
+    migrated = canonical_contract(
+        recorded,
+        {
+            "id": "main",
+            "fingerprint": configuration_fingerprint("anat", "main", current),
+            "resolved": current,
+        },
+    )
+
+    assert migrated["contract_schema"] == 15
+    assert migrated["configuration"] == configuration_fingerprint(
+        "anat", "main", current, scientific=True
+    )
 
 
 def test_synthsr_scaffold_migration_invalidates_only_lesion_anatomy() -> None:
