@@ -122,17 +122,47 @@ def snapshot(
     include_scientific_inputs: bool = False,
 ) -> dict:
     """Return owned work items and the facts needed to select safe deletions."""
-    from nro.orchestration.scheduler_service import status
-
     topology = BranchStore(registry.paths.control).read().topology
     name = topology.require_checkout(checkout)
     owner = topology.records[name].registry_id
-    report = status(registry, checkout=checkout, mode="cached")
     paths = BranchPaths(name, *(Path(site_values[key]) for key in ("bids", "work", "development")))
     if not registry.existing_database_path().is_file():
         return {"rows": [], "dependencies": [], "branch": name}
-    report_ids = {int(row["id"]) for row in report["rows"]}
     with registry.connection() as db:
+        report = [
+            dict(row)
+            for row in db.execute(
+                """
+                WITH latest_attempt AS (
+                    SELECT attempt.work_item_id, attempt.state
+                    FROM attempts attempt
+                    WHERE attempt.id=(
+                        SELECT MAX(candidate.id)
+                        FROM attempts candidate
+                        WHERE candidate.work_item_id=attempt.work_item_id
+                    )
+                ),
+                request_workflows AS (
+                    SELECT link.work_item_id,
+                           GROUP_CONCAT(DISTINCT workflow.workflow_id) AS workflow_ids
+                    FROM request_work_items link
+                    JOIN requests request ON request.id=link.request_id
+                    JOIN workflow_revisions workflow
+                      ON workflow.id=request.workflow_revision_id
+                    GROUP BY link.work_item_id
+                )
+                SELECT item.*, lineage.config_id, lineage.directory_label,
+                       lineage.lineage_fingerprint, lineage.configuration_class,
+                       attempt.state AS attempt_state, requests.workflow_ids
+                FROM work_items item
+                JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
+                LEFT JOIN latest_attempt attempt ON attempt.work_item_id=item.id
+                LEFT JOIN request_workflows requests ON requests.work_item_id=item.id
+                ORDER BY item.participant, item.module, item.work_item_key
+                """
+            )
+        ]
+        report_ids = {int(row["id"]) for row in report}
         execution = {
             row["work_item_id"]: dict(row)
             for row in _selected_rows(
@@ -165,8 +195,14 @@ def snapshot(
                     tuple(sorted(report_ids)),
                 )
             }
+        dependencies = [
+            [int(row["work_item_id"]), int(row["upstream_work_item_id"])]
+            for row in db.execute(
+                "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
+            )
+        ]
     rows = []
-    for row in report["rows"]:
+    for row in report:
         item = execution.get(row["id"])
         branch_item = ownership.get(row["id"])
         if branch_item is None and (
@@ -194,9 +230,9 @@ def snapshot(
         rows.append(payload)
     owned_ids = {int(row["id"]) for row in rows}
     dependencies = [
-        [int(work_item_id), int(upstream_id)]
-        for work_item_id, upstream_id in report.get("dependencies", ())
-        if int(work_item_id) in owned_ids and int(upstream_id) in owned_ids
+        [work_item_id, upstream_id]
+        for work_item_id, upstream_id in dependencies
+        if work_item_id in owned_ids and upstream_id in owned_ids
     ]
     return {"rows": rows, "dependencies": dependencies, "branch": name}
 
@@ -378,7 +414,7 @@ def purge(
         deleted, retained = registry.forget_purged_work_items_detailed(ids)
         for work_item_id in deleted:
             location = receipt_locations.get(work_item_id)
-            if location is None:
+            if location is None or location[0] not in planned_receipts:
                 continue
             path, root = location
             counts["derivative_paths"] += int(

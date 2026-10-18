@@ -277,7 +277,10 @@ def test_admission_repairs_namespaced_project_rename_identity(setup):
 
 
 @pytest.mark.parametrize("discard_execution", (False, True))
-def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, discard_execution):
+@pytest.mark.parametrize("missing_receipt", (False, True))
+def test_branch_purge_removes_receipts_and_empty_lineage_directories(
+    setup, discard_execution, missing_receipt, monkeypatch
+):
     from nro.orchestration.branch_purge import purge, snapshot
 
     registry, _branches, _site, prepare = setup
@@ -300,6 +303,10 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, disc
         "work": str(paths.work),
         "development": str(paths.development),
     }
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_service.status",
+        lambda *_args, **_kwargs: pytest.fail("purge snapshot requested full status"),
+    )
     view = snapshot(registry, checkout=checkout, site_values=site_values)
     row = next(item for item in view["rows"] if item["module"] == spec.module)
     scientific_view = snapshot(
@@ -335,6 +342,10 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, disc
     )
     lineage = receipt.parents[3]
     assert receipt in public
+    if missing_receipt:
+        receipt.unlink()
+
+    progress = []
 
     result = purge(
         registry,
@@ -350,8 +361,10 @@ def test_branch_purge_removes_receipts_and_empty_lineage_directories(setup, disc
         ],
         logs_only=False,
         dry_run=False,
+        progress=lambda phase, completed, total: progress.append((phase, completed, total)),
     )
 
+    assert all(0 <= completed <= total for _phase, completed, total in progress)
     assert result["scheduler_records"] == 1
     assert not receipt.exists()
     assert not lineage.exists()

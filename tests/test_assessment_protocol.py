@@ -336,6 +336,59 @@ def test_assessment_can_advance_contract_schema(graph):
     )
 
 
+def test_equivalent_parent_contract_migration_preserves_descendant_freshness(graph):
+    registry, _, ids = graph
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE work_items SET artifact_state='fresh',current_generation=4 WHERE id=?",
+            (ids["root"],),
+        )
+        db.execute(
+            "UPDATE work_items SET artifact_state='fresh' WHERE id=?",
+            (ids["leaf"],),
+        )
+        db.execute(
+            """UPDATE work_item_dependencies SET required_generation=3
+               WHERE work_item_id=? AND upstream_work_item_id=?""",
+            (ids["leaf"], ids["root"]),
+        )
+    snapshot = capture_assessment(registry, work_item_ids=[ids["leaf"]])
+    root = next(row for row in snapshot.work_items if row["id"] == ids["root"])
+    contract = json.loads(root["artifact_contract_json"])
+    contract["contract_schema"] += 1
+    updates = []
+    for row in snapshot.work_items:
+        updates.append(
+            {
+                "id": int(row["id"]),
+                "state": "fresh",
+                "reason": "Completed successfully",
+                "contract": contract if row["id"] == ids["root"] else None,
+                "command": None,
+                "inputs": None,
+            }
+        )
+
+    states = apply_assessment(
+        registry,
+        snapshot,
+        AssessmentReport(snapshot.fingerprint, tuple(updates)),
+    )
+
+    assert states[ids["root"]][0] == "fresh"
+    assert states[ids["leaf"]][0] == "fresh"
+    with registry.connection() as db:
+        generation = db.execute(
+            "SELECT current_generation FROM work_items WHERE id=?", (ids["root"],)
+        ).fetchone()[0]
+        required = db.execute(
+            """SELECT required_generation FROM work_item_dependencies
+               WHERE work_item_id=? AND upstream_work_item_id=?""",
+            (ids["leaf"], ids["root"]),
+        ).fetchone()[0]
+    assert generation == required == 4
+
+
 def test_scheduler_defers_contended_assessment(graph, monkeypatch):
     from nro.orchestration import scheduler_maintenance
 
