@@ -38,6 +38,45 @@ def test_module_change_selects_its_sphere_and_downstream_boundaries() -> None:
     assert not selection.full
 
 
+def test_explicit_sphere_does_not_expand_to_downstream_consumers() -> None:
+    scopes = load_scopes(ROOT / "development/test-scopes.toml")
+    selection = select_tests(scopes, (), requested=("definitions",))
+
+    assert selection.spheres == ("definitions",)
+    assert "tests/test_configuration_compiler.py" in selection.tests
+    assert "tests/test_anat_msmall.py" not in selection.tests
+    assert not selection.full
+
+
+@pytest.mark.parametrize("sphere", ("orchestration", "installation"))
+def test_infrastructure_spheres_are_focused(sphere: str) -> None:
+    scopes = load_scopes(ROOT / "development/test-scopes.toml")
+    selection = select_tests(scopes, (), requested=(sphere,))
+
+    assert selection.spheres == (sphere,)
+    assert not selection.full
+
+
+def test_scope_loader_accepts_pytest_node_ids(tmp_path) -> None:
+    development = tmp_path / "development"
+    tests = tmp_path / "tests"
+    development.mkdir()
+    tests.mkdir()
+    (tests / "test_example.py").write_text("def test_one(): pass\n", encoding="utf-8")
+    path = development / "test-scopes.toml"
+    path.write_text(
+        """\
+version = 1
+[scope.example]
+paths = ["nro/example.py"]
+tests = ["tests/test_example.py::test_one"]
+""",
+        encoding="utf-8",
+    )
+
+    assert load_scopes(path)["example"].tests == ("tests/test_example.py::test_one",)
+
+
 def test_unmapped_change_fails_closed_to_full_validation() -> None:
     scopes = load_scopes(ROOT / "development/test-scopes.toml")
     selection = select_tests(scopes, ("unexpected.file",))

@@ -297,14 +297,31 @@ def upsert_work_item_graph(
 def normalize_active_request_graph(database: sqlite3.Connection) -> None:
     """Reconcile active demand with the current dependency graph."""
     parents: dict[int, list[int]] = {}
+    inherited: dict[int, list[tuple[int, str | None, str]]] = {}
     for row in database.execute(
-        "SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies WHERE role != 'inherited'"
+        """SELECT edge.work_item_id,edge.upstream_work_item_id,edge.role,
+                  upstream.artifact_state,execution.branch AS upstream_branch
+             FROM work_item_dependencies edge
+             JOIN work_items upstream ON upstream.id=edge.upstream_work_item_id
+             LEFT JOIN work_item_execution execution
+               ON execution.work_item_id=edge.upstream_work_item_id"""
     ):
-        parents.setdefault(int(row["work_item_id"]), []).append(int(row["upstream_work_item_id"]))
+        work_item_id = int(row["work_item_id"])
+        upstream_id = int(row["upstream_work_item_id"])
+        if row["role"] == "inherited":
+            inherited.setdefault(work_item_id, []).append(
+                (upstream_id, row["upstream_branch"], str(row["artifact_state"]))
+            )
+        else:
+            parents.setdefault(work_item_id, []).append(upstream_id)
     for active_request in database.execute(
         "SELECT id FROM requests WHERE state='active'"
     ).fetchall():
         request_id = str(active_request["id"])
+        owner = database.execute(
+            "SELECT branch FROM request_owners WHERE request_id=?", (request_id,)
+        ).fetchone()
+        owner_branch = str(owner["branch"]) if owner is not None else None
         targets = {
             int(row["work_item_id"])
             for row in database.execute(
@@ -317,7 +334,18 @@ def normalize_active_request_graph(database: sqlite3.Connection) -> None:
         pending = list(targets)
         while pending:
             work_item_id = pending.pop()
-            for upstream_id in parents.get(work_item_id, ()):
+            upstream_ids = list(parents.get(work_item_id, ()))
+            upstream_ids.extend(
+                upstream_id
+                for upstream_id, upstream_branch, artifact_state in inherited.get(work_item_id, ())
+                if artifact_state != "fresh"
+                and (
+                    owner_branch is None
+                    or upstream_branch is None
+                    or upstream_branch == owner_branch
+                )
+            )
+            for upstream_id in upstream_ids:
                 if upstream_id not in required:
                     required.add(upstream_id)
                     pending.append(upstream_id)

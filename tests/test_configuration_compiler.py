@@ -362,6 +362,22 @@ def test_legacy_functional_runtime_path_is_not_scientific(store):
     ) == scientific_values("func", functional)
 
 
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
+def test_container_runtime_path_is_not_scientific(store, kind):
+    configuration = store.load_configuration(kind, "main").values
+    first = deepcopy(configuration)
+    second = deepcopy(configuration)
+    first["container"]["engine"] = "/site/runtime/old/apptainer"
+    second["container"]["engine"] = "/site/runtime/new/apptainer"
+
+    assert scientific_values(kind, first) == scientific_values(kind, second)
+    assert first["container"]["image"] == scientific_values(kind, first)["container"]["image"]
+    old = store.load_configuration(kind, "runtime-test", document=first)
+    new = store.load_configuration(kind, "runtime-test", document=second)
+    assert old.fingerprint != new.fingerprint
+    assert old.scientific_fingerprint == new.scientific_fingerprint
+
+
 def test_bids_filter_sets_normalize_without_losing_absence_semantics(store):
     from nro.engine.bids import matches_filter
 

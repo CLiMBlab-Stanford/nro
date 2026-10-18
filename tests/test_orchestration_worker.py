@@ -1875,6 +1875,138 @@ def test_stop_preserves_demand_as_resumable_state(tmp_path: Path) -> None:
     assert registry.work_item_status_snapshot()[0]["status"] == "Stopped"
 
 
+def test_new_request_reactivates_stopped_work(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "8" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "result.txt",
+    )
+    first = registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.request_stop(modules=("networks",))
+
+    second = registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+
+    with registry.connection() as db:
+        demand = {
+            str(row["request_id"]): str(row["demand_state"])
+            for row in db.execute(
+                "SELECT request_id,demand_state FROM request_work_items ORDER BY request_id"
+            )
+        }
+    assert demand[first] == "stopped"
+    assert demand[second] == "active"
+    assert registry.work_item_status_snapshot()[0]["status"] in {"Queued", "Waiting"}
+
+
+def test_stale_inherited_input_joins_active_request_closure(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    parent = _spec(
+        key="clean:" + "9" * 64,
+        module="clean",
+        lineage=registered.lineages["clean"],
+        config_fingerprint=workflow.configuration("clean").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "clean"),
+        output=tmp_path / "parent.txt",
+    )
+    child = _spec(
+        key="dynconn:" + "a" * 64,
+        module="dynconn",
+        lineage=registered.lineages["dynconn"],
+        config_fingerprint=workflow.configuration("dynconn").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "dynconn"),
+        output=tmp_path / "child.txt",
+        dependencies=(parent.key,),
+    )
+    request = registry.create_request(
+        registered=registered,
+        target_module="dynconn",
+        selectors={},
+        work_items=(parent, child),
+        terminal_work_item_keys=(child.key,),
+        concurrency=1,
+        partition=None,
+    )
+    with registry.connection(write=True) as db:
+        parent_id = db.execute(
+            "SELECT id FROM work_items WHERE work_item_key=?", (parent.key,)
+        ).fetchone()[0]
+        child_id = db.execute(
+            "SELECT id FROM work_items WHERE work_item_key=?", (child.key,)
+        ).fetchone()[0]
+        db.execute(
+            "UPDATE work_item_dependencies SET role='inherited' WHERE work_item_id=?",
+            (child_id,),
+        )
+        db.execute(
+            "DELETE FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, parent_id),
+        )
+        db.execute(
+            "INSERT INTO request_owners(request_id,branch,registry_id) VALUES (?,?,?)",
+            (request, "main", "main-registry"),
+        )
+        db.execute(
+            """INSERT INTO work_item_execution(
+                   work_item_id,branch,registry_id,logical_key,context_json,
+                   binding_sources_json,provenance_json,scientific_contract_json
+               ) VALUES (?,?,?,?,?,?,?,?)""",
+            (parent_id, "main", "main-registry", parent.key, "{}", "[]", "{}", "{}"),
+        )
+        db.execute("UPDATE work_items SET artifact_state='fresh' WHERE id=?", (parent_id,))
+        registry._normalize_active_request_graph_locked(db)
+        assert not db.execute(
+            "SELECT 1 FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, parent_id),
+        ).fetchone()
+        db.execute("UPDATE work_items SET artifact_state='stale' WHERE id=?", (parent_id,))
+        registry._normalize_active_request_graph_locked(db)
+        demand = db.execute(
+            "SELECT demand_state FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, parent_id),
+        ).fetchone()
+        assert demand is not None and demand["demand_state"] == "active"
+
+        db.execute(
+            "DELETE FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, parent_id),
+        )
+        db.execute(
+            "UPDATE request_owners SET branch='dev',registry_id='dev-registry' WHERE request_id=?",
+            (request,),
+        )
+        registry._normalize_active_request_graph_locked(db)
+        assert not db.execute(
+            "SELECT 1 FROM request_work_items WHERE request_id=? AND work_item_id=?",
+            (request, parent_id),
+        ).fetchone()
+
+
 def test_future_successor_does_not_suppress_immediate_pool_growth(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)

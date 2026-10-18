@@ -1390,6 +1390,29 @@ def test_run_resume_recreates_only_matching_registered_demand(
     assert json.loads(requests[-1]["selectors_json"])["participants"] == ["01"]
 
 
+def test_run_resume_reactivates_stopped_demand(tmp_path: Path, capsys) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+
+    run_main(["-P", "demo", "-m", "func", "--no-submit", "--json"])
+    capsys.readouterr()
+    registry = Registry.for_project("demo", bids_root=bids)
+    stopped = registry.request_stop(participants=("01",), modules=("func",))
+    assert stopped["work_items"] > 0
+    assert any(row["status"] == "Stopped" for row in registry.work_item_status_snapshot())
+
+    run_main(["--resume", "-P", "demo", "--no-submit", "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["resumed"] == 2
+    current = registry.work_item_status_snapshot()
+    assert not any(row["status"] == "Stopped" for row in current)
+    assert any(row["demanded"] for row in current)
+
+
 def test_run_resume_does_not_plan_cartesian_product_of_registered_work(
     tmp_path: Path,
     capsys,

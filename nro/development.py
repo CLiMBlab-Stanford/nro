@@ -67,7 +67,7 @@ def load_scopes(path: Path) -> dict[str, TestScope]:
             test
             for scope in scopes.values()
             for test in (*scope.tests, *scope.boundaries)
-            if not (root / test).is_file()
+            if not (root / test.split("::", 1)[0]).is_file()
         }
     )
     if missing_tests:
@@ -92,6 +92,7 @@ def select_tests(
 ) -> TestSelection:
     """Resolve changed paths and explicit spheres to a fail-closed test selection."""
     changed = tuple(dict.fromkeys(str(Path(path)) for path in changed if str(path).strip()))
+    requested = tuple(requested)
     selected = set(requested)
     unknown_requested = selected - scopes.keys()
     if unknown_requested:
@@ -104,13 +105,14 @@ def select_tests(
         if not owners:
             unmapped.append(path)
         selected.update(owners)
-    pending = list(selected)
-    while pending:
-        name = pending.pop()
-        for downstream in scopes[name].downstream:
-            if downstream not in selected:
-                selected.add(downstream)
-                pending.append(downstream)
+    if not requested:
+        pending = list(selected)
+        while pending:
+            name = pending.pop()
+            for downstream in scopes[name].downstream:
+                if downstream not in selected:
+                    selected.add(downstream)
+                    pending.append(downstream)
     full = bool(unmapped) or any(scopes[name].full for name in selected)
     tests = tuple(
         dict.fromkeys(
