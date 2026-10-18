@@ -261,5 +261,9 @@ CHAIN = ContractMigrationChain(
                 RemoveField("lesion.use_gpu", reconstructible=True),
             ),
         ),
+        ContractMigration(
+            destination=15,
+            summary="Treat the host container runtime as execution infrastructure",
+        ),
     ),
 )
