@@ -18,9 +18,6 @@ from nro.definitions.editor import (
 from nro.definitions.markup import compile_markup
 from nro.definitions.parsing import parse_mapping
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore, validate_config_id
-from nro.modules.firstlevels.authoring import discover_event_files, model_draft
-from nro.modules.firstlevels.task_models import model_path, validate_task_model
-from nro.site.configuration import bids_root as _configured_bids_root
 
 
 @dataclass(frozen=True)
@@ -36,6 +33,8 @@ class DefinitionTarget:
 def definition_target(store: ConfigStore, kind: str, identifier: str) -> DefinitionTarget:
     """Resolve an authoring ID without requiring an existing file."""
     if kind == "model":
+        from nro.modules.firstlevels.task_models import model_path
+
         identifier = identifier if "/" in identifier else f"{identifier}/main"
         return DefinitionTarget(kind, identifier, model_path(identifier, store.root / "models"))
     if kind == "workflow":
@@ -72,6 +71,8 @@ def validate_definition(store: ConfigStore, target: DefinitionTarget, text: str)
     try:
         value = parse_mapping(text, source=str(target.path))
         if target.kind == "model":
+            from nro.modules.firstlevels.task_models import validate_task_model
+
             validate_task_model(value)
         elif target.kind == "workflow":
             store.resolve(target.identifier, document=value)
@@ -115,9 +116,12 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         return yaml.safe_dump({name: "main" for name in CONFIGURATION_CLASSES}, sort_keys=False)
     if target.kind == "markup":
         return "{}\n"
+    from nro.modules.firstlevels.authoring import discover_event_files, model_draft
+    from nro.site.configuration import bids_root
+
     paths = args.events or discover_event_files(
         target.identifier.split("/")[0],
-        _configured_bids_root(),
+        bids_root(),
         projects=args.project or (),
         participants=args.participant or (),
     )

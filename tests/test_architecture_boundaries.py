@@ -119,6 +119,25 @@ def test_planning_catalog_does_not_load_array_or_image_stacks(
     assert result.returncode == 0, result.stderr
 
 
+def test_definition_config_authoring_does_not_load_model_data_stacks() -> None:
+    code = (
+        "import sys\n"
+        "import nro.definitions.authoring\n"
+        "forbidden = {'numpy', 'pandas'}\n"
+        "loaded = sorted(forbidden.intersection(sys.modules))\n"
+        "if loaded:\n"
+        "    raise SystemExit(', '.join(loaded))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_functional_stage_planners_do_not_import_or_mutate_runner() -> None:
     path = MODULES / "func" / "construction.py"
     source = path.read_text(encoding="utf-8")
