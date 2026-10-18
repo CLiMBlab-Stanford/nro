@@ -173,28 +173,42 @@ def admit_many(
         if not isinstance(contracts, dict):
             requested_contracts = {}
             break
-        requested_contracts.setdefault(entry["project"], set()).update(
+        project = entry["project"]
+        requested_contracts.setdefault(project, set()).update(
             scientific_contract_fingerprint(contract) for contract in contracts.values()
         )
-    from nro.orchestration.manifests import assess_registry
 
+    candidate_cache = {}
+    reusable_ids: set[int] = set()
     if requested_contracts:
         with registry.connection() as db:
-            candidate_ids = {
-                int(candidate.evidence["work_item_id"])
-                for project, fingerprints in requested_contracts.items()
-                for candidate in candidates_locked(
+            candidate_cache = {
+                project: candidates_locked(
                     db,
                     project,
                     fresh_only=False,
                     contract_fingerprints=fingerprints,
                 )
+                for project, fingerprints in requested_contracts.items()
+            }
+            candidate_ids = {
+                int(candidate.evidence["work_item_id"])
+                for candidates in candidate_cache.values()
+                for candidate in candidates
             }
         if candidate_ids:
-            assess_registry(registry, work_item_ids=candidate_ids, compiled=False)
+            if progress is not None:
+                count = len(candidate_ids)
+                noun = "artifact" if count == 1 else "artifacts"
+                progress(f"Inspecting {count:,} reusable {noun}")
+            from nro.orchestration.artifact_validation import assess_cached_artifacts
+
+            reusable_ids = assess_cached_artifacts(registry, candidate_ids)
     else:
         # Protocol-one requests normally supply detached scientific contracts.
         # Retain the broad fallback for an older or diagnostic caller.
+        from nro.orchestration.manifests import assess_registry
+
         assess_registry(registry, projects=tuple(dict.fromkeys(projects)), compiled=False)
     from nro.orchestration.registry import Registry
 
@@ -207,14 +221,43 @@ def admit_many(
     with _installation_access(checkout, payloads), branches._lock():
         topology = branches.read().topology
         with registry.connection(write=True) as db:
-            candidates = {
-                project: candidates_locked(
-                    db,
-                    project,
-                    contract_fingerprints=requested_contracts.get(project),
-                )
-                for project in dict.fromkeys(projects)
-            }
+            if candidate_cache:
+                current: dict[int, tuple[str, int]] = {}
+                ordered = tuple(sorted(reusable_ids))
+                for offset in range(0, len(ordered), 500):
+                    chunk = ordered[offset : offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    current.update(
+                        {
+                            int(row["id"]): (
+                                str(row["artifact_state"]),
+                                int(row["current_generation"]),
+                            )
+                            for row in db.execute(
+                                f"""SELECT id,artifact_state,current_generation FROM work_items
+                                    WHERE id IN ({placeholders})""",
+                                chunk,
+                            )
+                        }
+                    )
+                candidates = {
+                    project: tuple(
+                        candidate
+                        for candidate in candidate_cache.get(project, ())
+                        if current.get(int(candidate.evidence["work_item_id"]))
+                        == ("fresh", int(candidate.generation))
+                    )
+                    for project in dict.fromkeys(projects)
+                }
+            else:
+                candidates = {
+                    project: candidates_locked(
+                        db,
+                        project,
+                        contract_fingerprints=requested_contracts.get(project),
+                    )
+                    for project in dict.fromkeys(projects)
+                }
             for index, entry in enumerate(entries):
                 project = entry["project"]
                 project_registry = Registry.for_project(

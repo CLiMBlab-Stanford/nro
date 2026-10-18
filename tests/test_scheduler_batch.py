@@ -30,7 +30,12 @@ def test_status_projection_omits_execution_payloads() -> None:
 def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch, tmp_path):
     class Database:
         @staticmethod
-        def execute(*_args, **_kwargs):
+        def execute(statement, *_args, **_kwargs):
+            if "SELECT id,artifact_state,current_generation" in statement:
+                return (
+                    {"id": 1, "artifact_state": "fresh", "current_generation": 0},
+                    {"id": 2, "artifact_state": "fresh", "current_generation": 0},
+                )
             return SimpleNamespace(fetchone=lambda: None)
 
     db = Database()
@@ -45,7 +50,11 @@ def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch
             "payload": {
                 "project": project,
                 "source": source,
-                "contracts": {project: {"project": project}},
+                "contracts": {
+                    f"{project}-upstream": {"project": project, "kind": "upstream"},
+                    project: {"project": project, "kind": "terminal"},
+                },
+                "terminals": [project],
             },
         }
         for project in ("one", "one", "two")
@@ -59,9 +68,10 @@ def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch
         SourceSnapshot, "verify_manifest", lambda self: verified.append(self.digest)
     )
     monkeypatch.setattr(
-        manifests,
-        "assess_registry",
-        lambda selected, **kwargs: assessed.append((selected, kwargs)),
+        "nro.orchestration.artifact_validation.assess_cached_artifacts",
+        lambda selected, work_item_ids: (
+            assessed.append((selected, work_item_ids)) or set(work_item_ids)
+        ),
     )
     monkeypatch.setattr(
         Registry,
@@ -79,7 +89,9 @@ def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch
 
     def candidates(_db, project, **kwargs):
         candidate_queries.append((project, kwargs))
-        return (SimpleNamespace(evidence={"work_item_id": 1 if project == "one" else 2}),)
+        return (
+            SimpleNamespace(evidence={"work_item_id": 1 if project == "one" else 2}, generation=0),
+        )
 
     monkeypatch.setattr(scheduler_service, "candidates_locked", candidates)
     monkeypatch.setattr(scheduler_service, "protected_site_fingerprint", lambda _path: "site")
@@ -99,32 +111,36 @@ def test_batch_verifies_source_and_assesses_only_reusable_candidates(monkeypatch
 
     assert result == ["one", "one", "two"]
     assert verified == ["a" * 64]
-    assert assessed == [(registry, {"work_item_ids": {1, 2}, "compiled": False})]
+    assert assessed == [(registry, {1, 2})]
     assert candidate_queries == [
         (
             "one",
             {
                 "fresh_only": False,
-                "contract_fingerprints": {fingerprint({"project": "one"})},
+                "contract_fingerprints": {
+                    fingerprint({"project": "one", "kind": "upstream"}),
+                    fingerprint({"project": "one", "kind": "terminal"}),
+                },
             },
         ),
         (
             "two",
             {
                 "fresh_only": False,
-                "contract_fingerprints": {fingerprint({"project": "two"})},
+                "contract_fingerprints": {
+                    fingerprint({"project": "two", "kind": "upstream"}),
+                    fingerprint({"project": "two", "kind": "terminal"}),
+                },
             },
         ),
-        ("one", {"contract_fingerprints": {fingerprint({"project": "one"})}}),
-        ("two", {"contract_fingerprints": {fingerprint({"project": "two"})}}),
     ]
     assert all(call[2]["assess"] is False for call in admitted)
     assert all(call[2]["source_verified"] is True for call in admitted)
     assert all(call[2]["expected_site"] == "site" for call in admitted)
     assert [call[2]["locked"] for call in admitted] == [
-        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}),)),
-        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}),)),
-        (topology, db, (SimpleNamespace(evidence={"work_item_id": 2}),)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}, generation=0),)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 1}, generation=0),)),
+        (topology, db, (SimpleNamespace(evidence={"work_item_id": 2}, generation=0),)),
     ]
 
 

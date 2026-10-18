@@ -186,7 +186,7 @@ def test_preview_accepts_only_unchanged_stale_descendants(monkeypatch, tmp_path:
         selection={"projects": ["demo"]},
     )
     assert changed["items"][1]["action"] == "reject"
-    assert changed["items"][1]["reason"].startswith("artifact content changed:")
+    assert changed["items"][1]["reason"].startswith("artifact modification time changed:")
 
 
 def test_execute_updates_timestamp_and_generation_binding(monkeypatch, tmp_path: Path) -> None:

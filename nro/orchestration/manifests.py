@@ -8,7 +8,6 @@ tolerated because a module can recreate them when needed.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from copy import deepcopy
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from nro.definitions.store import fingerprint
 from nro.engine.bids import discover_raw_runs, matches_filter
 from nro.engine.references import resolve_public_payload
 from nro.orchestration.artifact_records import (
+    inventories_match,
     inventory,
     is_control_artifact,
     read_json_mapping,
@@ -43,12 +43,7 @@ def _same_file(record: dict) -> tuple[bool, str | None]:
     stat = path.stat()
     if stat.st_size != record.get("size"):
         return False, f"File size changed: {path}"
-    expected_digest = record.get("sha256")
-    if expected_digest is not None:
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual != expected_digest:
-            return False, f"File content changed: {path}"
-    elif stat.st_mtime_ns != record.get("mtime_ns"):
+    if stat.st_mtime_ns != record.get("mtime_ns"):
         return False, f"File modification time changed: {path}"
     return True, None
 
@@ -973,7 +968,7 @@ def evaluate_assessment(
                         recorded_inputs = manifest.get("inputs", [])
                         if input_error:
                             state = ("stale", input_error)
-                        elif current_inputs != recorded_inputs:
+                        elif not inventories_match(current_inputs, recorded_inputs):
                             state = ("stale", "Direct input set or fingerprint changed")
                         else:
                             public_outputs = manifest.get("public_outputs", [])

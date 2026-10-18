@@ -10,8 +10,8 @@ from typing import Iterable
 SMALL_DIGEST_LIMIT = 1024 * 1024
 
 
-def file_record(path: str | Path) -> dict:
-    """Describe one completed regular file for later integrity checks."""
+def file_record(path: str | Path, *, include_digest: bool = True) -> dict:
+    """Describe one regular file, optionally including a compact-file digest."""
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         if resolved.exists():
@@ -19,14 +19,38 @@ def file_record(path: str | Path) -> dict:
         raise ValueError(f"Completion artifact is missing: {resolved}")
     stat = resolved.stat()
     record = {"path": str(resolved), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    if stat.st_size <= SMALL_DIGEST_LIMIT:
+    if include_digest and stat.st_size <= SMALL_DIGEST_LIMIT:
         record["sha256"] = hashlib.sha256(resolved.read_bytes()).hexdigest()
     return record
 
 
 def inventory(paths: Iterable[str | Path]) -> list[dict]:
-    """Return deterministic integrity records for unique resolved files."""
-    return [file_record(path) for path in sorted({Path(path).resolve() for path in paths})]
+    """Return deterministic metadata records for unique resolved files."""
+    return [
+        file_record(path, include_digest=False)
+        for path in sorted({Path(path).resolve() for path in paths})
+    ]
+
+
+def inventories_match(left: Iterable[dict], right: Iterable[dict]) -> bool:
+    """Compare filesystem evidence while ignoring retired digest fields."""
+
+    def projected(records: Iterable[dict]) -> tuple[tuple[str, int, int], ...]:
+        return tuple(
+            sorted(
+                (
+                    str(record["path"]),
+                    int(record["size"]),
+                    int(record["mtime_ns"]),
+                )
+                for record in records
+            )
+        )
+
+    try:
+        return projected(left) == projected(right)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def read_json_mapping(path: str | Path) -> dict | None:
