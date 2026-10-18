@@ -9,6 +9,8 @@ import pytest
 
 from nro.definitions.store import ConfigStore, fingerprint
 from nro.orchestration import manifests
+from nro.orchestration.artifact_records import file_record, inventories_match, inventory
+from nro.orchestration.artifact_validation import assess_cached_artifacts
 from nro.orchestration.assessment import (
     AssessmentConflict,
     AssessmentReport,
@@ -511,3 +513,46 @@ def test_worker_validates_registered_contract_without_scientific_catalog(graph, 
         ][0]
         == "stale"
     )
+
+
+def test_cached_artifact_metadata_propagates_upstream_changes(graph):
+    registry, specs, ids = graph
+    by_key = {spec.key: spec for spec in specs}
+    registry.register_worker("metadata", resource_class="large")
+    while claim := registry.claim_ready_work_item("metadata", ("large",)):
+        record_completion(
+            registry,
+            work_item_id=claim.work_item_id,
+            attempt_id=claim.attempt_id,
+            outputs=by_key[claim.work_item_key].expected_outputs,
+        )
+
+    assert assess_cached_artifacts(registry, ids.values()) == set(ids.values())
+    root_output = by_key["root"].expected_outputs[0]
+    stat = root_output.stat()
+    os.utime(root_output, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    reusable = assess_cached_artifacts(registry, ids.values())
+    assert ids["root"] not in reusable
+    assert ids["leaf"] not in reusable
+    assert ids["unrelated"] in reusable
+    rows = {row["id"]: row for row in registry.work_item_rows()}
+    assert rows[ids["root"]]["artifact_state"] == "stale"
+    assert rows[ids["leaf"]]["artifact_state"] == "stale"
+
+
+def test_completed_file_record_uses_metadata_without_content_hash(tmp_path):
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("content")
+
+    record = inventory((artifact,))[0]
+
+    stat = artifact.stat()
+    assert record == {
+        "path": str(artifact.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+    legacy = file_record(artifact)
+    assert "sha256" in legacy
+    assert inventories_match([record], [legacy])

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import uuid
@@ -10,7 +9,7 @@ from pathlib import Path
 
 from nro.engine.io import atomic_write_json, sync_directory
 from nro.orchestration import dependency_state
-from nro.orchestration.artifact_records import inventory
+from nro.orchestration.artifact_records import inventories_match, inventory
 from nro.orchestration.assessment import capture_assessment
 from nro.orchestration.branch_purge import snapshot as branch_snapshot
 from nro.orchestration.control_paths import ControlPaths
@@ -55,10 +54,7 @@ def _same_file(record: dict) -> tuple[bool, str]:
     stat = path.stat()
     if stat.st_size != int(record["size"]):
         return False, f"artifact size changed: {path}"
-    digest = record.get("sha256")
-    if digest is not None and hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-        return False, f"artifact content changed: {path}"
-    if digest is None and stat.st_mtime_ns != int(record["mtime_ns"]):
+    if stat.st_mtime_ns != int(record["mtime_ns"]):
         return False, f"artifact modification time changed: {path}"
     return True, ""
 
@@ -338,7 +334,7 @@ def preview(registry, *, checkout: Path, site_values: dict, selection: dict) -> 
             except (OSError, ValueError) as error:
                 reason = f"Direct input cannot be validated: {error}"
             else:
-                if direct != completion.get("inputs", []):
+                if not inventories_match(direct, completion.get("inputs", [])):
                     reason = "Direct input fingerprint changed"
                 else:
                     records = [
@@ -455,12 +451,6 @@ def execute(
                 changed = stat.st_size != int(artifact["size"]) or stat.st_mtime_ns != int(
                     artifact["old_mtime_ns"]
                 )
-                if (
-                    not changed
-                    and artifact["digest_algorithm"] == "sha256"
-                    and hashlib.sha256(path.read_bytes()).hexdigest() != artifact["digest"]
-                ):
-                    changed = True
                 if changed:
                     raise RuntimeError(f"Artifact changed while freshening: {path}")
                 os.utime(path, ns=(stat.st_atime_ns, int(artifact["target_mtime_ns"])))
