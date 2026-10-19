@@ -22,7 +22,12 @@ from nro.modules.firstlevels.planning import direct_inputs as firstlevels_direct
 from nro.modules.firstlevels.planning import plan_work_items as plan_firstlevels_work_items
 from nro.modules.firstlevels.planning import refresh_command as refresh_firstlevels_command
 from nro.modules.firstlevels.planning import select_model_runs
-from nro.modules.firstlevels.task_models import canonical_processing, model_contract, select_models
+from nro.modules.firstlevels.task_models import (
+    canonical_processing,
+    model_contract,
+    select_models,
+    source_tasks,
+)
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.func.planning import plan_work_items as plan_func_work_items
 from nro.modules.microparcellation.contract import microparcellation_output_contract
@@ -96,6 +101,7 @@ class ModuleDescriptor:
     work_item_processing: Callable | None = None
     refresh_command: Callable | None = None
     select_models: Callable | None = None
+    model_source_tasks: Callable | None = None
     validate_public_definition: Callable | None = None
     canonical_processing: Callable | None = None
     dynamic_processing_keys: tuple[str, ...] = ()
@@ -192,6 +198,7 @@ BUILTIN_MODULES = (
         work_item_processing=model_contract,
         refresh_command=refresh_firstlevels_command,
         select_models=select_models,
+        model_source_tasks=source_tasks,
         validate_public_definition=validate_public_definition,
         canonical_processing=canonical_processing,
     ),

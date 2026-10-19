@@ -541,12 +541,10 @@ class Planner:
                 models=models,
                 model_sets=model_sets,
             )
-            from nro.modules.firstlevels.task_models import source_tasks
-
             tasks = {
                 task
                 for identifier, document in analysis_models.items()
-                for task in source_tasks(document, identifier)
+                for task in target_descriptor.model_source_tasks(document, identifier)
             }
             runs = tuple(run for run in runs if run.entities.get("task") in tasks)
         elif target_descriptor.select_runs is not None:
