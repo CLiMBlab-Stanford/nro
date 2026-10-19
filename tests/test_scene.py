@@ -55,15 +55,11 @@ def test_scene_rejects_metric_with_incompatible_surface_mesh(tmp_path: Path) -> 
     right = _geometry(tmp_path, "R", 7)
     metric = tmp_path / "sub-01_hemi-L_thickness.shape.gii"
     nib.save(
-        nib.GiftiImage(
-            darrays=[nib.gifti.GiftiDataArray(np.zeros(4, dtype=np.float32))]
-        ),
+        nib.GiftiImage(darrays=[nib.gifti.GiftiDataArray(np.zeros(4, dtype=np.float32))]),
         metric,
     )
 
-    assert incompatible_surface_data((metric,), (left, right)) == {
-        metric: {"L": (4, 5)}
-    }
+    assert incompatible_surface_data((metric,), (left, right)) == {metric: {"L": (4, 5)}}
 
 
 def test_scene_parser_uses_shared_selectors() -> None:

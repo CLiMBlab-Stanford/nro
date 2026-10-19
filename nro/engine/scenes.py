@@ -138,7 +138,8 @@ def cortical_vertex_counts(path: Path) -> dict[str, int]:
         except (OSError, IndexError, ValueError, AttributeError, TypeError):
             return {}
     if not any(
-        marker in path.name for marker in (".dlabel.nii", ".dscalar.nii", ".dtseries.nii", ".pconn.nii")
+        marker in path.name
+        for marker in (".dlabel.nii", ".dscalar.nii", ".dtseries.nii", ".pconn.nii")
     ):
         return {}
     try:

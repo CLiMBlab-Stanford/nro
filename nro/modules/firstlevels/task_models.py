@@ -186,10 +186,7 @@ def _selected_models(
             memberships = model_memberships(model)
             if sets and not set(sets).intersection(memberships):
                 continue
-            if (
-                tasks
-                and not set(tasks).intersection(source_tasks(model, identifier))
-            ):
+            if tasks and not set(tasks).intersection(source_tasks(model, identifier)):
                 continue
             selected[identifier] = model
     return selected

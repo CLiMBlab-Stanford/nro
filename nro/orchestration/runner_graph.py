@@ -582,11 +582,7 @@ class RunnerGraph:
         """Return declared inputs that no step in this graph produces."""
         if not self._frozen:
             raise RuntimeError("Runner graph must be frozen before reading external inputs.")
-        produced = {
-            _declared_path(output)
-            for step in self._steps
-            for output in step.outputs
-        }
+        produced = {_declared_path(output) for step in self._steps for output in step.outputs}
         return tuple(
             dict.fromkeys(
                 input_path

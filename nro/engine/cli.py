@@ -16,9 +16,7 @@ from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 
 
 @lru_cache(maxsize=256)
-def _model_source_tasks(
-    identifier: str, path: str, mtime_ns: int, size: int
-) -> tuple[str, ...]:
+def _model_source_tasks(identifier: str, path: str, mtime_ns: int, size: int) -> tuple[str, ...]:
     """Read source tasks once for one observed model-definition revision."""
     del path, mtime_ns, size
     from nro.modules.firstlevels.task_models import load_task_model, source_tasks

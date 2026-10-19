@@ -25,7 +25,9 @@ class _Candidate:
 def _paths(root: Path, pattern: str) -> tuple[Path, ...]:
     """Return regular files matching one artifact pattern below a managed root."""
     try:
-        return tuple(path for path in root.rglob(pattern) if path.is_file() and not path.is_symlink())
+        return tuple(
+            path for path in root.rglob(pattern) if path.is_file() and not path.is_symlink()
+        )
     except OSError:
         return ()
 

@@ -1768,9 +1768,8 @@ def _snapshot_ready(
 ) -> bool:
     """Allow a pending snapshot after quiet time or its maximum age."""
     return (
-        (not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS)
-        or now - last_snapshot >= STATUS_MAX_STALENESS_SECONDS
-    )
+        not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+    ) or now - last_snapshot >= STATUS_MAX_STALENESS_SECONDS
 
 
 def serve(

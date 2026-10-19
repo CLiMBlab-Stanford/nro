@@ -487,8 +487,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     modules = tuple(normalize_module(value) for value in selection.modules)
     if (
-        selection.analyses or selection.models or selection.model_sets
-    ) and modules and "firstlevels" not in modules:
+        (selection.analyses or selection.models or selection.model_sets)
+        and modules
+        and "firstlevels" not in modules
+    ):
         raise SystemExit("--analysis, --model, and --model-set require -m firstlevels")
     if (
         modules

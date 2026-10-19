@@ -109,9 +109,7 @@ def test_model_draft_unions_conditions_without_inferring_other_predictors(tmp_pa
 
 def test_model_draft_records_explicit_source_tasks(tmp_path):
     table = _events(tmp_path / "events.tsv", ["A", "B"])
-    model = yaml.safe_load(
-        model_draft([table], source_tasks=("sentences", "pictures"))
-    )
+    model = yaml.safe_load(model_draft([table], source_tasks=("sentences", "pictures")))
     assert model["tasks"] == ["sentences", "pictures"]
 
 

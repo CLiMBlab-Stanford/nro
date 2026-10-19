@@ -223,9 +223,7 @@ class Runner:
             # Publication completeness does not prove that the module's source
             # edges are unchanged. Include them in the cheap whole-module check
             # before bypassing ordinary node-by-node freshness evaluation.
-            boundary_inputs = tuple(
-                dict.fromkeys((*boundary.inputs, *graph.external_inputs()))
-            )
+            boundary_inputs = tuple(dict.fromkeys((*boundary.inputs, *graph.external_inputs())))
             boundary_run, boundary_reason = artifact_decision(
                 boundary.outputs,
                 boundary.force,
