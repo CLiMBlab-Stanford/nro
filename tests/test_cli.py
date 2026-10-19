@@ -84,7 +84,7 @@ def test_help_shows_task_guidance(capsys) -> None:
     help_command.main(["definitions"])
 
     output = capsys.readouterr().out
-    assert "nro def edit config MODULE ID" in output
+    assert "nro def edit MODULE ID" in output
     assert "nro def init [PATH]" in output
 
 

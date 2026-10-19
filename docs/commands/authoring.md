@@ -11,14 +11,14 @@ registry or request scientific work.
 ```bash
 nro def edit model newtask
 nro def edit model newtask alternative
-nro def edit config clean alternative
+nro def edit clean alternative
 nro def edit workflow experiment
 nro def edit markup
 ```
 
-Model arguments are `TASK [VARIANT]`; an omitted variant means `main`. Config
-arguments are `CLASS ID`. Workflow definitions take one ID. Markup accepts an
-optional ID and defaults to `main`. The configuration classes are `anat`,
+Model arguments are `ANALYSIS [VARIANT]`; an omitted variant means `main`.
+Module configurations use `MODULE ID`. Workflow definitions take one ID.
+Markup accepts an optional ID and defaults to `main`. The modules are `anat`,
 `func`, `clean`, `microparcellation`, `dynconn`, `networks`, and `firstlevels`.
 
 The command opens a private draft with `$VISUAL`, then `$EDITOR`. If neither is
@@ -46,14 +46,16 @@ it. Use `nro def validate` for a complete store audit.
 A missing model can be inferred from source BIDS events:
 
 ```bash
-nro def edit model newtask -P myproject -p 01 02
+nro def edit model language --task sentences pictures -P myproject -p 01 02
 nro def edit model newtask alternative --from newtask main
 ```
 
 Without `--from` or `--file`, model initialization discovers source BOLD runs
-with the task label and resolves their inherited event tables. Omitted project
-and participant selectors mean all matches under the configured BIDS root.
-Pass `--events FILE ...` to use explicit local tables instead. The initializer
+whose task matches the analysis label and resolves their inherited event tables.
+Use `--task TASK ...` when the analysis consumes differently named or multiple
+source tasks. Omitted project and participant selectors mean all matches under
+the configured BIDS root. Pass `--events FILE ...` to use explicit local tables
+instead. The initializer
 prefers `trial_type`; `--conditions COLUMN` resolves another shared condition
 column noninteractively.
 
@@ -68,7 +70,7 @@ comments. Add only values that should differ. `--from ID` copies another config
 in the same class:
 
 ```bash
-nro def edit config clean another --from alternative
+nro def edit clean another --from alternative
 nro def edit workflow another --from experiment
 ```
 
@@ -81,7 +83,7 @@ a config does not select it in a workflow.
 
 ```bash
 nro def edit model newtask --events run1_events.tsv run2_events.tsv --output model.yml
-nro def edit config clean alternative --output clean.yml
+nro def edit clean alternative --output clean.yml
 ```
 
 The output must be outside the definitions store and must not already exist.
@@ -89,7 +91,7 @@ Publish a local file without opening an editor with `--file`:
 
 ```bash
 nro def edit model newtask --file model.yml
-nro def edit config clean alternative --file clean.yml
+nro def edit clean alternative --file clean.yml
 ```
 
 Supplying `--file` is an explicit publication request, so no confirmation flag
@@ -111,8 +113,8 @@ This path form validates the complete staged store before publication. Use
 `ls` reports active definitions and the inheritance layer supplying each one:
 
 ```bash
-nro def ls config
-nro def ls config anat
+nro def ls anat
+nro def ls clean
 nro def ls model
 nro def ls model langlocSN
 nro def ls workflow
@@ -120,7 +122,8 @@ nro def ls markup
 nro def ls file
 ```
 
-Add `--json` for machine-readable output. Config listings include packaged
+The optional model-list selector is an analysis label. Add `--json` for
+machine-readable output. Config listings include packaged
 `main` definitions even when the external store does not override them.
 
 ## Remove and regenerate
@@ -132,7 +135,7 @@ logs, registry records, or demand. `--yes` is available for noninteractive use.
 nro def rm model spatialFIN main
 nro def edit model spatialFIN -P nptl
 
-nro def rm config clean alternative
+nro def rm clean alternative
 nro def rm workflow experiment
 nro def rm markup alternative
 ```

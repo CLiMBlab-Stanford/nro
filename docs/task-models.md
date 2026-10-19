@@ -1,20 +1,43 @@
-# Task models
+# First-level models
 
-A task model defines event predictors and contrasts for
+A first-level model defines event predictors and contrasts for
 [firstlevels](modules/firstlevels.md). Store it as
-`DEFINITIONS/models/TASK/VARIANT.yml` in the selected
+`DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected
 [definitions store](definitions.md); its identifier is
-`TASK/VARIANT`. The directory defines the task, so the YAML does not repeat it.
+`ANALYSIS/VARIANT`. For an ordinary single-task model, the analysis label is
+also the source BIDS task and the YAML does not repeat it. A model that pools
+several tasks declares them explicitly:
 
-`nro def edit model TASK [VARIANT]` opens an existing model or drafts a missing
+```yaml
+tasks: [ActPassBlock, ActPassEvent]
+conditions: trial_type
+contrasts:
+  plausibility:
+    trial_type.activeImplausible: 0.25
+    trial_type.passiveImplausible: 0.25
+    trial_type.activePlausible: -0.25
+    trial_type.passivePlausible: -0.25
+```
+
+`Input.task` in the compiled Stats Models document contains the declared source
+tasks. Each run is still fitted independently. Session and subject summaries
+pool the available primitive effects across tasks, so a contrast may become
+estimable even when no individual run contains all of its conditions.
+
+The current derivative layout predates multi-task models and encodes the
+analysis label as `task-ANALYSIS`. This is an on-disk compatibility convention;
+it does not mean that the analysis label is a source BIDS task. The public model
+snapshot and compiled Stats Models document retain the actual source tasks.
+
+`nro def edit model ANALYSIS [VARIANT]` opens an existing model or drafts a missing
 one from matching BIDS events. See
 [definition authoring](commands/authoring.md) for discovery selectors, local
 drafts, and save behavior.
 
 The firstlevels configuration supplies nuisance regression, temporal outlier
-handling, rank protection, run aggregation, and the noise model. Task models
-cannot override those settings or introduce confounds. This lets the same
-scientific model run under different firstlevels configurations.
+handling, rank protection, run aggregation, and the noise model. First-level
+models cannot override those settings or introduce confounds. This lets the
+same scientific model run under different firstlevels configurations.
 
 ## Basic model
 
@@ -50,16 +73,21 @@ model_set: [development, language-experiment]
 
 ```bash
 nro run -m firstlevels                         # set main
-nro run -m firstlevels --task langlocSN        # set main within this task
+nro run -m firstlevels --analysis language     # set main within this analysis
+nro run -m firstlevels --task langlocSN        # models that consume this source task
 nro run -m firstlevels --model alternative    # explicit variants, any set
-nro run -m firstlevels --model langlocSN/main # one qualified model
+nro run -m firstlevels --model language/main  # one qualified model
 nro run -m firstlevels --model-set development language-experiment
 ```
 
 Values within a selector are alternatives; different selectors intersect.
-`--model main` matches that variant across tasks. Explicit `--model` bypasses
+`--analysis` matches the first component of `ANALYSIS/VARIANT`. `--task` matches
+a model's declared source BIDS tasks. Either selector selects whole models; a
+task selection does not remove the model's other declared source tasks. Use a
+qualified `--model ANALYSIS/VARIANT` to select one model without ambiguity.
+`--model main` matches that variant across analyses. Explicit `--model` bypasses
 the default set restriction; an explicit `--model-set` still intersects it.
-`--task` and `--run task=...` constrain the same task entity.
+`--task` and `--run task=...` constrain the same source-task entity.
 
 Registration creates no demand. Bare `nro run` requests `dynconn`, `networks`,
 and `firstlevels`, using model set `main` for matching tasks. Use `-m firstlevels`
@@ -181,7 +209,7 @@ The compiler creates the Stats Models document used by the estimator. At run
 time it resolves selected nuisance/outlier columns and event HRFs. The saved
 run document records those choices; numerical design files record the fitted
 PCs, retained rows, parameter mapping, and rank budget. The work item also saves
-its scientific task YAML, resolved firstlevels configuration, and compiled
+its scientific model YAML, resolved firstlevels configuration, and compiled
 template. Execution-only set membership is excluded.
 
 ## Model edits and freshness

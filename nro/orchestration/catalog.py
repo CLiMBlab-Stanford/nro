@@ -183,7 +183,7 @@ BUILTIN_MODULES = (
     ModuleDescriptor(
         name="firstlevels",
         scope="subject",
-        output_format="Task/model run, session and subject GLM maps and compact covariance",
+        output_format="Analysis-model run, session and subject GLM maps and compact covariance",
         resource_class="medium",
         plan=plan_firstlevels_work_items,
         processing_contract=_firstlevels_processing_contract,

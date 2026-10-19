@@ -95,6 +95,101 @@ def has_surface_data(paths: tuple[Path, ...]) -> bool:
     return False
 
 
+def _hemisphere_from_name(path: Path) -> str | None:
+    """Return the hemisphere encoded in a BIDS-like surface filename."""
+    if "_hemi-L_" in path.name:
+        return "L"
+    if "_hemi-R_" in path.name:
+        return "R"
+    return None
+
+
+def surface_vertex_counts(paths: tuple[Path, ...]) -> dict[str, int]:
+    """Read the displayed vertex count for each cortical hemisphere."""
+    import nibabel as nib
+
+    counts: dict[str, int] = {}
+    for path in paths:
+        hemisphere = _hemisphere_from_name(path)
+        if hemisphere is None or not path.name.endswith(".surf.gii"):
+            continue
+        try:
+            image = nib.load(str(path))
+            pointset = next(
+                array.data
+                for array in image.darrays
+                if int(array.intent) == int(nib.nifti1.intent_codes["NIFTI_INTENT_POINTSET"])
+            )
+        except (OSError, StopIteration, ValueError, AttributeError, TypeError):
+            continue
+        counts.setdefault(hemisphere, int(len(pointset)))
+    return counts
+
+
+def cortical_vertex_counts(path: Path) -> dict[str, int]:
+    """Return cortical mesh sizes addressed by one metric or CIFTI file."""
+    import nibabel as nib
+
+    path = Path(path)
+    hemisphere = _hemisphere_from_name(path)
+    if hemisphere is not None and path.name.endswith((".func.gii", ".shape.gii", ".label.gii")):
+        try:
+            return {hemisphere: int(len(nib.load(str(path)).darrays[0].data))}
+        except (OSError, IndexError, ValueError, AttributeError, TypeError):
+            return {}
+    if not any(
+        marker in path.name for marker in (".dlabel.nii", ".dscalar.nii", ".dtseries.nii", ".pconn.nii")
+    ):
+        return {}
+    try:
+        image = nib.load(str(path))
+        axes = tuple(image.header.get_axis(index) for index in range(len(image.shape)))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    counts: dict[str, int] = {}
+    for axis in axes:
+        try:
+            structures = tuple(axis.iter_structures())
+        except AttributeError:
+            continue
+        for structure, _slice, model in structures:
+            label = str(structure).upper()
+            hemi = "L" if "CORTEX_LEFT" in label else "R" if "CORTEX_RIGHT" in label else None
+            if hemi is None:
+                continue
+            nvertices = getattr(model, "nvertices", None)
+            if isinstance(nvertices, dict):
+                size = next(
+                    (int(value) for key, value in nvertices.items() if str(key).upper() == label),
+                    None,
+                )
+            else:
+                size = int(nvertices) if nvertices is not None else None
+            if size is not None:
+                counts[hemi] = size
+    return counts
+
+
+def incompatible_surface_data(
+    data: tuple[Path, ...], surfaces: tuple[Path, ...]
+) -> dict[Path, dict[str, tuple[int, int]]]:
+    """Identify data whose cortical meshes cannot be displayed on the surfaces."""
+    geometry = surface_vertex_counts(surfaces)
+    if not geometry:
+        return {}
+    invalid: dict[Path, dict[str, tuple[int, int]]] = {}
+    for path in data:
+        observed = cortical_vertex_counts(path)
+        mismatch = {
+            hemisphere: (count, geometry[hemisphere])
+            for hemisphere, count in observed.items()
+            if hemisphere in geometry and count != geometry[hemisphere]
+        }
+        if mismatch:
+            invalid[path] = mismatch
+    return invalid
+
+
 def read_manifest(path: Path) -> dict[str, object]:
     """Read a JSON or YAML manifest and require a mapping."""
 

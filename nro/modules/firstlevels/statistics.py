@@ -157,7 +157,7 @@ def nuisance_components(
     exact_rank = int(np.linalg.matrix_rank(task)) if task.shape[1] else 0
     remaining = n - exact_rank
     if remaining <= 0:
-        raise UnidentifiableDesignError("Task model leaves no residual temporal dimensions")
+        raise UnidentifiableDesignError("First-level model leaves no residual temporal dimensions")
     if not 0 < variance_target <= 1 or minimum_rank < 0 or not 0 <= minimum_fraction <= 1:
         raise ValueError("Invalid nuisance rank protection settings")
     cap = max(0, remaining - max(minimum_rank, int(np.ceil(minimum_fraction * remaining))))

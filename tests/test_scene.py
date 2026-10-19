@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
+import nibabel as nib
+import numpy as np
 import pytest
 import yaml
 
@@ -17,6 +19,7 @@ from nro.engine.scenes import (
     _restore_spec_file_hemisphere_structures,
     base_scene,
     build_scene_bundle,
+    incompatible_surface_data,
     manifest_lesion_qc_paths,
     manifest_surface_families,
     public_manifest_paths,
@@ -32,6 +35,35 @@ def _surfaces(root: Path) -> tuple[Path, ...]:
             path.write_text(f"{hemi} {kind}\n", encoding="utf-8")
             result.append(path)
     return tuple(result)
+
+
+def _geometry(root: Path, hemisphere: str, vertices: int) -> Path:
+    path = root / f"sub-01_hemi-{hemisphere}_inflated.surf.gii"
+    image = nib.GiftiImage(
+        darrays=[
+            nib.gifti.GiftiDataArray(
+                np.zeros((vertices, 3), dtype=np.float32), intent="NIFTI_INTENT_POINTSET"
+            )
+        ]
+    )
+    nib.save(image, path)
+    return path
+
+
+def test_scene_rejects_metric_with_incompatible_surface_mesh(tmp_path: Path) -> None:
+    left = _geometry(tmp_path, "L", 5)
+    right = _geometry(tmp_path, "R", 7)
+    metric = tmp_path / "sub-01_hemi-L_thickness.shape.gii"
+    nib.save(
+        nib.GiftiImage(
+            darrays=[nib.gifti.GiftiDataArray(np.zeros(4, dtype=np.float32))]
+        ),
+        metric,
+    )
+
+    assert incompatible_surface_data((metric,), (left, right)) == {
+        metric: {"L": (4, 5)}
+    }
 
 
 def test_scene_parser_uses_shared_selectors() -> None:

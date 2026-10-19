@@ -9,7 +9,7 @@ databases, logs, and generated derivatives outside this repository.
 * `site/site.yml`: protected storage, execution, resource, and ingestion-source
   settings. Only the shared site store may contain this file.
 * `workflows/ID_workflow.yml`: configuration selections for each configuration class.
-* `models/TASK/VARIANT.yml`: task predictors, contrasts, and model-set membership.
+* `models/ANALYSIS/VARIANT.yml`: source tasks, predictors, contrasts, and model-set membership.
 * `markup/ID_markup.yml`: optional anatomical selections and source exclusions,
   grouped first by BIDS project and then by participant.
 * `hardware/gradient_unwarping.yml`: acquisition matching, gradient-unwarping
@@ -28,7 +28,7 @@ models, and source markup.
 Use `nro def apply --file RELATIVE_PATH=LOCAL_FILE` for event catalogs,
 ingestion profiles, hardware policy, and scan-plan parsers.
 
-New shared stores have no task models, event tables, or configured Flywheel
+New shared stores have no first-level models, event tables, or configured Flywheel
 servers. Development stores inherit `site/site.yml` from the shared store and
 are rejected if they try to supply their own copy.
 The starter hardware catalog is empty, so automatic gradient unwarping is off

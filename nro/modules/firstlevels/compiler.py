@@ -129,10 +129,11 @@ def task_node(source: dict) -> dict:
 
 
 def compile_model(source: dict, identifier: str, config: dict, *, sessions: bool = True) -> dict:
-    """Build run and direct-from-run summary nodes for a registered task model."""
-    from .task_models import scientific_model
+    """Build run and direct-from-run summary nodes for a registered analysis model."""
+    from .task_models import scientific_model, source_tasks
 
     source = scientific_model(source)
+    tasks = source_tasks(source, identifier)
     node = task_node(source)
     rules = node["Model"]["Software"]["nro"]
     rules["denoising"] = {key: deepcopy(config[key]) for key in NUISANCE_KEYS}
@@ -201,11 +202,11 @@ def compile_model(source: dict, identifier: str, config: dict, *, sessions: bool
             {
                 "Name": identifier.replace("/", "-"),
                 "BIDSModelVersion": "1.0.0",
-                "Input": {"task": identifier.split("/")[0]},
+                "Input": {"task": list(tasks) if len(tasks) > 1 else tasks[0]},
                 "Nodes": nodes,
                 "Edges": edges,
             },
-            task=identifier.split("/")[0],
+            task=tasks,
         )
     )
 
@@ -213,7 +214,7 @@ def compile_model(source: dict, identifier: str, config: dict, *, sessions: bool
 def realize_run_node(node: dict, events, confounds, config: dict) -> dict:
     """Resolve actual nuisance columns and event HRFs without reading images.
 
-    Event-only selection prevents task models from referring to confounds.
+    Event-only selection prevents first-level models from referring to confounds.
     Exact outlier columns remain separate from continuous nuisance PCA.
     """
     from .models import expand_columns

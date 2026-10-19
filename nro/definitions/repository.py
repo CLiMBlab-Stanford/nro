@@ -174,7 +174,7 @@ def validate_store(
 
     for path in files["models"]:
         if len(path.relative_to(root / "models").parts) != 2 or path.suffix != ".yml":
-            errors.append(f"Expected models/TASK/VARIANT.yml: {path}")
+            errors.append(f"Expected models/ANALYSIS/VARIANT.yml: {path}")
             continue
         identifier = f"{path.parent.name}/{path.stem}"
         check(path, lambda: scientific_model(load_task_model(identifier, root / "models")))

@@ -114,7 +114,7 @@ def plan_scope_key(
     workflow_id: str,
     selected_runs: tuple[str, ...],
     target_pairs: tuple[tuple[str, int], ...],
-    task_models: tuple[str, ...],
+    analysis_models: tuple[str, ...],
     memory_gb: int,
     max_memory_gb: int,
 ) -> str:
@@ -127,7 +127,7 @@ def plan_scope_key(
             "workflow": workflow_id,
             "runs": selected_runs,
             "target_pairs": target_pairs,
-            "task_models": task_models,
+            "analysis_models": analysis_models,
             "memory_gb": memory_gb,
             "max_memory_gb": max_memory_gb,
         }

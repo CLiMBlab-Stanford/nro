@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import os
 import subprocess
 from itertools import count
 from pathlib import Path
@@ -491,6 +492,143 @@ def test_fresh_public_boundary_does_not_require_private_work(tmp_path: Path) -> 
 
     assert actions == []
     assert all(state.value == "fresh" for state in states.values())
+
+
+def test_public_boundary_does_not_hide_changed_external_input(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    private = tmp_path / "work" / "intermediate.txt"
+    public = tmp_path / "derivatives" / "result.txt"
+    manifest = tmp_path / "derivatives" / "manifest.json"
+    source.write_text("first")
+    actions: list[str] = []
+
+    def construct() -> Runner:
+        runner = Runner(
+            module_name="Boundary Module",
+            container=None,
+            binds=(),
+            logger=logging.getLogger("test.runner.changed-boundary-source"),
+            next_step=count(1).__next__,
+        )
+
+        def build() -> None:
+            actions.append("build")
+            private.parent.mkdir(parents=True, exist_ok=True)
+            private.write_text(source.read_text())
+
+        def publish() -> None:
+            actions.append("publish")
+            public.parent.mkdir(parents=True, exist_ok=True)
+            public.write_text(private.read_text())
+            manifest.write_text("complete")
+
+        runner.add_step(
+            Step.python(
+                name="Build Private Intermediate",
+                inputs=(source,),
+                outputs=(private,),
+                action=build,
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Publish Derivative",
+                inputs=(private,),
+                outputs=(public, manifest),
+                action=publish,
+                completion_boundary=True,
+            )
+        )
+        return runner
+
+    runner = construct()
+    with runner.run_context():
+        runner.execute()
+    assert actions == ["build", "publish"]
+
+    actions.clear()
+    runner = construct()
+    with runner.run_context():
+        unchanged = runner.execute()
+    assert actions == []
+    assert all(state.value == "fresh" for state in unchanged.values())
+
+    source.write_text("second")
+    newer = manifest.stat().st_mtime_ns + 1_000_000_000
+    os.utime(source, ns=(newer, newer))
+    runner = construct()
+    with runner.run_context():
+        states = runner.execute()
+
+    assert actions == ["build", "publish"]
+    assert public.read_text() == "second"
+    assert all(state.value == "dirty" for state in states.values())
+
+
+def test_public_boundary_signature_change_traverses_runner_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "source.txt"
+    intermediate = tmp_path / "work" / "intermediate.txt"
+    manifest = tmp_path / "derivatives" / "manifest.json"
+    source.write_text("source")
+    validations: list[str] = []
+    ledger = tmp_path / "current-steps.json"
+    monkeypatch.setenv("NRO_STEP_LEDGER", str(ledger))
+
+    def construct() -> Runner:
+        runner = Runner(
+            module_name="Boundary Signature Module",
+            container=None,
+            binds=(),
+            logger=logging.getLogger("test.runner.boundary-signature"),
+            next_step=count(1).__next__,
+        )
+        runner.add_step(
+            Step.python(
+                name="Build",
+                inputs=(source,),
+                outputs=(intermediate,),
+                action=lambda: (
+                    intermediate.parent.mkdir(parents=True, exist_ok=True),
+                    intermediate.write_text(source.read_text()),
+                ),
+            )
+        )
+        runner.add_step(
+            Step.python(
+                name="Publish",
+                inputs=(intermediate,),
+                outputs=(manifest,),
+                action=lambda: (
+                    manifest.parent.mkdir(parents=True, exist_ok=True),
+                    manifest.write_text("complete"),
+                ),
+                completion_boundary=True,
+                validate=lambda: (validations.append("validated") or True, "valid"),
+            )
+        )
+        return runner
+
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "first")
+    with construct().run_context() as runner:
+        runner.execute()
+
+    validations.clear()
+    with construct().run_context() as runner:
+        runner.execute()
+    assert validations == ["validated"]
+
+    validations.clear()
+    caplog.clear()
+    monkeypatch.setenv("NRO_RUNNER_GRAPH_SIGNATURE", "second")
+    with construct().run_context() as runner:
+        states = runner.execute()
+    assert validations == ["validated"]
+    assert all(state is NodeState.FRESH for state in states.values())
+    assert not any(
+        "Skipping boundary signature module" in record.getMessage() for record in caplog.records
+    )
 
 
 def test_melodic_command_inference_never_tracks_only_a_directory(tmp_path: Path) -> None:

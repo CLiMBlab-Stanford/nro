@@ -180,6 +180,14 @@ def _render_report(
     return "\n".join(lines) + "\n"
 
 
+def _display_entities(row: dict) -> dict:
+    """Return user-facing entities with the firstlevels namespace named accurately."""
+    entities = json.loads(row["entities_json"])
+    if row["module"] == "firstlevels" and "task" in entities:
+        entities["analysis"] = entities.pop("task")
+    return entities
+
+
 def _failure_detail(row: dict, *, project: str) -> dict:
     """Extract the most specific root-failure information available."""
     log = Path(str(row.get("log_path") or ""))
@@ -214,9 +222,7 @@ def _failure_detail(row: dict, *, project: str) -> dict:
         except OSError:
             pass
     message = _concise_error(message)
-    entities = " ".join(
-        f"{key}={value}" for key, value in sorted(json.loads(row["entities_json"]).items())
-    )
+    entities = " ".join(f"{key}={value}" for key, value in sorted(_display_entities(row).items()))
     return {
         "work_item_id": int(row["id"]),
         "project": project,
@@ -406,7 +412,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             selectors=selectors,
         ):
             continue
-        entities = json.loads(row["entities_json"])
+        entities = _display_entities(row)
         root_ids = tuple(int(value) for value in row["root_failure_ids"])
         if row["status"] in {"Corrupt", "Timeout", "Error"}:
             key = (project, int(row["id"]))

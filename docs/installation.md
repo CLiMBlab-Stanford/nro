@@ -320,7 +320,7 @@ The `definitions` locator selects the site-owned repository. It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic
 starters and validates an existing store. New stores
-have no task models, event tables, or configured Flywheel servers. During the
+have no first-level models, event tables, or configured Flywheel servers. During the
 first maintenance run after this layout is introduced, setup moves old TOML
 settings and protected ingestion fields into `site/site.yml`, then reduces the
 TOML file to its locator. Commit the migrated definitions repository after

@@ -1,6 +1,6 @@
-# Task model registration
+# First-level model registration
 
-`nro models` manages YAML task models in the selected definitions store. It does not
+`nro models` manages YAML first-level models in the selected definitions store. It does not
 open the registry, request fits, or modify source BIDS data.
 
 Use [create and edit](authoring.md) for event-based initialization and reviewed
@@ -15,12 +15,13 @@ nro models register langlocSN/alternative /path/to/model.yml
 nro models compile langlocSN/main --config main
 ```
 
-`list` prints task/variant IDs and set memberships (`-` means no set).
-`show` prints validated YAML. `validate TASK FILE` checks supported task syntax
-without writing or inspecting a dataset. `register TASK/VARIANT FILE` validates
-and publishes `models/TASK/VARIANT.yml`; an existing ID is an error. Identifiers
-allow letters, digits, and hyphens in each part. Task comes from the registration,
-not a field inside the model.
+`list` prints analysis/variant IDs and set memberships (`-` means no set).
+`show` prints validated YAML. `validate ANALYSIS FILE` checks supported model
+syntax without writing or inspecting a dataset. `register ANALYSIS/VARIANT FILE`
+validates and publishes `models/ANALYSIS/VARIANT.yml`; an existing ID is an
+error. Identifiers allow letters, digits, and hyphens in each part. A
+single-task model uses `ANALYSIS` as its source task. A multi-task model declares
+a nonempty `tasks` list.
 
 `compile` prints a Stats Models template combined with the selected firstlevels
 configuration. This template includes session and subject summaries. Actual
@@ -30,8 +31,9 @@ availability and numerical estimability are checked when the data are available.
 
 The user must have write permission to the definitions store. Coordinate
 model changes with maintainers of a shared installation. Registration alone
-does not request work. Select models with `--task`, `--model`, or `--model-set`;
-firstlevels requests default to set `main`. See [task models](../task-models.md)
+does not request work. Select models with `--analysis`, `--task`, `--model`, or
+`--model-set`; firstlevels requests default to set `main`. See
+[first-level models](../task-models.md)
 for syntax and membership rules, and [firstlevels](../modules/firstlevels.md)
 for processing and output layout.
 

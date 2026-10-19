@@ -1,4 +1,4 @@
-"""Fit one registered task/model for a participant and spatial target."""
+"""Fit one registered analysis model for a participant and spatial target."""
 
 import argparse
 import json
@@ -26,7 +26,7 @@ def main(
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--participant", required=True)
     parser.add_argument("-P", "--project", required=True)
-    parser.add_argument("--model", required=True, metavar="TASK/VARIANT")
+    parser.add_argument("--model", required=True, metavar="ANALYSIS/VARIANT")
     parser.add_argument("--model-definition", help=argparse.SUPPRESS)
     parser.add_argument("-s", "--space", default=DEFAULT_SPACE)
     parser.add_argument("-S", "--smoothing", type=int, default=DEFAULT_SMOOTHING_MM)

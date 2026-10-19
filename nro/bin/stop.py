@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.stop") -> None:
         or selection.runs
         or selection.spaces
         or selection.smoothing
+        or selection.analyses
         or selection.models
         or selection.model_sets
         or args.only

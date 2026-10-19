@@ -57,10 +57,10 @@ TASK_GUIDES = {
 
         Edit or create a typed definition, list definitions, or remove one:
 
-          nro def edit config MODULE ID
+          nro def edit MODULE ID
           nro def edit workflow ID
           nro def edit markup
-          nro def ls config MODULE
+          nro def ls MODULE
           nro def rm markup ID
 
         Initialize or check a complete definitions store:

@@ -66,7 +66,7 @@ class SubjectPlanningContext:
     max_memory_gb: int
     definitions_roots: tuple[Path, ...]
     gradient_coefficients_root: Path
-    task_models: Mapping[str, dict] | None = None
+    analysis_models: Mapping[str, dict] | None = None
     source_markup: SubjectMarkup | None = None
 
     def runtime_config(self, configuration_class: str) -> Path:

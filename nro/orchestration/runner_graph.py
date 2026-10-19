@@ -578,6 +578,24 @@ class RunnerGraph:
         key = step if isinstance(step, str) else step.id
         return self._dependencies[key]
 
+    def external_inputs(self) -> tuple[Path, ...]:
+        """Return declared inputs that no step in this graph produces."""
+        if not self._frozen:
+            raise RuntimeError("Runner graph must be frozen before reading external inputs.")
+        produced = {
+            _declared_path(output)
+            for step in self._steps
+            for output in step.outputs
+        }
+        return tuple(
+            dict.fromkeys(
+                input_path
+                for step in self.ordered_steps()
+                for input_path in step.inputs
+                if _declared_path(input_path) not in produced
+            )
+        )
+
     def descendants(self, step: Step | str) -> frozenset[str]:
         """Return every transitive dependent of one step."""
         if not self._frozen:
@@ -860,6 +878,23 @@ class RunnerGraph:
             if comparable_old != comparable_current:
                 changed[step.id] = "declaration_changed"
         return changed
+
+    def contract_signature_matches(self, path: Path, *, signature: str) -> bool:
+        """Return whether a saved runner contract names this graph signature.
+
+        A signature mismatch does not itself make a step scientifically stale.
+        It does mean that the whole-module completion shortcut cannot establish
+        that all graph inputs were considered.  Callers should traverse the
+        graph normally and let the individual step declarations decide whether
+        any output needs rebuilding.
+        """
+        if not self._frozen:
+            raise RuntimeError("Runner graph must be frozen before reading its contract.")
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return False
+        return isinstance(existing, dict) and existing.get("signature") == signature
 
     def changed_steps(self, path: Path, *, signature: str) -> frozenset[str]:
         """Return nodes whose scientific declarations changed from the prior contract.

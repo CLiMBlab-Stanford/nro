@@ -32,7 +32,10 @@ from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.registry import RegistryLockTimeout
 from nro.orchestration.resources import SCHEDULABLE_RESOURCE_CLASSES
 from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
-from nro.orchestration.scheduler_maintenance import refresh_scheduler_state
+from nro.orchestration.scheduler_maintenance import (
+    reconcile_execution_allocations,
+    refresh_scheduler_state,
+)
 from nro.orchestration.scheduler_operations import (
     installation_activity,
     installation_prepare,
@@ -677,6 +680,10 @@ def _supply_requested_pool(registry, payload: dict) -> list[str]:
     """Supply all worker classes that currently need another allocation."""
     from nro.orchestration.scheduler_implementation import validate_worker_script
 
+    # A finished Slurm allocation must not retain a slot merely because worker
+    # traffic postponed the normal maintenance pass.
+    if hasattr(registry, "reconcile_scheduler_submissions"):
+        reconcile_execution_allocations(registry)
     submitted = []
     for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
         lower_memory = 0
@@ -1760,8 +1767,8 @@ def _snapshot_ready(
     now: float,
 ) -> bool:
     """Allow a pending snapshot after quiet time or its maximum age."""
-    return not coordinator.has_inflight() and (
-        now - last_request_activity >= BACKGROUND_QUIET_SECONDS
+    return (
+        (not coordinator.has_inflight() and now - last_request_activity >= BACKGROUND_QUIET_SECONDS)
         or now - last_snapshot >= STATUS_MAX_STALENESS_SECONDS
     )
 
@@ -1860,6 +1867,9 @@ def serve(
         "maintenance": ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="scheduler-maintenance"
         ),
+        "reconciliation": ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="scheduler-reconciliation"
+        ),
     }
     readers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-rpc-reader")
     ingress = {
@@ -1902,6 +1912,19 @@ def serve(
                 flush=True,
             )
         changed_event.set()
+
+    def note_reconciliation_completion(future) -> None:
+        try:
+            released = int(future.result())
+        except BaseException as error:
+            print(
+                f"WARNING: allocation reconciliation failed: {type(error).__name__}: {error}",
+                flush=True,
+            )
+            return
+        if released:
+            capacity_event.set()
+            changed_event.set()
 
     def note_maintenance_completion(future) -> None:
         try:
@@ -1949,10 +1972,12 @@ def serve(
     idle_since = None
     capacity_future = None
     maintenance_future = None
+    reconciliation_future = None
     capacity_pending = False
     snapshot_pending = True
     last_cleanup = 0.0
     last_maintenance = time.monotonic() - MAINTENANCE_INTERVAL_SECONDS
+    last_reconciliation = time.monotonic() - MAINTENANCE_INTERVAL_SECONDS
     last_request_activity = time.monotonic()
     last_snapshot = time.monotonic()
     try:
@@ -1966,6 +1991,16 @@ def serve(
             if now - last_cleanup >= 3600.0:
                 collect_transport_garbage(control)
                 last_cleanup = now
+            if (
+                now - last_reconciliation >= MAINTENANCE_INTERVAL_SECONDS
+                and (reconciliation_future is None or reconciliation_future.done())
+                and _registry_busy(registry)
+            ):
+                reconciliation_future = executors["reconciliation"].submit(
+                    reconcile_execution_allocations, registry
+                )
+                reconciliation_future.add_done_callback(note_reconciliation_completion)
+                last_reconciliation = now
             background_ready = _background_ready(
                 coordinator,
                 last_request_activity=last_request_activity,

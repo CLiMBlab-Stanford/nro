@@ -31,27 +31,30 @@ Multiple spaces and smoothing values create independent work items. One work
 item covers a participant, model variant, space, and smoothing value. Its run
 fits are separate steps within that work item, not separate worker jobs.
 
-Models live in `DEFINITIONS/models/TASK/VARIANT.yml` in the selected external store. They define
-event predictors and contrasts; the firstlevels configuration defines denoising,
-estimation, and run aggregation. See [task models](../task-models.md) for the YAML format,
-transformations, and model sets, and [model commands](../commands/models.md)
+Models live in `DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected external
+store. They define source tasks, event predictors, and contrasts; the
+firstlevels configuration defines denoising, estimation, and run aggregation.
+Single-task models infer their source task from `ANALYSIS`. Multi-task models
+declare `tasks` explicitly. See [first-level models](../task-models.md) for the YAML
+format, transformations, and model sets, and [model commands](../commands/models.md)
 for registration.
 
 ```bash
-nro run -m firstlevels --task langlocSN --model main
+nro run -m firstlevels --analysis language --model main
+nro run -m firstlevels --task langlocSN
 nro run -m firstlevels --model-set development
 ```
 
-Task and model selection are independent of workflow configuration. A model
+Analysis, source-task, and model selection are independent of workflow configuration. A model
 variant can be fitted under different denoising configurations by selecting
-different workflows. Each work item includes all runs of its task for that
-participant that match the configuration's `input_filter`. Partial CLI run
+different workflows. Each work item includes all runs of its declared source
+tasks for that participant that match the configuration's `input_filter`. Partial CLI run
 selectors other than task are rejected because they would redefine the same
 subject-level artifact without changing the work item's identity.
 
 ## Processing and aggregation
 
-1. Match the registered task. Resolve events
+1. Match the registered source tasks. Resolve events
    using BIDS inheritance. A more specific events table replaces a general
    table; rows are not merged. `Run` grouping must identify each BOLD run.
 2. At positive FWHM, smooth each volume with SciPy's Gaussian filter, using
@@ -61,7 +64,7 @@ subject-level artifact without changing the work item's identity.
    directly from `anat`; fsaverage and fsaverage6 geometry come from
    TemplateFlow. Zero FWHM skips smoothing. Anatomy is an explicit dependency
    and is not copied.
-3. Compile the task YAML and module configuration into Stats Models. Select
+3. Compile the model YAML and module configuration into Stats Models. Select
    continuous nuisance columns from confounds using `confounds_regex`. Event convolution uses Nilearn's SPM or Glover canonical
    HRF, normalized to discrete unit sum. Positive-duration events retain their
    source-scale height and duration; zero-duration events are unit-area
@@ -152,7 +155,7 @@ describe that fit without producing a separate plot per group.
 
 Each fitted run also saves `_statsmodel.json` with its resolved event HRFs,
 selected nuisance columns, exact outlier columns, and estimator rules. The
-work item saves the scientific task YAML, resolved configuration, and compiled
+work item saves the scientific model YAML, resolved configuration, and compiled
 model template. Model-set membership is excluded from these scientific records.
 The numerical design and its metadata describe the realized PCA fit.
 
@@ -191,7 +194,7 @@ These names are BIDS-like, not a claim of validator compliance.
 
 ## Stats Models execution
 
-The [task-model compiler](../task-models.md) generates the Stats Models document
+The [first-level model compiler](../task-models.md) generates the Stats Models document
 used for fitting. The estimator implements a bounded subset of
 [BIDS Stats Models 1.0.0](https://bids-standard.github.io/stats-models/), without
 a FitLins dependency. Unsupported task controls fail validation.

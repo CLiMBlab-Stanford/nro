@@ -5,15 +5,30 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Sequence
+
+import yaml
 
 from nro.engine.bids import matches_selectors, parse_selectors
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 
 
+@lru_cache(maxsize=256)
+def _model_source_tasks(
+    identifier: str, path: str, mtime_ns: int, size: int
+) -> tuple[str, ...]:
+    """Read source tasks once for one observed model-definition revision."""
+    del path, mtime_ns, size
+    from nro.modules.firstlevels.task_models import load_task_model, source_tasks
+
+    return source_tasks(load_task_model(identifier), identifier)
+
+
 @dataclass(frozen=True)
 class CoreSelection:
-    """Normalized data, workflow, spatial-target, and task-model selectors."""
+    """Normalized data, workflow, spatial-target, and first-level selectors."""
 
     participants: tuple[str, ...]
     projects: tuple[str, ...]
@@ -22,6 +37,7 @@ class CoreSelection:
     runs: dict[str, tuple[str, ...] | None]
     spaces: tuple[str, ...]
     smoothing: tuple[int, ...]
+    analyses: tuple[str, ...] = ()
     models: tuple[str, ...] = ()
     model_sets: tuple[str, ...] | None = None
     lineages: tuple[str, ...] = ()
@@ -30,12 +46,16 @@ class CoreSelection:
     def work_item_entities(self) -> dict[str, tuple[str, ...] | None]:
         """Return run and target entity filters used to match work items."""
         entities = dict(self.runs)
+        if "task" in entities:
+            entities["source_task"] = entities.pop("task")
         if self.spaces:
             entities["space"] = self.spaces
         if self.smoothing:
             entities["smoothing"] = tuple(str(value) for value in self.smoothing)
         if self.models:
             entities["model"] = self.models
+        if self.analyses:
+            entities["analysis"] = self.analyses
         if self.model_sets:
             from nro.modules.firstlevels.task_models import model_ids_in_sets
 
@@ -47,6 +67,29 @@ def matches_work_item_selectors(entities: dict, selectors: dict) -> bool:
     """Match work-item entities, including qualified models resolved from sets."""
     selectors = dict(selectors)
     identifier = f"{entities.get('task', '')}/{entities.get('model', '')}"
+    analyses = selectors.pop("analysis", ())
+    if analyses and entities.get("analysis", entities.get("task")) not in analyses:
+        return False
+    source_tasks = selectors.pop("source_task", ())
+    if source_tasks:
+        available = (entities.get("task"),)
+        if entities.get("model") and entities.get("task"):
+            identifier = f"{entities['task']}/{entities['model']}"
+            try:
+                from nro.modules.firstlevels.task_models import model_path
+
+                path = model_path(identifier)
+                stat = Path(path).stat()
+                available = _model_source_tasks(
+                    identifier, str(path), stat.st_mtime_ns, stat.st_size
+                )
+            except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError):
+                # Removed definitions remain selectable by analysis or
+                # qualified model.  The historical task entity is the best
+                # available fallback for source-task selection.
+                pass
+        if not set(source_tasks).intersection(filter(None, available)):
+            return False
     models = selectors.pop("model", ())
     if models and entities.get("model") not in models and identifier not in models:
         return False
@@ -146,12 +189,18 @@ def add_core_selection_arguments(
         metavar="MM",
         help="Select one or more smoothing FWHM values in mm",
     )
-    parser.add_argument("--task", nargs="+", action="extend", help="Select BIDS tasks")
+    parser.add_argument("--task", nargs="+", action="extend", help="Select source BIDS tasks")
+    parser.add_argument(
+        "--analysis",
+        nargs="+",
+        action="extend",
+        help="Select firstlevels analysis labels",
+    )
     parser.add_argument(
         "--model",
         nargs="+",
         action="extend",
-        help="Select firstlevels variants or TASK/VARIANT IDs",
+        help="Select firstlevels variants or ANALYSIS/VARIANT IDs",
     )
     parser.add_argument(
         "--model-set",
@@ -207,6 +256,7 @@ def core_selection(
         runs=runs,
         spaces=tuple(dict.fromkeys(args.space or ((DEFAULT_SPACE,) if planner_defaults else ()))),
         smoothing=smoothing,
+        analyses=tuple(dict.fromkeys(getattr(args, "analysis", None) or ())),
         models=tuple(dict.fromkeys(getattr(args, "model", None) or ())),
         model_sets=tuple(dict.fromkeys(args.model_set))
         if getattr(args, "model_set", None)

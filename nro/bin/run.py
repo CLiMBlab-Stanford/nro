@@ -214,6 +214,7 @@ def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSe
         ),
         models=models,
         model_sets=None,
+        analyses=(),
     )
 
 
@@ -485,8 +486,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         return
 
     modules = tuple(normalize_module(value) for value in selection.modules)
-    if (selection.models or selection.model_sets) and modules and "firstlevels" not in modules:
-        raise SystemExit("--model and --model-set require -m firstlevels")
+    if (
+        selection.analyses or selection.models or selection.model_sets
+    ) and modules and "firstlevels" not in modules:
+        raise SystemExit("--analysis, --model, and --model-set require -m firstlevels")
     if (
         modules
         and set(modules).issubset({"anat", "func"})
@@ -685,6 +688,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             max_memory_gb=args.max_memory,
             models=selection.models,
             model_sets=selection.model_sets,
+            analyses=selection.analyses,
             lineage_ids=selection.lineages,
         )
     if selection.participants:
@@ -730,6 +734,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 "spaces": list(selection.spaces),
                 "smoothing": list(selection.smoothing),
                 "models": list(selection.models),
+                "analyses": list(selection.analyses),
                 "model_sets": list(selection.model_sets or (() if selection.models else ("main",))),
             },
             concurrency=args.concurrency,
@@ -792,6 +797,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                     "spaces": list(selection.spaces),
                     "smoothing": list(selection.smoothing),
                     "models": list(selection.models),
+                    "analyses": list(selection.analyses),
                     "model_sets": list(
                         selection.model_sets or (() if selection.models else ("main",))
                     ),
@@ -868,6 +874,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 "spaces": list(selection.spaces),
                 "smoothing": list(selection.smoothing),
                 "models": list(selection.models),
+                "analyses": list(selection.analyses),
                 "model_sets": list(selection.model_sets or (() if selection.models else ("main",))),
             },
             concurrency=args.concurrency,

@@ -1,4 +1,4 @@
-"""Propose task-model drafts from source BIDS event tables."""
+"""Propose first-level model drafts from source BIDS event tables."""
 
 import csv
 import re
@@ -56,6 +56,7 @@ def model_draft(
     paths: Sequence[Path],
     *,
     conditions: str | None = None,
+    source_tasks: Sequence[str] = (),
     choose: Callable[[tuple[str, ...]], str] | None = None,
     report: Callable[[str], None] = print,
 ) -> str:
@@ -147,6 +148,7 @@ def model_draft(
     )
     model = {
         "model_set": [],
+        **({"tasks": list(dict.fromkeys(source_tasks))} if source_tasks else {}),
         "conditions": conditions,
         "hrf": "spm",
         "contrasts": contrasts,

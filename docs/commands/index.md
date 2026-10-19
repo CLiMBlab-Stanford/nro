@@ -52,9 +52,10 @@ inspect source BIDS images.
 | `-r`, `--run KEY=VALUE[,VALUE...] ...` | Joint BIDS run-entity matching. |
 | `-s`, `--space SPACE ...` | Target spaces from clean onward. |
 | `-S`, `--smoothing MM ...` | Nonnegative integer FWHM in mm. |
-| `--task TASK ...` | Tasks; intersects `--run task=...` when both are supplied. |
-| `--model MODEL ...` | Firstlevels variants or qualified `TASK/VARIANT` IDs. |
-| `--model-set SET ...` | Memberships declared in task YAML. |
+| `--task TASK ...` | Source BIDS tasks; intersects `--run task=...` when both are supplied. |
+| `--analysis ANALYSIS ...` | Firstlevels analysis labels from `ANALYSIS/VARIANT`. |
+| `--model MODEL ...` | Firstlevels variants or qualified `ANALYSIS/VARIANT` IDs. |
+| `--model-set SET ...` | Memberships declared in first-level model YAML. |
 
 Run selectors combine different keys with AND and values for a key with OR.
 Space and smoothing values expand as a cross-product. Run selectors describe
@@ -74,7 +75,7 @@ on their pages; do not assume the common short flags apply to them.
 Firstlevels requests without explicit model/set selection use model set `main`.
 An explicit model bypasses that default; explicit model and set filters
 intersect. Inspection and cleanup have no default model-set restriction.
-See [task models](../task-models.md) for examples and freshness rules.
+See [first-level models](../task-models.md) for examples and freshness rules.
 
 All commands support `-h`/`--help`. Parse failures and operational errors exit
 nonzero. Progress/errors may go to stderr even when a command offers `--json`.

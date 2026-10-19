@@ -107,6 +107,14 @@ def test_model_draft_unions_conditions_without_inferring_other_predictors(tmp_pa
     assert any("no condition label" in line for line in messages)
 
 
+def test_model_draft_records_explicit_source_tasks(tmp_path):
+    table = _events(tmp_path / "events.tsv", ["A", "B"])
+    model = yaml.safe_load(
+        model_draft([table], source_tasks=("sentences", "pictures"))
+    )
+    assert model["tasks"] == ["sentences", "pictures"]
+
+
 def test_draft_requires_resolution_of_ambiguous_condition_columns(tmp_path):
     table = _events(tmp_path / "events.tsv", ["A", "B"], column="condition")
     with pytest.raises(ValueError, match="Choose --conditions"):
@@ -183,13 +191,32 @@ def test_create_model_draft_and_register_local_file(store, tmp_path):
     assert yaml.safe_load(target.read_text())["model_set"] == []
 
 
+def test_create_multitask_model_draft_uses_analysis_namespace(store, tmp_path):
+    events = _events(tmp_path / "events.tsv", ["A", "B"])
+    output = tmp_path / "draft.yml"
+    edit(
+        [
+            "model",
+            "language",
+            "--task",
+            "sentences",
+            "pictures",
+            "--events",
+            str(events),
+            "--output",
+            str(output),
+        ]
+    )
+    assert yaml.safe_load(output.read_text())["tasks"] == ["sentences", "pictures"]
+
+
 def test_config_and_workflow_initialization(store, tmp_path):
     config = tmp_path / "config.yml"
-    edit(["config", "clean", "alternative", "--output", str(config)])
+    edit(["clean", "alternative", "--output", str(config)])
     assert yaml.safe_load(config.read_text()) is None
     assert "# Current main defaults" in config.read_text()
     config.write_text("minimum_temporal_rank: 25\n")
-    edit(["config", "clean", "alternative", "--file", str(config)])
+    edit(["clean", "alternative", "--file", str(config)])
     assert store.load_configuration("clean", "alternative").values["minimum_temporal_rank"] == 25
     workflow = _write(tmp_path / "workflow.yml", "clean: alternative\n")
     edit(["workflow", "experiment", "--file", str(workflow)])
@@ -269,7 +296,7 @@ def test_edit_existing_preserves_comments_without_save_confirmation(store, monke
         return subprocess.CompletedProcess(command, 0)
 
     _interactive(monkeypatch, editor, [])
-    edit(["config", "clean", "main"])
+    edit(["clean", "main"])
     assert target.read_text().endswith("# Reviewed settings.\n")
 
 
@@ -598,14 +625,14 @@ def test_delete_rejects_changed_targets_after_confirmation(store, monkeypatch):
 def test_delete_main_config_restores_packaged_default_and_warns_about_references(store, capsys):
     main = _write(store.configs / "clean/main_clean.yml", "minimum_temporal_rank: 25\n")
     assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 25
-    remove(["config", "clean", "main", "--yes"])
+    remove(["clean", "main", "--yes"])
     assert not main.exists()
     assert store.load_configuration("clean", "main").values["minimum_temporal_rank"] == 30
     assert "packaged main configuration" in capsys.readouterr().out
     alternative = _write(store.configs / "clean/alternative_clean.yml", "{}\n")
     workflow = _write(store.root / "workflows/experiment_workflow.yml", "clean: alternative\n")
     with pytest.raises(SystemExit):
-        remove(["config", "clean", "alternative", "--yes"])
+        remove(["clean", "alternative", "--yes"])
     assert alternative.exists()
     assert workflow.read_text() == "clean: alternative\n"
     assert "experiment" in capsys.readouterr().out
@@ -626,7 +653,7 @@ def test_delete_checks_identity_and_uses_authoring_lock(store):
 
 def test_definition_listing_reports_active_layers(store, capsys):
     _write(store.configs / "anat/fast_anat.yml", "surface_reconstruction_engine: fastsurfer\n")
-    definition_cli.main(["ls", "config", "anat", "--json"])
+    definition_cli.main(["ls", "anat", "--json"])
     rows = yaml.safe_load(capsys.readouterr().out)
 
     assert {(row["id"], row["source"]) for row in rows} == {

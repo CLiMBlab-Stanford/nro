@@ -119,24 +119,35 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
     from nro.modules.firstlevels.authoring import discover_event_files, model_draft
     from nro.site.configuration import bids_root
 
-    paths = args.events or discover_event_files(
-        target.identifier.split("/")[0],
-        bids_root(),
-        projects=args.project or (),
-        participants=args.participant or (),
+    analysis = target.identifier.split("/")[0]
+    tasks = tuple(dict.fromkeys(args.task or (analysis,)))
+    paths = args.events or tuple(
+        dict.fromkeys(
+            path
+            for task in tasks
+            for path in discover_event_files(
+                task,
+                bids_root(),
+                projects=args.project or (),
+                participants=args.participant or (),
+            )
+        )
     )
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     return model_draft(
-        paths, conditions=args.conditions, choose=_choose_column if interactive else None
+        paths,
+        conditions=args.conditions,
+        source_tasks=tasks if tasks != (analysis,) else (),
+        choose=_choose_column if interactive else None,
     )
 
 
 def _parsed_identifier(args: argparse.Namespace) -> str:
     """Return the canonical internal identifier for typed CLI arguments."""
-    if args.kind == "config":
-        return f"{args.configuration_class}/{args.config_id}"
+    if args.kind in CONFIGURATION_CLASSES:
+        return f"{args.kind}/{args.config_id}"
     if args.kind == "model":
-        return f"{args.task}/{args.variant}"
+        return f"{args.analysis}/{args.variant}"
     return args.identifier
 
 
@@ -148,7 +159,7 @@ def _source_identifier(target: DefinitionTarget, parts: list[str]) -> str:
         return f"{target.configuration_class}/{parts[0]}"
     if target.kind == "model":
         if len(parts) not in {1, 2}:
-            raise ValueError("Model --from requires TASK and optional VARIANT")
+            raise ValueError("Model --from requires ANALYSIS and optional VARIANT")
         return f"{parts[0]}/{parts[1] if len(parts) == 2 else 'main'}"
     if len(parts) != 1:
         raise ValueError(f"{target.kind.capitalize()} --from requires one ID")
@@ -160,19 +171,18 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
         description=(
-            "Edit or create a model, config, workflow, or markup definition."
+            "Edit or create a module configuration, model, workflow, or markup definition."
             if action == "edit"
-            else "Remove a model, config, workflow, or markup definition."
+            else "Remove a module configuration, model, workflow, or markup definition."
         ),
     )
     commands = parser.add_subparsers(dest="kind", required=True)
-    for kind in ("model", "config", "workflow", "markup"):
+    for kind in ("model", *CONFIGURATION_CLASSES, "workflow", "markup"):
         command = commands.add_parser(kind)
-        if kind == "config":
-            command.add_argument("configuration_class", metavar="CLASS")
+        if kind in CONFIGURATION_CLASSES:
             command.add_argument("config_id", metavar="ID")
         elif kind == "model":
-            command.add_argument("task", metavar="TASK")
+            command.add_argument("analysis", metavar="ANALYSIS")
             command.add_argument("variant", nargs="?", default="main", metavar="VARIANT")
         elif kind == "markup" and action == "edit":
             command.add_argument("identifier", nargs="?", default="main", metavar="ID")
@@ -193,6 +203,12 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
                 "--output", type=Path, help="Write a local draft without registration or an editor"
             )
             if kind == "model":
+                command.add_argument(
+                    "--task",
+                    nargs="+",
+                    action="extend",
+                    help="Discover events for these source BIDS tasks",
+                )
                 command.add_argument("-P", "--project", nargs="+", action="extend")
                 command.add_argument("-p", "--participant", nargs="+", action="extend")
                 command.add_argument(
@@ -329,7 +345,8 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
         # Publication validates the complete store under its write lock. Avoid
         # hashing every definition merely to prepare a private editor draft.
         store = ConfigStore(verify_integrity=False)
-        target = definition_target(store, args.kind, _parsed_identifier(args))
+        definition_kind = "config" if args.kind in CONFIGURATION_CLASSES else args.kind
+        target = definition_target(store, definition_kind, _parsed_identifier(args))
         if not target.path.resolve().is_relative_to(store.root):
             raise ValueError("Definition path escapes the selected store through a symbolic link")
         expected = read_definition(target.path)
@@ -339,7 +356,8 @@ def main(action: str, argv: list[str] | None = None, *, prog: str) -> None:
             _delete(store, target, expected, yes=args.yes)
             return
         discovery = any(
-            getattr(args, name, None) for name in ("events", "conditions", "project", "participant")
+            getattr(args, name, None)
+            for name in ("task", "events", "conditions", "project", "participant")
         )
         if args.source and args.file:
             raise ValueError("Use either --from or --file")

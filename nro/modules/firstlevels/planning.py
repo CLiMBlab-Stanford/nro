@@ -1,4 +1,4 @@
-"""Demand-driven work-item construction for participant/task/model GLMs."""
+"""Demand-driven work-item construction for participant analysis models."""
 
 import json
 import sys
@@ -9,7 +9,7 @@ from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import work_item_key
 
 from .paths import artifact_root, completion_path, work_item_prefix
-from .task_models import scientific_model
+from .task_models import load_task_model, scientific_model, source_tasks
 
 
 def refresh_command(command: tuple[str, ...], processing: dict) -> tuple[str, ...]:
@@ -22,13 +22,20 @@ def refresh_command(command: tuple[str, ...], processing: dict) -> tuple[str, ..
     return tuple(values)
 
 
-def selected_runs(runs, model_id: str, participant: str, input_filter: dict | None = None) -> tuple:
-    """Select runs of one task and participant that match the stable input filter."""
-    task = model_id.split("/")[0]
+def selected_runs(
+    runs,
+    model_id: str,
+    participant: str,
+    input_filter: dict | None = None,
+    *,
+    model: dict | None = None,
+) -> tuple:
+    """Select a participant's runs from every source task declared by a model."""
+    tasks = set(source_tasks(model or load_task_model(model_id), model_id))
     return tuple(
         run
         for run in runs
-        if run.entities.get("task") == task
+        if run.entities.get("task") in tasks
         and run.participant == participant
         and matches_filter(run.entities, input_filter)
     )
@@ -56,9 +63,15 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
     func = {work_item.output_prefix: work_item for work_item in upstream["func"]}
     directory = context.registered.directories["firstlevels"]
     result = []
-    for model_id, document in context.task_models.items():
+    for model_id, document in context.analysis_models.items():
         source = scientific_model(document)
-        runs = selected_runs(context.runs, model_id, context.participant, values["input_filter"])
+        runs = selected_runs(
+            context.runs,
+            model_id,
+            context.participant,
+            values["input_filter"],
+            model=document,
+        )
         if not runs:
             continue
         for space, smoothing in context.target_pairs:

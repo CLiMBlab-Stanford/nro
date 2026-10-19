@@ -1,4 +1,4 @@
-"""List, inspect, validate, register or compile YAML task models."""
+"""List, inspect, validate, register, or compile YAML first-level models."""
 
 import argparse
 import json
@@ -17,7 +17,7 @@ from nro.modules.firstlevels.task_models import (
 
 
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
-    """Manage task YAML without touching the registry or submitting work."""
+    """Manage first-level model YAML without opening the registry or submitting work."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list")
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     register.add_argument("model")
     register.add_argument("file", type=Path)
     validate = commands.add_parser("validate")
-    validate.add_argument("task")
+    validate.add_argument("analysis")
     validate.add_argument("file", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         else:
             from nro.modules.firstlevels.task_models import model_path
 
-            model_path(f"{args.task}/validation")
+            model_path(f"{args.analysis}/validation")
             validate_task_model(yaml.safe_load(args.file.read_text()))
             print("Model is supported")
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as error:

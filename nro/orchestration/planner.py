@@ -203,6 +203,7 @@ class Planner:
         max_memory_gb: int,
         models: Sequence[str] = (),
         model_sets: Sequence[str] | None = None,
+        analyses: Sequence[str] = (),
         lineage_ids: Sequence[str] = (),
     ) -> PlanningResult:
         """Construct requests from an explicit user selection."""
@@ -246,6 +247,7 @@ class Planner:
                                 max_memory_gb=max_memory_gb,
                                 models=models,
                                 model_sets=model_sets,
+                                analyses=analyses,
                             )
                         except ParticipantUnavailableError as error:
                             unavailable.append(
@@ -344,7 +346,10 @@ class Planner:
             }:
                 selectors = None
             elif target.module == "firstlevels":
-                selectors = {"task": (entities["task"],)}
+                # The historical derivative layout stores the analysis label
+                # in ``task``.  The qualified model ID below recovers its
+                # actual source tasks.
+                selectors = None
             spaces = (entities["space"],) if "space" in entities else None
             smoothing = (int(entities["smoothing"]),) if "smoothing" in entities else None
             models = (
@@ -508,6 +513,7 @@ class Planner:
         max_memory_gb: int = 256,
         models: Sequence[str] = (),
         model_sets: Sequence[str] | None = None,
+        analyses: Sequence[str] = (),
     ) -> tuple[WorkItemSpec, ...]:
         """Build the requested logical work-item graph for one participant."""
         target = normalize_module(module)
@@ -527,12 +533,21 @@ class Planner:
         source_markup = MarkupStore().subject(markup_id, project, subject_dir)
         runs = () if target == "anat" else discover_raw_runs(subject_dir, markup=source_markup)
         target_descriptor = module_descriptor(target)
-        task_models = None
+        analysis_models = None
         if target_descriptor.select_models is not None:
-            task_models = target_descriptor.select_models(
-                tasks=(selectors or {}).get("task", ()), models=models, model_sets=model_sets
+            analysis_models = target_descriptor.select_models(
+                analyses=analyses,
+                tasks=(selectors or {}).get("task", ()),
+                models=models,
+                model_sets=model_sets,
             )
-            tasks = {identifier.split("/")[0] for identifier in task_models}
+            from nro.modules.firstlevels.task_models import source_tasks
+
+            tasks = {
+                task
+                for identifier, document in analysis_models.items()
+                for task in source_tasks(document, identifier)
+            }
             runs = tuple(run for run in runs if run.entities.get("task") in tasks)
         elif target_descriptor.select_runs is not None:
             runs = target_descriptor.select_runs(
@@ -540,7 +555,7 @@ class Planner:
                 workflow.configuration(target_descriptor.configuration_class).values,
                 participant,
             )
-        if selectors:
+        if selectors and target_descriptor.select_models is None:
             runs = tuple(run for run in runs if matches_selectors(run.entities, selectors))
         if target in {"dynconn", "microparcellation", "networks"}:
             filter_class = (
@@ -585,7 +600,7 @@ class Planner:
             workflow_id=registered.workflow_id,
             selected_runs=tuple(str(run.path) for run in runs),
             target_pairs=target_pairs,
-            task_models=tuple(sorted(task_models or ())),
+            analysis_models=tuple(sorted(analysis_models or ())),
             memory_gb=memory_gb,
             max_memory_gb=max_memory_gb,
         )
@@ -598,7 +613,7 @@ class Planner:
                 "lineages": dict(sorted(registered.lineage_fingerprints.items())),
                 "bids": participant_source_manifest(self.registry, project_root, subject_dir),
                 "runs": [str(run.path) for run in runs],
-                "task_models": task_models,
+                "analysis_models": analysis_models,
                 "markup": source_markup.as_dict() if source_markup else None,
             },
         )
@@ -632,7 +647,7 @@ class Planner:
             max_memory_gb=max_memory_gb,
             definitions_roots=self._definitions_roots,
             gradient_coefficients_root=Path(self._site_values["gradient_coefficients"]),
-            task_models=task_models,
+            analysis_models=analysis_models,
             source_markup=source_markup,
         )
         descriptors = modules_through(target, workflow)
@@ -648,7 +663,7 @@ class Planner:
                 context.registered.lineage_fingerprints[descriptor.name],
                 tuple(str(run.path) for run in context.runs),
                 context.target_pairs,
-                fingerprint(context.task_models or {}),
+                fingerprint(context.analysis_models or {}),
                 fingerprint(context.source_markup.as_dict() if context.source_markup else {}),
                 context.memory_gb,
                 context.max_memory_gb,
@@ -684,6 +699,7 @@ def build_subject_work_items(
     max_memory_gb: int = 256,
     models: Sequence[str] = (),
     model_sets: Sequence[str] | None = None,
+    analyses: Sequence[str] = (),
 ) -> tuple[WorkItemSpec, ...]:
     """Convenience entry point for planning one participant."""
     return Planner(registry, bids_root=bids_root).plan_subject(
@@ -699,4 +715,5 @@ def build_subject_work_items(
         max_memory_gb=max_memory_gb,
         models=models,
         model_sets=model_sets,
+        analyses=analyses,
     )
