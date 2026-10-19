@@ -581,6 +581,53 @@ def test_partial_upstream_coverage_keeps_only_uncovered_runs(
     assert all(json.loads(row["entities_json"]).get("task") != "langlocSN" for row in demanded)
 
 
+def test_multitask_firstlevels_depends_on_each_declared_task(
+    branch_registry, tmp_path, monkeypatch
+) -> None:
+    from nro.modules.firstlevels import task_models
+
+    definitions = tmp_path / "definitions"
+    model = definitions / "models/combined/main.yml"
+    _write(
+        model,
+        yaml.safe_dump(
+            {
+                "model_set": "main",
+                "tasks": ["langlocSN", "rest"],
+                "conditions": "trial_type",
+                "contrasts": {"SvBaseline": {"trial_type.S": 1}},
+            }
+        ),
+    )
+    monkeypatch.setattr(task_models, "definitions_roots", lambda: (definitions,))
+    workflow = ConfigStore().resolve("main")
+    registered = branch_registry.register_workflow(workflow)
+
+    work_items = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="firstlevels",
+        workflow=workflow,
+        registered=registered,
+        registry=branch_registry,
+        bids_root=tmp_path / "bids",
+        spaces=("T1w",),
+        smoothing_levels=(0,),
+        models=("combined/main",),
+        selectors={"task": ("rest",)},
+    )
+    functionals = [item for item in work_items if item.module == "func"]
+    firstlevel = next(item for item in work_items if item.module == "firstlevels")
+
+    assert {item.entities["task"] for item in functionals} == {"langlocSN", "rest"}
+    assert firstlevel.entities["task"] == "combined"
+    assert set(firstlevel.dependencies).issuperset(item.key for item in functionals)
+    assert {path.name for path in firstlevel.input_paths} == {
+        "sub-01_task-langlocSN_run-1_events.tsv",
+        "sub-01_task-rest_run-1_events.tsv",
+    }
+
+
 def test_independent_endpoints_cover_upstream_without_merging_workflows(
     branch_registry,
     tmp_path,

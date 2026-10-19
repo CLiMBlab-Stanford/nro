@@ -8,6 +8,19 @@ if TYPE_CHECKING:
     from nro.orchestration.registry import Registry
 
 
+def reconcile_execution_allocations(registry: Registry) -> int:
+    """Release conclusively finished worker allocations and their orphaned attempts.
+
+    This is intentionally separate from artifact assessment and registry
+    compaction.  Capacity accounting must keep progressing while workers are
+    checking in, otherwise terminal Slurm allocations can occupy the worker
+    limit indefinitely and prevent their own replacements from being submitted.
+    """
+    released = registry.reconcile_scheduler_submissions()
+    recovered = registry.recover_orphaned_attempts()
+    return released + recovered
+
+
 def refresh_scheduler_state(registry: Registry) -> int:
     """Refresh active execution state once for the shared worker pool.
 
@@ -20,8 +33,7 @@ def refresh_scheduler_state(registry: Registry) -> int:
     from nro.orchestration.manifests import assess_registry
     from nro.orchestration.registry_compaction import compact_registry
 
-    registry.reconcile_scheduler_submissions()
-    registry.recover_orphaned_attempts()
+    reconcile_execution_allocations(registry)
     cancelled: list[dict] = []
     if registry.reserve_artifact_assessment():
         try:

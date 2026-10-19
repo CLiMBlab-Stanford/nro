@@ -38,7 +38,7 @@ def contrast_weights(contrast: dict) -> np.ndarray:
     return values
 
 
-def validate_model(document: dict, *, task: str) -> dict:
+def validate_model(document: dict, *, task: str | tuple[str, ...]) -> dict:
     """Validate supported Stats Models semantics and return a normalized copy.
 
     Run GLMs and within-subject meta nodes are supported. Unsupported features
@@ -54,8 +54,12 @@ def validate_model(document: dict, *, task: str) -> dict:
         "Input",
     )
     selected_tasks = result["Input"].get("task")
-    if selected_tasks not in (task, [task]):
-        raise ValueError("Model Input.task must select its registered task exactly")
+    expected_tasks = (task,) if isinstance(task, str) else tuple(task)
+    actual_tasks = (
+        (selected_tasks,) if isinstance(selected_tasks, str) else tuple(selected_tasks or ())
+    )
+    if actual_tasks != expected_tasks:
+        raise ValueError("Model Input.task must select its registered source tasks exactly")
     for value in result["Input"].values():
         if not isinstance(value, (str, list)) or (
             isinstance(value, list) and any(not isinstance(v, str) for v in value)

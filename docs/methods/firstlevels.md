@@ -4,7 +4,7 @@ The [firstlevels guide](../modules/firstlevels.md) describes inputs, model
 registration, processing, and outputs. These equations describe nro's estimator,
 not a requirement of the Stats Models interchange format.
 
-The [task-model compiler](../task-models.md) combines event predictors with the
+The [first-level model compiler](../task-models.md) combines event predictors with the
 firstlevels configuration's nuisance design. Exact outlier indicators do not
 enter nuisance PCA. The estimator excludes their marked rows, preserving gaps
 in the temporal covariance. For a fixed covariance model, this gives the same
@@ -49,7 +49,7 @@ residual variance supplies the location-specific scale.
 Task columns retain their original interpretation through a recorded mapping
 from independent fit columns. Nuisance candidates are RMS-scaled and reduced
 by SVD, targeting `nuisance_variance_explained`. If `d` dimensions remain after
-the exact task model, at most
+the exact first-level model, at most
 
 ```text
 max(0, d - max(minimum_temporal_rank,
@@ -127,7 +127,7 @@ fixed run weights. Condition-specific precision weights need not commute.
 Nested equal-weight session summaries give equal weight to sessions, not
 necessarily to every original run. Connect a Subject node directly to Run
 outputs to request equal run weighting, as the example in the
-[task-model guide](../task-models.md) does.
+[first-level model guide](../task-models.md) does.
 
 ## Inference limits and validation
 

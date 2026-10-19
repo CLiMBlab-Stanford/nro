@@ -17,7 +17,7 @@ workflow selects configuration IDs, and `main` is the default workflow. Module
 pages show the packaged configurations and explain which steps consume their
 keys. A site's active values may differ when it defines an override.
 
-Use `nro def edit config CLASS ID` or `nro def edit workflow ID` to create or
+Use `nro def edit MODULE ID` or `nro def edit workflow ID` to create or
 edit definitions through a validated draft. See
 [definition authoring](commands/authoring.md) for local drafts and shared-store
 safeguards.
@@ -168,10 +168,10 @@ separate from scientific contracts.
 | `networks` | networks | `networks` | [Networks](modules/networks.md) |
 | `firstlevels` | firstlevels | `firstlevels` | [First-level models](modules/firstlevels.md) |
 
-[Task models](task-models.md) are separate from firstlevels configurations.
+[First-level models](task-models.md) are separate from firstlevels configurations.
 They define event predictors, contrasts, and HRFs. The firstlevels configuration
 supplies denoising, estimation, and run-aggregation choices.
-Task/model/model-set selectors choose work; model-set membership does not
+Analysis/task/model/model-set selectors choose work; model-set membership does not
 contribute to scientific fingerprints.
 
 Site resources use `site:KEY` references, resolved before configuration

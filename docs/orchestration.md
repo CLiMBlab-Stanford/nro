@@ -104,7 +104,7 @@ freshness is checked. The shared runner then executes or skips each declared
 step and writes the completion record.
 
 Participant plans are cached by their scientific inputs. The cache key covers
-the compiled workflow and module lineages, relevant task models and markup,
+the compiled workflow and module lineages, relevant first-level models and markup,
 protected site definitions, execution source, and the participant's source-BIDS
 inventory and metadata. Repeating an equivalent request can therefore recover
 the already compiled dependency graph instead of rebuilding every module plan.

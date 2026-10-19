@@ -7,6 +7,7 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from numpy.testing import assert_allclose
 
 from nro.definitions.store import ConfigStore
@@ -55,6 +56,62 @@ def test_stable_input_filter_limits_firstlevel_runs(tmp_path: Path) -> None:
     selected = selected_runs(runs, "langlocSN/main", "01", {"ses": ["keep"]})
 
     assert selected == (runs[0],)
+
+
+def test_multitask_model_selects_and_compiles_declared_source_tasks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from nro.engine.cli import matches_work_item_selectors
+    from nro.modules.firstlevels import task_models
+    from nro.modules.firstlevels.task_models import scientific_model, select_models
+
+    runs = tuple(
+        BidsRun(
+            participant="01",
+            session=None,
+            stem=f"sub-01_task-{task}_run-1",
+            entities={"task": task, "run": "1"},
+            path=tmp_path / f"sub-01_task-{task}_run-1_bold.nii.gz",
+        )
+        for task in ("sentences", "pictures", "rest")
+    )
+    source = {
+        "model_set": "main",
+        "tasks": ["sentences", "pictures"],
+        "conditions": "trial_type",
+        "contrasts": {"language": {"trial_type.language": 1}},
+    }
+    selected = selected_runs(runs, "language/main", "01", model=source)
+    compiled = compile_model(
+        source,
+        "language/main",
+        ConfigStore().load_configuration("firstlevels", "main").values,
+    )
+
+    assert selected == runs[:2]
+    assert compiled["Input"]["task"] == ["sentences", "pictures"]
+    assert scientific_model(source)["tasks"] == ["sentences", "pictures"]
+
+    root = tmp_path / "definitions/models/language"
+    root.mkdir(parents=True)
+    root.joinpath("main.yml").write_text(yaml.safe_dump(source), encoding="utf-8")
+    monkeypatch.setattr(task_models, "definitions_roots", lambda: (tmp_path / "definitions",))
+    assert set(select_models(tasks=("pictures",), root=tmp_path / "definitions/models")) == {
+        "language/main"
+    }
+    assert not select_models(tasks=("language",), root=tmp_path / "definitions/models")
+    assert set(select_models(analyses=("language",), root=tmp_path / "definitions/models")) == {
+        "language/main"
+    }
+    assert matches_work_item_selectors(
+        {"task": "language", "model": "main"}, {"source_task": ("pictures",)}
+    )
+
+
+def test_single_task_model_contract_remains_implicit() -> None:
+    from nro.modules.firstlevels.task_models import scientific_model
+
+    assert "tasks" not in scientific_model(load_task_model("langlocSN/main"))
 
 
 def build_design(node, events, confounds, tr, config):
@@ -761,6 +818,8 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
             [
                 "-m",
                 "firstlevels",
+                "--analysis",
+                "langlocSN",
                 "--task",
                 "langlocSN",
                 "--model-set",
@@ -775,6 +834,7 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
         )
     )
     assert selection.runs == {"task": ("langlocSN",)}
+    assert selection.analyses == ("langlocSN",)
     entities = {"task": "langlocSN", "model": "dev", "space": "T1w", "smoothing": "0"}
     assert matches_work_item_selectors(entities, selection.work_item_entities)
     assert not matches_work_item_selectors(
@@ -947,10 +1007,10 @@ def test_event_transforms_and_hrf_are_source_aware():
 @pytest.mark.parametrize(
     "field", ["confounds_regex", "models", "task", "levels", "noise_model", "Nodes"]
 )
-def test_task_yaml_rejects_wrong_ownership(field):
+def test_model_yaml_rejects_wrong_ownership(field):
     from nro.modules.firstlevels.task_models import validate_task_model
 
-    with pytest.raises(ValueError, match="Unsupported task-model"):
+    with pytest.raises(ValueError, match="Unsupported first-level model"):
         validate_task_model({**load_task_model("langlocSN/main"), field: "anything"})
 
 
@@ -1093,7 +1153,7 @@ def test_public_adoption_checks_scientific_model_not_set(tmp_path):
     row["artifact_contract_json"] = json.dumps(
         {"processing": {"task_model": scientific_model(source)}}
     )
-    with pytest.raises(_PublicDerivativeContractMismatch, match="task model differs"):
+    with pytest.raises(_PublicDerivativeContractMismatch, match="firstlevels model differs"):
         _public_derivative_completion(row, None)
 
 
@@ -1105,7 +1165,7 @@ def test_invalid_unselected_development_model_does_not_block_main(task_store):
     path = task_store / "models/langlocSN/dev.yml"
     path.write_text(yaml.safe_dump({"model_set": "dev", "not_implemented_yet": True}))
     assert set(select_models()) == {"langlocSN/main"}
-    with pytest.raises(ValueError, match="Unsupported task-model"):
+    with pytest.raises(ValueError, match="Unsupported first-level model"):
         select_models(model_sets=("dev",))
 
 

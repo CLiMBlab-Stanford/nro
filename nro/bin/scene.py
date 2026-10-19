@@ -6,15 +6,22 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
 from nro.engine.bids import ENTITY_ORDER, parse_bids_entities
-from nro.engine.cli import add_core_selection_arguments, core_selection, matches_module_lineage
+from nro.engine.cli import (
+    add_core_selection_arguments,
+    core_selection,
+    matches_module_lineage,
+    matches_work_item_selectors,
+)
 from nro.engine.scenes import (
     SceneSource,
     build_scene_bundle,
     has_surface_data,
+    incompatible_surface_data,
     manifest_anatomical_images,
     manifest_lesion_qc_paths,
     manifest_surface_families,
@@ -92,10 +99,7 @@ def _row_matches(row: dict, selection, *, match_module: bool = True) -> bool:
     ):
         return False
     entities = _mapping(row.get("entities_json"))
-    for key, accepted in selection.work_item_entities.items():
-        if key in entities and accepted is not None and entities[key] not in accepted:
-            return False
-    return True
+    return matches_work_item_selectors(entities, selection.work_item_entities)
 
 
 def _source(row: dict, path: Path, *, role: str = "derivative") -> SceneSource:
@@ -387,6 +391,24 @@ def generate_scenes(
                         raise SystemExit(
                             "No complete bilateral display-surface family is available for "
                             f"{project} sub-{participant} space-{space}"
+                        )
+                    incompatible = incompatible_surface_data(
+                        tuple(source.path for source in selected),
+                        tuple(source.path for source in geometry),
+                    )
+                    if incompatible:
+                        for path, counts in incompatible.items():
+                            details = ", ".join(
+                                f"{hemi}: data {actual:,}, surface {expected:,}"
+                                for hemi, (actual, expected) in sorted(counts.items())
+                            )
+                            print(
+                                "Skipping derivative with incompatible display geometry: "
+                                f"{path} ({details})",
+                                file=sys.stderr,
+                            )
+                        selected = tuple(
+                            source for source in selected if source.path not in incompatible
                         )
                     anatomical: tuple[SceneSource, ...] = ()
                     if not surface_target and space == "T1w":

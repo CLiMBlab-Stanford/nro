@@ -159,5 +159,5 @@ def validate_public_definition(manifest: dict, processing: dict) -> tuple[bool, 
     except (ValueError, TypeError, KeyError):
         matches = False
     if not matches:
-        return False, "Public firstlevels task model differs from the current definition"
-    return True, "Task model matches"
+        return False, "Public firstlevels model differs from the current definition"
+    return True, "First-level model matches"

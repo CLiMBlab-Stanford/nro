@@ -1,4 +1,4 @@
-"""Construct a complete firstlevels runner from a task model and source runs."""
+"""Construct a complete firstlevels runner from an analysis model and source runs."""
 
 import json
 import logging
@@ -443,7 +443,7 @@ def build_module(
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> tuple[Runner, Path]:
-    """Construct one participant/task/model/space/smoothing DAG.
+    """Construct one participant/model/space/smoothing DAG.
 
     The returned runner owns the complete graph but has not assessed or
     executed it. The second value is the completion artifact produced by its
@@ -646,7 +646,7 @@ def run_module(
     output_root: Path | None = None,
     execution_context: ExecutionContext | None = None,
 ) -> Path:
-    """Construct and execute one participant/task/model/space/smoothing DAG.
+    """Construct and execute one participant/model/space/smoothing DAG.
 
     Return the completion artifact after the shared runner has executed or
     skipped every declared step.

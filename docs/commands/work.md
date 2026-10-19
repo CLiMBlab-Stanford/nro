@@ -33,7 +33,7 @@ Omitting `--module` requests every endpoint derived from the selected workflow.
 For `main`, these are `dynconn`, `networks`, and `firstlevels`, with shared
 dependencies registered once. Firstlevels selects model set `main` unless a
 model or set is specified. Participants without a
-matching task model can still run the connectivity paths. Explicit `--module`
+matching first-level model can still run the connectivity paths. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
 
 Selecting an endpoint together with its dependencies creates no extra upstream
@@ -47,14 +47,14 @@ in one invocation; it does not cancel earlier requests.
 nro run -P nptl -p t20 -m networks -w main -s fsnative -S 2
 ```
 
-For firstlevels, select task models independently of the workflow:
+For firstlevels, select analysis models independently of the workflow:
 
 ```bash
-nro run -m firstlevels --task langlocSN --model-set main
+nro run -m firstlevels --analysis language --model-set main
 ```
 
 Model sets affect request selection, not artifact freshness. Existing demand
-is not cancelled when a model leaves a set. See [task models](../task-models.md).
+is not cancelled when a model leaves a set. See [first-level models](../task-models.md).
 
 New requests capture source code and resolved site settings for execution.
 Editing the checkout after submission does not change that captured source;
@@ -75,7 +75,7 @@ one exists and otherwise runs through a fenced one-shot coordinator.
 The first request for a participant and scientific selection compiles the full
 dependency closure and saves a content-addressed planning entry. Later
 equivalent requests reuse it. Changes to source-BIDS inventory or metadata,
-imaging headers, compiled definitions, task models, markup, protected site
+imaging headers, compiled definitions, first-level models, markup, protected site
 settings, or execution source select a new entry automatically. File timestamps
 may cause conservative replanning, but they do not make derivatives stale;
 freshness remains based on artifact contracts and content evidence.

@@ -60,7 +60,7 @@ explicit processing field; a source-code version is not a substitute for a
 semantic contract.
 
 Modules can normalize their processing specification before comparison.
-Firstlevels uses a [canonical compiled task definition](task-models.md#model-edits-and-freshness)
+Firstlevels uses a [canonical compiled model definition](task-models.md#model-edits-and-freshness)
 so equivalent authoring forms share a contract. The same normalization applies
 to recorded contracts and database completion records. It does not suppress changes
 to dependencies, output requirements, or resolved scientific configuration.

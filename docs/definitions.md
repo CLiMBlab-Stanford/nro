@@ -14,7 +14,7 @@ DEFINITIONS/
 ├── site/site.yml
 ├── configs/CLASS/ID_CLASS.yml
 ├── workflows/ID_workflow.yml
-├── models/TASK/VARIANT.yml
+├── models/ANALYSIS/VARIANT.yml
 ├── markup/ID_markup.yml
 ├── hardware/gradient_unwarping.yml
 ├── events/TASK/index.yml
@@ -25,7 +25,7 @@ DEFINITIONS/
 
 The protected `site/site.yml` document defines shared storage, execution
 resources, and ingestion sources. Configurations and workflows control
-processing; [task models](task-models.md)
+processing; [first-level models](task-models.md)
 define predictors and contrasts. Source markup selects manual anatomical inputs
 and excludes known-bad BIDS paths. [Event tables](event-files.md) supply stimulus
 timing during bidsification. [Ingestion profiles](commands/bidsify.md) describe
@@ -314,7 +314,7 @@ for dependency checks. Both store commands support `--json` and exit nonzero on
 failure.
 
 Use [definition authoring](commands/authoring.md) for configurations,
-workflows, task models, and source markup. Use `nro site set` for protected
+workflows, first-level models, and source markup. Use `nro site set` for protected
 site values. For event catalogs, ingestion profiles, hardware policy, and
 scan-plan parsers, publish one or more local files as a validated transaction:
 

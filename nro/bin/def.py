@@ -19,7 +19,7 @@ from nro.definitions.repository import create_store, validate_store
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
 from nro.site import configuration as site
 
-TYPED_KINDS = frozenset({"config", "model", "workflow", "markup"})
+TYPED_KINDS = frozenset({"model", "workflow", "markup", *CONFIGURATION_CLASSES})
 
 
 def _context(root: Path) -> tuple[bool, Path | None, tuple[Path, ...]]:
@@ -179,31 +179,20 @@ def _source_label(store: ConfigStore, path: Path) -> str:
 def _definition_rows(kind: str, selector: str | None) -> list[dict[str, str]]:
     store = ConfigStore()
     rows: list[dict[str, str]] = []
-    if kind == "config":
-        classes = (selector,) if selector else CONFIGURATION_CLASSES
-        unknown = set(classes) - set(CONFIGURATION_CLASSES)
-        if unknown:
-            raise ValueError(
-                "Choose a configuration class from " + ", ".join(CONFIGURATION_CLASSES)
+    if kind in CONFIGURATION_CLASSES:
+        if selector:
+            raise ValueError(f"{kind} listings do not take a selector")
+        suffix = f"_{kind}.yml"
+        identifiers = {"main"}
+        for root in store.roots:
+            identifiers.update(
+                path.name.removesuffix(suffix)
+                for path in (root / "configs" / kind).glob(f"*{suffix}")
+                if path.is_file()
             )
-        for configuration_class in classes:
-            suffix = f"_{configuration_class}.yml"
-            identifiers = {"main"}
-            for root in store.roots:
-                identifiers.update(
-                    path.name.removesuffix(suffix)
-                    for path in (root / "configs" / configuration_class).glob(f"*{suffix}")
-                    if path.is_file()
-                )
-            for identifier in sorted(identifiers, key=lambda value: (value != "main", value)):
-                path = store.configuration_path(configuration_class, identifier)
-                rows.append(
-                    {
-                        "class": configuration_class,
-                        "id": identifier,
-                        "source": _source_label(store, path),
-                    }
-                )
+        for identifier in sorted(identifiers, key=lambda value: (value != "main", value)):
+            path = store.configuration_path(kind, identifier)
+            rows.append({"id": identifier, "source": _source_label(store, path)})
     elif kind == "model":
         seen: set[tuple[str, str]] = set()
         for root in store.roots:
@@ -213,7 +202,11 @@ def _definition_rows(kind: str, selector: str | None) -> list[dict[str, str]]:
                     continue
                 seen.add(key)
                 rows.append(
-                    {"task": key[0], "variant": key[1], "source": _source_label(store, path)}
+                    {
+                        "analysis": key[0],
+                        "variant": key[1],
+                        "source": _source_label(store, path),
+                    }
                 )
     elif kind == "workflow":
         if selector:
@@ -260,11 +253,11 @@ def _list(args: argparse.Namespace) -> None:
         print(json.dumps(rows, indent=2))
         return
     columns = {
-        "config": ("class", "id", "source"),
-        "model": ("task", "variant", "source"),
+        "model": ("analysis", "variant", "source"),
         "workflow": ("id", "source"),
         "markup": ("id", "source"),
         "file": ("path", "source"),
+        **{kind: ("id", "source") for kind in CONFIGURATION_CLASSES},
     }[args.kind]
     widths = {
         column: max(len(column.upper()), *(len(row[column]) for row in rows)) for column in columns
@@ -282,18 +275,20 @@ def _parser(prog: str) -> argparse.ArgumentParser:
             action,
             description=f"{action.capitalize()} a typed definition or store-relative file.",
             epilog=(
-                f"Run `{prog} {action} config --help`, `{prog} {action} model --help`, "
+                f"Run `{prog} {action} MODULE --help`, `{prog} {action} model --help`, "
                 f"or the corresponding workflow, markup, or file command for details."
             ),
         )
         command.add_argument(
             "arguments",
             nargs=argparse.REMAINDER,
-            metavar="{config,model,workflow,markup,file} ...",
+            metavar="{MODULE,model,workflow,markup,file} ...",
         )
     listing = commands.add_parser("ls", help="List active definitions and their source layer")
-    listing.add_argument("kind", choices=("config", "model", "workflow", "markup", "file"))
-    listing.add_argument("selector", nargs="?", help="Configuration class or model task")
+    listing.add_argument(
+        "kind", choices=(*CONFIGURATION_CLASSES, "model", "workflow", "markup", "file")
+    )
+    listing.add_argument("selector", nargs="?", help="Optional analysis label for model listings")
     listing.add_argument("--json", action="store_true")
     for action in ("init", "migrate", "validate"):
         command = commands.add_parser(action)
@@ -339,7 +334,8 @@ def main(argv=None, *, prog="nro def"):
                 return
             if kind != "file":
                 parser.error(
-                    f"unknown definition type {kind!r}; choose from config, model, workflow, markup, file"
+                    f"unknown definition type {kind!r}; choose a module or one of "
+                    "model, workflow, markup, file"
                 )
             file_args = _file_parser(args.action, f"{prog} {args.action} file").parse_args(
                 arguments

@@ -415,12 +415,25 @@ def test_scheduler_snapshot_has_a_bounded_delay() -> None:
     )
 
     coordinator.has_inflight = lambda: True
-    assert not scheduler_service._snapshot_ready(
+    assert scheduler_service._snapshot_ready(
         coordinator,
         last_request_activity=0.0,
         last_snapshot=0.0,
         now=scheduler_service.STATUS_MAX_STALENESS_SECONDS,
     )
+
+
+def test_allocation_reconciliation_is_separate_from_artifact_assessment() -> None:
+    from nro.orchestration.scheduler_maintenance import reconcile_execution_allocations
+
+    calls = []
+    registry = SimpleNamespace(
+        reconcile_scheduler_submissions=lambda: calls.append("submissions") or 2,
+        recover_orphaned_attempts=lambda: calls.append("attempts") or 3,
+    )
+
+    assert reconcile_execution_allocations(registry) == 5
+    assert calls == ["submissions", "attempts"]
 
 
 def test_scheduler_separates_polling_from_maintenance_execution() -> None:

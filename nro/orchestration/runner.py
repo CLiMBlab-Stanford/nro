@@ -200,8 +200,12 @@ class Runner:
         signature = os.environ.get("NRO_RUNNER_GRAPH_SIGNATURE", "direct")
         contract_path: Path | None = None
         contract_changes: dict[str, str] = {}
+        completion_contract_matches = True
         if ledger:
             contract_path = Path(ledger).with_name("runner-contract.json")
+            completion_contract_matches = graph.contract_signature_matches(
+                contract_path, signature=signature
+            )
             contract_changes = graph.step_contract_changes(contract_path, signature=signature)
             graph.initialize_step_contract(contract_path, signature=signature)
 
@@ -209,12 +213,21 @@ class Runner:
         completion = [step for step in ordered_steps if step.completion_boundary]
         if len(completion) > 1:
             raise RuntimeError("A module DAG may declare at most one completion boundary.")
-        if completion and not contract_changes and target_step_id is None:
+        if (
+            completion
+            and completion_contract_matches
+            and not contract_changes
+            and target_step_id is None
+        ):
             boundary = completion[0]
+            # Publication completeness does not prove that the module's source
+            # edges are unchanged. Include them in the cheap whole-module check
+            # before bypassing ordinary node-by-node freshness evaluation.
+            boundary_inputs = tuple(dict.fromkeys((*boundary.inputs, *graph.external_inputs())))
             boundary_run, boundary_reason = artifact_decision(
                 boundary.outputs,
                 boundary.force,
-                inputs=boundary.inputs,
+                inputs=boundary_inputs,
                 freshness_marker=boundary.freshness_marker,
             )
             if not boundary_run and boundary.validate is not None:

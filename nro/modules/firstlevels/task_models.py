@@ -1,4 +1,4 @@
-"""YAML task definitions and execution-only model-set membership."""
+"""First-level analysis definitions and execution-only model-set membership."""
 
 import json
 import os
@@ -16,10 +16,10 @@ from nro.site.configuration import definitions_roots
 
 
 def model_path(identifier: str, root: Path | None = None) -> Path:
-    """Resolve a registered TASK/VARIANT identifier to its YAML definition."""
+    """Resolve a registered ANALYSIS/VARIANT identifier to its YAML definition."""
     parts = identifier.split("/")
     if len(parts) != 2 or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", p) for p in parts):
-        raise ValueError("Model ID must be TASK/VARIANT using letters, digits and hyphens")
+        raise ValueError("Model ID must be ANALYSIS/VARIANT using letters, digits and hyphens")
     directories = (
         (Path(root),)
         if root is not None
@@ -35,15 +35,16 @@ def model_path(identifier: str, root: Path | None = None) -> Path:
 
 
 def validate_task_model(value: dict) -> dict:
-    """Validate task syntax without reading data or permitting nuisance settings."""
+    """Validate model syntax without reading data or permitting nuisance settings."""
     from .compiler import task_node
 
     if not isinstance(value, dict):
-        raise ValueError("Task model must be a YAML mapping")
+        raise ValueError("First-level model must be a YAML mapping")
     result = deepcopy(value)
     allowed = {
         "description",
         "model_set",
+        "tasks",
         "conditions",
         "predictors",
         "hrf",
@@ -54,8 +55,10 @@ def validate_task_model(value: dict) -> dict:
     }
     unknown = set(result) - allowed
     if unknown:
-        raise ValueError(f"Unsupported task-model fields: {sorted(unknown)}")
+        raise ValueError(f"Unsupported first-level model fields: {sorted(unknown)}")
     result["model_set"] = list(model_memberships(result))
+    if "tasks" in result:
+        result["tasks"] = list(source_tasks(result))
     if "description" in result and not isinstance(result["description"], str):
         raise ValueError("description must be text")
     task_node(result)
@@ -65,7 +68,7 @@ def validate_task_model(value: dict) -> dict:
 def model_memberships(model: dict) -> tuple[str, ...]:
     """Read validated execution membership without interpreting scientific fields."""
     if not isinstance(model, dict):
-        raise ValueError("Task model must be a YAML mapping")
+        raise ValueError("First-level model must be a YAML mapping")
     sets = model.get("model_set", [])
     sets = [sets] if isinstance(sets, str) else sets
     if not isinstance(sets, list) or any(
@@ -75,9 +78,29 @@ def model_memberships(model: dict) -> tuple[str, ...]:
     return tuple(dict.fromkeys(sets))
 
 
+def source_tasks(model: dict, identifier: str | None = None) -> tuple[str, ...]:
+    """Return the source BIDS tasks selected by a model definition."""
+    tasks = model.get("tasks")
+    if tasks is None:
+        if identifier is None:
+            raise ValueError("Model tasks require an identifier when tasks is omitted")
+        tasks = [identifier.split("/", 1)[0]]
+    tasks = [tasks] if isinstance(tasks, str) else tasks
+    if (
+        not isinstance(tasks, list)
+        or not tasks
+        or any(
+            not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", value)
+            for value in tasks
+        )
+    ):
+        raise ValueError("tasks must be a nonempty task name or list of task names")
+    return tuple(dict.fromkeys(tasks))
+
+
 def load_task_model(identifier: str, root: Path | None = None) -> dict:
-    """Load and validate one registered task model, including set membership."""
-    path = model_path(identifier, root)
+    """Load and validate one registered first-level model, including set membership."""
+    path = model_path(identifier) if root is None else model_path(identifier, root)
     return validate_task_model(parse_mapping(path.read_text(), source=str(path)))
 
 
@@ -89,7 +112,7 @@ def scientific_model(model: dict) -> dict:
     avoids recompiling repeated snapshots; callers receive independent copies.
     """
     if not isinstance(model, dict):
-        raise ValueError("Task model must be a YAML mapping")
+        raise ValueError("First-level model must be a YAML mapping")
     scientific = {
         key: value for key, value in model.items() if key not in {"model_set", "description"}
     }
@@ -104,12 +127,15 @@ def _canonical_model(serialized: str) -> dict:
     node = canonical_model_document({"Nodes": [task_node(source)]})["Nodes"][0]
     transformations = node["Transformations"]
     rules = node["Model"]["Software"]["nro"]
-    return {
+    result = {
         "predictors": rules["event_predictors"],
         "hrf": rules["default_hrf"],
         "hrf_overrides": rules["hrf_overrides"],
         "statsmodels": {"Transformations": transformations, "Contrasts": node["Contrasts"]},
     }
+    if "tasks" in source:
+        result["tasks"] = list(source_tasks(source))
+    return result
 
 
 def canonical_processing(processing: dict) -> dict:
@@ -131,7 +157,7 @@ def model_contract(entities: dict) -> dict:
 
 
 def _selected_models(
-    *, tasks=(), models=(), model_sets=None, root: Path | None = None
+    *, analyses=(), tasks=(), models=(), model_sets=None, root: Path | None = None
 ) -> dict[str, dict]:
     roots = (
         (Path(root),)
@@ -152,7 +178,7 @@ def _selected_models(
                 continue
             seen.add(identifier)
             model_path(identifier, directory)
-            if tasks and path.parent.name not in tasks:
+            if analyses and path.parent.name not in analyses:
                 continue
             if models and path.stem not in models and identifier not in models:
                 continue
@@ -160,23 +186,31 @@ def _selected_models(
             memberships = model_memberships(model)
             if sets and not set(sets).intersection(memberships):
                 continue
+            if tasks and not set(tasks).intersection(source_tasks(model, identifier)):
+                continue
             selected[identifier] = model
     return selected
 
 
 def select_models(
-    *, tasks=(), models=(), model_sets=None, root: Path | None = None
+    *, analyses=(), tasks=(), models=(), model_sets=None, root: Path | None = None
 ) -> dict[str, dict]:
     """Select and validate scientific models for demand planning.
 
-    None defaults model_sets to main unless models are explicit. Empty
-    model_sets selects all sets. Values within selectors are alternatives;
-    different selectors intersect. Models accept variants or TASK/VARIANT IDs.
+    ``analyses`` matches the namespace component; ``tasks`` matches declared
+    source BIDS tasks. ``None`` defaults ``model_sets`` to main unless models
+    are explicit. Empty model sets select every membership. Values within a
+    selector are alternatives; different selectors intersect. Models accept
+    variants or ANALYSIS/VARIANT IDs.
     """
     return {
         identifier: validate_task_model(model)
         for identifier, model in _selected_models(
-            tasks=tasks, models=models, model_sets=model_sets, root=root
+            analyses=analyses,
+            tasks=tasks,
+            models=models,
+            model_sets=model_sets,
+            root=root,
         ).items()
     }
 

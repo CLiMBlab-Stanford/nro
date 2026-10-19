@@ -22,7 +22,7 @@ COMMAND_HELP = {
     "get": "Read site settings (compatibility alias for `nro site get`).",
     "hotfix": "Apply a release-scoped repair for an identified historical defect.",
     "gc": "Remove unclaimed files from nro derivative namespaces.",
-    "models": "Inspect, validate, register, and compile task models.",
+    "models": "Inspect, validate, register, and compile first-level models.",
     "migrate": "Preview or apply explicit metadata representation migrations.",
     "setup": "Set up dependencies or connect to a shared installation.",
     "paths": "Manage site settings (compatibility alias for `nro site`).",
