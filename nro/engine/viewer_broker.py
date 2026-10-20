@@ -190,12 +190,18 @@ def _launch(
     )
     log_stream = log.open("a", encoding="utf-8")
     try:
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("SLURM_") or key in {"SLURM_CLUSTERS", "SLURM_CONF"}
+        }
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
             stdout=log_stream,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=environment,
         )
     finally:
         log_stream.close()
@@ -279,6 +285,7 @@ def open_viewer(
     hours: int = VIEWER_HOURS,
     memory_gb: int = VIEWER_MEMORY_GB,
     cpus: int = VIEWER_CPUS,
+    serverless: bool = False,
 ) -> int:
     """Open one scene through the current user's persistent viewer allocation."""
     scene = Path(scene).expanduser().absolute()
@@ -287,11 +294,9 @@ def open_viewer(
         raise ValueError(f"Workbench scene is unavailable: {scene}")
     if not viewer.is_file():
         raise ValueError(f"Connectome Workbench viewer is unavailable: {viewer}")
-    if os.environ.get("SLURM_JOB_ID"):
-        if not os.environ.get("DISPLAY"):
-            raise ValueError(
-                "This Slurm allocation has no X11 display; reconnect with SSH X forwarding"
-            )
+    if serverless:
+        if not _display_available():
+            raise ValueError("The current host has no usable X11 display")
         return _start_viewer(viewer, scene, state_directory(control)).pid
 
     root = state_directory(control)

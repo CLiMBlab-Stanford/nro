@@ -161,7 +161,7 @@ nro scene -p 01 -P example -s fsnative -S 2 --open
 The default scene links to its source derivatives. Add `--publish` to copy its
 inputs into a portable scene directory. `--open` runs `wb_view` through an X11
 Slurm allocation on the site's viewing partition; it does not consume an nro
-worker slot.
+worker slot. Add `--serverless` to run the viewer on the current host instead.
 
 Render all named maps in a selection as static images:
 

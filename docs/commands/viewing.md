@@ -17,8 +17,9 @@ Add `--open` to launch the `wb_view` executable beside the configured
 site's `viewing_partition`. The broker has 2 CPUs and 32 GB of memory and remains
 available for its full 12-hour allocation. Later calls reuse it and may open
 several independent Workbench processes without waiting for another allocation.
-Inside an existing Slurm allocation, the viewer runs directly because Slurm
-cannot add X11 forwarding to a nested job step.
+This behavior is the same from login hosts and existing Slurm allocations.
+Use `--serverless` with `--open` to run Workbench directly on the current host.
+The current host must already have a usable X11 display.
 
 Workbench loads the first scene state directly and hides its scene-loader
 dialog. Because this operation selects one scene state, `--open` requires

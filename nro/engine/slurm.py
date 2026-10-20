@@ -16,12 +16,12 @@ def run_x11(
     hours: int = 12,
     memory_gb: int = 32,
     cpus: int = 2,
+    serverless: bool = False,
 ) -> None:
     """Open a Workbench scene through the user's persistent viewer allocation.
 
-    The command must use Workbench's direct scene-loading form. Existing Slurm
-    allocations launch the viewer directly because X11 cannot be added to a
-    nested job step.
+    The command must use Workbench's direct scene-loading form. ``serverless``
+    runs Workbench on the current host instead of using the viewer allocation.
     """
     if len(command) != 4 or command[1] != "-scene-load-hd" or command[3] != "1":
         raise ValueError("Persistent viewing requires one direct Workbench scene command")
@@ -34,4 +34,5 @@ def run_x11(
         hours=hours,
         memory_gb=memory_gb,
         cpus=cpus,
+        serverless=serverless,
     )
