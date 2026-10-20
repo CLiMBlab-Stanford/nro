@@ -267,6 +267,11 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
         "--publish", action="store_true", help="Copy every input into the scene bundle"
     )
     parser.add_argument("--open", action="store_true", help="Open generated scenes in wb_view")
+    parser.add_argument(
+        "--serverless",
+        action="store_true",
+        help="Run wb_view on the current host instead of using the viewer allocation",
+    )
     return parser
 
 
@@ -491,6 +496,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
     """Build all scenes selected by argv and optionally open them."""
 
     args = build_parser(prog=prog).parse_args(argv)
+    if args.serverless and not args.open:
+        raise SystemExit("--serverless requires --open")
     try:
         selection = core_selection(args)
     except ValueError as error:
@@ -516,6 +523,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
                 hours=values["viewer_time"],
                 memory_gb=values["viewer_memory"],
                 cpus=values["viewer_cpus"],
+                serverless=args.serverless,
             )
         except ValueError as error:
             raise SystemExit(str(error)) from error

@@ -76,6 +76,13 @@ def test_scene_parser_uses_shared_selectors() -> None:
     )
 
 
+def test_scene_parser_accepts_serverless_viewing() -> None:
+    args = build_parser().parse_args(["--open", "--serverless"])
+
+    assert args.open is True
+    assert args.serverless is True
+
+
 def test_scene_discovers_portable_public_manifest_paths(tmp_path: Path) -> None:
     root = tmp_path / "BIDS/demo/derivatives/nro/anat/main/sub-01/anat"
     image = root / "sub-01_T1w.nii.gz"
@@ -130,6 +137,7 @@ def test_scene_viewer_uses_the_persistent_broker(monkeypatch, tmp_path: Path) ->
         "hours": 12,
         "memory_gb": 32,
         "cpus": 2,
+        "serverless": False,
     }
 
 
@@ -140,6 +148,9 @@ def test_viewer_broker_launch_requests_twelve_hours_and_fixed_resources(
     viewer = tmp_path / "wb_view"
     viewer.touch()
     monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setenv("SLURM_JOB_ID", "123")
+    monkeypatch.setenv("SLURM_STEP_ID", "4")
+    monkeypatch.setenv("SLURM_CONF", "/etc/slurm/slurm.conf")
     monkeypatch.setattr(viewer_broker.shutil, "which", lambda _name: "/usr/bin/srun")
     monkeypatch.setattr(
         viewer_broker.subprocess,
@@ -162,6 +173,10 @@ def test_viewer_broker_launch_requests_twelve_hours_and_fixed_resources(
     assert "--time=12:00:00" in command
     assert command[-2:] == ["--viewer", str(viewer)]
     assert options["start_new_session"] is True
+    assert "SLURM_JOB_ID" not in options["env"]
+    assert "SLURM_STEP_ID" not in options["env"]
+    assert options["env"]["SLURM_CONF"] == "/etc/slurm/slurm.conf"
+    assert options["env"]["DISPLAY"] == "localhost:10.0"
 
 
 def test_viewer_broker_requires_x11_only_when_starting(monkeypatch, tmp_path: Path) -> None:
@@ -181,15 +196,15 @@ def test_viewer_broker_requires_x11_only_when_starting(monkeypatch, tmp_path: Pa
         )
 
 
-def test_viewer_in_existing_allocation_checks_startup(monkeypatch, tmp_path: Path) -> None:
+def test_serverless_viewer_checks_startup(monkeypatch, tmp_path: Path) -> None:
     scene = tmp_path / "example.scene"
     viewer = tmp_path / "wb_view"
     scene.touch()
     viewer.touch()
     child = SimpleNamespace(pid=456)
     calls = []
-    monkeypatch.setenv("SLURM_JOB_ID", "123")
     monkeypatch.setenv("DISPLAY", "localhost:10.0")
+    monkeypatch.setattr(viewer_broker, "_display_available", lambda: True)
     monkeypatch.setattr(viewer_broker, "state_directory", lambda _control: tmp_path)
     monkeypatch.setattr(
         viewer_broker,
@@ -206,10 +221,38 @@ def test_viewer_in_existing_allocation_checks_startup(monkeypatch, tmp_path: Pat
             partition="interactive",
             account=None,
             control=tmp_path / "control",
+            serverless=True,
         )
         == 456
     )
     assert calls == [(viewer, scene, tmp_path)]
+
+
+def test_viewer_in_existing_allocation_still_uses_broker(monkeypatch, tmp_path: Path) -> None:
+    scene = tmp_path / "example.scene"
+    viewer = tmp_path / "wb_view"
+    scene.touch()
+    viewer.touch()
+    active = {"token": "token", "host": "node", "port": 1234}
+    monkeypatch.setenv("SLURM_JOB_ID", "123")
+    monkeypatch.setattr(viewer_broker, "state_directory", lambda _control: tmp_path)
+    monkeypatch.setattr(viewer_broker, "_live_active", lambda _root: active)
+    monkeypatch.setattr(
+        viewer_broker,
+        "_exchange",
+        lambda selected, payload: {"ok": True, "pid": 456},
+    )
+
+    assert (
+        viewer_broker.open_viewer(
+            scene,
+            viewer=viewer,
+            partition="interactive",
+            account=None,
+            control=tmp_path / "control",
+        )
+        == 456
+    )
 
 
 def test_viewer_startup_reports_the_captured_error(monkeypatch, tmp_path: Path) -> None:
