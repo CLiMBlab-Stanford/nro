@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.render") -> None
             selection,
             wb_command=wb_command,
             publish=False,
+            include_heavy=True,
         )
     except (OSError, ValueError, RuntimeError) as error:
         raise SystemExit(str(error)) from error

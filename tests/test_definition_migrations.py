@@ -266,6 +266,26 @@ def test_schema_seven_removes_retired_neurolit_execution_settings(tmp_path):
     assert yaml.safe_load(inherited.read_text()) == {"surface_reconstruction_engine": "fastsurfer"}
 
 
+def test_schema_eight_preserves_named_network_sources(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    directory = root / "configs/networks"
+    main = directory / "main_networks.yml"
+    clustering = directory / "clustering_networks.yml"
+    dynconn = directory / "dynconn_networks.yml"
+    main.write_text(MANAGED_NOTICE + "labeling:\n  enabled: false\n")
+    clustering.write_text(MANAGED_NOTICE + "parcellation_strategy: clustering\n")
+    dynconn.write_text(MANAGED_NOTICE + "connectivity_source: dynconn\n")
+    (root / MANIFEST).write_text(_manifest_text(root, 7))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    assert "connectivity_source" not in yaml.safe_load(main.read_text())
+    assert yaml.safe_load(clustering.read_text())["connectivity_source"] == "microparcellation"
+    assert yaml.safe_load(dynconn.read_text())["connectivity_source"] == "dynconn"
+
+
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):
     root = create_store(tmp_path / "definitions")
     relative = Path("configs/clean/alternative_clean.yml")

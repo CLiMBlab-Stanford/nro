@@ -24,7 +24,9 @@ VIEWER_HOURS = 12
 VIEWER_MEMORY_GB = 32
 VIEWER_CPUS = 2
 _MAX_MESSAGE_BYTES = 64 * 1024
+_DISPLAY_PROBE_TIMEOUT_SECONDS = 5.0
 _VIEWER_STARTUP_SECONDS = 5.0
+_OPEN_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 def state_directory(control: Path) -> Path:
@@ -316,7 +318,11 @@ def open_viewer(
                 )
                 active = _await_start(process, root, token, log)
             try:
-                response = _exchange(active, {"operation": "open", "scene": str(scene)})
+                response = _exchange(
+                    active,
+                    {"operation": "open", "scene": str(scene)},
+                    timeout=_OPEN_REQUEST_TIMEOUT_SECONDS,
+                )
             except OSError:
                 response = {"ok": False, "stale": True, "error": "Viewer broker is unavailable"}
             if response.get("ok"):
@@ -339,7 +345,7 @@ def _display_available() -> bool:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=5,
+                timeout=_DISPLAY_PROBE_TIMEOUT_SECONDS,
             ).returncode
             == 0
         )

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import yaml
 
-from nro.bin.scene import _collect, _viewer_command, build_parser, scene_id
+from nro.bin.scene import _collect, _heavy_scene_source, _viewer_command, build_parser, scene_id
 from nro.engine import viewer_broker
 from nro.engine.cli import core_selection
 from nro.engine.io import write_public_json
@@ -81,6 +81,46 @@ def test_scene_parser_accepts_serverless_viewing() -> None:
 
     assert args.open is True
     assert args.serverless is True
+
+
+def test_scene_parser_accepts_heavy_derivatives() -> None:
+    args = build_parser().parse_args(["--include-heavy"])
+
+    assert args.include_heavy is True
+
+
+def test_scene_excludes_heavy_derivatives_by_default(tmp_path: Path, monkeypatch) -> None:
+    pconn = tmp_path / "sub-01_desc-connectivity.pconn.nii"
+    dlabel = tmp_path / "sub-01_desc-microparcellation.dlabel.nii"
+    dscalar = tmp_path / "sub-01_desc-networks_stat.dscalar.nii"
+    manifest = tmp_path / "sub-01_manifest.json"
+    for path in (pconn, dlabel, dscalar, manifest):
+        path.touch()
+    monkeypatch.setattr(
+        "nro.bin.scene.public_manifest_paths",
+        lambda _module, _manifest: (pconn, dlabel, dscalar),
+    )
+    monkeypatch.setattr("nro.bin.scene.manifest_lesion_qc_paths", lambda _manifest: ())
+    row = {
+        "status": "Success",
+        "module": "microparcellation",
+        "project": "demo",
+        "participant": "01",
+        "directory_label": "main",
+        "output_prefix": "sub-01",
+        "output_root": str(tmp_path),
+        "entities_json": "{}",
+        "expected_outputs_json": f'["{manifest}"]',
+    }
+
+    assert _heavy_scene_source("microparcellation", pconn)
+    assert _heavy_scene_source("microparcellation", dlabel)
+    assert not _heavy_scene_source("networks", dlabel)
+    assert not _heavy_scene_source("networks", dscalar)
+    default, _surfaces, _diagnostics = _collect([row])
+    complete, _surfaces, _diagnostics = _collect([row], include_heavy=True)
+    assert [source.path for source, _entities in default] == [dscalar]
+    assert [source.path for source, _entities in complete] == [pconn, dlabel, dscalar]
 
 
 def test_scene_discovers_portable_public_manifest_paths(tmp_path: Path) -> None:
@@ -240,7 +280,7 @@ def test_viewer_in_existing_allocation_still_uses_broker(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         viewer_broker,
         "_exchange",
-        lambda selected, payload: {"ok": True, "pid": 456},
+        lambda selected, payload, **options: {"ok": True, "pid": 456},
     )
 
     assert (
@@ -287,11 +327,13 @@ def test_viewer_broker_reuses_a_live_allocation(monkeypatch, tmp_path: Path) -> 
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     monkeypatch.setattr(viewer_broker, "state_directory", lambda _control: tmp_path)
     monkeypatch.setattr(viewer_broker, "_live_active", lambda _root: active)
-    monkeypatch.setattr(
-        viewer_broker,
-        "_exchange",
-        lambda selected, payload: {"ok": True, "pid": 456},
-    )
+    exchanges = []
+
+    def exchange(selected, payload, **options):
+        exchanges.append((selected, payload, options))
+        return {"ok": True, "pid": 456}
+
+    monkeypatch.setattr(viewer_broker, "_exchange", exchange)
     monkeypatch.setattr(
         viewer_broker,
         "_launch",
@@ -307,6 +349,16 @@ def test_viewer_broker_reuses_a_live_allocation(monkeypatch, tmp_path: Path) -> 
             control=tmp_path / "control",
         )
         == 456
+    )
+    assert exchanges == [
+        (
+            active,
+            {"operation": "open", "scene": str(scene)},
+            {"timeout": viewer_broker._OPEN_REQUEST_TIMEOUT_SECONDS},
+        ),
+    ]
+    assert viewer_broker._OPEN_REQUEST_TIMEOUT_SECONDS > (
+        viewer_broker._DISPLAY_PROBE_TIMEOUT_SECONDS + viewer_broker._VIEWER_STARTUP_SECONDS
     )
 
 

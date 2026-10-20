@@ -36,6 +36,11 @@ do not duplicate large CIFTIs or surface geometry. `--publish` instead copies
 every input beneath the scene directory, rewrites references to those copies,
 and records SHA-256 checksums. Published scenes can be moved as a unit.
 
+Scenes omit parcel-connectivity matrices (`.pconn.nii`) and microparcellation
+label files (`.dlabel.nii`) by default. These files can take several minutes and
+substantial memory to load in Workbench. Add `--include-heavy` when the scene
+needs them.
+
 Scenes are visualization caches, not module artifacts. They live at
 `PROJECT/derivatives/scenes/space-SPACE_smoothing-Nmm/sub-ID/SCENE_ID/`.
 Regenerating a scene replaces only a directory carrying an nro scene manifest;

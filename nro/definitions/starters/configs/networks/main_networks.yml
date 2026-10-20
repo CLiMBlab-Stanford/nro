@@ -1,6 +1,6 @@
 markup: main
 overwrite: false
-connectivity_source: microparcellation
+connectivity_source: dynconn
 parcellation_strategy: ica
 feature_reduction:
   maximum_dimensions: 1000
@@ -12,13 +12,13 @@ connectivity:
   minimum_weight: 0.0
   percentile_cutoff: 90
 ica:
-  n_networks: 50
+  n_networks: 100
   random_seed: 1
   max_iterations: 500
   tolerance: 0.0001
   upper_quantile: 0.99
 clustering:
-  n_networks: 50
+  n_networks: 100
   repetitions: 100
   random_seed: 1
   n_init: 1

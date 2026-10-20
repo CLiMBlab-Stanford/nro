@@ -282,6 +282,7 @@ def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, mon
     manifest = _manifest(subject, "fsnative", "surface")
     monkeypatch.setattr(networks_main, "BIDS_PATH", str(tmp_path))
     config = ConfigStore().load_configuration("networks", "main").values
+    config["connectivity_source"] = "microparcellation"
     target, cfg = networks_main.make_target_config(
         "project", "01", "main", config, source_manifest=manifest
     )
@@ -296,7 +297,7 @@ def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, mon
     assert cfg.output.prefix == "sub-01_space-fsnative_smoothing-2mm"
     assert cfg.inputs.domain == "surface"
     assert cfg.parcellation_strategy == "ica"
-    assert cfg.ica.n_networks == 50
+    assert cfg.ica.n_networks == 100
 
 
 def test_network_config_routes_branch_outputs(tmp_path):
@@ -309,6 +310,7 @@ def test_network_config_routes_branch_outputs(tmp_path):
     context = ExecutionContext(paths, "demo", "networks:1", ())
     manifest = _manifest(tmp_path / "upstream", "T1w", "volume")
     config = ConfigStore().load_configuration("networks", "main").values
+    config["connectivity_source"] = "microparcellation"
     _, cfg = networks_main.make_target_config(
         "demo", "01", "main", config, source_manifest=manifest, execution_context=context
     )
@@ -362,6 +364,7 @@ def test_network_entry_selects_upstream_branch(tmp_path, monkeypatch):
         ),
     )
     cfg = ConfigStore().load_configuration("networks", "main").values
+    cfg["connectivity_source"] = "microparcellation"
     cfg["labeling"]["enabled"] = False
     cfg["source_directory"] = "main"
     monkeypatch.setattr(
@@ -410,6 +413,7 @@ def test_oslom_workflow_selects_oslom_network_configuration() -> None:
 
     assert workflow.selections["networks"] == "oslom"
     assert workflow.configuration("networks").values["parcellation_strategy"] == "oslom"
+    assert workflow.configuration("networks").values["connectivity_source"] == "microparcellation"
 
 
 def test_clustering_workflow_selects_clustering_network_configuration() -> None:
@@ -418,7 +422,7 @@ def test_clustering_workflow_selects_clustering_network_configuration() -> None:
     assert workflow.selections["networks"] == "clustering"
     config = workflow.configuration("networks").values
     assert config["parcellation_strategy"] == "clustering"
-    assert config["clustering"]["n_networks"] == 50
+    assert config["clustering"]["n_networks"] == 100
     assert config["clustering"]["repetitions"] == 100
 
 
@@ -500,6 +504,7 @@ def test_rejects_pconn_with_different_spatial_parcel_mapping(tmp_path: Path) -> 
     cfg = ModuleConfig(
         inputs=_micro_inputs(manifest, dlabel, pconn, domain="volume", space="T1w"),
         output=OutputConfig(tmp_path / "out", tmp_path / "work", "sub-01_space-T1w"),
+        connectivity_source="microparcellation",
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
     )
@@ -616,6 +621,7 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
             work_directory=tmp_path / "work" / "networks",
             prefix="sub-01_space-T1w",
         ),
+        connectivity_source="microparcellation",
         connectivity=ConnectivityConfig(
             transform="clip_positive",
             minimum_weight=0.0,
@@ -701,6 +707,7 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
             work_directory=tmp_path / "work" / "networks",
             prefix="sub-01_space-T1w",
         ),
+        connectivity_source="microparcellation",
         connectivity=ConnectivityConfig(percentile_cutoff=None),
         parcellation_strategy="ica",
         ica=IcaConfig(n_networks=2),
@@ -775,6 +782,7 @@ def test_volumetric_network_module_publishes_clustering_frequencies(
             work_directory=tmp_path / "work" / "networks",
             prefix="sub-01_space-T1w",
         ),
+        connectivity_source="microparcellation",
         connectivity=ConnectivityConfig(percentile_cutoff=None),
         parcellation_strategy="clustering",
         clustering=ClusteringConfig(n_networks=2, repetitions=2),
@@ -831,6 +839,7 @@ def test_missing_public_network_metric_is_rebuilt(tmp_path: Path, monkeypatch) -
             work_directory=tmp_path / "work" / "networks",
             prefix="sub-01_space-T1w",
         ),
+        connectivity_source="microparcellation",
         connectivity=ConnectivityConfig(
             transform="clip_positive",
             minimum_weight=0.0,
