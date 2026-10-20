@@ -40,7 +40,7 @@ def test_run_defaults() -> None:
     selection = core_selection(args)
     assert selection.participants == ()
     assert selection.projects == ()
-    assert selection.modules == ("dynconn", "networks", "firstlevels")
+    assert selection.modules == ("microparcellation", "networks", "firstlevels")
     assert selection.workflows == ("main",)
     assert selection.spaces == ("fsnative",)
     assert selection.smoothing == (2,)
@@ -1470,7 +1470,7 @@ def test_bare_request_keeps_networks_when_no_task_models_match(
     request = json.loads(capsys.readouterr().out)
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
-    assert request["modules"] == ["dynconn", "networks", "firstlevels"]
+    assert request["modules"] == ["microparcellation", "networks", "firstlevels"]
     assert request["work_items"] == 12
     assert request["concurrency"] == 50
 
@@ -1506,7 +1506,7 @@ def test_run_requests_each_selected_branch_across_projects(
         argv.extend(["-m", *modules])
     run_main(argv)
     result = json.loads(capsys.readouterr().out)
-    selected = modules or ("dynconn", "networks", "firstlevels")
+    selected = modules or ("microparcellation", "networks", "firstlevels")
     assert result["modules"] == list(selected)
     registry = Registry.for_project("alpha", bids_root=bids)
     rows = registry.work_item_rows()

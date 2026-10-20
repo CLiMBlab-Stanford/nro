@@ -424,7 +424,7 @@ def test_all_lineage_directories_are_content_addressed(tmp_path: Path) -> None:
     assert clean["func_directory"] == registered.directories["func"]
     assert clean["anat_directory"] == registered.directories["anat"]
     assert micro["clean_directory"] == registered.directories["clean"]
-    assert networks["source_directory"] == registered.directories["microparcellation"]
+    assert networks["source_directory"] == registered.directories["dynconn"]
 
 
 def test_evolved_main_configuration_reuses_its_named_directory(tmp_path: Path) -> None:
