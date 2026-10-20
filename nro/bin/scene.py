@@ -118,8 +118,18 @@ def _source(row: dict, path: Path, *, role: str = "derivative") -> SceneSource:
     )
 
 
+def _heavy_scene_source(module: str, path: Path) -> bool:
+    """Return whether a derivative is excluded from scenes by default."""
+
+    return path.name.endswith(".pconn.nii") or (
+        module == "microparcellation" and path.name.endswith(".dlabel.nii")
+    )
+
+
 def _collect(
     rows: list[dict],
+    *,
+    include_heavy: bool = False,
 ) -> tuple[
     list[tuple[SceneSource, dict[str, str]]],
     tuple[SceneSource, ...],
@@ -140,6 +150,8 @@ def _collect(
             except ValueError:
                 continue
             for path in paths:
+                if not include_heavy and _heavy_scene_source(str(row["module"]), path):
+                    continue
                 if path in diagnostic_paths:
                     if path not in seen_lesion_qc:
                         seen_lesion_qc.add(path)
@@ -272,11 +284,20 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
         action="store_true",
         help="Run wb_view on the current host instead of using the viewer allocation",
     )
+    parser.add_argument(
+        "--include-heavy",
+        action="store_true",
+        help="Include pconns and microparcellation dlabels in generated scenes",
+    )
     return parser
 
 
 def generate_scenes(
-    selection, *, wb_command: str | Path, publish: bool = False
+    selection,
+    *,
+    wb_command: str | Path,
+    publish: bool = False,
+    include_heavy: bool = False,
 ) -> tuple[list[Path], dict]:
     """Build scenes for a resolved selection and return their paths and site settings."""
     from nro.orchestration.branch_views import registered_rows
@@ -288,10 +309,16 @@ def generate_scenes(
         raise SystemExit("No central nro registry found")
     matched = [row for row in rows if _row_matches(row, selection)]
     support_rows = [row for row in rows if _row_matches(row, selection, match_module=False)]
-    data, _unused_surfaces, lesion_qc_sources = _collect(matched)
-    support_data, surface_sources, _unused_lesion_qc = _collect(support_rows)
+    data, _unused_surfaces, lesion_qc_sources = _collect(matched, include_heavy=include_heavy)
+    support_data, surface_sources, _unused_lesion_qc = _collect(
+        support_rows, include_heavy=include_heavy
+    )
     if not data:
-        raise SystemExit("No completed derivatives match the requested selectors")
+        suffix = "; add --include-heavy to include pconns and microparcellation dlabels"
+        raise SystemExit(
+            "No completed derivatives match the requested selectors"
+            + ("" if include_heavy else suffix)
+        )
     wb_command = resolve_workbench_command(wb_command)
     values = settings()[0]
     branches = BranchStore(Path(values["registry"]))
@@ -506,6 +533,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
         selection,
         wb_command=args.wb_command,
         publish=args.publish,
+        include_heavy=args.include_heavy,
     )
     wb_command = resolve_workbench_command(args.wb_command)
     for scene in scenes:

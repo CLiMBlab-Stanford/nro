@@ -382,6 +382,25 @@ def _synthsr_lesion_scaffold(root: Path) -> None:
         )
 
 
+def _preserve_named_network_sources(root: Path) -> None:
+    """Preserve the source inherited by named network configurations."""
+
+    directory = root / "configs/networks"
+    if not directory.is_dir():
+        return
+    for config in directory.glob("*_networks.yml"):
+        if config.name == "main_networks.yml":
+            continue
+        document = yaml.safe_load(config.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError(f"Invalid networks configuration: {config}")
+        document.setdefault("connectivity_source", "microparcellation")
+        config.write_text(
+            normalize_managed_text(config, yaml.safe_dump(document, sort_keys=False)),
+            encoding="utf-8",
+        )
+
+
 MIGRATIONS = (
     Migration(0, 1, "0.13.0", _adopt_unversioned),
     Migration(1, 2, "0.14.4", _private_flywheel_credentials),
@@ -390,6 +409,7 @@ MIGRATIONS = (
     Migration(4, 5, "0.31.0", _t2w_anatomical_fallback),
     Migration(5, 6, "0.31.0", _unified_site_policy),
     Migration(6, 7, "0.34.0", _synthsr_lesion_scaffold),
+    Migration(7, 8, "0.35.2", _preserve_named_network_sources),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].destination
 

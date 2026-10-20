@@ -70,7 +70,11 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ("networks", {"oslom": {"directed": True}}, "directed"),
         (
             "networks",
-            {"parcellation_strategy": "oslom", "oslom": {"initialization": "file"}},
+            {
+                "connectivity_source": "microparcellation",
+                "parcellation_strategy": "oslom",
+                "oslom": {"initialization": "file"},
+            },
             "initial_partition",
         ),
         (
@@ -207,7 +211,16 @@ def test_func_classifier_vocabulary_ignores_unselected_backend_settings(store):
 
 def test_networks_scientific_vocabulary_ignores_unselected_source_and_estimators(store):
     values = store.load_configuration("networks", "main").values
-    micro_ica = scientific_values("networks", values)
+    dynconn_ica = scientific_values("networks", values)
+    assert "connectivity" not in dynconn_ica
+    assert "feature_reduction" in dynconn_ica
+    assert "ica" in dynconn_ica
+    assert "clustering" not in dynconn_ica
+    assert "oslom" not in dynconn_ica
+    assert "consensus" not in dynconn_ica
+
+    micro_values = {**values, "connectivity_source": "microparcellation"}
+    micro_ica = scientific_values("networks", micro_values)
     assert "connectivity" in micro_ica
     assert "feature_reduction" in micro_ica
     assert "ica" in micro_ica
@@ -215,8 +228,6 @@ def test_networks_scientific_vocabulary_ignores_unselected_source_and_estimators
     assert "oslom" not in micro_ica
     assert "consensus" not in micro_ica
 
-    dynconn_ica = scientific_values("networks", {**values, "connectivity_source": "dynconn"})
-    assert "connectivity" not in dynconn_ica
     changed_unused = {
         **values,
         "connectivity_source": "dynconn",
@@ -224,7 +235,7 @@ def test_networks_scientific_vocabulary_ignores_unselected_source_and_estimators
     }
     assert scientific_values("networks", changed_unused) == dynconn_ica
 
-    oslom = scientific_values("networks", {**values, "parcellation_strategy": "oslom"})
+    oslom = scientific_values("networks", {**micro_values, "parcellation_strategy": "oslom"})
     assert "feature_reduction" not in oslom
     assert "ica" not in oslom
     assert "clustering" not in oslom

@@ -364,9 +364,9 @@ def test_all_planned_manifests_use_the_selected_bids_root(branch_registry, tmp_p
 @pytest.mark.parametrize(
     "modules",
     [
-        ("microparcellation", "networks"),
-        ("networks", "microparcellation"),
-        ("anat", "func", "clean", "microparcellation", "networks", "networks"),
+        ("dynconn", "networks"),
+        ("networks", "dynconn"),
+        ("anat", "func", "clean", "dynconn", "networks", "networks"),
     ],
 )
 def test_upstream_targets_collapse_to_endpoint(branch_registry, tmp_path, modules):
@@ -1003,7 +1003,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     configs.mkdir()
     shutil.copytree(ConfigStore().root, configs, dirs_exist_ok=True)
     (configs / "workflows" / "rest_workflow.yml").write_text(
-        yaml.safe_dump({"microparcellation": "rest"})
+        yaml.safe_dump({"microparcellation": "rest", "networks": "rest"})
     )
     (configs / "configs" / "microparcellation" / "rest_microparcellation.yml").write_text(
         yaml.safe_dump(
@@ -1012,6 +1012,9 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
                 "coarsening": {"target_vertices": 60_000},
             }
         )
+    )
+    (configs / "configs" / "networks" / "rest_networks.yml").write_text(
+        yaml.safe_dump({"connectivity_source": "microparcellation"})
     )
     refresh_manifest(configs)
     store = ConfigStore(configs)
@@ -1136,7 +1139,7 @@ def test_subject_planner_builds_filtered_complete_dag(tmp_path: Path, monkeypatc
     assert registered.directories["anat"].startswith("main-")
     assert registered.directories["func"].startswith("main-")
     assert registered.directories["microparcellation"].startswith("rest-")
-    assert registered.directories["networks"].startswith("main-")
+    assert registered.directories["networks"].startswith("rest-")
     assert inventory_calls == 1
 
 
@@ -1286,7 +1289,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
     )
     by_module = {
         name: [work_item for work_item in work_items if work_item.module == name]
-        for name in ("anat", "func", "clean", "microparcellation", "networks")
+        for name in ("anat", "func", "clean", "dynconn", "networks")
     }
     expected_pairs = {
         ("fsnative", "0"),
@@ -1301,8 +1304,7 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         (item.entities["space"], item.entities["smoothing"]) for item in by_module["clean"]
     } == expected_pairs
     assert {
-        (item.entities["space"], item.entities["smoothing"])
-        for item in by_module["microparcellation"]
+        (item.entities["space"], item.entities["smoothing"]) for item in by_module["dynconn"]
     } == expected_pairs
     assert {
         (item.entities["space"], item.entities["smoothing"]) for item in by_module["networks"]
@@ -1312,9 +1314,16 @@ def test_subject_planner_creates_only_requested_space_smoothing_cross_product(
         for item in by_module["clean"]
     }
     anat_key = by_module["anat"][0].key
-    for item in by_module["microparcellation"]:
+    for item in by_module["dynconn"]:
         pair = (item.entities["space"], item.entities["smoothing"])
-        assert item.dependencies == (clean_keys[pair], anat_key)
+        assert item.dependencies == (clean_keys[pair],)
+    dynconn_keys = {
+        (item.entities["space"], item.entities["smoothing"]): item.key
+        for item in by_module["dynconn"]
+    }
+    for item in by_module["networks"]:
+        pair = (item.entities["space"], item.entities["smoothing"])
+        assert item.dependencies == (dynconn_keys[pair], anat_key)
 
 
 @pytest.mark.parametrize("space", ["MNI152NLin2009cAsym", "fsaverage6"])

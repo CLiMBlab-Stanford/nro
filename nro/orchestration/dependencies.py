@@ -26,7 +26,7 @@ _DIRECT_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 
 
 def _network_source(configuration: Mapping[str, object]) -> str:
-    source = str(configuration.get("connectivity_source", "microparcellation"))
+    source = str(configuration.get("connectivity_source", "dynconn"))
     if source not in {"microparcellation", "dynconn"}:
         raise ValueError(f"Unsupported networks connectivity source: {source}")
     return source

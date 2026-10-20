@@ -32,10 +32,11 @@ and known-bad source exclusion. A site can also define
 :language: yaml
 ```
 
-The `clustering` and `oslom` workflows change the networks estimator, and
-`dynconn-networks` changes its source to dynconn. The selected source becomes a
-static workflow dependency; OSLOM requires microparcellation. Named
-configurations are merged over their class's
+The `main` and `clustering` network configurations use dynconn. The `oslom`
+configuration changes the estimator and explicitly selects microparcellation,
+which OSLOM requires. The named `dynconn-networks` workflow retains an explicit
+spelling of the default source. The selected source becomes a static workflow
+dependency. Named configurations are merged over their class's
 `main` configuration. Unknown override keys are rejected rather than silently
 creating misspelled settings. Config IDs are validated filename identifiers;
 use the definitions store instead of assembling paths in scientific code.

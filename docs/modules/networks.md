@@ -1,10 +1,11 @@
 # Individualized networks
 
 `networks` estimates individualized maps from one configured source. The default
-uses `microparcellation` connectivity. Set `connectivity_source: dynconn` to use
-vertex- or voxel-level dynamic-connectivity time series instead. The selected
-source is a static workflow dependency, so requesting `networks` plans only that
-source. Anatomy remains a direct dependency for reference-atlas projection.
+uses vertex- or voxel-level `dynconn` time series. Set
+`connectivity_source: microparcellation` to use continuous parcel-connectivity
+profiles instead. The selected source is a static workflow dependency, so
+requesting `networks` plans only that source. Anatomy remains a direct dependency
+for reference-atlas projection.
 
 ## Common input preparation
 
@@ -27,9 +28,10 @@ frame as an independent dimension. `oversampling`, `power_iterations`, and
 input and fitted dimensions, seed, and retained variance.
 
 The same output and labeling stages surround every `parcellation_strategy`.
-`main` selects ICA from microparcellation. `clustering` and `oslom` select the
-corresponding estimator, while `dynconn-networks` selects dynconn-backed ICA.
-OSLOM is valid only with a microparcellation source.
+`main` selects dynconn-backed ICA. `clustering` selects the corresponding
+dynconn-backed estimator. `oslom` explicitly selects microparcellation because
+OSLOM is valid only with that source. The named `dynconn-networks` workflow is
+retained as an explicit spelling of the default source.
 
 ## ICA
 
@@ -46,7 +48,7 @@ at a vertex. The convention assumes a network's positive tail occupies a
 minority of the spatial domain. Components without a positive finite tail fail
 validation. Reaching the iteration limit logs a convergence warning.
 
-`n_networks` defaults to 50 and must be smaller than both the spatial and fitted
+`n_networks` defaults to 100 and must be smaller than both the spatial and fitted
 feature dimensions. `random_seed`, `max_iterations`, and `tolerance` control
 FastICA.
 
