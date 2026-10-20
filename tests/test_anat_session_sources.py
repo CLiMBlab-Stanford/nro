@@ -165,18 +165,46 @@ def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> N
         force=False,
     )
 
-    assert step.command[:4] == (
+    assert step.command[:3] == (
         "/shared/runtime/bin/apptainer",
         "run",
         "--cleanenv",
-        str(synthstrip),
     )
-    assert step.command[5] == str(source)
+    assert step.command[3:7] == (
+        "--bind",
+        f"{destination.parent.resolve()}:{destination.parent.resolve()}",
+        "--bind",
+        f"{source.parent.resolve()}:{source.parent.resolve()}:ro",
+    )
+    assert step.command[7] == str(synthstrip)
+    assert step.command[9] == str(source)
     assert step.inputs == (source,)
     assert step.outputs == (destination, mask)
     assert step.prepare is not None
     step.prepare()
     assert destination.parent.is_dir()
+
+
+def test_brain_extraction_does_not_mount_an_output_directory_read_only(tmp_path: Path) -> None:
+    directory = tmp_path / "anat"
+    source = directory / "source.nii.gz"
+    destination = directory / "destination.nii.gz"
+    mask = directory / "mask.nii.gz"
+
+    step = anat_steps._brain_extract_anat_copy(
+        "/shared/runtime/bin/apptainer",
+        tmp_path / "synthstrip.sif",
+        env={},
+        source=source,
+        dst=destination,
+        mask=mask,
+        force=False,
+    )
+
+    bind = f"{directory.resolve()}:{directory.resolve()}"
+    assert step.command.count("--bind") == 1
+    assert bind in step.command
+    assert f"{bind}:ro" not in step.command
 
 
 def test_t1w_resampling_separates_intensity_and_mask_interpolation(tmp_path: Path) -> None:
