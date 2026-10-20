@@ -2026,7 +2026,6 @@ def serve(
                 changed = True
             if changed:
                 snapshot_pending = True
-            maintenance_idle = maintenance_future is None or maintenance_future.done()
             if (
                 snapshot_pending
                 and now - last_snapshot >= STATUS_PUBLISH_INTERVAL_SECONDS
@@ -2036,7 +2035,6 @@ def serve(
                     last_snapshot=last_snapshot,
                     now=now,
                 )
-                and maintenance_idle
             ):
                 generation += 1
                 with registry.connection(write=True) as db:

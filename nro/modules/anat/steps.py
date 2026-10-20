@@ -330,10 +330,16 @@ def _brain_extract_anat_copy(
     mask: Path,
     force: bool,
 ) -> Step:
+    writable_directories = {dst.parent.resolve(), mask.parent.resolve()}
+    input_directory = source.parent.resolve()
+    binds = [f"{directory}:{directory}" for directory in sorted(writable_directories, key=str)]
+    if input_directory not in writable_directories:
+        binds.append(f"{input_directory}:{input_directory}:ro")
     cmd = [
         runtime,
         "run",
         "--cleanenv",
+        *(value for bind in binds for value in ("--bind", bind)),
         str(synthstrip_image),
         "-i",
         str(source),
