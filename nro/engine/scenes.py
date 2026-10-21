@@ -319,7 +319,11 @@ def template_surface_family(paths: tuple[Path, ...], space: str) -> tuple[Path, 
 
 
 def manifest_surface_families(manifest: Path) -> tuple[Path, ...]:
-    """Return complete display-surface families named by a manifest."""
+    """Return every complete display-surface family named by a manifest.
+
+    Each family contributes its left then right surfaces in ``SURFACE_TYPES``
+    order. Incomplete families are omitted.
+    """
 
     document = read_manifest(manifest)
     values: list[Path] = []
@@ -348,11 +352,21 @@ def manifest_surface_families(manifest: Path) -> tuple[Path, ...]:
                 )
                 expanded.extend(path.with_name(f"{stem}_{kind}.surf.gii") for kind in SURFACE_TYPES)
     candidates.extend(dict.fromkeys(path.absolute() for path in expanded if path.is_file()))
-    try:
-        inventory = surface_inventory(candidates)
-    except (ValueError, FileNotFoundError):
-        return ()
-    return tuple(inventory[(hemi, kind)] for hemi in ("L", "R") for kind in SURFACE_TYPES)
+    # A manifest may name several families, such as fsnative and MSMAll surfaces.
+    # Group them by every entity except the hemisphere and keep each complete one.
+    groups: dict[str, list[Path]] = {}
+    for path in candidates:
+        key = path.name.replace("_hemi-L_", "_hemi-X_").replace("_hemi-R_", "_hemi-X_")
+        kind = next(kind for kind in SURFACE_TYPES if key.endswith(f"_{kind}.surf.gii"))
+        groups.setdefault(key.removesuffix(f"_{kind}.surf.gii"), []).append(path)
+    families: list[Path] = []
+    for paths in groups.values():
+        try:
+            inventory = surface_inventory(paths)
+        except (ValueError, FileNotFoundError):
+            continue
+        families.extend(inventory[(hemi, kind)] for hemi in ("L", "R") for kind in SURFACE_TYPES)
+    return tuple(families)
 
 
 def _surface_spec_entries(inventory: dict[tuple[str, str], Path]) -> str:

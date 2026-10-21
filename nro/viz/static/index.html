@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nro viz</title>
+  <link rel="stylesheet" href="/static/viz.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/viz.js"></script>
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>nro viz</h1>
+      <button id="collapse" type="button" title="Hide panel">‹</button>
+    </header>
+
+    <section>
+      <label>Branch
+        <select id="branch"></select>
+      </label>
+      <label>Project
+        <select id="project"></select>
+      </label>
+      <label>Participant
+        <select id="participant"></select>
+      </label>
+    </section>
+
+    <section>
+      <label>Surface family
+        <select id="family"></select>
+      </label>
+      <div class="segmented" id="kind"></div>
+      <label>Sulcal shading
+        <select id="shading">
+          <option value="continuous">Continuous</option>
+          <option value="binary">Binary (sulci and gyri)</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+      <label>Hemispheres
+        <select id="layout">
+          <option value="splayed">Splayed 180° (both lateral surfaces)</option>
+          <option value="separated">Separated</option>
+          <option value="together">Anatomical position</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="trackball"> Free rotation (trackball)</label>
+      <label class="check"><input type="checkbox" id="additive"> Additive color</label>
+      <div class="views">
+        <button type="button" data-view="left">L lateral</button>
+        <button type="button" data-view="right">R lateral</button>
+        <button type="button" data-view="left-medial">L medial</button>
+        <button type="button" data-view="right-medial">R medial</button>
+        <button type="button" data-view="dorsal">Dorsal</button>
+        <button type="button" data-view="ventral">Ventral</button>
+        <button type="button" data-view="anterior">Anterior</button>
+        <button type="button" data-view="posterior">Posterior</button>
+      </div>
+      <button id="reset-view" type="button">Reset view</button>
+    </section>
+
+    <section>
+      <h2>Layers</h2>
+      <div class="add">
+        <select id="available"></select>
+        <button id="add" type="button">Add</button>
+      </div>
+      <div class="add">
+        <input id="file-path" type="text" placeholder="Path in the project, e.g. derivatives/..." spellcheck="false">
+        <button id="open-file" type="button" title="Open a GIFTI or CIFTI file from this project's BIDS directory">Open</button>
+      </div>
+      <div id="layers"></div>
+    </section>
+
+    <section>
+      <h2>Server</h2>
+      <div class="server">
+        <button id="refresh" type="button" title="Reread the registry for newly completed derivatives">Refresh data</button>
+        <button id="restart" type="button" title="Restart the server with the current nro code">Restart server</button>
+      </div>
+    </section>
+
+    <section id="readout" hidden>
+      <h2>Selected vertex</h2>
+      <dl id="readout-values"></dl>
+    </section>
+  </aside>
+
+  <main>
+    <canvas id="canvas"></canvas>
+    <button id="expand" type="button" title="Show panel" hidden>›</button>
+    <div id="status" role="status"></div>
+  </main>
+
+  <template id="layer-template">
+    <article class="layer">
+      <header>
+        <input type="checkbox" class="visible" checked title="Show">
+        <span class="name"></span>
+        <button type="button" class="remove" title="Remove">×</button>
+      </header>
+      <p class="hint"></p>
+      <label class="map-row">Map <select class="map"></select></label>
+      <div class="grid">
+        <label>Colors <select class="cmap"></select></label>
+        <label>Opacity <input class="opacity" type="range" min="0" max="1" step="0.05" value="1"></label>
+        <label>Min <input class="min" type="number" step="any"></label>
+        <label>Max <input class="max" type="number" step="any"></label>
+        <label>Threshold <input class="threshold" type="number" step="any"></label>
+      </div>
+    </article>
+  </template>
+</body>
+</html>

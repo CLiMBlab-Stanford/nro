@@ -411,6 +411,36 @@ def test_anatomical_manifest_selects_only_display_surfaces(tmp_path: Path) -> No
     assert manifest_surface_families(manifest) == surfaces
 
 
+def test_anatomical_manifest_returns_native_and_msmall_families(tmp_path: Path) -> None:
+    native = _surfaces(tmp_path)
+    atlas = []
+    for hemi in ("L", "R"):
+        for kind in ("pial", "midthickness", "white", "inflated"):
+            path = tmp_path / f"sub-01_space-MSMAll_den-32k_hemi-{hemi}_{kind}.surf.gii"
+            path.write_text(f"{hemi} {kind}\n", encoding="utf-8")
+            atlas.append(path)
+    manifest = tmp_path / "sub-01_desc-preprocessAnat_manifest.json"
+    write_public_json(
+        manifest,
+        {
+            "outputs": {
+                "surfaces": {f"surface{index}": str(path) for index, path in enumerate(native)},
+                "msmall": {
+                    "atlas_surfaces": {
+                        "L": {path.stem: str(path) for path in atlas[:4]},
+                        "R": {path.stem: str(path) for path in atlas[4:]},
+                    }
+                },
+            }
+        },
+    )
+
+    families = manifest_surface_families(manifest)
+
+    assert set(families) == {path.absolute() for path in (*native, *atlas)}
+    assert len(families) == 16
+
+
 def test_anatomical_manifest_discovers_msmall_surface_family(tmp_path: Path) -> None:
     surfaces = []
     for hemi in ("L", "R"):

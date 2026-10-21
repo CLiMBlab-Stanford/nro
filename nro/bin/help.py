@@ -105,6 +105,10 @@ TASK_GUIDES = {
 
           nro scene -P PROJECT -p PARTICIPANT -m MODULE --publish
 
+        Browse surfaces and maps in a web browser through an SSH tunnel:
+
+          nro viz
+
         Open arbitrary Workbench files on an X11 display:
 
           nro wb_view FILE [FILE ...]

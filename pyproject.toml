@@ -86,6 +86,7 @@ include = ["nro*"]
 "nro.engine" = ["*.scene.in", "*.b85"]
 "nro.modules.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
 "nro.qc" = ["*.scene.in"]
+"nro.viz" = ["static/*"]
 "nro.orchestration.migrations" = ["baselines.json"]
 
 [tool.pytest.ini_options]

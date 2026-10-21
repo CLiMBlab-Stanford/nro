@@ -79,6 +79,106 @@ allocation first when the current host should not run interactive programs.
 Workbench reads NIfTI, GIFTI, and CIFTI files. Convert FreeSurfer `.mgz`
 volumes and native surfaces before opening them.
 
+## `nro viz`
+
+```bash
+nro viz
+nro viz -P climb -p c026 --branch main
+nro viz --stop
+```
+
+`nro viz` serves completed surface derivatives to a web browser. It is an
+early prototype that runs beside Workbench and does not replace `nro scene`.
+Selectors are optional. `-P`, `-p`, and `--branch` add the initial project,
+participant, and branch to the printed URL; the page can change all three.
+
+Each user has one server for each nro checkout. The first call submits it as a
+Slurm batch job on the site's `viewing_partition`, with the same CPU, memory,
+and wall-time settings as the Workbench viewer broker. The command waits until
+the server is running, prints an SSH tunnel command and a URL, and exits:
+
+```text
+ssh -N -L 44252:NODE:44252 USER@LOGIN_HOST
+http://localhost:44252/?token=TOKEN
+```
+
+Run the tunnel command on your own computer and open the URL there. The server
+keeps running until `nro viz --stop` or the end of its allocation. Later calls
+find the running server and print the same instructions without submitting
+another job, so several terminals and browser tabs share one allocation.
+`--no-wait` returns as soon as the job is queued; run `nro viz` again once it
+starts. Pressing Ctrl-C while waiting leaves the job queued.
+
+The server port is derived from your user ID, so it stays the same from one
+server to the next. A server moves to a nearby port only when that one is busy
+on its node. The node can differ between servers. `--local-port` changes the
+local port named in the printed commands. `--serverless` runs a private server
+in the current terminal on the current host, with `--port` to fix its port.
+
+The server listens on every interface of its host, so other cluster users can
+reach the port. A request without your access token receives no data. The token
+is stored in your private state directory and persists across servers, so a
+saved URL keeps working when a new server lands on the same node. Opening the
+URL stores the token in a browser cookie. Treat the URL like a password. Server
+state and logs live in `viewers/uid-<UID>/viz-<CHECKOUT_DIGEST>/` in the central
+nro store.
+
+The server reads each branch's registry on first use. The page's **Refresh
+data** button rereads the selected branch, so derivatives that finished later
+appear without a restart. **Restart server** replaces the server process inside
+the same job so it loads the checkout's current code; `scancel --batch
+--signal=USR1 JOB_ID` does the same. The restarted server keeps its port and
+token, so tunnels and open pages keep working, but it must read time series
+again. Changes to the page's own HTML, CSS, and JavaScript need only a browser
+reload.
+
+The page lists every registered branch. It starts on the server checkout's
+branch, or on `main` when that branch has no completed derivatives. For the
+selected branch it lists every project and participant with completed
+derivatives. For each participant, the viewer draws complete
+bilateral display-surface families and lists maps whose vertex counts match the
+selected surfaces. These maps include GIFTI metrics and labels, CIFTI dense
+scalars and labels, and dense time series. Volume images and parcel-connectivity
+matrices are not shown.
+
+Hemispheres are splayed 180 degrees by default; they can also be separated or
+shown in anatomical position. The splayed layout turns each hemisphere 90 degrees about the vertical axis, so
+both lateral surfaces face the viewer side by side with the base of the brain
+down. **Reset view** returns to that view, or to the left lateral view in the
+other layouts. The view uses an orthographic projection, as Workbench does, so distant parts
+of a surface are not drawn smaller. Lateral and medial views show only the
+facing hemisphere. After a change of layout, surface, or view, the
+camera keeps its direction and rescales so the surfaces fill the canvas width
+with a small margin, or its height when that is the tighter limit. Dragging
+rotates like a turntable, keeping the superior axis vertical. Select **Free rotation (trackball)** to rotate about any axis.
+
+Layers are drawn over sulcal shading, with the newest layer on top. Shading is
+continuous by default; the panel also offers two-tone sulcus and gyrus shading,
+as in Workbench, or none. Each layer has its own colors, range, threshold, and
+opacity. The red, green, blue, yellow, cyan, and magenta schemes keep one color
+and map the value to opacity between the layer's minimum and maximum. The signed
+scheme colors positive values up to the maximum and negative values down to the
+minimum. A dense time series, such as the `dynconn` output, becomes a
+seed-correlation layer. Click the cortex to place a seed, and the server
+correlates that vertex with every other vertex. The first seed request reads the
+complete series into memory; a 1.2 GB `dynconn` series takes about 20 seconds to
+load, and later seeds take under a second. The server keeps loaded series for
+later seeds in up to 60 percent of its memory allocation, dropping the least
+recently used series first.
+
+**Open** adds a file that is not a registered derivative, such as a
+diagnostic or ad hoc map. Enter its path relative to the selected project's
+BIDS directory, for example `derivatives/diagnostics/sub-01/NAME.func.gii`. The
+viewer accepts GIFTI metrics and labels and CIFTI dense scalars, labels, and
+time series. A GIFTI file with a `hemi-L` or `hemi-R` entity opens with its
+other hemisphere when that file exists. The file's vertex counts must match the
+displayed surfaces. Paths that resolve outside the project directory, including
+through symbolic links, are refused.
+
+The browser loads the three.js rendering library from `cdn.jsdelivr.net`, so
+the computer running the browser needs internet access. Imaging data travels
+only through the SSH tunnel.
+
 ## `nro render`
 
 `render` creates static images from the same combined views as `scene`:
