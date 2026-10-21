@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 from typing import Callable, Literal
@@ -12,6 +13,15 @@ from nro.orchestration.releases import ReleaseStore, tagged_source
 from nro.orchestration.scheduler_implementation import activate
 
 MaintenanceAction = Literal["drain", "stop"]
+
+
+def _remove_legacy_planner_state(control: Path) -> None:
+    """Remove retired planner election state after orchestration is quiescent."""
+    root = Path(control) / "shared/planner"
+    (root / "active.json").unlink(missing_ok=True)
+    shutil.rmtree(root / "launch", ignore_errors=True)
+    for script in root.glob("planner-*.sbatch"):
+        script.unlink(missing_ok=True)
 
 
 def _repair_scientific_schemas(registry: Registry) -> list[dict]:
@@ -171,6 +181,7 @@ def prepare_pool(
                 "An unmanaged worker pool is still active; stop it before scheduler activation"
             )
         _set_installation_barrier(registry, checkout, action="drain")
+        _remove_legacy_planner_state(registry.paths.control)
         audit = audit_shared_state(registry, discover_bids_inventory(registry.paths.bids_root))
         journal.record("audited", audit=audit.as_dict())
         if audit.fatal_errors:
@@ -292,6 +303,7 @@ def prepare_pool(
             report_interval=report_interval,
         )
     assert progress is not None
+    _remove_legacy_planner_state(registry.paths.control)
     journal.record("rebuilding", audit=audit.as_dict())
     scientific = _repair_scientific_schemas(registry)
     result = {**summary, **progress, "scientific": scientific}

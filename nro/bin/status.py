@@ -134,7 +134,7 @@ def _render_report(
         detail["workflows"].update(row.get("workflows", ()))
     if variants and show_lineages:
         lines.extend(("", _paint("Module lineages", _BOLD + _CYAN, color=color)))
-        for (module, lineage), detail in sorted(variants.items()):
+        for (module, lineage), detail in variants.items():
             lines.append(f"- {module}/{lineage}")
             route = " -> ".join(f"{item['module']}={item['config']}" for item in detail["route"])
             lines.append(f"  Route: {route or '-'}")
@@ -186,6 +186,67 @@ def _display_entities(row: dict) -> dict:
     if row["module"] == "firstlevels" and "task" in entities:
         entities["analysis"] = entities.pop("task")
     return entities
+
+
+def _ordered_status_rows(rows: list[dict], dependencies: list[tuple[int, int]]) -> list[dict]:
+    """Order status rows by project, participant, and module dependency depth."""
+    by_id = {int(row["id"]): row for row in rows}
+    modules_by_group: dict[tuple[str, str], set[str]] = {}
+    parents_by_group: dict[tuple[str, str], dict[str, set[str]]] = {}
+    for row in rows:
+        group = str(row["project"]), str(row["participant"])
+        module = str(row["module"])
+        modules_by_group.setdefault(group, set()).add(module)
+        parents_by_group.setdefault(group, {}).setdefault(module, set())
+    for child_id, parent_id in dependencies:
+        child = by_id.get(int(child_id))
+        parent = by_id.get(int(parent_id))
+        if child is None or parent is None:
+            continue
+        child_group = str(child["project"]), str(child["participant"])
+        parent_group = str(parent["project"]), str(parent["participant"])
+        child_module = str(child["module"])
+        parent_module = str(parent["module"])
+        if child_group == parent_group and child_module != parent_module:
+            parents_by_group[child_group][child_module].add(parent_module)
+
+    ranks: dict[tuple[str, str], dict[str, tuple[int, str]]] = {}
+    for group, modules in modules_by_group.items():
+        remaining = set(modules)
+        depths: dict[str, int] = {}
+        while remaining:
+            ready = sorted(
+                module for module in remaining if not (parents_by_group[group][module] & remaining)
+            )
+            if not ready:
+                cycle_depth = max(depths.values(), default=-1) + 1
+                for module in sorted(remaining):
+                    depths[module] = cycle_depth
+                break
+            for module in ready:
+                parent_depths = [
+                    depths[parent] for parent in parents_by_group[group][module] if parent in depths
+                ]
+                depths[module] = max(parent_depths, default=-1) + 1
+                remaining.remove(module)
+        ranks[group] = {module: (depths[module], module) for module in modules}
+
+    def key(row: dict) -> tuple:
+        group = str(row["project"]), str(row["participant"])
+        entities = tuple(
+            sorted((str(name), str(value)) for name, value in _display_entities(row).items())
+        )
+        lineage = str(row.get("directory_label") or row.get("config_id") or "-")
+        stable = str(row.get("work_item_key") or row["id"])
+        return (
+            *group,
+            ranks[group][str(row["module"])],
+            lineage,
+            entities,
+            stable,
+        )
+
+    return sorted(rows, key=key)
 
 
 def _failure_detail(row: dict, *, project: str) -> dict:
@@ -333,6 +394,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         projects = selected_projects(bids_root, projects)
     selected_project_set = set(projects)
     visible_ids = None
+    dependencies: list[tuple[int, int]] = []
     if branch_execution:
         if args.update:
             from nro.orchestration.branch_status import refresh
@@ -354,6 +416,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
 
             result = read_branch_snapshot(Path(values["registry"]), site.CHECKOUT)
         rows, visible_ids = result["rows"], set(result["visible_ids"])
+        dependencies = [tuple(pair) for pair in result.get("dependencies", [])]
         if not projects:
             selected_project_set = {str(row["project"]) for row in rows if row["id"] in visible_ids}
         if args.update:
@@ -398,10 +461,13 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
         rows = registry.work_item_status_snapshot(read_only=True)
     elif not branch_execution and registry.existing_database_path().is_file():
         rows = registry.work_item_status_snapshot(read_only=True)
+    if not branch_execution and registry.existing_database_path().is_file():
+        dependencies = registry.work_item_dependencies(read_only=True)
+    visible_rows = [row for row in rows if visible_ids is None or int(row["id"]) in visible_ids]
+    ordered_rows = _ordered_status_rows(visible_rows, dependencies)
     by_id = {int(row["id"]): row for row in rows}
-    for row in rows:
-        if visible_ids is not None and row["id"] not in visible_ids:
-            continue
+    order_by_id = {int(row["id"]): position for position, row in enumerate(ordered_rows)}
+    for row in ordered_rows:
         project = str(row["project"])
         if project not in selected_project_set or not _matches_request(
             row,
@@ -450,7 +516,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
                 "oom_count": row.get("oom_count", 0),
             }
         )
-    error_details = list(critical_errors.values())
+    error_details = sorted(
+        critical_errors.values(),
+        key=lambda detail: order_by_id.get(int(detail["work_item_id"]), len(order_by_id)),
+    )
     error_labels = {
         detail["work_item_id"]: _work_item_identifier(detail) for detail in error_details
     }

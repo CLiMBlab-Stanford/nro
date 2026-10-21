@@ -172,15 +172,6 @@ SITE_SETTINGS = {
     "slurm.scheduler.cpus": _setting(
         "scheduler_cpus", "int", "next scheduler", "Scheduler CPUs", minimum=1
     ),
-    "slurm.planner.time_hours": _setting(
-        "planner_time", "int", "next planner", "Planner wall time", minimum=1
-    ),
-    "slurm.planner.memory_gb": _setting(
-        "planner_memory", "int", "next planner", "Planner host memory", minimum=1
-    ),
-    "slurm.planner.cpus": _setting(
-        "planner_cpus", "int", "next planner", "Planner CPUs", minimum=1
-    ),
     "slurm.worker.time_hours": _setting(
         "worker_time", "int", "new request", "General and GPU worker wall time", minimum=1
     ),

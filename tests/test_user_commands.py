@@ -20,7 +20,7 @@ from nro.bin.run import (
 )
 from nro.bin.run import main as run_main
 from nro.bin.set import main as set_main
-from nro.bin.status import _concise_error, _format_elapsed, _render_report
+from nro.bin.status import _concise_error, _format_elapsed, _ordered_status_rows, _render_report
 from nro.bin.status import main as status_main
 from nro.bin.stop import build_parser as stop_parser
 from nro.bin.stop import main as stop_main
@@ -55,7 +55,7 @@ def test_run_cpu_override() -> None:
 
 @pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
 def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, capsys, mode) -> None:
-    from nro.orchestration import planner_client, scheduler_client, source_snapshots
+    from nro.orchestration import scheduler_client, source_snapshots
     from nro.site import configuration as site
 
     source = SimpleNamespace(root=tmp_path / "source", digest="digest")
@@ -81,11 +81,6 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
         "command",
         lambda control, bids_root: calls.append(("command", control, bids_root)) or endpoint,
     )
-    monkeypatch.setattr(
-        planner_client,
-        "ensure",
-        lambda value: calls.append(("ensure", value)),
-    )
 
     def exchange(value, payload, **options):
         calls.append(("exchange", value, payload, options))
@@ -103,16 +98,15 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
 
     result = json.loads(capsys.readouterr().out)
     assert result["requests"] == ["request-1"]
-    assert calls[1] == ("ensure", endpoint)
-    assert calls[2][0:2] == ("exchange", endpoint)
-    assert calls[2][2]["operation"] == "plan_run"
-    assert calls[2][2]["request"]["execution"]["kind"] == (
+    assert calls[1][0:2] == ("exchange", endpoint)
+    assert calls[1][2]["operation"] == "plan_run"
+    assert calls[1][2]["request"]["execution"]["kind"] == (
         "checkout" if mode == "branch" else "installed"
     )
-    assert calls[2][2]["request"]["execution"]["digest"] == (
+    assert calls[1][2]["request"]["execution"]["digest"] == (
         "branch-digest" if mode == "branch" else "digest"
     )
-    assert calls[2][2]["request"]["argv"] == [
+    assert calls[1][2]["request"]["argv"] == [
         "-P",
         "demo",
         "-m",
@@ -120,9 +114,9 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
         "--no-submit",
         "--json",
     ]
-    progress = calls[2][3].pop("progress")
+    progress = calls[1][3].pop("progress")
     assert isinstance(progress, scheduler_client._ProgressNotice)
-    assert calls[2][3] == {"timeout": None, "require_service": True, "start_epoch": True}
+    assert calls[1][3] == {"timeout": None, "require_service": True, "start_epoch": True}
 
 
 def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> None:
@@ -900,6 +894,80 @@ def test_status_elapsed_clock_handles_missing_and_subday_values() -> None:
     assert _format_elapsed(None) == "-"
     assert _format_elapsed(0.9) == "00:00:00"
     assert _format_elapsed(3661.9) == "01:01:01"
+
+
+def test_status_orders_projects_participants_and_module_dag() -> None:
+    def row(identifier, project, participant, module, entities=None, lineage="main"):
+        return {
+            "id": identifier,
+            "project": project,
+            "participant": participant,
+            "module": module,
+            "directory_label": lineage,
+            "entities_json": json.dumps(entities or {}),
+            "work_item_key": f"key-{identifier}",
+        }
+
+    rows = [
+        row(5, "beta", "01", "anat"),
+        row(4, "alpha", "02", "anat"),
+        row(3, "alpha", "01", "networks"),
+        row(2, "alpha", "01", "dynconn", {"run": "02"}),
+        row(7, "alpha", "01", "firstlevels"),
+        row(6, "alpha", "01", "microparcellation"),
+        row(1, "alpha", "01", "anat"),
+        row(8, "alpha", "01", "func"),
+        row(9, "alpha", "01", "clean"),
+        row(10, "alpha", "01", "dynconn", {"run": "01"}),
+    ]
+    dependencies = [
+        (8, 1),
+        (9, 8),
+        (2, 9),
+        (10, 9),
+        (7, 9),
+        (6, 9),
+        (3, 2),
+    ]
+
+    ordered = _ordered_status_rows(rows, dependencies)
+
+    assert [(item["project"], item["participant"]) for item in ordered[:8]] == [("alpha", "01")] * 8
+    assert [item["module"] for item in ordered[:8]] == [
+        "anat",
+        "func",
+        "clean",
+        "dynconn",
+        "dynconn",
+        "firstlevels",
+        "microparcellation",
+        "networks",
+    ]
+    assert [json.loads(item["entities_json"]).get("run") for item in ordered[3:5]] == [
+        "01",
+        "02",
+    ]
+    assert [(item["project"], item["participant"]) for item in ordered[8:]] == [
+        ("alpha", "02"),
+        ("beta", "01"),
+    ]
+
+
+def test_status_keeps_cyclic_modules_readable() -> None:
+    rows = [
+        {
+            "id": identifier,
+            "project": "demo",
+            "participant": "01",
+            "module": module,
+            "entities_json": "{}",
+        }
+        for identifier, module in ((1, "anat"), (2, "zeta"), (3, "alpha"))
+    ]
+
+    ordered = _ordered_status_rows(rows, [(2, 3), (3, 2)])
+
+    assert [row["module"] for row in ordered] == ["anat", "alpha", "zeta"]
 
 
 def test_status_work_item_details_are_opt_in() -> None:

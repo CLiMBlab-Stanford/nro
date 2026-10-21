@@ -12,7 +12,6 @@ records in this layout:
 CONTROL/
   shared/scheduler/registry.sqlite3
   shared/scheduler/service/{progress,status.json,status-static-*,status-dynamic-*}
-  shared/planner/{active.json,launch}
   branches/<branch-id>/registry.sqlite3
 ```
 
@@ -35,12 +34,11 @@ terminal identities, while inherited-input reconciliation plans use compressed s
 Periodic transactional compaction removes superseded attempts and terminal worker or
 Slurm records; incremental vacuuming reclaims the resulting free pages gradually.
 
-`nro run` starts or joins both the scheduler and a small planning broker. When
-both are absent, the command submits their Slurm allocations independently so
-they may dequeue in parallel. The scheduler records planning requests in FIFO
-order. The broker processes one at a time using the requesting branch's pinned
-source in an isolated subprocess; it never opens the scheduler registry. Both
-services remain available for a 12-hour idle grace period.
+`nro run` starts or joins the scheduler. The scheduler records planning requests
+in FIFO order and processes one at a time using the requesting branch's pinned
+source in an isolated subprocess. The child does not open the scheduler registry.
+Worker coordination continues on separate scheduler threads while planning runs.
+The scheduler remains available for a 12-hour idle grace period.
 
 The worker pool has general, long-CPU, and GPU resource classes. General and
 long-CPU workers claim complete work items and share the global CPU concurrency
@@ -97,7 +95,8 @@ status mode, cancellation rule, and repair boundary.
 
 ## Planning and execution
 
-The planning broker registers complete work item specifications before submitting work.
+The scheduler's isolated planner child returns complete work item specifications before
+the scheduler submits work.
 Workers request ready work items from the controller and run each one in a
 separate subprocess. A module constructs its complete runner graph before
 freshness is checked. The shared runner then executes or skips each declared

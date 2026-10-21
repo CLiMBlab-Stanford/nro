@@ -242,7 +242,7 @@ def _private_flywheel_credentials(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4}:
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5}:
         raise ValueError(
             f"Definitions schema 1 requires site definition version 1, 2, or 3: {path}"
         )
@@ -278,7 +278,7 @@ def _managed_pycicada_dependency(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4}:
+    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4, 5}:
         raise ValueError(f"Definitions schema 3 requires site definition version 2 or 3: {path}")
     resources = value.get("resources")
     if not isinstance(resources, dict):
@@ -327,9 +327,9 @@ def _unified_site_policy(root: Path) -> None:
     if not path.is_file():
         return
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4}:
+    if not isinstance(value, dict) or value.get("version") not in {2, 3, 4, 5}:
         raise ValueError(f"Definitions schema 5 requires site definition version 2 or 3: {path}")
-    if value["version"] == 4:
+    if value["version"] >= 4:
         return
     execution = value.get("execution")
     if not isinstance(execution, dict):
@@ -401,6 +401,29 @@ def _preserve_named_network_sources(root: Path) -> None:
         )
 
 
+def _scheduler_owned_planning(root: Path) -> None:
+    """Move planner resources into the scheduler allocation."""
+    path = root / "site/site.yml"
+    if not path.is_file():
+        return
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") not in {4, 5}:
+        raise ValueError(f"Definitions schema 9 requires site definition version 4: {path}")
+    if value["version"] == 5:
+        return
+    slurm = value.get("slurm")
+    if not isinstance(slurm, dict) or not isinstance(slurm.get("scheduler"), dict):
+        raise ValueError(f"Invalid site Slurm settings: {path}")
+    slurm.pop("planner", None)
+    scheduler = slurm["scheduler"]
+    scheduler["memory_gb"] = max(8, int(scheduler.get("memory_gb", 0)))
+    value["version"] = 5
+    path.write_text(
+        normalize_managed_text(path, yaml.safe_dump(value, sort_keys=False)),
+        encoding="utf-8",
+    )
+
+
 MIGRATIONS = (
     Migration(0, 1, "0.13.0", _adopt_unversioned),
     Migration(1, 2, "0.14.4", _private_flywheel_credentials),
@@ -410,6 +433,7 @@ MIGRATIONS = (
     Migration(5, 6, "0.31.0", _unified_site_policy),
     Migration(6, 7, "0.34.0", _synthsr_lesion_scaffold),
     Migration(7, 8, "0.35.2", _preserve_named_network_sources),
+    Migration(8, 9, "0.35.4", _scheduler_owned_planning),
 )
 SCHEMA_VERSION = MIGRATIONS[-1].destination
 

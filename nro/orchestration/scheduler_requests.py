@@ -14,6 +14,10 @@ from nro.orchestration.scheduler_bus import validate_message
 REQUEST_REGISTRATION_TIMEOUT_SECONDS = 0.25
 
 
+class RetryableSchedulerRequest(RuntimeError):
+    """Leave a durable request unresolved for the replacement scheduler."""
+
+
 def cancel_orphaned_for_maintenance(
     registry,
     *,
@@ -146,7 +150,7 @@ def _execute(registry, record: dict, operation: Callable[[dict], dict]) -> dict:
         )
     try:
         response = operation(record)
-    except RegistryLockTimeout:
+    except (RegistryLockTimeout, RetryableSchedulerRequest):
         # The durable record remains running and may be reclaimed by the same
         # request identity after the competing transaction releases the lock.
         raise

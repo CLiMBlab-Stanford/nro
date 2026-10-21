@@ -24,7 +24,7 @@ _WORKER_JOB_NAMES = frozenset({"nro-worker", "nro-long-worker", "nro-gpu-worker"
 
 @dataclass(frozen=True)
 class PendingService:
-    """A scheduler or planner allocation waiting to start."""
+    """A scheduler allocation waiting to start."""
 
     name: str
     token: str
@@ -128,17 +128,12 @@ def _age_seconds(record: dict, now: float) -> float:
 
 
 def _launches(control: Path) -> tuple[tuple[str, dict], ...]:
-    from nro.orchestration import planner_bus, scheduler_bus
+    from nro.orchestration import scheduler_bus
 
     if scheduler_bus.read_active(control) is None:
         launch = scheduler_bus.read_launch(control)
         return () if launch is None else (("scheduler", launch),)
-    launches: list[tuple[str, dict]] = []
-    if planner_bus.read_active(control) is None:
-        launch = planner_bus.read_launch(control)
-        if launch is not None:
-            launches.append(("planner", launch))
-    return tuple(launches)
+    return ()
 
 
 def pending_service(

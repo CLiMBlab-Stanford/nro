@@ -423,7 +423,6 @@ def test_execute_moves_each_managed_project_root(tmp_path, definitions_fixture, 
         "registered_checkout",
         lambda self, candidate: "main" if candidate == checkout else None,
     )
-    monkeypatch.setattr("nro.orchestration.planner_client.shutdown", lambda _control: None)
     roots = (bids, work, development / "dev/BIDS", development / "dev/WORK")
     for root in roots:
         project = root / "old"
