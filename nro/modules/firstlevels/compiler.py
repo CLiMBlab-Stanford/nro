@@ -53,7 +53,7 @@ def task_node(source: dict) -> dict:
         or any(not isinstance(v, str) or not v for v in predictors)
     ):
         raise ValueError("Provide conditions or a nonempty list of event predictors")
-    hrf = source.get("hrf", "spm")
+    hrf = source.get("hrf", "glover")
     if hrf not in {"spm", "glover", None}:
         raise ValueError("hrf must be spm, glover or null")
     overrides = source.get("hrf_overrides", {})

@@ -9,7 +9,11 @@ import pytest
 
 from nro.definitions.store import ConfigStore, fingerprint
 from nro.modules.firstlevels.compiler import compile_model
-from nro.modules.firstlevels.contract import _matches_definition, definition_fingerprint
+from nro.modules.firstlevels.contract import (
+    _matches_definition,
+    definition_fingerprint,
+    estimation_fingerprint,
+)
 from nro.modules.firstlevels.task_models import scientific_model
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.manifests import _completion_matches_contract
@@ -51,7 +55,7 @@ def test_authoring_forms_compile_identically(form):
             "EvH": {"trial_type.E": 0.5, "trial_type.H": -0.5},
         }
     elif form == "explicit_defaults":
-        variant.update(hrf="spm", hrf_overrides={})
+        variant.update(hrf="glover", hrf_overrides={})
     elif form == "advanced":
         variant = scientific_model(source)
     else:
@@ -64,7 +68,7 @@ def test_authoring_forms_compile_identically(form):
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("hrf", "glover"),
+        ("hrf", "spm"),
         ("hrf_overrides", {"trial_type.E": None}),
         ("contrasts", {"E": {"E": 2}, "EvH": {"E": 1, "H": -1}}),
     ],
@@ -72,6 +76,19 @@ def test_authoring_forms_compile_identically(form):
 def test_scientific_changes_remain_distinct(field, value):
     source = _source()
     assert scientific_model(source) != scientific_model({**source, field: value})
+
+
+def test_estimation_identity_excludes_contrasts_but_includes_hrf():
+    config = ConfigStore().load_configuration("firstlevels", "main").values
+    original = compile_model(_source(), "task/main", config)
+    contrasts = compile_model(
+        {**_source(), "contrasts": {"H": {"H": 1}, "HvE": {"H": 1, "E": -1}}},
+        "task/main",
+        config,
+    )
+    changed_hrf = compile_model({**_source(), "hrf": "spm"}, "task/main", config)
+    assert estimation_fingerprint(original, config) == estimation_fingerprint(contrasts, config)
+    assert estimation_fingerprint(original, config) != estimation_fingerprint(changed_hrf, config)
 
 
 def test_task_models_reject_module_owned_aggregation():
@@ -111,7 +128,7 @@ def test_recorded_contracts_normalize_without_loading_current_model():
     assert completion["artifact_fingerprint"] != expected
     assert _completion_matches_contract(completion, expected)
     changed = deepcopy(contract)
-    changed["processing"]["task_model"]["hrf"] = "glover"
+    changed["processing"]["task_model"]["hrf"] = "spm"
     assert not _completion_matches_contract(completion, fingerprint(canonical_contract(changed)))
     completion["artifact_fingerprint"] = "corrupt"
     assert not _completion_matches_contract(completion, expected)
@@ -218,7 +235,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     assert registry.work_item_rows()[0]["artifact_state"] == "fresh"
     assert assess_registry(registry)[work_item_id][0] == "fresh"
     assert output.stat().st_mtime_ns == stamp
-    model_path.write_text(yaml.safe_dump({**_source(), "hrf": "glover"}))
+    model_path.write_text(yaml.safe_dump({**_source(), "hrf": "spm"}))
     assert preview_registry(registry)[work_item_id][0] == "stale"
     assert assess_registry(registry)[work_item_id][0] == "stale"
 

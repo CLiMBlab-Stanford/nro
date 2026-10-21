@@ -559,6 +559,47 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
     assert json.loads(path.read_text())["definition_fingerprint"] != old_definition
 
 
+def test_contrast_only_edit_reuses_compact_run_fits(tmp_path, monkeypatch):
+    from nro.modules.firstlevels import module
+
+    root = _synthetic_project(tmp_path, "volume")
+    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config["noise_model"] = "ols"
+    model = load_task_model("langlocSN/main")
+    kwargs = dict(
+        runs=discover_raw_runs(root / "sub-01"),
+        participant="01",
+        project_root=root,
+        func_id="main",
+        anat_id="main",
+        config_id="main",
+        model_id="langlocSN/main",
+        model=model,
+        config=config,
+        space="T1w",
+        smoothing=0,
+        work_root=tmp_path / "work",
+    )
+    output = run_module(**kwargs)
+    first = read_public_json(output)
+    arrays = {
+        Path(path): Path(path).stat().st_mtime_ns
+        for fit in first["source_fits"].values()
+        for path in fit["arrays"].values()
+    }
+
+    def unexpected_refit(*args, **kwargs):
+        raise AssertionError("A contrast-only edit refitted the time series")
+
+    monkeypatch.setattr(module, "fit_glm", unexpected_refit)
+    model["contrasts"]["SplusN"] = {"S": 0.5, "N": 0.5}
+    run_module(**kwargs)
+
+    updated = read_public_json(output)
+    assert any(record["name"] == "SplusN" for record in updated["records"])
+    assert arrays == {path: path.stat().st_mtime_ns for path in arrays}
+
+
 @pytest.mark.parametrize("domain,smoothing", [("volume", 0), ("volume", 2), ("surface", 0)])
 def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
     import shutil

@@ -100,7 +100,7 @@ def test_model_draft_unions_conditions_without_inferring_other_predictors(tmp_pa
     assert model["conditions"] == "trial_type"
     assert model["contrasts"] == {"N": {"N": 1}, "S": {"S": 1}}
     assert model["model_set"] == []
-    assert model["hrf"] == "spm"
+    assert "hrf" not in model
     assert "aggregation" not in model
     assert "predictors" not in model
     assert any("1/2 tables" in line for line in messages)

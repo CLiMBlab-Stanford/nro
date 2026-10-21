@@ -17,7 +17,7 @@ def canonical_transform(instruction: dict) -> dict:
     if name == "Factor":
         result.setdefault("Constraint", "none")
     elif name == "Convolve":
-        result.setdefault("Model", "spm")
+        result.setdefault("Model", "glover")
     elif name == "Scale":
         result.setdefault("Demean", True)
         result.setdefault("Rescale", True)
@@ -54,7 +54,7 @@ def validate_transform(instruction: dict) -> None:
         or any(not isinstance(v, str) or not v for v in inputs)
     ):
         raise ValueError("Transformation Input must name event variables")
-    if name == "Convolve" and instruction.get("Model", "spm") not in {"spm", "glover"}:
+    if name == "Convolve" and instruction.get("Model", "glover") not in {"spm", "glover"}:
         raise ValueError("Supported HRFs: spm, glover")
     if name == "Factor":
         constraint = instruction.get("Constraint", "none")
@@ -142,7 +142,7 @@ def event_variables(events: pd.DataFrame, transformations: dict) -> tuple[dict, 
             for name in names:
                 if name in convolutions:
                     raise ValueError(f"Repeated HRF convolution: {name}")
-                convolutions[name] = instruction.get("Model", "spm")
+                convolutions[name] = instruction.get("Model", "glover")
             continue
         if convolutions:
             raise ValueError("Event transformations must precede convolution")

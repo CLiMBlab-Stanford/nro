@@ -34,6 +34,7 @@ from nro.orchestration.runner_graph import Step
 from .compiler import compile_model, realize_run_node
 from .contract import (
     definition_fingerprint,
+    estimation_fingerprint,
     firstlevels_output_contract,
     response_scaling_metadata,
     validate_completion,
@@ -197,6 +198,33 @@ def create_fit_step(
     """Declare one independent run fit, with runtime omissions recorded in its manifest."""
     manifest = prefix.with_name(prefix.name + "_manifest.json")
 
+    def reusable_fit(inputs: tuple[Path, ...]) -> tuple[dict, dict, dict] | None:
+        """Return a prior compact fit when only its contrast program changed."""
+        if config["overwrite"] or not manifest.is_file():
+            return None
+        try:
+            previous = read_public_json(manifest)
+            if previous["definition_fingerprint"] == base["definition_fingerprint"]:
+                return None
+            if estimation_fingerprint(
+                previous["model_document"], previous["configuration"]
+            ) != estimation_fingerprint(base["model_document"], config):
+                return None
+            if manifest.stat().st_mtime_ns < max(path.stat().st_mtime_ns for path in inputs):
+                return None
+            sources = previous["source_fits"]
+            if set(sources) != {run.stem}:
+                return None
+            arrays = sources[run.stem]["arrays"]
+            if any(
+                not Path(path).is_file() or not Path(path).stat().st_size
+                for path in arrays.values()
+            ):
+                return None
+            return previous, sources, previous["geometry"]
+        except (OSError, ValueError, TypeError, KeyError):
+            return None
+
     def action() -> None:
         confounds = pd.read_csv(confounds_path, sep="\t")
         events = pd.read_csv(events_path, sep="\t")
@@ -253,39 +281,72 @@ def create_fit_step(
                 sources={},
             )
             return
-        data, geometry = read_timeseries(images)
-        if len(data) != len(confounds):
-            raise ValueError("Functional frame count differs from confounds")
-        data, invalid_locations = percent_signal_change(data, design.retained)
-        design.metadata["ResponseScalingInvalidLocations"] = invalid_locations
-        grid = np.array([0.0]) if config["noise_model"] == "ols" else np.asarray(config["ar_grid"])
-        LOG.info(
-            "Fitting %s: %d retained frames, %d observation dimensions, %d predictors, %d locations",
-            run.stem,
-            design.retained.sum(),
-            design.matrix.shape[0],
-            design.matrix.shape[1],
-            data.shape[1],
+        fit_inputs = (
+            *images,
+            confounds_path,
+            events_path,
+            sidecar_json_path(original_images[0]),
         )
-        fitted = fit_glm(
-            data,
-            design.matrix,
-            retained=design.retained,
-            ar_grid=grid,
-            block_size=config["spatial_block_size"],
-        )
-        mapping = design.coefficient_map
-        fit = RunFit(
-            (mapping @ fitted.beta).astype(np.float32),
-            fitted.residual_variance,
-            fitted.groups,
-            np.array([mapping @ covariance @ mapping.T for covariance in fitted.covariance]),
-            fitted.dof,
-            fitted.ar_coefficients,
-        )
-        fit_record, outputs = save_fit(prefix, fit)
+        reusable = reusable_fit(fit_inputs)
+        if reusable is not None:
+            previous = reusable[0]
+            prior_metadata = previous.get("design_metadata", {})
+            prior_estimability = np.asarray(
+                prior_metadata.get("CoefficientEstimability", []), dtype=float
+            )
+            if (
+                prior_metadata.get("Predictors") != design.names
+                or prior_estimability.shape != design.estimability.shape
+                or not np.allclose(prior_estimability, design.estimability)
+            ):
+                reusable = None
+        if reusable is None:
+            data, geometry = read_timeseries(images)
+            if len(data) != len(confounds):
+                raise ValueError("Functional frame count differs from confounds")
+            data, invalid_locations = percent_signal_change(data, design.retained)
+            design.metadata["ResponseScalingInvalidLocations"] = invalid_locations
+            grid = (
+                np.array([0.0]) if config["noise_model"] == "ols" else np.asarray(config["ar_grid"])
+            )
+            LOG.info(
+                "Fitting %s: %d retained frames, %d observation dimensions, %d predictors, %d locations",
+                run.stem,
+                design.retained.sum(),
+                design.matrix.shape[0],
+                design.matrix.shape[1],
+                data.shape[1],
+            )
+            fitted = fit_glm(
+                data,
+                design.matrix,
+                retained=design.retained,
+                ar_grid=grid,
+                block_size=config["spatial_block_size"],
+            )
+            mapping = design.coefficient_map
+            fit = RunFit(
+                (mapping @ fitted.beta).astype(np.float32),
+                fitted.residual_variance,
+                fitted.groups,
+                np.array([mapping @ covariance @ mapping.T for covariance in fitted.covariance]),
+                fitted.dof,
+                fitted.ar_coefficients,
+            )
+            fit_record, outputs = save_fit(prefix, fit)
+            sources = {key: fit_record}
+        else:
+            previous, sources, geometry = reusable
+            prior_metadata = previous.get("design_metadata", {})
+            if "ResponseScalingInvalidLocations" in prior_metadata:
+                design.metadata["ResponseScalingInvalidLocations"] = prior_metadata[
+                    "ResponseScalingInvalidLocations"
+                ]
+            outputs = [Path(path) for path in sources[key]["arrays"].values()]
+            LOG.info("Reusing the compact GLM fit for %s; updating contrasts only", run.stem)
+            if geometry["domain"] == "volume":
+                geometry = {**geometry, "reference": nib.load(geometry["reference_path"])}
         outputs.extend(design_outputs)
-        sources = {key: fit_record}
         outputs.extend(_publish_records(records, sources, prefix, geometry, fit_base, config))
         spatial = {key: value for key, value in geometry.items() if key != "reference"}
         if geometry["domain"] == "volume":
