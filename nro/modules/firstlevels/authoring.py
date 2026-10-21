@@ -150,7 +150,6 @@ def model_draft(
         "model_set": [],
         **({"tasks": list(dict.fromkeys(source_tasks))} if source_tasks else {}),
         "conditions": conditions,
-        "hrf": "spm",
         "contrasts": contrasts,
     }
     validate_task_model(model)

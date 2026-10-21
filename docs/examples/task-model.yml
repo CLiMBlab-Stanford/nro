@@ -1,7 +1,6 @@
 description: Sentences and nonwords, with within-participant summaries.
 model_set: main
 conditions: trial_type
-hrf: spm
 contrasts:
   S: {S: 1}
   N: {N: 1}

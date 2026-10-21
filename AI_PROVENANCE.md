@@ -20,7 +20,7 @@ documentation they publish.
 | --- | --- | --- | --- | --- | --- |
 | OpenAI | Codex | GPT-5 | 2026-09–2026-10 | implementation, testing, documentation, review, refactoring | The active agent environment identifies the tool as Codex based on GPT-5; the underlying model is not disclosed beyond that family. |
 | OpenAI | Codex | GPT-6 | 2026-09–2026-10 | implementation, testing, documentation, review, refactoring | The active environment identifies Codex as based on GPT-6. |
-| Anthropic | Claude Code | claude-opus-5-5 | 2026-10 | implementation, testing, documentation | The active Claude Code environment exposes the model ID claude-opus-5-5. |
+| Anthropic | Claude Code | claude-opus-5-5 | 2026-10 | implementation, testing, documentation, review, release preparation | The active Claude Code environment exposes the model ID claude-opus-5-5. |
 
 ## Agent registration
 

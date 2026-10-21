@@ -34,6 +34,11 @@ one from matching BIDS events. See
 [definition authoring](commands/authoring.md) for discovery selectors, local
 drafts, and save behavior.
 
+At execution time, firstlevels reads event tables from the BIDS project. Task
+repositories and shared event templates may support BIDSification and model
+authoring, but they are not runtime dependencies after the corresponding
+`events.tsv` files have been published.
+
 The firstlevels configuration supplies nuisance regression, temporal outlier
 handling, rank protection, run aggregation, and the noise model. First-level
 models cannot override those settings or introduce confounds. This lets the
@@ -51,7 +56,7 @@ In this short form, contrast keys such as `S` resolve to `trial_type.S`.
 Contrast weights are finite numbers or fraction strings such as `"1/2"`.
 Output contrast names must use letters, digits, dots, underscores, or hyphens.
 
-`hrf` defaults to `spm`; `glover` and `null` are also supported. The selected
+`hrf` defaults to `glover`; `spm` and `null` are also supported. The selected
 HRF applies to event-derived predictors. Confounds and the intercept are never
 convolved. Timing comes from `onset` and `duration`, adjusted for the functional
 input's `StartTime`; these timing columns are not automatic predictors.
@@ -229,6 +234,14 @@ Predictor lists, transformation sequences, and explicit advanced contrast lists
 remain ordered. Changes to those sequences, HRFs, contrast weights, or
 aggregation rules can change the contract. nro does not attempt to prove
 arbitrary algebraic equivalence or equivalence that depends on event values.
+
+Changing only contrasts or aggregation rules republishes the affected maps and
+summaries without refitting the time series. Each run manifest retains the
+compact coefficient and covariance fit for every design predictor. nro reuses
+that fit only when its input data are still fresh and its predictors, HRF,
+transformations, nuisance model, response scaling, and estimator settings are
+unchanged. Predictor, transformation, HRF, denoising, or estimator changes
+require a new GLM fit. Explicit overwrite requests also refit.
 
 Planning, status assessment, public-output adoption, and execution use this
 normalization. Recorded contracts are normalized as well as current ones, so

@@ -1,5 +1,6 @@
 """Semantic publication requirements for first-level statistics."""
 
+from copy import deepcopy
 from pathlib import Path
 
 from nro.definitions.schema import scientific_values
@@ -21,6 +22,21 @@ def definition_fingerprint(definition: dict) -> str:
     if "runs" in definition:
         result = fingerprint({"definition": result, "runs": definition["runs"]})
     return result
+
+
+def estimation_fingerprint(model: dict, config: dict) -> str:
+    """Identify the temporal GLM independently of requested contrasts."""
+    model = deepcopy(model)
+    run = model["Nodes"][0]
+    run.pop("Contrasts", None)
+    rules = run["Model"]["Software"]["nro"]
+    rules.pop("internal_contrasts", None)
+    rules.pop("aggregation_weighting", None)
+    model["Nodes"] = [run]
+    model["Edges"] = []
+    fit_config = dict(scientific_values("firstlevels", config))
+    fit_config.pop("aggregation_weighting", None)
+    return fingerprint({"model": model, "config": fit_config})
 
 
 def response_scaling_metadata() -> dict:
