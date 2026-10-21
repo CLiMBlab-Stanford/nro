@@ -122,7 +122,8 @@ The controller publishes a component JSON read model after relevant changes. A s
 atomic manifest selects a reusable static work-item graph and the current dynamic
 execution state. Cached observation joins those components without starting the
 controller or opening SQLite. Bounded mutations use the live controller or a fenced local
-one-shot coordinator. `run` may submit the scheduler and planning broker;
+one-shot coordinator. `run` may submit the scheduler, which runs pinned planning
+in an isolated child process;
 workers may recover a scheduler required by active work. Commands display a
 lightweight progress indicator while awaiting a response. Controller queueing has no
 timeout; communication with a live controller does.

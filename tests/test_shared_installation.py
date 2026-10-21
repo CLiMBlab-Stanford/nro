@@ -13,6 +13,25 @@ from nro.orchestration.registry import Registry
 from nro.site import shared_installation
 
 
+def test_installation_removes_retired_planner_state_but_keeps_logs(tmp_path):
+    root = tmp_path / "control/shared/planner"
+    launch = root / "launch"
+    launch.mkdir(parents=True)
+    (root / "active.json").write_text("{}")
+    (launch / "owner.json").write_text("{}")
+    script = root / "planner-token.sbatch"
+    log = root / "planner-123.log"
+    script.write_text("#!/bin/sh\n")
+    log.write_text("historical log\n")
+
+    shared_installation._remove_legacy_planner_state(tmp_path / "control")
+
+    assert not (root / "active.json").exists()
+    assert not launch.exists()
+    assert not script.exists()
+    assert log.read_text() == "historical log\n"
+
+
 def _mock_service(monkeypatch, tmp_path, responses):
     implementation = tmp_path / "implementation.json"
     implementation.write_text("{}")

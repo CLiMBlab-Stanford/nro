@@ -5,8 +5,9 @@ when invoked from another directory. First setup asks for `personal`, `shared`,
 or `branch` mode and saves that role in the untracked `.nro-installation.json`.
 
 Personal and shared installations both publish the scheduler implementation.
-Ordinary `run` commands start or join the scheduler and planning broker; personal
-mode does not plan or submit scientific workers directly from the calling process.
+Ordinary `run` commands start or join the scheduler, which launches pinned planner
+children inside its allocation; personal mode does not plan or submit scientific
+workers directly from the calling process.
 Installation maintenance alone may access the registry before that binding exists.
 Install a tagged main release in either mode; use branch mode for development.
 

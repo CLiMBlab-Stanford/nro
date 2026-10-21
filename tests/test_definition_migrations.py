@@ -80,7 +80,7 @@ def test_schema_two_moves_flywheel_keys_out_of_tracked_site_metadata(tmp_path, m
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     assert migrated["bidsify"]["servers"]["cni"] == {
         "host": "cni.example.org",
         "projects": ["lab/study"],
@@ -141,7 +141,7 @@ SourceStore(applications).capture(checkout)
         check=True,
     )
 
-    assert yaml.safe_load(site.read_text())["version"] == 4
+    assert yaml.safe_load(site.read_text())["version"] == 5
     validate_store(root, require_site=True)
 
 
@@ -182,7 +182,7 @@ def test_schema_four_removes_site_pycicada_path(tmp_path):
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     assert "pycicada" not in migrated["resources"]
     assert "cicada_cmd" not in yaml.safe_load(config.read_text())
 
@@ -230,10 +230,11 @@ def test_schema_six_moves_slurm_and_pool_defaults_into_site_policy(tmp_path):
     )
 
     migrated = yaml.safe_load(site.read_text())
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     assert migrated["execution"]["concurrency"] == 50
     assert migrated["execution"]["gpu_concurrency"] == 1
-    assert migrated["slurm"]["scheduler"] == {"time_hours": 24, "memory_gb": 4, "cpus": 4}
+    assert migrated["slurm"]["scheduler"] == {"time_hours": 24, "memory_gb": 8, "cpus": 4}
+    assert "planner" not in migrated["slurm"]
     assert migrated["slurm"]["worker"] == {
         "time_hours": 24,
         "memory_gb": 32,
@@ -284,6 +285,26 @@ def test_schema_eight_preserves_named_network_sources(tmp_path):
     assert "connectivity_source" not in yaml.safe_load(main.read_text())
     assert yaml.safe_load(clustering.read_text())["connectivity_source"] == "microparcellation"
     assert yaml.safe_load(dynconn.read_text())["connectivity_source"] == "dynconn"
+
+
+def test_schema_nine_moves_planning_into_scheduler_resources(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    site = root / "site/site.yml"
+    value = yaml.safe_load(site.read_text())
+    value["version"] = 4
+    value["slurm"]["scheduler"]["memory_gb"] = 4
+    value["slurm"]["planner"] = {"time_hours": 24, "memory_gb": 8, "cpus": 2}
+    site.write_text(MANAGED_NOTICE + yaml.safe_dump(value, sort_keys=False))
+    (root / MANIFEST).write_text(_manifest_text(root, 8))
+
+    assert migrate_store(
+        root, validate=lambda candidate: validate_store(candidate, require_site=True)
+    )
+
+    migrated = yaml.safe_load(site.read_text())
+    assert migrated["version"] == 5
+    assert migrated["slurm"]["scheduler"] == {"time_hours": 24, "memory_gb": 8, "cpus": 4}
+    assert "planner" not in migrated["slurm"]
 
 
 def test_direct_changes_are_rejected_but_explicit_apply_can_adopt_them(tmp_path):

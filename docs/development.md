@@ -53,11 +53,11 @@ default to guess how an older derivative was produced.
 
 Once [a main scheduler is installed and active](commands/releases.md), branch
 `run`, `status`, `log`, `stop`, and `set` use the central implementation.
-The branch's planner compiles its complete graph and records scientific revisions.
-It sends that graph, workflow records, and execution recipes as JSON to a separate
-process running central Python and source. The central process does not open the
-branch's scientific database or import its modules. Delayed requests cannot replace
-a newer admitted scientific revision.
+The scheduler launches the branch's pinned planner in an isolated child process. The
+child compiles its complete graph, records scientific revisions, and returns workflow
+records and execution recipes as JSON. The scheduler does not open the branch's
+scientific database or import its modules. Delayed requests cannot replace a newer
+admitted scientific revision.
 
 Admission resolves fresh compatible ancestors, records read dependencies without
 demanding ancestor computation, and routes owned work to branch directories.

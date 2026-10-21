@@ -60,7 +60,7 @@ def _checkout() -> Path:
 
 CHECKOUT = _checkout()
 RECORD_NAME = ".nro-installation.json"
-SITE_DEFINITION_VERSION = 4
+SITE_DEFINITION_VERSION = 5
 SITE_DEFINITION = Path("site/site.yml")
 LAB = Path("/juice6/u/nlp/climblab")
 DEFAULTS = {
@@ -84,7 +84,7 @@ DEFAULTS = {
     "worker_idle_timeout": 30,
     "worker_drain_minutes": 15,
     "scheduler_time": 24,
-    "scheduler_memory": 4,
+    "scheduler_memory": 8,
     "scheduler_cpus": 4,
     "planner_time": 24,
     "planner_memory": 8,
@@ -182,11 +182,6 @@ SLURM_GROUPS = {
         "time_hours": "scheduler_time",
         "memory_gb": "scheduler_memory",
         "cpus": "scheduler_cpus",
-    },
-    "planner": {
-        "time_hours": "planner_time",
-        "memory_gb": "planner_memory",
-        "cpus": "planner_cpus",
     },
     "worker": {
         "time_hours": "worker_time",
@@ -383,7 +378,7 @@ def validate_site_document(value: object) -> tuple[dict, dict]:
         raise ValueError(
             "site/site.yml requires version, storage, resources, execution, slurm, and bidsify"
         )
-    if value["version"] not in {2, 3, SITE_DEFINITION_VERSION}:
+    if value["version"] not in {2, 3, 4, SITE_DEFINITION_VERSION}:
         raise ValueError(f"Unsupported site definition version: {value['version']!r}")
     if value["version"] == 2:
         value = dict(value)
@@ -426,10 +421,17 @@ def validate_site_document(value: object) -> tuple[dict, dict]:
         )
     else:
         slurm = value["slurm"]
-        if not isinstance(slurm, dict) or set(slurm) != {*SLURM_SCALARS, *SLURM_GROUPS}:
+        groups = dict(SLURM_GROUPS)
+        if value["version"] == 4:
+            groups["planner"] = {
+                "time_hours": "planner_time",
+                "memory_gb": "planner_memory",
+                "cpus": "planner_cpus",
+            }
+        if not isinstance(slurm, dict) or set(slurm) != {*SLURM_SCALARS, *groups}:
             raise ValueError("site.slurm has an invalid structure")
         settings_values.update({key: slurm[key] for key in SLURM_SCALARS})
-        for group, fields in SLURM_GROUPS.items():
+        for group, fields in groups.items():
             group_value = slurm[group]
             if not isinstance(group_value, dict) or set(group_value) != set(fields):
                 raise ValueError(f"site.slurm.{group} has an invalid structure")

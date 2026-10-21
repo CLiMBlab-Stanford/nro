@@ -521,8 +521,6 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         or implementation_path(Path(values["registry"])).is_file()
     )
     if branch_execution and not args.local and os.environ.get("NRO_REMOTE_PLANNER") != "1":
-        from nro.orchestration.planner_client import ensure as ensure_planner
-        from nro.orchestration.scheduler_bus import read_active
         from nro.orchestration.scheduler_client import command, exchange, startup_notice
         from nro.orchestration.source_snapshots import execution_source_root, source_fingerprint
 
@@ -537,10 +535,6 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             else:
                 source_digest = source_fingerprint(execution_source_root())
                 source_kind = "checkout"
-            # Submit both services without serial queue latency when neither exists.
-            # A live scheduler owns planner lifecycle for subsequent invocations.
-            if read_active(control) is None:
-                ensure_planner(endpoint)
             result = exchange(
                 endpoint,
                 {

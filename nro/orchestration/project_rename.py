@@ -1219,9 +1219,6 @@ def execute(
         current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if current != expected:
             raise ValueError(f"Project metadata changed after the rename preview: {path}")
-    from nro.orchestration.planner_client import shutdown as shutdown_planner
-
-    shutdown_planner(registry.paths.control)
     store = current_store
     topology = current_topology
     branch_lineages = _branch_lineage_fingerprints(store)

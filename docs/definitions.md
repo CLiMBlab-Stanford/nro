@@ -92,8 +92,7 @@ slurm:
   partition: compute
   viewing_partition: interactive
   account: ''
-  scheduler: {time_hours: 24, memory_gb: 4, cpus: 4}
-  planner: {time_hours: 24, memory_gb: 8, cpus: 2}
+  scheduler: {time_hours: 24, memory_gb: 8, cpus: 4}
   worker: {time_hours: 24, memory_gb: 32, max_memory_gb: 256, cpus: 2}
   long_worker: {time_hours: 48, cpus: 8}
   viewer: {time_hours: 12, memory_gb: 32, cpus: 2}

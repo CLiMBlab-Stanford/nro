@@ -203,6 +203,29 @@ def test_durable_request_retries_scheduler_lock_contention(tmp_path):
     assert calls == 2
 
 
+def test_durable_request_replays_after_scheduler_shutdown(tmp_path):
+    from nro.orchestration.scheduler_requests import (
+        RequestCoordinator,
+        RetryableSchedulerRequest,
+        prepare,
+    )
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    record = scheduler_bus.create_message({"operation": "plan_run"})
+
+    def interrupted(_received):
+        raise RetryableSchedulerRequest("scheduler stopped")
+
+    with pytest.raises(RetryableSchedulerRequest, match="scheduler stopped"):
+        RequestCoordinator(registry, interrupted).run(record)
+
+    assert [item["id"] for item in prepare(registry)] == [record["id"]]
+    assert RequestCoordinator(registry, lambda _received: {"result": "done"}).run(record) == {
+        "result": "done"
+    }
+
+
 def test_interrupted_durable_request_is_recovered(tmp_path):
     from nro.orchestration.scheduler_requests import prepare, register
 

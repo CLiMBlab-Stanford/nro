@@ -52,6 +52,7 @@ from nro.orchestration.source_snapshots import SourceSnapshot
 from nro.site.configuration import protected_site_fingerprint
 
 _STOP = False
+_PLANNING_STOP = threading.Event()
 MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
 STATUS_MAX_STALENESS_SECONDS = 5.0
@@ -84,6 +85,7 @@ class _ActivitySignal:
 def _request_stop(_signum, _frame) -> None:
     global _STOP
     _STOP = True
+    _PLANNING_STOP.set()
 
 
 @contextmanager
@@ -943,7 +945,6 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
     """Apply one validated command through the service's registry authority."""
     global _STOP
     if message["operation"] == "server_shutdown":
-        from nro.orchestration.planner_client import shutdown as shutdown_planner
         from nro.orchestration.scheduler_bus import publish_shutdown
 
         publish_shutdown(
@@ -951,7 +952,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             token=os.environ["NRO_SCHEDULER_TOKEN"],
             generation=int(os.environ["NRO_SCHEDULER_GENERATION"]),
         )
-        shutdown_planner(registry.paths.control)
+        _PLANNING_STOP.set()
         _STOP = True
         result = {"stopping": True}
     elif message["operation"] == "worker":
@@ -987,8 +988,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
     elif message["operation"] == "plan_run":
         from nro.orchestration.control_paths import ControlPaths
         from nro.orchestration.execution_pins import capture_execution, capture_site
-        from nro.orchestration.planner_client import ensure as ensure_planner
-        from nro.orchestration.planner_client import execute as execute_plan
+        from nro.orchestration.planning_subprocess import execute as execute_plan
         from nro.orchestration.scheduler_bus import publish_progress
         from nro.orchestration.scheduler_client import command
         from nro.orchestration.scheduler_implementation import implementation_path
@@ -1041,11 +1041,14 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             )
         request["source"] = {"root": str(source.root), "digest": source.digest}
         request["site"] = str(site)
-        ensure_planner(endpoint)
+        progress("Planning requested work")
         planned = execute_plan(
-            registry.paths.control,
             request,
-            progress=progress,
+            stop=_PLANNING_STOP,
+            threads=min(
+                2,
+                int(os.environ.get("SLURM_CPUS_PER_TASK", values["scheduler_cpus"])),
+            ),
         )
         required = {
             "protocol",
@@ -1453,6 +1456,7 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
 def _message_response(registry, record: dict, *, values: dict) -> dict:
     """Execute one validated scheduler request and encode its result."""
     from nro.orchestration.registry import Registry
+    from nro.orchestration.scheduler_requests import RetryableSchedulerRequest
 
     operation_registry = Registry.for_project(
         record["payload"].get("project", ""),
@@ -1469,6 +1473,8 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
             )
         }
     except RegistryLockTimeout:
+        raise
+    except RetryableSchedulerRequest:
         raise
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, sqlite3.Error) as error:
         response = {"error": str(error), "error_type": type(error).__name__}
@@ -1794,6 +1800,7 @@ def serve(
 
     global _STOP
     _STOP = False
+    _PLANNING_STOP.clear()
     values = settings()[0]
     control = Path(values["registry"])
     publish_startup_progress(control, launch_token, "Validating scheduler implementation")
@@ -2063,6 +2070,7 @@ def serve(
         publish_status_snapshot(registry, generation=generation, active=False)
         return 0
     finally:
+        _PLANNING_STOP.set()
         heartbeat_stop.set()
         heartbeat_thread.join()
         listener_stop.set()

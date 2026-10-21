@@ -1,138 +1,16 @@
-"""The planner broker serializes pinned planning outside the scheduler process."""
+"""The scheduler runs pinned planning in one isolated FIFO subprocess lane."""
 
 from __future__ import annotations
 
 import json
 import subprocess
 import threading
-import time
 from types import SimpleNamespace
 
-import pytest
-
-from nro.orchestration import planner_bus, planner_client, planner_service, scheduler_service
-from nro.orchestration.planner_bus import claim_launch, read_active, read_launch, update_launch_job
+from nro.orchestration import planning_subprocess, scheduler_service
 
 
-def test_planner_submission_reports_slurm_error(monkeypatch, tmp_path):
-    script = tmp_path / "planner.sbatch"
-
-    def reject(*args, **kwargs):
-        raise subprocess.CalledProcessError(1, args[0], stderr="time limit exceeds partition")
-
-    monkeypatch.setattr(planner_bus.subprocess, "run", reject)
-    with pytest.raises(RuntimeError, match="time limit exceeds partition"):
-        planner_bus.submit(script)
-
-
-def test_planner_service_executes_requests_and_shuts_down(tmp_path, monkeypatch):
-    control = tmp_path / "control"
-    monkeypatch.setattr(planner_service.socket, "getfqdn", lambda: "127.0.0.1")
-    claim = claim_launch(control)
-    assert claim is not None
-    seen = []
-    monkeypatch.setattr(
-        planner_service,
-        "_run",
-        lambda request, _stop=None: seen.append(request) or {"requests": ["request-1"]},
-    )
-    thread = threading.Thread(
-        target=planner_service.serve,
-        kwargs={"control": control, "launch_token": claim.token, "idle_grace": 30},
-    )
-    thread.start()
-    for _ in range(100):
-        if read_active(control) is not None:
-            break
-        time.sleep(0.01)
-
-    request = {
-        "source": {"root": "/source", "digest": "digest"},
-        "site": "/site.toml",
-        "python": "/python",
-        "checkout": "/checkout",
-        "argv": ["-P", "demo"],
-    }
-    assert planner_client.execute(control, request) == {"requests": ["request-1"]}
-    assert seen == [request]
-    assert planner_client.shutdown(control) == {"stopping": True}
-    thread.join(timeout=5)
-    assert not thread.is_alive()
-    assert read_active(control) is None
-
-
-def test_planner_shutdown_interrupts_an_active_plan(tmp_path, monkeypatch):
-    control = tmp_path / "control"
-    monkeypatch.setattr(planner_service.socket, "getfqdn", lambda: "127.0.0.1")
-    claim = claim_launch(control)
-    assert claim is not None
-    entered = threading.Event()
-
-    def plan(_request, stop=None):
-        entered.set()
-        assert stop is not None
-        stop.wait(5)
-        raise RuntimeError("planning stopped")
-
-    monkeypatch.setattr(planner_service, "_run", plan)
-    service = threading.Thread(
-        target=planner_service.serve,
-        kwargs={"control": control, "launch_token": claim.token, "idle_grace": 30},
-    )
-    service.start()
-    for _ in range(100):
-        if read_active(control) is not None:
-            break
-        time.sleep(0.01)
-
-    errors = []
-    request = {
-        "source": {"root": "/source", "digest": "digest"},
-        "site": "/site.toml",
-        "python": "/python",
-        "checkout": "/checkout",
-        "argv": ["-P", "demo"],
-    }
-    client = threading.Thread(
-        target=lambda: _record_error(errors, planner_client.execute, control, request)
-    )
-    client.start()
-    assert entered.wait(2)
-    assert planner_client.shutdown(control) == {"stopping": True}
-    client.join(timeout=5)
-    service.join(timeout=5)
-
-    assert not client.is_alive()
-    assert not service.is_alive()
-    assert errors and "planning stopped" in str(errors[0])
-
-
-def test_planner_shutdown_cancels_a_pending_allocation(tmp_path, monkeypatch):
-    control = tmp_path / "control"
-    claim = claim_launch(control)
-    assert claim is not None
-    update_launch_job(claim, "12345")
-    calls = []
-    monkeypatch.setattr(
-        planner_client.subprocess,
-        "run",
-        lambda command, **options: calls.append((command, options)),
-    )
-
-    assert planner_client.shutdown(control) == {"stopping": True}
-
-    assert read_launch(control) is None
-    assert calls[0][0] == ["scancel", "12345"]
-
-
-def _record_error(errors, function, *args):
-    try:
-        function(*args)
-    except BaseException as error:
-        errors.append(error)
-
-
-def test_planner_child_uses_pinned_checkout_and_structured_output(tmp_path, monkeypatch):
+def test_planner_child_uses_pinned_checkout_and_thread_limits(tmp_path, monkeypatch):
     source = tmp_path / "source"
     site = tmp_path / "site.toml"
     python = tmp_path / "python"
@@ -147,11 +25,7 @@ def test_planner_child_uses_pinned_checkout_and_structured_output(tmp_path, monk
         verify_manifest=lambda: None,
         command=lambda command, *, site: tuple(command),
     )
-    monkeypatch.setattr(
-        planner_service,
-        "SourceSnapshot",
-        lambda root, digest: snapshot,
-    )
+    monkeypatch.setattr(planning_subprocess, "SourceSnapshot", lambda root, digest: snapshot)
     calls = []
 
     class Process:
@@ -160,20 +34,21 @@ def test_planner_child_uses_pinned_checkout_and_structured_output(tmp_path, monk
         def communicate(self, timeout=None):
             return json.dumps({"requests": []}), ""
 
-    def run(command, **kwargs):
-        calls.append((command, kwargs))
-        return Process()
+    monkeypatch.setattr(
+        planning_subprocess.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append((command, kwargs)) or Process(),
+    )
 
-    monkeypatch.setattr(planner_service.subprocess, "Popen", run)
-
-    result = planner_service._run(
+    result = planning_subprocess.execute(
         {
             "source": {"root": str(source), "digest": "digest"},
             "site": str(site),
             "python": str(python),
             "checkout": str(checkout),
             "argv": ["-P", "demo", "--json"],
-        }
+        },
+        threads=8,
     )
 
     assert result == {"requests": []}
@@ -184,6 +59,65 @@ def test_planner_child_uses_pinned_checkout_and_structured_output(tmp_path, monk
     assert options["env"]["NRO_PLANNER_SOURCE_ROOT"] == str(source)
     assert options["env"]["NRO_PLANNER_SITE"] == str(site)
     assert options["env"]["NRO_CHECKOUT"] == str(checkout)
+    assert options["env"]["OMP_NUM_THREADS"] == "2"
+    assert options["env"]["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] == "2"
+
+
+def test_scheduler_shutdown_terminates_active_planner_child(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    site = tmp_path / "site.toml"
+    python = tmp_path / "python"
+    checkout = tmp_path / "checkout"
+    source.mkdir()
+    checkout.mkdir()
+    site.write_text("")
+    python.write_text("")
+    snapshot = SimpleNamespace(
+        root=source,
+        digest="digest",
+        verify_manifest=lambda: None,
+        command=lambda command, *, site: tuple(command),
+    )
+    monkeypatch.setattr(planning_subprocess, "SourceSnapshot", lambda root, digest: snapshot)
+    stopped = threading.Event()
+
+    class Process:
+        returncode = None
+
+        def communicate(self, timeout=None):
+            if timeout == 1.0:
+                stopped.set()
+                raise subprocess.TimeoutExpired("planner", timeout)
+            return "", ""
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(
+        planning_subprocess.subprocess, "Popen", lambda *_args, **_kwargs: Process()
+    )
+    stop = threading.Event()
+    stop.set()
+
+    try:
+        planning_subprocess.execute(
+            {
+                "source": {"root": str(source), "digest": "digest"},
+                "site": str(site),
+                "python": str(python),
+                "checkout": str(checkout),
+                "argv": ["-P", "demo"],
+            },
+            stop=stop,
+        )
+    except RuntimeError as error:
+        assert str(error) == "Planning stopped with the scheduler"
+    else:
+        raise AssertionError("cancelled planning unexpectedly succeeded")
+    assert stopped.is_set()
 
 
 def test_scheduler_routes_plan_run_to_single_planner_lane():
@@ -207,7 +141,7 @@ def test_scheduler_routes_plan_run_to_single_planner_lane():
     )
 
 
-def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch):
+def test_scheduler_dispatches_planning_in_its_allocation(tmp_path, monkeypatch):
     source = SimpleNamespace(root=tmp_path / "source", digest="digest")
     endpoint = SimpleNamespace(source=source)
     calls = []
@@ -218,9 +152,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
     implementation.write_text(json.dumps({"checkout": str(checkout)}))
     monkeypatch.setattr(
         "nro.orchestration.scheduler_bus.publish_progress",
-        lambda _control, _message_id, *, phase, completed, total: phases.append(
-            (phase, completed, total)
-        ),
+        lambda _control, _message_id, *, phase, completed, total: phases.append(phase),
     )
     monkeypatch.setattr(
         "nro.orchestration.scheduler_client.command",
@@ -234,15 +166,9 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         "nro.orchestration.execution_pins.capture_site",
         lambda root, _values: site_roots.append(root) or tmp_path / "site.toml",
     )
-    monkeypatch.setattr(
-        planner_client,
-        "ensure",
-        lambda value: calls.append(("ensure", value)),
-    )
 
-    def execute(control, request, *, progress):
-        calls.append(("execute", control, request))
-        progress("Planning requested work")
+    def execute(request, *, stop, threads):
+        calls.append(("execute", request, stop, threads))
         return {
             "protocol": 1,
             "entries": [{"project": "demo", "payload": {}}],
@@ -254,7 +180,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
             "resumed": 0,
         }
 
-    monkeypatch.setattr(planner_client, "execute", execute)
+    monkeypatch.setattr(planning_subprocess, "execute", execute)
 
     def admit(_registry, entries, **options):
         progress = options.pop("progress")
@@ -272,10 +198,7 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
         ),
     )
     registry = SimpleNamespace(
-        paths=SimpleNamespace(
-            control=tmp_path / "control",
-            bids_root=tmp_path / "BIDS",
-        )
+        paths=SimpleNamespace(control=tmp_path / "control", bids_root=tmp_path / "BIDS")
     )
 
     result = scheduler_service.dispatch(
@@ -294,74 +217,19 @@ def test_scheduler_dispatches_planning_through_the_broker(tmp_path, monkeypatch)
                 "argv": ["-P", "demo"],
             },
         },
-        values={},
+        values={"scheduler_cpus": 4},
         message_id="message",
     )
 
-    assert result == {
-        "submitted_workers": [],
-        "requests": ["request-1"],
-        "projects": ["demo"],
-        "participants": {"demo": ["01"]},
-        "work_items": 1,
-        "unavailable": [],
-        "resumed": 0,
-    }
-    assert calls == [
-        ("command", registry.paths.control, registry.paths.bids_root),
-        ("ensure", endpoint),
-        (
-            "execute",
-            registry.paths.control,
-            {
-                "checkout": str(checkout),
-                "python": "/python",
-                "argv": ["-P", "demo"],
-                "source": {"root": str(source.root), "digest": "digest"},
-                "site": str(tmp_path / "site.toml"),
-            },
-        ),
-        (
-            "admit",
-            [{"project": "demo", "payload": {}}],
-            {
-                "checkout": tmp_path / "checkout",
-                "site_values": {},
-                "message_id": "message",
-            },
-        ),
-        (
-            "supply",
-            ["request-1"],
-            {"no_submit": True},
-            {"checkout": tmp_path / "checkout"},
-        ),
-    ]
-    assert [phase for phase, _completed, _total in phases] == [
+    assert result["requests"] == ["request-1"]
+    assert [call[0] for call in calls] == ["command", "execute", "admit", "supply"]
+    assert calls[1][1]["source"] == {"root": str(source.root), "digest": "digest"}
+    assert calls[1][2] is scheduler_service._PLANNING_STOP
+    assert calls[1][3] == 2
+    assert phases == [
         "Planning requested work",
         "Inspecting existing artifacts",
         "Registering requested work",
         "Reconciling worker pool",
     ]
     assert site_roots == [tmp_path / "control/shared/cache/execution-sites"]
-
-
-def test_planner_script_requests_small_persistent_service(tmp_path):
-    source = SimpleNamespace(
-        command=lambda command, *, site: tuple(command),
-    )
-    script = planner_bus.write_script(
-        tmp_path / "control",
-        token="token",
-        source=source,
-        site=tmp_path / "site.toml",
-        python=tmp_path / "python",
-        partition="sphinx",
-        account="nlp",
-    )
-
-    text = script.read_text()
-    assert f"#SBATCH --cpus-per-task={planner_bus.PLANNER_CPUS}\n" in text
-    assert f"#SBATCH --mem={planner_bus.PLANNER_MEMORY_GB}G\n" in text
-    assert "#SBATCH --time=24:00:00\n" in text
-    assert "#SBATCH --account=nlp\n" in text
