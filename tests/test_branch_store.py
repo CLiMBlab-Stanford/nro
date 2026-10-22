@@ -27,10 +27,7 @@ def test_repository_identity_normalizes_git_transport(remote, tmp_path, monkeypa
         ),
     )
 
-    assert (
-        branches.repository_identity(tmp_path)
-        == "remote:github.com/CLiMBlab-Stanford/nro"
-    )
+    assert branches.repository_identity(tmp_path) == "remote:github.com/CLiMBlab-Stanford/nro"
 
 
 def test_control_permissions_do_not_change_existing_ancestors(tmp_path):
