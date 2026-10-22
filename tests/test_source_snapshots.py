@@ -146,6 +146,12 @@ def test_snapshot_rejects_unrelated_commands(tmp_path):
             snapshot.command(command)
 
 
+def copy_site_modules(site_package):
+    for name in ("configuration.py", "managed_runtime.py"):
+        original = Path(__file__).resolve().parents[1] / "nro/site" / name
+        shutil.copyfile(original, site_package / name)
+
+
 def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
     from nro.orchestration.execution_pins import capture_site
     from nro.site.configuration import settings
@@ -154,8 +160,7 @@ def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
     site_package = root / "nro/site"
     site_package.mkdir()
     (site_package / "__init__.py").write_text("")
-    original = Path(__file__).resolve().parents[1] / "nro/site/configuration.py"
-    shutil.copyfile(original, site_package / "configuration.py")
+    copy_site_modules(site_package)
     (root / "nro/probe.py").write_text(
         'from nro.site.configuration import settings\nprint(settings()[0]["bids"])\n'
     )
@@ -180,6 +185,36 @@ def test_captured_site_overrides_environment_and_rejects_later_edits(tmp_path):
     assert "settings changed" in result.stderr
     with pytest.raises(ValueError, match="settings changed"):
         capture_site(tmp_path / "sites", values)
+
+
+def test_site_launch_exposes_managed_runtime_helpers(tmp_path):
+    import os
+
+    from nro.orchestration.execution_pins import capture_site
+    from nro.site.configuration import settings
+    from nro.site.managed_runtime import RUNTIME_MANIFEST
+
+    root = source(tmp_path)
+    site_package = root / "nro/site"
+    site_package.mkdir()
+    (site_package / "__init__.py").write_text("")
+    copy_site_modules(site_package)
+    (root / "nro/probe.py").write_text('import os\nprint(os.environ["PATH"])\n')
+    snapshot = SourceStore(tmp_path / "snapshots").capture(root)
+    runtime = tmp_path / "runtime/bin/apptainer"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("#!/bin/sh\n")
+    (runtime.parent.parent / RUNTIME_MANIFEST).write_text("{}")
+    values = settings()[0]
+    values["runtime"] = str(runtime)
+    site = capture_site(tmp_path / "sites", values)
+    command = snapshot.command((sys.executable, "-m", "nro.probe"), site=site)
+
+    result = subprocess.run(command, env={"PATH": "/usr/bin"}, text=True, capture_output=True)
+
+    assert result.returncode == 0, result.stderr
+    fuse = os.access("/dev/fuse", os.R_OK | os.W_OK)
+    assert result.stdout.strip() == ("/usr/bin:" + str(runtime.parent) if fuse else "/usr/bin")
 
 
 def test_execution_source_root_uses_checkout_outside_snapshot(tmp_path, monkeypatch):

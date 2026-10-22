@@ -9,6 +9,7 @@ import json
 import os
 import runpy
 import sys
+import tomllib
 from pathlib import Path
 
 MANIFEST_ONLY_PROTOCOL = 1
@@ -117,6 +118,12 @@ def main() -> None:
         for key in ENVIRONMENT_KEYS:
             os.environ.pop(key, None)
         os.environ["NRO_SITE_CONFIG"] = site_path
+        if not manifest_only:
+            # Scientific attempts start containers from many call sites.
+            from nro.site.managed_runtime import expose_managed_runtime_helpers
+
+            with site.open("rb") as stream:
+                expose_managed_runtime_helpers(tomllib.load(stream).get("runtime", ""))
     runpy.run_module(module, run_name="__main__", alter_sys=True)
 
 

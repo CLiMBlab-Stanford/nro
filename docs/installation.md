@@ -456,6 +456,14 @@ Compute nodes therefore do not need a system Singularity or Apptainer command.
 Offline setup reuses the verified tree or its cached bundle and reports the
 missing artifact otherwise.
 
+The bundle includes `squashfuse_ll` and `fuse-overlayfs`, which let Apptainer
+mount a SIF image without unpacking it. When `/dev/fuse` is readable and
+writable, setup checks and scientific jobs append the bundle's `bin` directory
+to `PATH` so Apptainer can find them. Helpers already on `PATH` take precedence.
+Without FUSE, Apptainer unpacks each image into a temporary sandbox at every
+launch. That is slow for large images and fails on hosts that refuse
+unprivileged overlay mounts.
+
 Set `execution.runtime` to an absolute executable to select an administrator-
 provided runtime instead. Setup preserves that choice and does not fall back to
 the managed bundle. Both modes require host support for unprivileged containers;

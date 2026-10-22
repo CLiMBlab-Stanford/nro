@@ -116,8 +116,10 @@ class Runner:
 
             raise SystemExit(runtime_diagnostic(self._container.engine))
         from nro.site.dependencies import validate_managed_runtime
+        from nro.site.managed_runtime import expose_managed_runtime_helpers
 
         validate_managed_runtime(resolved_engine)
+        expose_managed_runtime_helpers(resolved_engine)
         if not self._container.image.exists():
             raise SystemExit(f"Container image not found: {self._container.image}")
 
