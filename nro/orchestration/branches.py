@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 
 @lru_cache(maxsize=256)
@@ -57,6 +57,34 @@ def checkout_identity(checkout: Path) -> tuple[Path, str, str]:
     return root, name, git("rev-parse", "HEAD")
 
 
+def _canonical_remote(value: str, checkout: Path) -> str:
+    """Normalize common Git transport spellings without weakening repository identity."""
+    value = value.strip()
+    if "://" in value:
+        parsed = urlsplit(value)
+        if parsed.scheme == "file":
+            return "path:" + str(Path(parsed.path).expanduser().resolve())
+        if parsed.hostname:
+            host = parsed.hostname.lower()
+            if parsed.port is not None:
+                host += f":{parsed.port}"
+            path = parsed.path.strip("/")
+            if path.endswith(".git"):
+                path = path[:-4]
+            return f"remote:{host}/{path}"
+    match = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", value)
+    if match:
+        host, path = match.groups()
+        path = path.strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"remote:{host.lower()}/{path}"
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = checkout / path
+    return "path:" + str(path.resolve())
+
+
 def repository_identity(checkout: Path) -> str | None:
     """Identify the Git repository used by a checkout.
 
@@ -80,7 +108,7 @@ def repository_identity(checkout: Path) -> str | None:
     except OSError:
         return None
     if remote is not None and remote.returncode == 0 and remote.stdout.strip():
-        return "origin:" + remote.stdout.strip()
+        return _canonical_remote(remote.stdout, checkout)
     for arguments in (("rev-parse", "--git-common-dir"), ("rev-parse", "--git-dir")):
         common = subprocess.run(["git", *arguments], cwd=checkout, capture_output=True, text=True)
         if common is not None and common.returncode == 0 and common.stdout.strip():

@@ -757,7 +757,7 @@ def _main(argv=None) -> None:
                 if existing and existing.get("environment")
                 else ROOT / ".nro-env"
             )
-        if mode == "branch" and existing and environment.exists():
+        if mode == "branch" and existing and existing.get("ready") and environment.exists():
             check_branch_environment(site, environment)
         if mode == "branch":
             activate_managed_bootstrap()

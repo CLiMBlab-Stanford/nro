@@ -8,6 +8,28 @@ import pytest
 from nro.orchestration.branch_store import BranchStore
 
 
+@pytest.mark.parametrize(
+    "remote",
+    (
+        "git@github.com:CLiMBlab-Stanford/nro.git",
+        "ssh://git@github.com/CLiMBlab-Stanford/nro.git",
+        "https://github.com/CLiMBlab-Stanford/nro",
+    ),
+)
+def test_repository_identity_normalizes_git_transport(remote, tmp_path, monkeypatch):
+    from nro.orchestration import branches
+
+    monkeypatch.setattr(
+        branches.subprocess,
+        "run",
+        lambda *args, **kwargs: branches.subprocess.CompletedProcess(
+            args[0], 0, stdout=remote + "\n", stderr=""
+        ),
+    )
+
+    assert branches.repository_identity(tmp_path) == "remote:github.com/CLiMBlab-Stanford/nro"
+
+
 def test_control_permissions_do_not_change_existing_ancestors(tmp_path):
     from nro.orchestration.registry import ensure_shared_directory
 
