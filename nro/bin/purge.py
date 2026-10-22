@@ -498,6 +498,7 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
         checkout=checkout,
         operation="purge_snapshot",
         include_scientific_inputs=args.excluded,
+        selection_only=True,
     )
     excluded_ids = (
         _excluded_selection(
@@ -509,14 +510,28 @@ def _branch_purge(args, selection, *, values: dict, checkout: Path) -> None:
         if args.excluded
         else None
     )
+    selected_ids = {
+        int(row["id"])
+        for row in snapshot["rows"]
+        if (
+            int(row["id"]) in excluded_ids
+            if excluded_ids is not None
+            else _matches_selection(row, selection)
+        )
+    }
+    snapshot = (
+        maintenance(
+            control,
+            bids_root,
+            checkout=checkout,
+            operation="purge_snapshot",
+            work_item_ids=sorted(selected_ids),
+        )
+        if selected_ids
+        else {"rows": []}
+    )
     plan, public, private, projects = [], set(), set(), set()
     for row in snapshot["rows"]:
-        if (
-            int(row["id"]) not in excluded_ids
-            if excluded_ids is not None
-            else not _matches_selection(row, selection)
-        ):
-            continue
         if not args.logs and row["attempt_state"] in {"queued", "running", "cancel_requested"}:
             raise SystemExit(_active_error([row]))
         context = ExecutionContext.from_dict(row["execution_context"])

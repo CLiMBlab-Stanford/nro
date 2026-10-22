@@ -120,6 +120,8 @@ def snapshot(
     checkout: Path,
     site_values: dict,
     include_scientific_inputs: bool = False,
+    work_item_ids: set[int] | None = None,
+    selection_only: bool = False,
 ) -> dict:
     """Return owned work items and the facts needed to select safe deletions."""
     topology = BranchStore(registry.paths.control).read().topology
@@ -129,10 +131,19 @@ def snapshot(
     if not registry.existing_database_path().is_file():
         return {"rows": [], "dependencies": [], "branch": name}
     with registry.connection() as db:
+        selected_ids = None if work_item_ids is None else {int(value) for value in work_item_ids}
+        where = ""
+        parameters: tuple[int, ...] = ()
+        if selected_ids is not None:
+            if not selected_ids:
+                return {"rows": [], "dependencies": [], "branch": name}
+            placeholders = ",".join("?" for _ in selected_ids)
+            where = f"WHERE item.id IN ({placeholders})"
+            parameters = tuple(sorted(selected_ids))
         report = [
             dict(row)
             for row in db.execute(
-                """
+                f"""
                 WITH latest_attempt AS (
                     SELECT attempt.work_item_id, attempt.state
                     FROM attempts attempt
@@ -151,15 +162,22 @@ def snapshot(
                       ON workflow.id=request.workflow_revision_id
                     GROUP BY link.work_item_id
                 )
-                SELECT item.*, lineage.config_id, lineage.directory_label,
+                SELECT item.id,item.work_item_key,item.module,item.module_lineage_id,
+                       item.project,item.participant,item.entities_json,item.artifact_state,
+                       item.current_generation,item.revision_fingerprint,
+                       item.artifact_fingerprint,item.input_paths_json,item.output_root,
+                       item.output_prefix,
+                       lineage.config_id, lineage.directory_label,
                        lineage.lineage_fingerprint, lineage.configuration_class,
                        attempt.state AS attempt_state, requests.workflow_ids
                 FROM work_items item
                 JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
                 LEFT JOIN latest_attempt attempt ON attempt.work_item_id=item.id
                 LEFT JOIN request_workflows requests ON requests.work_item_id=item.id
+                {where}
                 ORDER BY item.participant, item.module, item.work_item_key
-                """
+                """,
+                parameters,
             )
         ]
         report_ids = {int(row["id"]) for row in report}
@@ -195,11 +213,18 @@ def snapshot(
                     tuple(sorted(report_ids)),
                 )
             }
+        dependency_query = "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
+        dependency_parameters: tuple[int, ...] = ()
+        if selected_ids is not None:
+            placeholders = ",".join("?" for _ in selected_ids)
+            dependency_query += (
+                f" WHERE work_item_id IN ({placeholders})"
+                f" AND upstream_work_item_id IN ({placeholders})"
+            )
+            dependency_parameters = parameters + parameters
         dependencies = [
             [int(row["work_item_id"]), int(row["upstream_work_item_id"])]
-            for row in db.execute(
-                "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
-            )
+            for row in db.execute(dependency_query, dependency_parameters)
         ]
     rows = []
     for row in report:
@@ -217,11 +242,12 @@ def snapshot(
             if encoded
             else ExecutionContext(paths, row["project"], row["work_item_key"], ())
         )
-        payload = dict(
-            row,
-            execution_context=context.as_dict(),
-            purge_token=token(row, encoded),
-        )
+        payload = dict(row)
+        if not selection_only:
+            payload.update(
+                execution_context=context.as_dict(),
+                purge_token=token(row, encoded),
+            )
         if include_scientific_inputs:
             payload.update(
                 input_paths_json=scientific[int(row["id"])]["input_paths_json"],

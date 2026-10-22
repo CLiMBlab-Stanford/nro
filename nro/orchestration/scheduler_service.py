@@ -1152,6 +1152,10 @@ def dispatch(registry, message: dict, *, values: dict, message_id: str) -> objec
             checkout=Path(message["checkout"]),
             site_values=values,
             include_scientific_inputs=bool(message.get("include_scientific_inputs", False)),
+            work_item_ids={int(value) for value in message["work_item_ids"]}
+            if message.get("work_item_ids") is not None
+            else None,
+            selection_only=bool(message.get("selection_only", False)),
         )
     elif message["operation"] == "purge":
         from nro.orchestration.branch_purge import purge
