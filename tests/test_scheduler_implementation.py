@@ -80,6 +80,9 @@ def central(tmp_path, request):
     site.mkdir()
     (site / "__init__.py").write_text("")
     (site / "configuration.py").write_text("ENVIRONMENT_KEYS = {}\n")
+    shutil.copyfile(
+        Path(__file__).parents[1] / "nro/site/managed_runtime.py", site / "managed_runtime.py"
+    )
     (root / "pyproject.toml").write_text('[project]\nname="nro"\nversion="0.0.1"\n')
     (root / ".gitignore").write_text(".nro-installation.json\n")
     for args in [
