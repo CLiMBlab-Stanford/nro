@@ -31,6 +31,7 @@ from nro.modules.anat.lesion_policy import (
 )
 from nro.modules.anat.policy import FASTSURFER_OCI_DIGEST
 from nro.site.configuration import settings
+from nro.site.managed_runtime import RUNTIME_MANIFEST, expose_managed_runtime_helpers
 
 FASTSURFER_IMAGE = "docker://deepmi/fastsurfer@" + FASTSURFER_OCI_DIGEST
 IMAGES = {
@@ -100,7 +101,6 @@ MANAGED_RUNTIME = {
     "environment_lock_sha256": ("83b6dfc6510caaf6280370f6187971a0a94d799af3a402051bf084022f216a05"),
     "archive_builder": "conda-pack=0.9.2",
 }
-RUNTIME_MANIFEST = ".nro-runtime.json"
 
 
 def template_catalog() -> dict:
@@ -566,6 +566,7 @@ def check_installation(
     mode installs resources or processes subject data.
     """
     values, _ = settings()
+    expose_managed_runtime_helpers(values["runtime"])
     results = []
 
     def check(name, function, required=True):
@@ -802,6 +803,7 @@ def check_installation(
 def _install_image(key: str, source: str, *, offline: bool, checksum: str | None = None) -> None:
     """Acquire one configured container image under its resource lock."""
     values, _ = settings()
+    expose_managed_runtime_helpers(values["runtime"])
     path = Path(values[key])
 
     def outdated() -> bool:

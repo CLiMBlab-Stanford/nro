@@ -611,6 +611,47 @@ def test_runtime_diagnostic_distinguishes_absolute_path(tmp_path, monkeypatch):
     )
 
 
+def managed_runtime_tree(root: Path) -> Path:
+    executable = root / "bin/apptainer"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    (root / dependencies.RUNTIME_MANIFEST).write_text("{}", encoding="utf-8")
+    return executable
+
+
+def test_managed_runtime_helpers_follow_existing_path(tmp_path, monkeypatch):
+    from nro.site import managed_runtime
+
+    executable = managed_runtime_tree(tmp_path / "runtime")
+    monkeypatch.setattr(managed_runtime.os, "access", lambda path, mode: path == "/dev/fuse")
+    monkeypatch.setenv("PATH", "/host/bin:/usr/bin")
+
+    managed_runtime.expose_managed_runtime_helpers(executable)
+    managed_runtime.expose_managed_runtime_helpers(executable)
+
+    assert os.environ["PATH"] == f"/host/bin:/usr/bin:{executable.parent}"
+
+
+def test_managed_runtime_helpers_leave_path_without_fuse_or_manifest(tmp_path, monkeypatch):
+    from nro.site import managed_runtime
+
+    managed = managed_runtime_tree(tmp_path / "runtime")
+    external = tmp_path / "external/apptainer"
+    external.parent.mkdir()
+    external.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    monkeypatch.setattr(managed_runtime.os, "access", lambda _path, _mode: True)
+    managed_runtime.expose_managed_runtime_helpers(external)
+    managed_runtime.expose_managed_runtime_helpers("apptainer")
+    assert os.environ["PATH"] == "/usr/bin"
+
+    monkeypatch.setattr(managed_runtime.os, "access", lambda _path, _mode: False)
+    managed_runtime.expose_managed_runtime_helpers(managed)
+    assert os.environ["PATH"] == "/usr/bin"
+
+
 def test_template_catalog_covers_host_template_inputs():
     catalog = {Path(path) for path in dependencies.template_catalog()}
     configured = Path(site.DERIVED["mni_template"][1])
