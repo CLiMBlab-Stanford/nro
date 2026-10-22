@@ -268,7 +268,10 @@ def test_launcher_combines_shared_dependencies_with_release_application(tmp_path
     assert env["NRO_CHECKOUT"] == main["checkout"]
 
 
-def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monkeypatch):
+@pytest.mark.parametrize("incomplete_retry", [False, True])
+def test_branch_install_does_not_maintain_site_or_change_default(
+    tmp_path, monkeypatch, incomplete_retry
+):
     from nro.orchestration import branches
     from nro.orchestration.branch_store import BranchStore
 
@@ -283,10 +286,31 @@ def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monke
     (root / ".nro-bootstrap/bin").mkdir(parents=True)
     (root / ".nro-bootstrap/bin/python").write_text("python")
     (root / ".nro-bootstrap/bin/uv").write_text("uv")
+    if incomplete_retry:
+        environment = root / ".nro-env"
+        (environment / "bin").mkdir(parents=True)
+        (environment / "bin/python").write_text("python")
+        (root / bootstrap.RECORD).write_text(
+            json.dumps(
+                {
+                    "mode": "branch",
+                    "checkout": str(root),
+                    "site": str(site),
+                    "branch": "feature",
+                    "environment": str(environment),
+                    "ready": False,
+                }
+            )
+        )
     monkeypatch.setattr(bootstrap, "ROOT", root)
     monkeypatch.setattr(branches, "checkout_identity", lambda _: (root, "feature", "a" * 40))
     monkeypatch.setattr(
         bootstrap, "check_workers", lambda *a: pytest.fail("Branch setup tried shared maintenance")
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "check_branch_environment",
+        lambda *a: pytest.fail("Incomplete branch setup required central authorization"),
     )
     calls = []
 
@@ -294,7 +318,7 @@ def test_branch_install_does_not_maintain_site_or_change_default(tmp_path, monke
         calls.append((command, kwargs))
         if "sync" in command:
             python = root / ".nro-env/bin/python"
-            python.parent.mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
             python.write_text("python")
         if "nro.bin.branch" in command:
             store = BranchStore(control)
