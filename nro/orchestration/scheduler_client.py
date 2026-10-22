@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from nro.engine.terminal import spinner_frame
 from nro.orchestration.errors import SchedulerError
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.scheduler_implementation import (
@@ -28,9 +29,6 @@ MAINTENANCE_RPC_TIMEOUT_SECONDS = 900.0
 PENDING_REQUEST_INITIAL_POLL_SECONDS = 0.5
 PENDING_REQUEST_MAX_POLL_SECONDS = 2.0
 PENDING_REQUEST_POLL_JITTER = 0.2
-_WAIT_FRAMES = ("·", "•", "●", "•")
-_WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
-_RESET = "\x1b[0m"
 _CLEAR = "\r\x1b[2K"
 
 _OPERATION_NOTICES = {
@@ -168,10 +166,7 @@ def command(
 def _wait_notice(frame: int, message: str) -> bool:
     if not sys.stderr.isatty():
         return False
-    marker = _WAIT_FRAMES[frame % len(_WAIT_FRAMES)]
-    if "NO_COLOR" not in os.environ:
-        marker = f"{_WAIT_COLORS[frame % len(_WAIT_COLORS)]}{marker}{_RESET}"
-    sys.stderr.write(f"{_CLEAR}{marker} {message}")
+    sys.stderr.write(f"{_CLEAR}{spinner_frame(frame)} {message}")
     sys.stderr.flush()
     return True
 

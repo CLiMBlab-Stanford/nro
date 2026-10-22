@@ -139,6 +139,9 @@ def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> 
     assert "Preparing scheduler request..." in rendered
     assert "Waiting for the scheduler allocation..." in rendered
     assert rendered.count(scheduler_client._CLEAR) >= 4
+    assert "⠋" in rendered
+    assert any(frame in rendered for frame in ("⠙", "⠹", "⠸", "⠼"))
+    assert "\x1b[9" not in rendered
     assert "\n" not in rendered
 
 

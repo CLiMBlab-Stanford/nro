@@ -34,6 +34,7 @@ from nro.definitions.store import (
 )
 from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.engine.io import atomic_write_text
+from nro.engine.terminal import spinner_frame
 from nro.orchestration import dependency_state
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.migrations import migrate_database
@@ -55,10 +56,7 @@ if TYPE_CHECKING:
 
 
 _WAIT_NOTICE_SECONDS = 0.75
-_WAIT_FRAMES = ("·", "•", "●", "•")
-_WAIT_COLORS = ("\x1b[95m", "\x1b[94m", "\x1b[96m", "\x1b[92m", "\x1b[93m")
 _CLEAR_LINE = "\r\x1b[2K"
-_RESET = "\x1b[0m"
 
 
 @dataclass
@@ -515,11 +513,9 @@ class RegistryLock:
             detail = f" (held by process {owner['pid']} on {host})"
         else:
             detail = ""
-        marker = _WAIT_FRAMES[frame % len(_WAIT_FRAMES)]
-        if "NO_COLOR" not in os.environ:
-            color = _WAIT_COLORS[frame % len(_WAIT_COLORS)]
-            marker = f"{color}{marker}{_RESET}"
-        sys.stderr.write(f"{_CLEAR_LINE}{marker} Waiting for registry access{detail}...")
+        sys.stderr.write(
+            f"{_CLEAR_LINE}{spinner_frame(frame)} Waiting for registry access{detail}..."
+        )
         sys.stderr.flush()
         return True
 
