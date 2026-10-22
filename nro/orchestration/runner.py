@@ -36,6 +36,10 @@ from nro.orchestration.runner_support import (
     shlex_quote,
     write_completion_breadcrumb,
 )
+from nro.site.managed_runtime import (
+    expose_managed_runtime_helpers,
+    managed_runtime_environment,
+)
 
 
 @dataclass
@@ -116,7 +120,6 @@ class Runner:
 
             raise SystemExit(runtime_diagnostic(self._container.engine))
         from nro.site.dependencies import validate_managed_runtime
-        from nro.site.managed_runtime import expose_managed_runtime_helpers
 
         validate_managed_runtime(resolved_engine)
         expose_managed_runtime_helpers(resolved_engine)
@@ -1488,7 +1491,7 @@ class Runner:
         active_step_name = state.active_steps[-1][1]
         if self._container is None or direct:
             full_cmd = list(cmd)
-            host_env = env
+            host_env = managed_runtime_environment(full_cmd, env)
         else:
             full_cmd = self._container_prefix_for_cwd(cwd) + [
                 "bash",
@@ -1610,7 +1613,7 @@ class Runner:
                 prepare()
             subprocess.run(
                 list(args),
-                env=env,
+                env=managed_runtime_environment(args, env),
                 cwd=str(cwd) if cwd else None,
                 text=True,
                 capture_output=True,

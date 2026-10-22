@@ -652,6 +652,27 @@ def test_managed_runtime_helpers_leave_path_without_fuse_or_manifest(tmp_path, m
     assert os.environ["PATH"] == "/usr/bin"
 
 
+def test_managed_runtime_environment_extends_only_explicit_runtime_environments(
+    tmp_path, monkeypatch
+):
+    from nro.site import managed_runtime
+
+    managed = managed_runtime_tree(tmp_path / "runtime")
+    monkeypatch.setattr(managed_runtime.os, "access", lambda path, mode: path == "/dev/fuse")
+    explicit = {"SUBJECTS_DIR": "/subjects"}
+
+    assert managed_runtime.managed_runtime_environment([str(managed), "exec"], explicit) == {
+        "SUBJECTS_DIR": "/subjects",
+        "PATH": str(managed.parent),
+    }
+    assert managed_runtime.managed_runtime_environment(
+        [str(managed), "exec"], {"PATH": "/usr/bin"}
+    ) == {"PATH": f"/usr/bin:{managed.parent}"}
+    assert explicit == {"SUBJECTS_DIR": "/subjects"}
+    assert managed_runtime.managed_runtime_environment([str(managed)], None) is None
+    assert managed_runtime.managed_runtime_environment(["recon-all"], explicit) == explicit
+
+
 def test_template_catalog_covers_host_template_inputs():
     catalog = {Path(path) for path in dependencies.template_catalog()}
     configured = Path(site.DERIVED["mni_template"][1])
