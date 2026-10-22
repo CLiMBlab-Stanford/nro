@@ -1753,3 +1753,31 @@ def test_successful_command_without_declared_output_fails_its_step(
                 runner.execute()
 
     assert "Failed Step: 002 — Successful-But-Empty" in caplog.text
+
+
+def test_direct_managed_runtime_command_keeps_explicit_environment_and_finds_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nro.site import managed_runtime
+
+    runtime = tmp_path / "runtime/bin/apptainer"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("#!/bin/sh\n")
+    (runtime.parent.parent / managed_runtime.RUNTIME_MANIFEST).write_text("{}")
+    monkeypatch.setattr(managed_runtime.os, "access", lambda path, mode: path == "/dev/fuse")
+    calls = []
+    monkeypatch.setattr(
+        "nro.orchestration.runner.subprocess.run",
+        lambda command, **kwargs: calls.append(kwargs["env"]),
+    )
+    runner = Runner(
+        module_name="Direct Managed Runtime",
+        container=None,
+        binds=(),
+        logger=logging.getLogger("test.runner.managed-runtime"),
+        next_step=count(1).__next__,
+    )
+
+    runner.run_direct([str(runtime), "exec", "image.sif", "true"], env={"SUBJECTS_DIR": "/s"})
+
+    assert calls == [{"SUBJECTS_DIR": "/s", "PATH": str(runtime.parent)}]
