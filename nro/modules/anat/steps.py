@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from nro.engine.execution import (
+    allocated_cpus,
     create_copy_file_step,
     ensure_directory,
+    thread_environment,
 )
 from nro.engine.freesurfer_templates import (
     FREESURFER_BUILD,
@@ -1001,11 +1003,16 @@ def _create_recon_all_step(
         translated_command = [
             translated(Path(item[4:])) if item.startswith("NRO:/") else item for item in command
         ]
+        # --cleanenv drops the worker's thread limits, so restate them inside the container.
+        thread_exports = "".join(
+            f"export {name}={value}; " for name, value in thread_environment().items()
+        )
         setup = (
             "export FREESURFER_HOME=/usr/local/freesurfer; "
             "export SUBJECTS_DIR=/subjects; export FS_LICENSE=/license.txt; "
             "source /usr/local/freesurfer/SetUpFreeSurfer.sh >/dev/null; "
             "export TMPDIR=/tmp; export TMP=/tmp; export TEMP=/tmp; "
+            f"{thread_exports}"
             'exec "$@"'
         )
         return [
@@ -1054,6 +1061,8 @@ def _create_recon_all_step(
                 fs_subject,
                 "-rng-seed",
                 str(seed),
+                "-openmp",
+                str(allocated_cpus()),
                 "-i",
                 f"NRO:{primary}",
                 "-autorecon1",
@@ -1133,6 +1142,8 @@ def _create_recon_all_step(
                     fs_subject,
                     "-rng-seed",
                     str(seed),
+                    "-openmp",
+                    str(allocated_cpus()),
                 ]
                 if t2w is not None and t1w is not None:
                     second += ["-T2", f"NRO:{t2w}", "-T2pial"]

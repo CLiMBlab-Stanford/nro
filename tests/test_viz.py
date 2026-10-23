@@ -280,6 +280,7 @@ def test_state_is_private_per_user_and_checkout(tmp_path: Path) -> None:
 def test_server_prefers_stable_port_and_moves_when_taken(tmp_path: Path, monkeypatch) -> None:
     import socket
 
+    preferred_port = service.preferred_port
     holder = socket.socket()
     holder.bind(("0.0.0.0", 0))
     holder.listen()
@@ -295,8 +296,8 @@ def test_server_prefers_stable_port_and_moves_when_taken(tmp_path: Path, monkeyp
             server.server_close()
     finally:
         holder.close()
-    assert 20000 <= service.preferred_port(12345) < 60000
-    assert service.preferred_port(12345) == service.preferred_port(12345)
+    assert 20000 <= preferred_port(12345) < 60000
+    assert preferred_port(12345) == preferred_port(12345)
 
 
 def test_submit_queues_a_batch_job_on_the_viewing_partition(tmp_path: Path, monkeypatch) -> None:
