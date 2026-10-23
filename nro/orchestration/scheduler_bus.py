@@ -19,6 +19,7 @@ from typing import Any
 from nro.definitions.store import fingerprint
 from nro.engine.io import atomic_write_json, atomic_write_text, read_json
 from nro.orchestration.control_paths import ControlPaths
+from nro.orchestration.recovery_lock import RecoveryLock
 
 PROTOCOL = 1
 HEARTBEAT_SECONDS = 5.0
@@ -358,10 +359,8 @@ def claim_launch(control: Path) -> LaunchClaim | None:
         if not _launch_abandoned(record):
             if record.get("created_at") != "invalid":
                 return None
-        recovery = paths.service / "launch.recovery"
-        try:
-            recovery.mkdir(mode=0o2775)
-        except FileExistsError:
+        recovery = RecoveryLock(paths.service / "launch.recovery")
+        if not recovery.acquire():
             return None
         try:
             record = read_launch(control)
@@ -372,6 +371,8 @@ def claim_launch(control: Path) -> LaunchClaim | None:
                 except OSError:
                     return None
             elif not _launch_abandoned(record):
+                return None
+            if not recovery.owned():
                 return None
             stale = paths.service / f"launch.stale-{uuid.uuid4().hex}"
             try:
@@ -384,10 +385,7 @@ def claim_launch(control: Path) -> LaunchClaim | None:
             except FileExistsError:
                 return None
         finally:
-            try:
-                recovery.rmdir()
-            except OSError:
-                pass
+            recovery.release()
     owner_path = launch / "owner.json"
     atomic_write_json(
         owner_path,

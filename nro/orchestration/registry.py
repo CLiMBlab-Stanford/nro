@@ -38,6 +38,7 @@ from nro.engine.terminal import spinner_frame
 from nro.orchestration import dependency_state
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.migrations import migrate_database
+from nro.orchestration.recovery_lock import RecoveryLock
 from nro.orchestration.registry_schema import (
     APPLICATION_ID,
     SCHEMA_VERSION,
@@ -424,10 +425,8 @@ class RegistryLock:
         """Renew this owner's cross-host lease while fencing recovery."""
         if self.lease_seconds is None or not self._held:
             return False
-        try:
-            self.recovery_path.mkdir(mode=0o2775)
-            self.recovery_path.chmod(0o2775)
-        except FileExistsError:
+        recovery = RecoveryLock(self.recovery_path)
+        if not recovery.acquire():
             return False
         try:
             current = self._read_owner()
@@ -440,10 +439,7 @@ class RegistryLock:
             _atomic_text(self.owner_path, json.dumps(asdict(self.owner), indent=2) + "\n")
             return True
         finally:
-            try:
-                self.recovery_path.rmdir()
-            except OSError:
-                pass
+            recovery.release()
 
     def _heartbeat(self) -> None:
         """Renew a long-lived lease until release begins."""
@@ -474,17 +470,31 @@ class RegistryLock:
             self._heartbeat_thread.join()
             self._heartbeat_thread = None
 
+    def _may_need_recovery(self) -> bool:
+        """Return whether the owner's lease or age permits a recovery check."""
+        lease_expires_at = (self._read_owner() or {}).get("lease_expires_at")
+        if lease_expires_at is not None:
+            try:
+                return time.time() > float(lease_expires_at)
+            except (TypeError, ValueError):
+                return False
+        return self._owner_is_old()
+
     def _recover_if_safe(self) -> bool:
-        try:
-            self.recovery_path.mkdir(mode=0o2775)
-            self.recovery_path.chmod(0o2775)
-        except FileExistsError:
+        # Waiters call this on every poll. Check age without the recovery lock
+        # first, because taking it costs several shared-filesystem operations.
+        if not self.path.exists():
+            return True
+        if not self._may_need_recovery():
+            return False
+        recovery = RecoveryLock(self.recovery_path)
+        if not recovery.acquire():
             return False
         try:
             if not self.path.exists():
                 return True
             owner = self._read_owner()
-            if not self._owner_definitively_dead(owner):
+            if not self._owner_definitively_dead(owner) or not recovery.owned():
                 return False
             token = str((owner or {}).get("token") or "unknown")
             stale = self.path.with_name(f"registry.lock.stale-{token}-{uuid.uuid4().hex}")
@@ -495,10 +505,7 @@ class RegistryLock:
             shutil.rmtree(stale, ignore_errors=True)
             return True
         finally:
-            try:
-                self.recovery_path.rmdir()
-            except OSError:
-                pass
+            recovery.release()
 
     def _show_wait(self, frame: int) -> bool:
         """Refresh the interactive registry-wait indicator."""

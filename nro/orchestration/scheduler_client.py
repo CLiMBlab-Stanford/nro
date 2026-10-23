@@ -29,6 +29,8 @@ MAINTENANCE_RPC_TIMEOUT_SECONDS = 900.0
 PENDING_REQUEST_INITIAL_POLL_SECONDS = 0.5
 PENDING_REQUEST_MAX_POLL_SECONDS = 2.0
 PENDING_REQUEST_POLL_JITTER = 0.2
+# Each check of a pending scheduler allocation queries Slurm.
+LAUNCH_CHECK_SECONDS = 30.0
 _CLEAR = "\r\x1b[2K"
 
 _OPERATION_NOTICES = {
@@ -474,6 +476,7 @@ def _exchange(
     if descriptors:
         raise ValueError("The durable scheduler transport does not accept file descriptors")
     from nro.orchestration.scheduler_bus import (
+        _launch_abandoned,
         create_message,
         read_active,
         read_launch,
@@ -501,6 +504,8 @@ def _exchange(
             return _response_result(response)
     started = time.monotonic()
     last_recovery_check = started
+    last_launch_check = started
+    ended_job: str | None = None
     active_token: str | None = None
     active_started: float | None = None
     attempted_endpoint: tuple[str, int] | None = None
@@ -577,6 +582,21 @@ def _exchange(
         waiting_for_slurm = (
             active_started is None and bool(job_id) and not job_id.startswith("local-")
         )
+        if not waiting_for_slurm:
+            ended_job = None
+        elif now - last_launch_check >= LAUNCH_CHECK_SECONDS:
+            last_launch_check = now
+            if not _launch_abandoned(launch):
+                ended_job = None
+            elif ended_job != job_id:
+                # Recovery below replaces an ended launch. Fail only when the
+                # same ended job is still recorded at the next check.
+                ended_job = job_id
+            else:
+                raise SchedulerError(
+                    f"Scheduler allocation {job_id} ended before the scheduler started, "
+                    "and no replacement allocation could be claimed"
+                )
         if active_started is not None:
             timed_elapsed = now - active_started
         elif waiting_for_slurm:
