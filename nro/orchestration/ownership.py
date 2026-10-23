@@ -28,6 +28,7 @@ from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
 from nro.orchestration.workflow_registry import lineage_directory_label
+from nro.site.configuration import with_site_read_cache
 from nro.versioning import application_version
 
 if TYPE_CHECKING:
@@ -558,13 +559,17 @@ def missing_work_item_ownership(
     return tuple(missing)
 
 
+@with_site_read_cache
 def read_ownership_records(
     bids_root: Path,
     projects: Iterable[str],
     *,
     source_bids_root: Path | None = None,
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
-    """Read and resolve ownership records from the selected derivative trees."""
+    """Read and resolve ownership records from the selected derivative trees.
+
+    Site settings are read once for the whole scan, not once per record.
+    """
     lineages: dict[tuple[str, str], dict] = {}
     ambiguous: set[tuple[str, str]] = set()
     work_items: list[tuple[dict, Path]] = []
