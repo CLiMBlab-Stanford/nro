@@ -120,6 +120,7 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
 
 
 def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> None:
+    from nro.engine import terminal as terminal_module
     from nro.orchestration import scheduler_client
 
     class Terminal(io.StringIO):
@@ -127,7 +128,7 @@ def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> 
             return True
 
     terminal = Terminal()
-    monkeypatch.setattr(scheduler_client.sys, "stderr", terminal)
+    monkeypatch.setattr(terminal_module.sys, "stderr", terminal)
     notice = scheduler_client._ProgressNotice(interval=0.01)
     notice.update("Preparing scheduler request...")
     scheduler_client.time.sleep(0.025)
@@ -138,7 +139,7 @@ def test_scheduler_progress_replaces_and_cycles_startup_message(monkeypatch) -> 
     rendered = terminal.getvalue()
     assert "Preparing scheduler request..." in rendered
     assert "Waiting for the scheduler allocation..." in rendered
-    assert rendered.count(scheduler_client._CLEAR) >= 4
+    assert rendered.count(terminal_module.CLEAR_LINE) >= 4
     assert "⠋" in rendered
     assert any(frame in rendered for frame in ("⠙", "⠹", "⠸", "⠼"))
     assert "\x1b[9" not in rendered
