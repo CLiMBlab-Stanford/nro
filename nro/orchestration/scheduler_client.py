@@ -7,14 +7,13 @@ import os
 import queue
 import random
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from nro.engine.terminal import spinner_frame
+from nro.engine.terminal import SpinnerLine
 from nro.orchestration.errors import SchedulerError
 from nro.orchestration.execution_cache import cache_lock
 from nro.orchestration.scheduler_implementation import (
@@ -31,7 +30,6 @@ PENDING_REQUEST_MAX_POLL_SECONDS = 2.0
 PENDING_REQUEST_POLL_JITTER = 0.2
 # Each check of a pending scheduler allocation queries Slurm.
 LAUNCH_CHECK_SECONDS = 30.0
-_CLEAR = "\r\x1b[2K"
 
 _OPERATION_NOTICES = {
     "admit": "Registering requested work...",
@@ -165,60 +163,8 @@ def command(
     )
 
 
-def _wait_notice(frame: int, message: str) -> bool:
-    if not sys.stderr.isatty():
-        return False
-    sys.stderr.write(f"{_CLEAR}{spinner_frame(frame)} {message}")
-    sys.stderr.flush()
-    return True
-
-
-class _ProgressNotice:
+class _ProgressNotice(SpinnerLine):
     """Render replaceable scheduler progress throughout a command lifecycle."""
-
-    def __init__(self, *, interval: float = 0.5) -> None:
-        self._interval = interval
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._message = ""
-        self._frame = 0
-        self._thread: threading.Thread | None = None
-
-    def update(self, message: str) -> None:
-        """Start the display or replace its current message in place."""
-        if not sys.stderr.isatty():
-            return
-        with self._lock:
-            self._message = message
-            if self._thread is not None:
-                return
-            _wait_notice(self._frame, self._message)
-            self._frame += 1
-            self._thread = threading.Thread(
-                target=self._animate,
-                name="scheduler-client-progress",
-                daemon=True,
-            )
-            self._thread.start()
-
-    def _animate(self) -> None:
-        while not self._stop.wait(self._interval):
-            with self._lock:
-                _wait_notice(self._frame, self._message)
-                self._frame += 1
-
-    def clear(self) -> None:
-        """Stop rendering and remove the transient terminal line."""
-        with self._lock:
-            thread = self._thread
-            if thread is None:
-                return
-            self._stop.set()
-        thread.join(timeout=max(1.0, self._interval * 2))
-        with self._lock:
-            sys.stderr.write(_CLEAR)
-            sys.stderr.flush()
-            self._thread = None
 
 
 def startup_notice(message: str) -> _ProgressNotice:
@@ -379,8 +325,7 @@ def _run_once(endpoint: SchedulerEndpoint, record: dict, *, durable: bool = True
         process.stdin = None
         notice_text = _operation_notice(record["payload"])
         started = time.monotonic()
-        frame = 0
-        notice = False
+        notice = SpinnerLine()
         try:
             while True:
                 try:
@@ -389,14 +334,9 @@ def _run_once(endpoint: SchedulerEndpoint, record: dict, *, durable: bool = True
                 except subprocess.TimeoutExpired:
                     if time.monotonic() - started >= 0.75:
                         progress = read_progress(endpoint.control, str(record["id"]))
-                        notice = (
-                            _wait_notice(frame, _progress_notice(progress, notice_text)) or notice
-                        )
-                        frame += 1
+                        notice.update(_progress_notice(progress, notice_text))
         finally:
-            if notice:
-                sys.stderr.write(_CLEAR)
-                sys.stderr.flush()
+            notice.clear()
         if process.returncode:
             detail = stderr.strip() or stdout.strip() or f"status {process.returncode}"
             raise SchedulerError(f"One-shot scheduler update failed: {detail}")

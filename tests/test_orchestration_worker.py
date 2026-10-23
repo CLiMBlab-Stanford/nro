@@ -2178,7 +2178,7 @@ def test_registry_lock_reports_interactive_wait_owner(tmp_path: Path, monkeypatc
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids", lock_timeout=0.05)
     registry.initialize()
     terminal = Terminal()
-    monkeypatch.setattr("nro.orchestration.registry.sys.stderr", terminal)
+    monkeypatch.setattr("nro.engine.terminal.sys.stderr", terminal)
     monkeypatch.setattr("nro.orchestration.registry._WAIT_NOTICE_SECONDS", 0.0)
 
     with registry._lock():
