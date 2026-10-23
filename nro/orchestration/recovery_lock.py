@@ -61,6 +61,7 @@ class RecoveryLock:
     """
 
     def __init__(self, path: Path, *, lease_seconds: float = LEASE_SECONDS) -> None:
+        """Configure the lock path and the lease, in seconds, for remote owners."""
         self.path = Path(path)
         self.lease_seconds = lease_seconds
         self.token = uuid.uuid4().hex

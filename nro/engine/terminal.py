@@ -22,6 +22,7 @@ class SpinnerLine:
     """
 
     def __init__(self, *, interval: float = SPINNER_INTERVAL_SECONDS) -> None:
+        """Configure the redraw interval in seconds."""
         self._interval = interval
         self._lock = threading.Lock()
         self._stop = threading.Event()
