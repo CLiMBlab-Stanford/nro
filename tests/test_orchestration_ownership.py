@@ -261,3 +261,43 @@ def test_work_item_key_retains_pre_terminology_identity() -> None:
     assert work_item_key("demo", "clean", "lineage", "01", {"space": "T1w"}) == (
         "clean:c18c0eeff956df04e4199b78d10fd2c356d919f7fcc58a6db5b994fdbf8e216a"
     )
+
+
+def test_ownership_scan_reads_site_settings_once(tmp_path: Path, monkeypatch) -> None:
+    import nro.site.configuration as configuration
+
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    for participant in ("01", "02"):
+        _write(bids / "demo" / f"sub-{participant}" / "anat" / f"sub-{participant}_T1w.nii.gz")
+        work_item = build_subject_work_items(
+            project="demo",
+            participant=participant,
+            module="anat",
+            workflow=workflow,
+            registered=registered,
+            registry=registry,
+            bids_root=bids,
+        )[0]
+        write_work_item_ownership(
+            registry, registry.register_work_items((work_item,))[work_item.key]
+        )
+
+    reads = []
+    original = configuration.read_overrides
+
+    def counting(*args, **kwargs):
+        reads.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(configuration, "read_overrides", counting)
+    _lineages, records, errors = read_ownership_records(bids, ("demo",))
+
+    assert errors == []
+    assert len(records) == 2
+    assert len(reads) <= 1
+    reads.clear()
+    configuration.settings()
+    assert len(reads) == 1, "the read cache must not outlive the scan"
