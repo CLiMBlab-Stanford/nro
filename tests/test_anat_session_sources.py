@@ -272,6 +272,7 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path, monke
     subjects_dir = tmp_path / "subjects"
     subject_dir = subjects_dir / "sub-1"
     calls: list[list[str]] = []
+    monkeypatch.setenv("NRO_ALLOCATED_CPUS", "3")
     monkeypatch.setattr(anat_steps, "ensure_portable_fsaverage", lambda **_kwargs: None)
 
     def run_child(command, **_kwargs):
@@ -311,6 +312,9 @@ def test_recon_all_uses_external_mask_and_pinned_container(tmp_path: Path, monke
     assert len(calls) == 4
     assert all(call[:3] == ["singularity", "exec", "--cleanenv"] for call in calls)
     assert all(any("export TMPDIR=/tmp" in item for item in call) for call in calls)
+    assert all(any("export OMP_NUM_THREADS=3;" in item for item in call) for call in calls)
+    assert calls[0][calls[0].index("-openmp") + 1] == "3"
+    assert calls[3][calls[3].index("-openmp") + 1] == "3"
     assert "-autorecon1" in calls[0]
     assert calls[0][calls[0].index("-rng-seed") + 1] == "1234"
     assert "-noskullstrip" in calls[0]
