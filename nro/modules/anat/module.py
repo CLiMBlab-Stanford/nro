@@ -289,6 +289,7 @@ def build_module(
     binds = collect_bind_directories(
         [
             *(item.image for item in all_images),
+            *(item.image.resolve() for item in all_images),
             *(item.json for item in all_images if item.json is not None),
             opts.out_dir,
             opts.work_dir,
@@ -2174,6 +2175,15 @@ def _build_argparser() -> argparse.ArgumentParser:
     return p
 
 
+def source_image_path(path: Path, *, project: str) -> Path:
+    """Resolve a source image's directory while keeping its BIDS file name.
+
+    git-annex stores each image as a symlink to an object whose name lacks the
+    BIDS suffix, so resolving the file itself would lose the modality.
+    """
+    return resolve_project_path(path.parent, project=project) / path.name
+
+
 def main(
     argv: Optional[Sequence[str]] = None, *, execution_context: ExecutionContext | None = None
 ) -> None:
@@ -2184,8 +2194,8 @@ def main(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     project = str(args.project)
-    t1w = [load_anat_image(resolve_project_path(path, project=project)) for path in args.t1w]
-    t2w = [load_anat_image(resolve_project_path(path, project=project)) for path in args.t2w]
+    t1w = [load_anat_image(source_image_path(path, project=project)) for path in args.t1w]
+    t2w = [load_anat_image(source_image_path(path, project=project)) for path in args.t2w]
     markup = active_source_markup(project=project)
     msmall = (
         resolve_msmall_calibration(
