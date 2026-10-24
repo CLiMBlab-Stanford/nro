@@ -12,6 +12,7 @@ from nro.definitions.repository import create_store, validate_store
 from nro.definitions.store import ConfigStore, WorkflowError
 from nro.engine.bids import discover_raw_runs
 from nro.modules.anat.inputs import load_anat_image
+from nro.modules.anat.module import source_image_path
 from nro.modules.anat.planning import (
     _effective_markup_contract,
     raw_anatomical_images,
@@ -183,6 +184,18 @@ def test_anatomical_discovery_keeps_bids_names_of_annexed_images(tmp_path: Path)
 
     assert raw_anatomical_images(subject) == (t1w,)
     assert raw_anatomical_images(subject, SubjectMarkup("main", "moth", subject)) == (t1w,)
+
+
+def test_anatomical_module_keeps_modality_of_annexed_images(tmp_path: Path) -> None:
+    annexed = _write(tmp_path / "BIDS/moth/.git/annex/objects/MD5E-s1--abc.nii.gz")
+    t1w = tmp_path / "BIDS/moth/sub-UTS01/ses-1/anat/sub-UTS01_ses-1_T1w.nii.gz"
+    t1w.parent.mkdir(parents=True)
+    t1w.symlink_to(annexed)
+
+    path = source_image_path(t1w, project="moth")
+
+    assert path == t1w
+    assert load_anat_image(path).modality == "T1w"
 
 
 def test_missing_project_or_subject_produces_empty_markup(tmp_path: Path) -> None:
