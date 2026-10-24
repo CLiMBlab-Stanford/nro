@@ -27,11 +27,19 @@ if TYPE_CHECKING:
 
 
 def _canonical_images(paths: list[Path] | tuple[Path, ...]) -> tuple[Path, ...]:
-    """Resolve BIDS aliases and retain each physical image exactly once."""
-    unique: dict[Path, None] = {}
+    """Retain each physical image once under a path that keeps its BIDS name.
+
+    A regular file is preferred over a symlink to it. When only a symlink
+    exists, as in git-annex datasets, the symlink path is kept because the
+    resolved target name lacks the BIDS suffix.
+    """
+    unique: dict[Path, Path] = {}
     for path in paths:
-        unique[path.resolve()] = None
-    return tuple(unique)
+        target = path.resolve()
+        kept = unique.get(target)
+        if kept is None or (kept.is_symlink() and not path.is_symlink()):
+            unique[target] = path
+    return tuple(unique.values())
 
 
 def raw_anatomical_images(

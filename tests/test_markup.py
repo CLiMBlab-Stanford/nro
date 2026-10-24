@@ -173,6 +173,18 @@ def test_anatomical_discovery_deduplicates_session_aliases(tmp_path: Path) -> No
     assert raw_anatomical_images(subject) == (t1w, t2w)
 
 
+def test_anatomical_discovery_keeps_bids_names_of_annexed_images(tmp_path: Path) -> None:
+    subject = tmp_path / "BIDS/moth/sub-UTS01"
+    annexed = _write(tmp_path / "BIDS/moth/.git/annex/objects/MD5E-s1--abc.nii.gz")
+    anat = subject / "ses-1/anat"
+    anat.mkdir(parents=True)
+    t1w = anat / "sub-UTS01_ses-1_T1w.nii.gz"
+    t1w.symlink_to(annexed)
+
+    assert raw_anatomical_images(subject) == (t1w,)
+    assert raw_anatomical_images(subject, SubjectMarkup("main", "moth", subject)) == (t1w,)
+
+
 def test_missing_project_or_subject_produces_empty_markup(tmp_path: Path) -> None:
     root = tmp_path / "definitions"
     _write(root / "markup/main_markup.yml", "other:\n  someone: {}\n")
