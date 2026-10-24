@@ -32,6 +32,7 @@ from nro.engine.paths import (
     module_artifact_root,
 )
 from nro.engine.pose import create_pose_normalized_grid, invert_itk_affine, pose_quality
+from nro.engine.source_metadata import inherited_sidecar_metadata
 from nro.modules.anat.inputs import AnatImage, sort_anat_images
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.runner import Runner
@@ -296,7 +297,7 @@ def _plan_session_anatomicals(
             for image in session_images
         }
         for image in session_images:
-            payload: dict[str, object] = dict(image.metadata)
+            payload: dict[str, object] = inherited_sidecar_metadata(image.metadata)
             payload["Sources"] = [str(image.image)]
             payload["BiasCorrection"] = "N4BiasFieldCorrection"
             staged_preprocessed = staged[image.image]
