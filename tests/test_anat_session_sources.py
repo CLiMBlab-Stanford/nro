@@ -149,6 +149,40 @@ def test_session_plans_keep_modalities_independent_and_repeated_acquisitions_dis
         assert "TransformToT1w" not in plan.metadata
 
 
+def test_session_metadata_omits_archival_conversion_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "raw" / "sub-1_ses-1_T1w.nii.gz"
+    path.parent.mkdir()
+    path.write_bytes(b"raw")
+    image = AnatImage(
+        image=path,
+        json=None,
+        modality="T1w",
+        session_id="ses-1",
+        entities={"sub": "1", "ses": "1"},
+        time_kind="series",
+        time_value=1.0,
+        metadata={
+            "SeriesNumber": 1,
+            "SourceDICOM": {"Series": [{"Directory": "/archive/subject/dicoms"}]},
+        },
+    )
+    monkeypatch.setattr(
+        anat_steps, "anat_session_dir", lambda *_args, **_kwargs: tmp_path / "derivatives"
+    )
+    monkeypatch.setattr(
+        anat_steps, "anat_session_work_dir", lambda *_args, **_kwargs: tmp_path / "work"
+    )
+
+    (plan,) = anat_steps._plan_session_anatomicals(
+        images=(image,), project="project", anat_id="main", sub_id="sub-1"
+    )
+
+    assert plan.metadata["SeriesNumber"] == 1
+    assert "SourceDICOM" not in plan.metadata
+
+
 def test_brain_extraction_reads_source_and_owns_its_outputs(tmp_path: Path) -> None:
     source = tmp_path / "source.nii.gz"
     destination = tmp_path / "missing" / "anat" / "destination.nii.gz"

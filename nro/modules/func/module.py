@@ -88,6 +88,7 @@ from nro.engine.paths import (
     resolve_project_work_path,
 )
 from nro.engine.references import portable_public_payload, resolve_public_payload
+from nro.engine.source_metadata import inherited_sidecar_metadata
 from nro.engine.targets import supported_output_spaces
 from nro.engine.templates import find_fsaverage_template_surface
 from nro.modules.func.contract import (
@@ -2799,7 +2800,7 @@ def build_module(
         for image_path, metadata_path in zip(public_images, metadata_outputs):
             space = bids_entity(image_path, "space", default=None)
             metadata = {
-                **epi_input_meta,
+                **inherited_sidecar_metadata(epi_input_meta),
                 "Description": "nro functional preprocessing derivative.",
                 "Sources": [str(source_inputs.epi), str(anat_manifest)],
                 "SpatialReference": space,

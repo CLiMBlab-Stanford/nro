@@ -37,6 +37,17 @@ FUNCTIONAL_METADATA_FIELDS = ACQUISITION_ORDER_FIELDS | frozenset(
 )
 
 
+# Conversion provenance kept in raw sidecars for debugging. It describes how the
+# source dataset was made, not the derivative, and may name hosts outside nro's
+# configured roots, so derivative sidecars never inherit it.
+ARCHIVAL_SOURCE_FIELDS = frozenset({"SourceDICOM"})
+
+
+def inherited_sidecar_metadata(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return raw sidecar metadata that a derivative sidecar may inherit."""
+    return {key: value for key, value in values.items() if key not in ARCHIVAL_SOURCE_FIELDS}
+
+
 def metadata_fields(module: str) -> frozenset[str]:
     """Return source metadata fields declared scientifically relevant by a module."""
     if module == "anat":

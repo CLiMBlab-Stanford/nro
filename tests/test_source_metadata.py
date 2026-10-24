@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nro.engine.source_metadata import semantic_metadata_snapshot
+from nro.engine.source_metadata import inherited_sidecar_metadata, semantic_metadata_snapshot
 
 
 def _dataset(tmp_path: Path) -> tuple[Path, Path]:
@@ -59,3 +59,13 @@ def test_semantic_metadata_tracks_consumed_sidecar_fields(tmp_path: Path) -> Non
     sidecar.write_text(json.dumps(metadata))
 
     assert semantic_metadata_snapshot((image,), module="func") != before
+
+
+def test_derivative_sidecars_do_not_inherit_conversion_provenance() -> None:
+    raw = {
+        "RepetitionTime": 1.5,
+        "SourceDICOM": {"Series": [{"Directory": "/archive/subject/dicoms"}]},
+    }
+
+    assert inherited_sidecar_metadata(raw) == {"RepetitionTime": 1.5}
+    assert "SourceDICOM" in raw
