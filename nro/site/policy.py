@@ -153,10 +153,14 @@ SITE_SETTINGS = {
         scheduler_operation="gpu_concurrency",
     ),
     "execution.worker_idle_timeout_seconds": _setting(
-        "worker_idle_timeout", "int", "new request", "Idle time before a worker exits", minimum=1
+        "worker_idle_timeout", "int", "new allocation", "Idle time before a worker exits", minimum=1
     ),
     "execution.worker_drain_minutes": _setting(
-        "worker_drain_minutes", "int", "new request", "Time reserved for worker shutdown", minimum=0
+        "worker_drain_minutes",
+        "int",
+        "new allocation",
+        "Time reserved for worker shutdown",
+        minimum=0,
     ),
     "slurm.partition": _setting("partition", "str", "new allocation", "Default Slurm partition"),
     "slurm.viewer_partition": _setting(
@@ -173,22 +177,26 @@ SITE_SETTINGS = {
         "scheduler_cpus", "int", "next scheduler", "Scheduler CPUs", minimum=1
     ),
     "slurm.worker.time_hours": _setting(
-        "worker_time", "int", "new request", "General and GPU worker wall time", minimum=1
+        "worker_time", "int", "new allocation", "General and GPU worker wall time", minimum=1
     ),
     "slurm.worker.memory_gb": _setting(
-        "worker_memory", "int", "new request", "Initial worker host memory", minimum=1
+        "worker_memory", "int", "new allocation", "Initial worker host memory", minimum=1
     ),
     "slurm.worker.max_memory_gb": _setting(
-        "worker_max_memory", "int", "new request", "Maximum retried worker host memory", minimum=1
+        "worker_max_memory",
+        "int",
+        "new allocation",
+        "Maximum retried worker host memory",
+        minimum=1,
     ),
     "slurm.worker.cpus": _setting(
-        "worker_cpus", "int", "new request", "General and GPU worker CPUs", minimum=1
+        "worker_cpus", "int", "new allocation", "General and GPU worker CPUs", minimum=1
     ),
     "slurm.long_worker.time_hours": _setting(
-        "long_worker_time", "int", "new request", "Long CPU worker wall time", minimum=1
+        "long_worker_time", "int", "new allocation", "Long CPU worker wall time", minimum=1
     ),
     "slurm.long_worker.cpus": _setting(
-        "long_worker_cpus", "int", "new request", "Long CPU worker CPUs", minimum=1
+        "long_worker_cpus", "int", "new allocation", "Long CPU worker CPUs", minimum=1
     ),
     "slurm.viewer.time_hours": _setting(
         "viewer_time", "int", "new viewer", "Viewer server wall time", minimum=1

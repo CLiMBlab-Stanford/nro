@@ -32,7 +32,8 @@ history. It preserves active demand, existing derivative provenance, unresolved
 diagnostics, and their dependency closures. Terminal publication handles contain only
 terminal identities, while inherited-input reconciliation plans use compressed storage.
 Periodic transactional compaction removes superseded attempts and terminal worker or
-Slurm records; incremental vacuuming reclaims the resulting free pages gradually.
+Slurm records. It keeps started attempts on a work item's current revision so that
+`ELAPSED` in `nro status` includes interrupted and retried attempts; incremental vacuuming reclaims the resulting free pages gradually.
 
 `nro run` starts or joins the scheduler. The scheduler records planning requests
 in FIFO order and processes one at a time using the requesting branch's pinned

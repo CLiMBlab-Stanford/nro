@@ -30,7 +30,11 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.execution_context import ExecutionContext
 from nro.orchestration.registry import RegistryLockTimeout
-from nro.orchestration.resources import SCHEDULABLE_RESOURCE_CLASSES
+from nro.orchestration.resources import (
+    LONG_CPU_RESOURCE_CLASS,
+    SCHEDULABLE_RESOURCE_CLASSES,
+    memory_tiers,
+)
 from nro.orchestration.scheduler_bus import DEFAULT_IDLE_GRACE_SECONDS, HEARTBEAT_SECONDS
 from nro.orchestration.scheduler_maintenance import (
     reconcile_execution_allocations,
@@ -566,56 +570,80 @@ class _WorkerCheckinBatcher:
                 future.set_result(response)
 
 
-def _worker_script(registry, *, resource_class: str, memory_gb: int, profile: str | None) -> Path:
-    suffix = f"-{profile}" if profile else ""
-    exact = registry.paths.workers / f"worker-{resource_class}-{memory_gb}gb{suffix}.sbatch"
-    if exact.is_file():
-        return exact
-    candidates = sorted(
-        registry.paths.workers.glob(f"worker-{resource_class}-{memory_gb}gb-*.sbatch")
-    )
-    if candidates:
-        return candidates[-1]
-    raise ValueError(f"No prepared {resource_class} {memory_gb} GB worker script is available")
+def _profile_placement(registry, profile: str | None) -> tuple[str | None, str | None] | None:
+    """Return the partition and account a request chose for its worker profile."""
+    if not profile:
+        return None
+    for candidate in sorted(registry.paths.workers.glob(f"worker-*gb-{profile}.sbatch")):
+        directives = {
+            key: value
+            for line in candidate.read_text().splitlines()
+            if line.startswith("#SBATCH --") and "=" in line
+            for key, value in (line.removeprefix("#SBATCH --").split("=", 1),)
+        }
+        return directives.get("partition"), directives.get("account")
+    return None
 
 
-def _worker_script_tiers(
-    registry, *, resource_class: str, minimum_memory_gb: int, profile: str | None
-) -> tuple[tuple[int, Path], ...]:
-    """Return one request profile's eligible scripts in ascending memory order."""
-    prefix = f"worker-{resource_class}-"
-    suffix = f"gb-{profile}.sbatch" if profile else None
-    scripts = []
-    pattern = f"{prefix}*{suffix}" if suffix else f"{prefix}*gb-*.sbatch"
-    for candidate in registry.paths.workers.glob(pattern):
-        value = candidate.name.removeprefix(prefix).split("gb-", 1)[0]
-        if value.isdigit() and int(value) >= minimum_memory_gb:
-            scripts.append((int(value), candidate))
-    if scripts:
-        latest_by_tier: dict[int, Path] = {}
-        for memory_gb, candidate in scripts:
-            current = latest_by_tier.get(memory_gb)
-            if current is None or candidate.stat().st_mtime_ns > current.stat().st_mtime_ns:
-                latest_by_tier[memory_gb] = candidate
-        return tuple(sorted(latest_by_tier.items()))
-    if profile is not None:
-        return _worker_script_tiers(
-            registry,
-            resource_class=resource_class,
-            minimum_memory_gb=minimum_memory_gb,
-            profile=None,
-        )
-    return (
-        (
-            minimum_memory_gb,
-            _worker_script(
-                registry,
-                resource_class=resource_class,
-                memory_gb=minimum_memory_gb,
-                profile=profile,
-            ),
-        ),
+def _current_worker_script(
+    registry, *, resource_class: str, memory_gb: int, profile: str | None
+) -> Path:
+    """Write a worker script from the active implementation and live site settings.
+
+    Wall time, CPUs, idle timeout, and drain time come from the site as it is now,
+    so successors and expansions adopt site changes. The requesting profile keeps
+    only its Slurm placement, which a run may choose for its workers.
+    """
+    from nro.orchestration.scheduler_implementation import bound_site_values
+    from nro.orchestration.submission import _write_worker_script
+
+    values = bound_site_values(registry.paths.control)
+    placement = _profile_placement(registry, profile)
+    partition, account = (
+        placement
+        if placement is not None
+        else (values["partition"] or None, values["account"] or None)
     )
+    long_cpu = resource_class == LONG_CPU_RESOURCE_CLASS
+    return _write_worker_script(
+        registry,
+        bids_root=registry.paths.bids_root,
+        partition=partition,
+        account=account,
+        hours=int(values["long_worker_time" if long_cpu else "worker_time"]),
+        memory_gb=memory_gb,
+        cpus=int(values["long_worker_cpus" if long_cpu else "worker_cpus"]),
+        resource_class=resource_class,
+        idle_timeout=int(values["worker_idle_timeout"]),
+        drain_seconds=int(values["worker_drain_minutes"]) * 60,
+    )
+
+
+def _submit_current(
+    registry,
+    submission_ids: list[int],
+    *,
+    resource_class: str,
+    memory_gb: int,
+    profile: str | None,
+    dependency: str | None = None,
+) -> list[str]:
+    """Write a current worker script and submit each reserved intent with it."""
+    from nro.orchestration.execution_cache import cache_lock
+
+    with cache_lock(registry.paths.control):
+        try:
+            script = _current_worker_script(
+                registry, resource_class=resource_class, memory_gb=memory_gb, profile=profile
+            )
+        except BaseException:
+            for submission_id in submission_ids:
+                registry.update_submission(submission_id, state="error")
+            raise
+        return [
+            _submit_reserved(registry, submission_id, script, dependency=dependency)
+            for submission_id in submission_ids
+        ]
 
 
 def _submit_reserved(
@@ -680,41 +708,18 @@ def _pending_pool_expansions(registry) -> list[tuple[str, str, dict]]:
 
 def _supply_requested_pool(registry, payload: dict) -> list[str]:
     """Supply all worker classes that currently need another allocation."""
-    from nro.orchestration.scheduler_implementation import validate_worker_script
+    from nro.orchestration.scheduler_implementation import bound_site_values
 
     # A finished Slurm allocation must not retain a slot merely because worker
     # traffic postponed the normal maintenance pass.
     if hasattr(registry, "reconcile_scheduler_submissions"):
         reconcile_execution_allocations(registry)
+    values = bound_site_values(registry.paths.control)
+    tiers = memory_tiers(int(values["worker_memory"]), int(values["worker_max_memory"]))
     submitted = []
     for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
         lower_memory = 0
-        tiers = _worker_script_tiers(
-            registry,
-            resource_class=resource_class,
-            minimum_memory_gb=1,
-            profile=payload.get("profile"),
-        )
-        valid_tiers = []
-        for memory_gb, script in tiers:
-            try:
-                validate_worker_script(registry.paths.control, script)
-            except ValueError:
-                continue
-            valid_tiers.append((memory_gb, script))
-        if not valid_tiers and payload.get("profile") is not None:
-            for memory_gb, script in _worker_script_tiers(
-                registry,
-                resource_class=resource_class,
-                minimum_memory_gb=1,
-                profile=None,
-            ):
-                try:
-                    validate_worker_script(registry.paths.control, script)
-                except ValueError:
-                    continue
-                valid_tiers.append((memory_gb, script))
-        for memory_gb, script in valid_tiers:
+        for memory_gb in tiers:
             reservations = registry.reserve_worker_submissions(
                 request_id=None,
                 resource_class=resource_class,
@@ -725,8 +730,13 @@ def _supply_requested_pool(registry, payload: dict) -> list[str]:
             if not reservations:
                 continue
             submitted.extend(
-                _submit_reserved(registry, submission_id, script)
-                for submission_id, _token in reservations
+                _submit_current(
+                    registry,
+                    [submission_id for submission_id, _token in reservations],
+                    resource_class=resource_class,
+                    memory_gb=memory_gb,
+                    profile=payload.get("profile"),
+                )
             )
             break
     return submitted
@@ -900,32 +910,31 @@ def _apply_worker_operation(registry, message: dict) -> object:
             )
             if reservation is None:
                 return None
-            script = _worker_script(
-                registry,
-                resource_class=resource_class,
-                memory_gb=memory,
-                profile=message.get("profile"),
-            )
             with registry.connection() as db:
                 row = db.execute(
                     "SELECT slurm_job_id FROM workers WHERE id=?", (worker_id,)
                 ).fetchone()
-            return _submit_reserved(
-                registry, reservation[0], script, dependency=row[0] if row else None
-            )
+            return _submit_current(
+                registry,
+                [reservation[0]],
+                resource_class=resource_class,
+                memory_gb=memory,
+                profile=message.get("profile"),
+                dependency=row[0] if row else None,
+            )[0]
         if kind == "adaptive":
             reservation = registry.reserve_adaptive_worker(
                 resource_class=resource_class, memory_gb=memory
             )
             if reservation is None:
                 return None
-            script = _worker_script(
+            return _submit_current(
                 registry,
+                [reservation[0]],
                 resource_class=resource_class,
                 memory_gb=memory,
                 profile=message.get("profile"),
-            )
-            return _submit_reserved(registry, reservation[0], script)
+            )[0]
         if kind == "expand":
             _queue_pool_expansion(registry, message)
             return None

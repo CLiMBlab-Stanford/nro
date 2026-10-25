@@ -284,7 +284,16 @@ controller. The registry, not queued Slurm count, enforces the independent
 general and GPU concurrency limits. If an allocation nevertheless expires while
 running an item or resource step, the scheduler records the interrupted attempt
 and returns that work to the appropriate ready queue. It does not classify the
-work item as timed out or cancel its descendants.
+work item as timed out or cancel its descendants. A signal that reaches the worker
+while a command runs also returns that work to the ready queue, even when the
+command traps SIGTERM and exits with another status.
+
+The scheduler writes a new worker script for each successor, OOM retry, and pool
+expansion. Wall time, CPUs, idle timeout, and drain time come from the current site
+settings, and the source comes from the active scheduler binding. Only the Slurm
+partition and account of the requesting worker's profile carry over. A scheduler
+relaunched by a worker also reads the current binding, so changes to
+`slurm.scheduler.*` apply to the next scheduler allocation.
 Confirmed OOMs increase the work-item memory tier geometrically up to the
 request ceiling; higher-tier workers may accept lower-tier work items.
 

@@ -7,6 +7,7 @@ import os
 import queue
 import random
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Sequence
@@ -214,6 +215,19 @@ def _start_service(endpoint: SchedulerEndpoint, *, options: dict | None = None) 
     if claim is None:
         return None
     try:
+        if not endpoint.maintenance and implementation_path(endpoint.control).is_file():
+            # A worker pins the site and source of its own submission. Relaunch
+            # from the current binding so the new scheduler adopts site changes.
+            try:
+                endpoint = _endpoint(
+                    endpoint.control, endpoint.bids_root, allow_changed_checkout=True
+                )
+            except ValueError as error:
+                print(
+                    f"WARNING: launching the scheduler from its caller's settings: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
         values = settings(path=endpoint.site)[0]
         run_locally = os.environ.get("NRO_SCHEDULER_LOCAL") == "1"
         if run_locally:

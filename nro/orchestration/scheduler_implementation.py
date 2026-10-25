@@ -73,6 +73,20 @@ def _coordination_site(values: dict) -> dict:
     return {key: values[key] for key in _COORDINATION_SITE_KEYS if key in values}
 
 
+def bound_site_values(control: Path) -> dict:
+    """Read the designated installation's site settings as they are now.
+
+    Allocations that the scheduler submits use these values, so a site change
+    applies to the next worker or scheduler without restarting the service.
+    """
+    path = implementation_path(control)
+    if not path.exists():
+        return settings()[0]
+    if path.is_symlink():
+        raise ValueError("Scheduler binding cannot be a symlink")
+    return settings(path=Path(json.loads(path.read_text())["site"]))[0]
+
+
 def implementation_path(control: Path) -> Path:
     """Locate the explicit central installation binding, not a code archive."""
     return ControlPaths(control).scheduler / "implementation.json"
