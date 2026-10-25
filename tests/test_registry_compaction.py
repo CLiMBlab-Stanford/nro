@@ -336,3 +336,60 @@ def test_large_request_plan_round_trip_is_compressed() -> None:
     assert isinstance(encoded, bytes)
     assert len(encoded) < len(json.dumps(payload)) // 4
     assert decode_plan(encoded) == payload
+
+
+def test_compaction_retains_started_attempts_of_the_current_revision(tmp_path: Path) -> None:
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    item = _spec(
+        registry,
+        registered,
+        workflow,
+        key="anat:" + "f" * 64,
+        module="anat",
+    )
+    work_item_id = registry.register_work_items((item,))[item.key]
+    with registry.connection(write=True) as database:
+        for revision, started, finished, state, message in (
+            (
+                "old-revision",
+                "2026-10-01T00:00:00+00:00",
+                "2026-10-01T01:00:00+00:00",
+                "success",
+                "old",
+            ),
+            (
+                item.revision_fingerprint,
+                "2026-10-02T00:00:00+00:00",
+                "2026-10-03T00:00:00+00:00",
+                "cancelled",
+                "expired",
+            ),
+            (item.revision_fingerprint, "2026-10-03T00:10:00+00:00", None, "running", None),
+        ):
+            database.execute(
+                """INSERT INTO attempts(
+                       work_item_id,state,revision_fingerprint,memory_gb,started_at,
+                       completed_at,error_type,error_message,log_path,created_at
+                   ) VALUES (?,?,?,32,?,?,?,?,'/attempt.log',?)""",
+                (
+                    work_item_id,
+                    state,
+                    revision,
+                    started,
+                    finished,
+                    "WorkerAllocationExpired" if state == "cancelled" else None,
+                    message,
+                    started,
+                ),
+            )
+
+    report = compact_registry(registry, minimum_interval_seconds=0)
+
+    assert report.removed_attempts == 1
+    with registry.connection() as database:
+        assert [row[0] for row in database.execute("SELECT state FROM attempts ORDER BY id")] == [
+            "cancelled",
+            "running",
+        ]

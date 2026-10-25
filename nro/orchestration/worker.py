@@ -375,8 +375,15 @@ class Worker:
         return True
 
     def _allocation_timed_out(self, return_code: int) -> bool:
-        """Identify SIGTERM delivered at the worker allocation deadline."""
-        if return_code != -signal.SIGTERM or self.deadline is None:
+        """Identify a command stopped by the worker allocation deadline.
+
+        Slurm signals the command and this worker together. The command may
+        trap SIGTERM and exit with another nonzero status, so a signal received
+        by the worker also identifies the interruption.
+        """
+        if return_code == 0 or self.deadline is None:
+            return False
+        if return_code != -signal.SIGTERM and not self.stop_requested:
             return False
         # The deadline starts a few seconds after the Slurm allocation. Allow
         # for that skew and for one launcher polling interval.
@@ -804,6 +811,10 @@ class Worker:
                     },
                 )
                 return
+            if self.stop_requested and return_code != 0:
+                # The worker was signalled while the command ran. The command can
+                # exit before the next cancellation poll observes that signal.
+                cancelled = True
             if cancelled:
                 # Registry-issued cancellations already carry their durable
                 # cause.  A worker-level signal is infrastructure interruption

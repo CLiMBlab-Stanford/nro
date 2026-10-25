@@ -1718,7 +1718,7 @@ def test_set_lists_supported_settings_without_registry_access(capsys) -> None:
     result = json.loads(capsys.readouterr().out)
     settings = {setting["key"]: setting for setting in result["settings"]}
     assert settings["execution.concurrency"]["effect"] == "immediate"
-    assert settings["slurm.worker.time_hours"]["effect"] == "new request"
+    assert settings["slurm.worker.time_hours"]["effect"] == "new allocation"
     assert settings["slurm.scheduler.cpus"]["effect"] == "next scheduler"
 
 
@@ -1949,8 +1949,6 @@ def test_worker_script_records_memory_tier(tmp_path: Path) -> None:
 
 
 def test_gpu_worker_script_requests_one_gpu_and_never_lingers(tmp_path: Path) -> None:
-    from nro.orchestration.scheduler_service import _worker_script_tiers
-
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     registry.initialize()
@@ -1998,23 +1996,10 @@ def test_gpu_worker_script_requests_one_gpu_and_never_lingers(tmp_path: Path) ->
     assert "--idle-timeout 0" in text
     assert "#SBATCH --gres=gpu:1" not in general.read_text()
     assert "--idle-timeout 30" in general.read_text()
-    assert _worker_script_tiers(
-        registry,
-        resource_class="gpu",
-        minimum_memory_gb=1,
-        profile=script.stem.rsplit("-", 1)[-1],
-    ) == ((32, smaller_gpu), (64, script))
-    assert _worker_script_tiers(
-        registry,
-        resource_class="gpu",
-        minimum_memory_gb=64,
-        profile=script.stem.rsplit("-", 1)[-1],
-    ) == ((64, script),)
+    assert smaller_gpu.name.startswith("worker-gpu-32gb-")
 
 
 def test_long_cpu_worker_script_has_distinct_identity(tmp_path: Path) -> None:
-    from nro.orchestration.scheduler_service import _worker_script_tiers
-
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
     registry.initialize()
@@ -2049,12 +2034,7 @@ def test_long_cpu_worker_script_has_distinct_identity(tmp_path: Path) -> None:
     assert "#SBATCH --cpus-per-task=8" in text
     assert "--resource-class long" in text
     assert "#SBATCH --gres=gpu:1" not in text
-    assert _worker_script_tiers(
-        registry,
-        resource_class="large",
-        minimum_memory_gb=1,
-        profile=script.stem.rsplit("-", 1)[-1],
-    ) == ((64, general),)
+    assert script.stem.rsplit("-", 1)[-1] != general.stem.rsplit("-", 1)[-1]
 
 
 def test_wb_view_replaces_process_with_configured_viewer(tmp_path: Path, monkeypatch) -> None:

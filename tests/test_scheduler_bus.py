@@ -565,37 +565,100 @@ def test_failed_capacity_drain_leaves_request_for_retry(tmp_path, monkeypatch) -
     assert len(scheduler_service._pending_pool_expansions(registry)) == 1
 
 
-def test_capacity_expansion_falls_back_from_obsolete_worker_profile(tmp_path, monkeypatch) -> None:
-    obsolete = tmp_path / "obsolete.sbatch"
-    current = tmp_path / "current.sbatch"
-    calls = []
+_LIVE_SITE = {
+    "partition": "sphinx",
+    "account": "nlp",
+    "worker_time": 36,
+    "worker_cpus": 3,
+    "worker_memory": 32,
+    "worker_max_memory": 64,
+    "long_worker_time": 72,
+    "long_worker_cpus": 9,
+    "worker_idle_timeout": 120,
+    "worker_drain_minutes": 20,
+}
+
+
+def _capture_worker_scripts(tmp_path, monkeypatch) -> list[dict]:
+    from contextlib import nullcontext
+
+    written: list[dict] = []
+
+    def write(_registry, **options):
+        written.append(options)
+        return tmp_path / f"worker-{options['resource_class']}-{options['memory_gb']}gb.sbatch"
+
+    monkeypatch.setattr(
+        "nro.orchestration.scheduler_implementation.bound_site_values",
+        lambda _control: dict(_LIVE_SITE),
+    )
+    monkeypatch.setattr("nro.orchestration.submission._write_worker_script", write)
+    monkeypatch.setattr(
+        "nro.orchestration.execution_cache.cache_lock", lambda _control: nullcontext()
+    )
+    monkeypatch.setattr(
+        scheduler_service,
+        "_submit_reserved",
+        lambda _registry, submission_id, _script, dependency=None: f"job-{submission_id}",
+    )
+    return written
+
+
+def test_capacity_expansion_writes_scripts_from_live_site_settings(tmp_path, monkeypatch) -> None:
+    workers = tmp_path / "workers"
+    workers.mkdir()
+    (workers / "worker-large-32gb-oldprofile.sbatch").write_text(
+        "#!/usr/bin/env bash\n#SBATCH --time=24:00:00\n#SBATCH --partition=john\n"
+    )
+    written = _capture_worker_scripts(tmp_path, monkeypatch)
+    reservations = []
 
     class FakeRegistry:
-        paths = SimpleNamespace(control=tmp_path)
+        paths = SimpleNamespace(control=tmp_path, workers=workers, bids_root=tmp_path / "BIDS")
 
         def reserve_worker_submissions(self, **options):
-            calls.append(options)
+            reservations.append(options)
+            if options["resource_class"] == "large" and options["memory_gb"] == 64:
+                return [(7, "token")]
             return []
 
-    def tiers(_registry, *, resource_class, minimum_memory_gb, profile):
-        calls.append((resource_class, minimum_memory_gb, profile))
-        return ((32, obsolete if profile else current),)
+    assert scheduler_service._supply_requested_pool(FakeRegistry(), {"profile": "oldprofile"}) == [
+        "job-7"
+    ]
+    assert {(item["resource_class"], item["memory_gb"]) for item in reservations} >= {
+        ("large", 32),
+        ("large", 64),
+    }
+    assert written == [
+        {
+            "bids_root": tmp_path / "BIDS",
+            "partition": "john",
+            "account": None,
+            "hours": 36,
+            "memory_gb": 64,
+            "cpus": 3,
+            "resource_class": "large",
+            "idle_timeout": 120,
+            "drain_seconds": 1200,
+        }
+    ]
 
-    def validate(_control, script):
-        if script == obsolete:
-            raise ValueError("obsolete implementation")
 
-    monkeypatch.setattr(scheduler_service, "_worker_script_tiers", tiers)
-    monkeypatch.setattr(
-        "nro.orchestration.scheduler_implementation.validate_worker_script", validate
+def test_successor_uses_live_site_settings_instead_of_its_profile(tmp_path, monkeypatch) -> None:
+    workers = tmp_path / "workers"
+    workers.mkdir()
+    written = _capture_worker_scripts(tmp_path, monkeypatch)
+    registry = SimpleNamespace(
+        paths=SimpleNamespace(control=tmp_path, workers=workers, bids_root=tmp_path / "BIDS")
     )
 
-    assert (
-        scheduler_service._supply_requested_pool(FakeRegistry(), {"profile": "old-profile"}) == []
-    )
-    assert ("large", 1, "old-profile") in calls
-    assert ("large", 1, None) in calls
-    assert any(isinstance(call, dict) for call in calls)
+    assert scheduler_service._submit_current(
+        registry, [3], resource_class="long", memory_gb=64, profile=None, dependency="41"
+    ) == ["job-3"]
+    assert written[0]["partition"] == "sphinx"
+    assert written[0]["account"] == "nlp"
+    assert written[0]["hours"] == 72
+    assert written[0]["cpus"] == 9
 
 
 def test_failed_worker_script_validation_releases_reserved_capacity(tmp_path, monkeypatch) -> None:

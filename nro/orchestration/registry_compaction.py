@@ -189,7 +189,11 @@ def _compact_terminal_requests(database: sqlite3.Connection) -> tuple[int, int]:
 
 
 def _remove_attempt_history(database: sqlite3.Connection) -> int:
-    """Retain active, current diagnostic, and current-completion attempts."""
+    """Retain active, diagnostic, completion, and current-revision timing attempts.
+
+    Status reports a work item's elapsed time as the sum of its attempts on the
+    current revision, so those attempts remain until the revision changes.
+    """
     database.execute(
         """DELETE FROM attempt_dependencies WHERE attempt_id IN (
                SELECT id FROM attempts
@@ -218,6 +222,12 @@ def _remove_attempt_history(database: sqlite3.Connection) -> int:
              AND NOT EXISTS (
                  SELECT 1 FROM resource_step_tasks
                  WHERE resource_step_tasks.attempt_id=candidate.id
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM work_items current
+                 WHERE current.id=candidate.work_item_id
+                   AND current.revision_fingerprint=candidate.revision_fingerprint
+                   AND candidate.started_at IS NOT NULL
              )
              AND NOT (
                  candidate.state IN ('error','cancelled')

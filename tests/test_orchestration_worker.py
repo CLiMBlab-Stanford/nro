@@ -2629,6 +2629,66 @@ def test_worker_walltime_sigterm_returns_work_to_ready_queue(
     assert registry.claim_ready_work_item("successor", ("large",)) is not None
 
 
+@pytest.mark.parametrize(
+    ("at_deadline", "error_type"),
+    [(True, "WorkerAllocationExpired"), (False, "WorkerTerminated")],
+)
+def test_signalled_worker_requeues_command_that_traps_sigterm(
+    tmp_path: Path, at_deadline: bool, error_type: str
+) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "9" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("worker", resource_class="large")
+    claimed = registry.claim_ready_work_item("worker", ("large",))
+    assert claimed is not None
+    worker: Worker
+
+    class TrappingLauncher:
+        def terminate(self) -> None:
+            pass
+
+        def run(self, *args, **kwargs) -> ExecutionResult:
+            # Slurm signals the worker and the command together; the command
+            # exits before the next cancellation poll.
+            worker._signal(signal.SIGTERM, None)
+            return ExecutionResult(1, False, False)
+
+    worker = Worker(
+        registry,
+        resource_class="large",
+        launcher=TrappingLauncher(),
+        worker_id="worker",
+        walltime_seconds=1 if at_deadline else 24 * 60 * 60,
+    )
+    if at_deadline:
+        worker.deadline = time.monotonic()
+    worker._execute(claimed)
+
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Queued"
+    assert row["attempt_state"] == "cancelled"
+    assert row["error_type"] == error_type
+
+
 def test_gpu_worker_walltime_returns_resource_step_to_ready_queue(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)
