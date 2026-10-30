@@ -48,7 +48,8 @@ nro run -m firstlevels --model-set development
 Analysis, source-task, and model selection are independent of workflow configuration. A model
 variant can be fitted under different denoising configurations by selecting
 different workflows. Each work item includes all runs of its declared source
-tasks for that participant that match the configuration's `input_filter`. Partial CLI run
+tasks for that participant that match the configuration's `input_filter` and have an
+applicable events table. Runs without one are skipped. Partial CLI run
 selectors other than task are rejected because they would redefine the same
 subject-level artifact without changing the work item's identity.
 

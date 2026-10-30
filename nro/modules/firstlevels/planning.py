@@ -29,8 +29,12 @@ def selected_runs(
     input_filter: dict | None = None,
     *,
     model: dict | None = None,
+    markup=None,
 ) -> tuple:
-    """Select a participant's runs from every source task declared by a model."""
+    """Select a participant's runs from every source task declared by a model.
+
+    Skip runs without an applicable events table.
+    """
     tasks = set(source_tasks(model or load_task_model(model_id), model_id))
     return tuple(
         run
@@ -38,7 +42,16 @@ def selected_runs(
         if run.entities.get("task") in tasks
         and run.participant == participant
         and matches_filter(run.entities, input_filter)
+        and _has_events(run, markup)
     )
+
+
+def _has_events(run, markup) -> bool:
+    try:
+        resolve_bids_table(run.path, suffix="events", markup=markup)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def select_model_runs(
@@ -71,6 +84,7 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
             context.participant,
             values["input_filter"],
             model=document,
+            markup=context.source_markup,
         )
         if not runs:
             continue

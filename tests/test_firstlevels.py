@@ -42,20 +42,42 @@ def load_model(identifier, config=None):
 
 
 def test_stable_input_filter_limits_firstlevel_runs(tmp_path: Path) -> None:
+    func = tmp_path / "sub-01" / "func"
+    func.mkdir(parents=True)
     runs = tuple(
         BidsRun(
             participant="01",
             session=session,
             stem=f"sub-01_ses-{session}_task-langlocSN_run-1",
             entities={"ses": session, "task": "langlocSN", "run": "1"},
-            path=tmp_path / f"sub-01_ses-{session}_task-langlocSN_run-1_bold.nii.gz",
+            path=func / f"sub-01_ses-{session}_task-langlocSN_run-1_bold.nii.gz",
         )
         for session in ("keep", "drop")
     )
+    for run in runs:
+        (func / f"{run.stem}_events.tsv").write_text("onset\tduration\n")
 
     selected = selected_runs(runs, "langlocSN/main", "01", {"ses": ["keep"]})
 
     assert selected == (runs[0],)
+
+
+def test_firstlevel_selection_skips_runs_without_events(tmp_path: Path) -> None:
+    func = tmp_path / "sub-01" / "func"
+    func.mkdir(parents=True)
+    runs = tuple(
+        BidsRun(
+            participant="01",
+            session=None,
+            stem=f"sub-01_task-langlocSN_run-{index}",
+            entities={"task": "langlocSN", "run": str(index)},
+            path=func / f"sub-01_task-langlocSN_run-{index}_bold.nii.gz",
+        )
+        for index in (1, 2)
+    )
+    (func / f"{runs[0].stem}_events.tsv").write_text("onset\tduration\n")
+
+    assert selected_runs(runs, "langlocSN/main", "01") == (runs[0],)
 
 
 def test_multitask_model_selects_and_compiles_declared_source_tasks(
@@ -71,10 +93,13 @@ def test_multitask_model_selects_and_compiles_declared_source_tasks(
             session=None,
             stem=f"sub-01_task-{task}_run-1",
             entities={"task": task, "run": "1"},
-            path=tmp_path / f"sub-01_task-{task}_run-1_bold.nii.gz",
+            path=tmp_path / "sub-01" / "func" / f"sub-01_task-{task}_run-1_bold.nii.gz",
         )
         for task in ("sentences", "pictures", "rest")
     )
+    (tmp_path / "sub-01" / "func").mkdir(parents=True)
+    (tmp_path / "task-sentences_events.tsv").write_text("onset\tduration\n")
+    (tmp_path / "task-pictures_events.tsv").write_text("onset\tduration\n")
     source = {
         "model_set": "main",
         "tasks": ["sentences", "pictures"],
