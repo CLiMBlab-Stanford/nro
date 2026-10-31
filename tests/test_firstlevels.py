@@ -21,6 +21,7 @@ from nro.modules.firstlevels.estimation import meta_records
 from nro.modules.firstlevels.io import load_fit, save_fit
 from nro.modules.firstlevels.models import validate_model
 from nro.modules.firstlevels.module import run_module
+from nro.modules.firstlevels.paths import node_prefix
 from nro.modules.firstlevels.planning import selected_runs
 from nro.modules.firstlevels.statistics import (
     Estimate,
@@ -1263,3 +1264,20 @@ def test_reference_levels_and_constant_group_handling():
             events,
             {"Instructions": [{"Name": "Factor", "Input": "trial_type", "Constraint": "drop_one"}]},
         )
+
+
+def test_node_prefixes_keep_the_task_only_for_multi_task_models(tmp_path: Path) -> None:
+    prefix = "sub-01_task-taskB_model-main_smoothing-2_space-fsnative"
+    node = {"Name": "run", "Level": "Run"}
+    stem = "sub-01_ses-1_task-taskB_run-01_bold"
+
+    single = node_prefix(tmp_path, prefix, node, run_stem=stem)
+    pooled = node_prefix(tmp_path, prefix, node, run_stem=stem, pooled_tasks=True)
+    other = node_prefix(
+        tmp_path, prefix, node, run_stem=stem.replace("taskB", "taskA"), pooled_tasks=True
+    )
+
+    assert single.name == f"{prefix}_node-run_ses-1_run-01"
+    assert pooled.name == f"{prefix}_node-run_ses-1_task-taskB_run-01"
+    assert other.name == f"{prefix}_node-run_ses-1_task-taskA_run-01"
+    assert single.parent == pooled.parent == other.parent == tmp_path / "ses-1/task-taskB/node-run"

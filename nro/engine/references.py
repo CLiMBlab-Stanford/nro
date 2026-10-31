@@ -72,6 +72,10 @@ def configured_reference_roots(
         for key in sorted(PATH_KEYS)
         if key in site and str(site[key]).strip()
     }
+    # A command name such as ``singularity`` is resolved through PATH, not a root.
+    runtime = str(site.get("runtime") or "").strip()
+    if Path(runtime).is_absolute():
+        roots["runtime"] = Path(runtime)
     roots["checkout"] = CHECKOUT
     return ReferenceRoots.for_project(
         project_root,

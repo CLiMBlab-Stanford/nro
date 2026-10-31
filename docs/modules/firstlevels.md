@@ -131,7 +131,8 @@ outputs and session maps use `ses-SESSION` when the
 source data have sessions. The task-level `node-session` directory contains the
 aggregate node's manifest; datasets without sessions also use it for maps.
 Filenames include model variant, task, space, smoothing, Stats Models node name,
-and applicable run/session entities. Each node target has one dense-scalar CIFTI
+and applicable run/session entities. Run filenames from a model over several
+tasks also keep the source `task-` entity. Each node target has one dense-scalar CIFTI
 for each available statistic: effect, variance, t, and degrees of freedom. The
 contrasts are named maps on the CIFTI scalar axis, so Workbench can page through
 them. A pass-through contrast has no t map and is omitted from the t-statistic

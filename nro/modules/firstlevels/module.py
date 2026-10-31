@@ -607,7 +607,13 @@ def build_module(
                 )
                 smoothed.append(output)
             images = tuple(smoothed)
-        destination = node_prefix(root, prefix, root_node, run_stem=run.stem)
+        destination = node_prefix(
+            root,
+            prefix,
+            root_node,
+            run_stem=run.stem,
+            pooled_tasks=isinstance(model["Input"]["task"], list),
+        )
         confounds = original[0].parent / f"{run.stem}_desc-confounds_timeseries.tsv"
         events = resolve_bids_table(run.path, suffix="events")
         step = create_fit_step(
