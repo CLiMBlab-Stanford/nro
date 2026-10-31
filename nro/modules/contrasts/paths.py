@@ -10,8 +10,8 @@ def artifact_root(
     config_id: str,
     participant: str,
 ) -> Path:
-    """Return one participant's shared firstlevels directory."""
-    return module_artifact_root(project_root, "firstlevels", config_id) / (
+    """Return one participant's shared contrasts directory."""
+    return module_artifact_root(project_root, "contrasts", config_id) / (
         f"sub-{participant.removeprefix('sub-')}"
     )
 
@@ -27,7 +27,7 @@ def _task_directory(root: Path, prefix: str) -> Path:
 
     task = parse_bids_entities(prefix).get("task")
     if not task:
-        raise ValueError(f"Firstlevels prefix lacks a task entity: {prefix}")
+        raise ValueError(f"Contrasts prefix lacks a task entity: {prefix}")
     return Path(root) / f"task-{task}"
 
 
@@ -63,4 +63,4 @@ def node_prefix(
 
 def completion_path(root: Path, prefix: str) -> Path:
     """Return the fixed module manifest independent of which effects are estimable."""
-    return _task_directory(root, prefix) / "node-run" / f"{prefix}_desc-firstlevels_manifest.json"
+    return _task_directory(root, prefix) / "node-run" / f"{prefix}_desc-contrasts_manifest.json"

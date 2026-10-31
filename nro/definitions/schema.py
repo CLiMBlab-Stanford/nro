@@ -262,7 +262,7 @@ SCHEMAS = {
         "container": CONTAINER,
         "wb_command": TEXT,
     },
-    "firstlevels": {
+    "contrasts": {
         "markup": OPTIONAL_TEXT,
         "input_filter": Field("filter"),
         "container": CONTAINER,
@@ -403,7 +403,7 @@ RUNTIME_FIELDS = {
     "anat": {},
     "func": {"anat_directory": TEXT, "fsaverage_template": enum("fsaverage", "fsaverage6")},
     "clean": {"func_directory": TEXT, "anat_directory": TEXT},
-    "firstlevels": {
+    "contrasts": {
         "func_directory": TEXT,
         "anat_directory": TEXT,
     },
@@ -444,9 +444,9 @@ def _relationships(kind: str, values: dict) -> None:
         low, high = values["low_pass"], values["high_pass"]
         if low is not None and high is not None and high >= low:
             raise DefinitionError("clean.high_pass must be below clean.low_pass")
-    elif kind == "firstlevels":
+    elif kind == "contrasts":
         if len(set(values["ar_grid"])) != len(values["ar_grid"]):
-            raise DefinitionError("firstlevels.ar_grid must contain distinct coefficients")
+            raise DefinitionError("contrasts.ar_grid must contain distinct coefficients")
     elif kind == "networks":
         oslom = values["oslom"]
         if (

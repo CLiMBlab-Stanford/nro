@@ -34,7 +34,7 @@ def estimation_fingerprint(model: dict, config: dict) -> str:
     rules.pop("aggregation_weighting", None)
     model["Nodes"] = [run]
     model["Edges"] = []
-    fit_config = dict(scientific_values("firstlevels", config))
+    fit_config = dict(scientific_values("contrasts", config))
     fit_config.pop("aggregation_weighting", None)
     return fingerprint({"model": model, "config": fit_config})
 
@@ -72,12 +72,12 @@ def _matches_definition(manifest: dict, expected: dict) -> bool:
         return False
     recorded["model"] = canonical_model_document(recorded["model"])
     expected = {**expected, "model": canonical_model_document(expected["model"])}
-    recorded["config"] = scientific_values("firstlevels", recorded["config"])
-    expected["config"] = scientific_values("firstlevels", expected["config"])
+    recorded["config"] = scientific_values("contrasts", recorded["config"])
+    expected["config"] = scientific_values("contrasts", expected["config"])
     return definition_fingerprint(recorded) == definition_fingerprint(expected)
 
 
-def firstlevels_output_contract() -> dict:
+def contrasts_output_contract() -> dict:
     """Describe the substantive estimator, covariance and omission contracts."""
     return {
         "layout": "subject-task-level-model-target-v5",
@@ -113,18 +113,18 @@ def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[
         from nro.engine.io import read_public_json
 
         value = read_public_json(Path(path))
-        expected = firstlevels_output_contract()
+        expected = contrasts_output_contract()
         if not metadata_contract_compatible(value.get("output_metadata_contract"), expected):
-            return False, "Firstlevels publication contract differs"
+            return False, "Contrasts publication contract differs"
         validate_metadata_fields(
             value,
             expected["required_manifest_fields"],
-            label="Firstlevels publication manifest",
+            label="Contrasts publication manifest",
         )
         if value["complete"] is not True:
-            return False, "Firstlevels publication is incomplete"
+            return False, "Contrasts publication is incomplete"
         if definition is not None and not _matches_definition(value, definition):
-            return False, "Firstlevels model or configuration changed"
+            return False, "Contrasts model or configuration changed"
         if not isinstance(value["records"], list) or not isinstance(value["omissions"], list):
             return False, "Invalid contrast or omission inventory"
         if value["node"] != "module" and value["records"]:
@@ -135,7 +135,7 @@ def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[
                 else {"shape", "affine", "reference_path"}
             )
             if not fields <= set(geometry):
-                return False, "Missing firstlevels spatial correspondence metadata"
+                return False, "Missing contrasts spatial correspondence metadata"
         for source in value["source_fits"].values():
             if source["dof"] <= 0 or set(source["arrays"]) != {
                 "beta",
@@ -151,7 +151,7 @@ def validate_completion(path: Path, *, definition: dict | None = None) -> tuple[
         for output in value["public_outputs"]:
             item = Path(output)
             if not item.is_file() or not item.stat().st_size:
-                return False, f"Missing firstlevels output: {output}"
+                return False, f"Missing contrasts output: {output}"
             if item.name.endswith(".dscalar.nii"):
                 if indexed_cifti_sidecar(item) not in {
                     Path(candidate) for candidate in value["public_outputs"]
@@ -175,5 +175,5 @@ def validate_public_definition(manifest: dict, processing: dict) -> tuple[bool, 
     except (ValueError, TypeError, KeyError):
         matches = False
     if not matches:
-        return False, "Public firstlevels model differs from the current definition"
+        return False, "Public contrasts model differs from the current definition"
     return True, "First-level model matches"

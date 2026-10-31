@@ -33,7 +33,7 @@ class DefinitionTarget:
 def definition_target(store: ConfigStore, kind: str, identifier: str) -> DefinitionTarget:
     """Resolve an authoring ID without requiring an existing file."""
     if kind == "model":
-        from nro.modules.firstlevels.task_models import model_path
+        from nro.modules.contrasts.task_models import model_path
 
         identifier = identifier if "/" in identifier else f"{identifier}/main"
         return DefinitionTarget(kind, identifier, model_path(identifier, store.root / "models"))
@@ -71,7 +71,7 @@ def validate_definition(store: ConfigStore, target: DefinitionTarget, text: str)
     try:
         value = parse_mapping(text, source=str(target.path))
         if target.kind == "model":
-            from nro.modules.firstlevels.task_models import validate_task_model
+            from nro.modules.contrasts.task_models import validate_task_model
 
             validate_task_model(value)
         elif target.kind == "workflow":
@@ -116,7 +116,7 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         return yaml.safe_dump({name: "main" for name in CONFIGURATION_CLASSES}, sort_keys=False)
     if target.kind == "markup":
         return "{}\n"
-    from nro.modules.firstlevels.authoring import discover_event_files, model_draft
+    from nro.modules.contrasts.authoring import discover_event_files, model_draft
     from nro.site.configuration import bids_root
 
     analysis = target.identifier.split("/")[0]
@@ -249,7 +249,7 @@ def _store_validator(
         staged = definition_target(active, target.kind, target.identifier)
         if target.kind == "model":
             if not deleting or staged.path.is_file():
-                from nro.modules.firstlevels.task_models import load_task_model, scientific_model
+                from nro.modules.contrasts.task_models import load_task_model, scientific_model
 
                 scientific_model(load_task_model(target.identifier, candidate / "models"))
             return

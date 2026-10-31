@@ -22,7 +22,7 @@ from .task_models import load_task_model, model_path, validate_task_model
 def main(
     argv: list[str] | None = None, *, execution_context: ExecutionContext | None = None
 ) -> None:
-    """Resolve a workflow snapshot and execute one complete firstlevels work item."""
+    """Resolve a workflow snapshot and execute one complete contrasts work item."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-p", "--participant", required=True)
     parser.add_argument("-P", "--project", required=True)
@@ -33,7 +33,7 @@ def main(
     parser.add_argument("-w", "--workflow", default="main")
     args = parser.parse_args(argv)
     if execution_context is not None and execution_context.project != args.project:
-        raise ValueError("Firstlevels project differs from its execution context")
+        raise ValueError("Contrasts project differs from its execution context")
     model_path(args.model)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -42,10 +42,10 @@ def main(
     runtime = select_runtime_config(
         project=args.project,
         workflow_id=args.workflow,
-        configuration_class="firstlevels",
+        configuration_class="contrasts",
         execution_context=execution_context,
     )
-    config_id, config = load_runtime_configuration(runtime, "firstlevels")
+    config_id, config = load_runtime_configuration(runtime, "contrasts")
     model = (
         validate_task_model(json.loads(args.model_definition))
         if args.model_definition
@@ -75,7 +75,7 @@ def main(
         space=args.space,
         smoothing=args.smoothing,
         work_root=module_work_root(
-            "firstlevels",
+            "contrasts",
             config_id,
             project=args.project,
             work_root=Path(

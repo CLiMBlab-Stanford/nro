@@ -84,10 +84,10 @@ def test_duplicate_keys_rejected_on_every_read_path(store, tmp_path, text):
         ),
         ("microparcellation", {"mask": 42}, "mask"),
         ("microparcellation", {"input_filter": {"task": False}}, "task"),
-        ("firstlevels", {"ar_grid": [0, 0]}, "ar_grid"),
-        ("firstlevels", {"ar_grid": [1]}, "ar_grid"),
-        ("firstlevels", {"aggregation_weighting": "unknown"}, "aggregation_weighting"),
-        ("firstlevels", {"low_pass": 0.1}, "low_pass"),
+        ("contrasts", {"ar_grid": [0, 0]}, "ar_grid"),
+        ("contrasts", {"ar_grid": [1]}, "ar_grid"),
+        ("contrasts", {"aggregation_weighting": "unknown"}, "aggregation_weighting"),
+        ("contrasts", {"low_pass": 0.1}, "low_pass"),
         ("func", {"bbregister_dof": 5}, "bbregister_dof"),
         ("func", {"output_spaces": []}, "output_spaces"),
         ("func", {"fsaverage_template": "fsaverage"}, "fsaverage_template"),
@@ -265,14 +265,14 @@ def test_execution_roles_are_explicit_and_scientific_order_is_preserved(store):
     assert scientific_values("networks", clustering) != scientific_values(
         "networks", changed_clustering
     )
-    values = store.load_configuration("firstlevels", "main").values
+    values = store.load_configuration("contrasts", "main").values
     assert values["input_filter"] == {}
     assert values["aggregation_weighting"] == "precision"
-    assert scientific_values("firstlevels", values) != scientific_values(
-        "firstlevels", {**values, "ar_grid": values["ar_grid"][::-1]}
+    assert scientific_values("contrasts", values) != scientific_values(
+        "contrasts", {**values, "ar_grid": values["ar_grid"][::-1]}
     )
-    assert scientific_values("firstlevels", values) != scientific_values(
-        "firstlevels", {**values, "aggregation_weighting": "equal"}
+    assert scientific_values("contrasts", values) != scientific_values(
+        "contrasts", {**values, "aggregation_weighting": "equal"}
     )
     dynconn = store.load_configuration("dynconn", "main").values
     changed_options = {
@@ -320,7 +320,7 @@ def test_every_module_uses_execution_only_overwrite(store, kind):
     assert changed.scientific_fingerprint == config.scientific_fingerprint
 
 
-@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "contrasts"))
 def test_legacy_execution_and_flat_container_fields_are_rejected(store, kind):
     with pytest.raises(ValueError, match="force"):
         store.load_configuration(kind, "legacy", document={"force": False})
@@ -328,7 +328,7 @@ def test_legacy_execution_and_flat_container_fields_are_rejected(store, kind):
         store.load_configuration(kind, "legacy", document={"container_engine": "apptainer"})
 
 
-@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "contrasts"))
 def test_nested_container_changes_remain_scientific(store, kind):
     config = store.load_configuration(kind, "main")
     changed = store.load_configuration(
@@ -373,7 +373,7 @@ def test_legacy_functional_runtime_path_is_not_scientific(store):
     ) == scientific_values("func", functional)
 
 
-@pytest.mark.parametrize("kind", ("anat", "func", "clean", "firstlevels"))
+@pytest.mark.parametrize("kind", ("anat", "func", "clean", "contrasts"))
 def test_container_runtime_path_is_not_scientific(store, kind):
     configuration = store.load_configuration(kind, "main").values
     first = deepcopy(configuration)
@@ -411,17 +411,17 @@ def test_workflow_errors_and_runtime_snapshot_validation(store, tmp_path):
             store.resolve("bad")
         with pytest.raises(ValueError):
             validate_definition(store, target, text)
-    runtime = tmp_path / "main_firstlevels.yml"
-    values = store.load_configuration("firstlevels", "main").values
+    runtime = tmp_path / "main_contrasts.yml"
+    values = store.load_configuration("contrasts", "main").values
     runtime.write_text(yaml.safe_dump(values))
     with pytest.raises(ValueError, match="anat_directory"):
-        load_runtime_configuration(runtime, "firstlevels")
+        load_runtime_configuration(runtime, "contrasts")
     values.update(
         anat_directory="main",
         func_directory="main",
     )
     runtime.write_text(yaml.safe_dump(values))
-    assert load_runtime_configuration(runtime, "firstlevels")[1] == values
+    assert load_runtime_configuration(runtime, "contrasts")[1] == values
     with pytest.raises(ValueError, match="Recursive YAML"):
         parse_mapping("x: &x {y: *x}")
 

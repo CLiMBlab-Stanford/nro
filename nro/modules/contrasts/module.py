@@ -1,4 +1,4 @@
-"""Construct a complete firstlevels runner from an analysis model and source runs."""
+"""Construct a complete contrasts runner from an analysis model and source runs."""
 
 import json
 import logging
@@ -33,9 +33,9 @@ from nro.orchestration.runner_graph import Step
 
 from .compiler import compile_model, realize_run_node
 from .contract import (
+    contrasts_output_contract,
     definition_fingerprint,
     estimation_fingerprint,
-    firstlevels_output_contract,
     response_scaling_metadata,
     validate_completion,
 )
@@ -66,13 +66,13 @@ def _input_denoising(run: str, metadata: dict) -> dict:
 def _merge_input_denoising(documents: list[dict]) -> dict:
     """Merge per-run denoising provenance while requiring a common policy."""
     if not documents:
-        raise ValueError("Firstlevels aggregation requires at least one input")
+        raise ValueError("Contrasts aggregation requires at least one input")
     policy = documents[0]["input_denoising"]["policy"]
     runs = {}
     for document in documents:
         value = document["input_denoising"]
         if value["policy"] != policy:
-            raise ValueError("Functional denoising policies differ within one firstlevels target")
+            raise ValueError("Functional denoising policies differ within one contrasts target")
         for run, metadata in value["runs"].items():
             if run in runs and json.dumps(runs[run], sort_keys=True) != json.dumps(
                 metadata, sort_keys=True
@@ -110,7 +110,7 @@ def _write_manifest(
         "records": records,
         "omissions": omissions,
         "source_fits": sources,
-        "output_metadata_contract": firstlevels_output_contract(),
+        "output_metadata_contract": contrasts_output_contract(),
     }
     write_public_json(path, value)
     # Only superseded files explicitly owned by this node's prior inventory may
@@ -371,7 +371,7 @@ def create_fit_step(
             manifest,
             definition={
                 "model": base["model_document"],
-                "config": scientific_values("firstlevels", config),
+                "config": scientific_values("contrasts", config),
             },
         ),
         force=bool(config["overwrite"]),
@@ -401,7 +401,7 @@ def create_meta_step(
             if any(
                 candidate.get(key) != geometry.get(key) for key in ("domain", "shape", "counts")
             ):
-                raise ValueError("Run geometries differ within one firstlevels target")
+                raise ValueError("Run geometries differ within one contrasts target")
             if geometry["domain"] == "volume" and not np.allclose(
                 candidate["affine"], geometry["affine"]
             ):
@@ -432,7 +432,7 @@ def create_meta_step(
             manifest,
             definition={
                 "model": base["model_document"],
-                "config": scientific_values("firstlevels", config),
+                "config": scientific_values("contrasts", config),
                 "runs": base["runs"],
             },
         ),
@@ -512,7 +512,7 @@ def build_module(
     """
     if not runs or smoothing < 0 or config["noise_model"] not in {"ols", "ar1"}:
         raise ValueError(
-            "Firstlevels requires selected runs, nonnegative smoothing and ols/ar1 noise"
+            "Contrasts requires selected runs, nonnegative smoothing and ols/ar1 noise"
         )
     if config["spatial_block_size"] < 1:
         raise ValueError("Invalid block-size configuration")
@@ -524,7 +524,7 @@ def build_module(
     root = output_root or artifact_root(project_root, config_id, participant)
     if execution_context is not None:
         if project_root != execution_context.paths.source_project(execution_context.project):
-            raise ValueError("Firstlevels project differs from its execution context")
+            raise ValueError("Contrasts project differs from its execution context")
         root = execution_context.output_path(root)
         work_root = execution_context.output_path(work_root, private=True)
     prefix = work_item_prefix(participant, model_id, space, smoothing)
@@ -536,13 +536,13 @@ def build_module(
             execution_context=execution_context,
         )
     runner = Runner(
-        module_name="firstlevels",
+        module_name="contrasts",
         container=container,
         binds=(),
         logger=LOG,
         execution_context=execution_context,
     )
-    scientific_config = scientific_values("firstlevels", config)
+    scientific_config = scientific_values("contrasts", config)
     definition = {"model": model, "config": scientific_config}
     base = {
         "model": model_id,
@@ -631,7 +631,7 @@ def build_module(
             step.with_parameters(
                 {
                     "model": model,
-                    "configuration": scientific_values("firstlevels", config),
+                    "configuration": scientific_values("contrasts", config),
                 }
             )
         )
@@ -684,7 +684,7 @@ def build_module(
 
     runner.add_step(
         Step.python(
-            name="Publish firstlevels",
+            name="Publish contrasts",
             inputs=inputs,
             outputs=(completion,),
             action=finalize,

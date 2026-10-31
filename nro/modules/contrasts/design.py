@@ -38,12 +38,12 @@ def build_design(
     The compiled denoising rules must match the supplied module configuration.
     """
     if {"high_pass", "low_pass"} & config.keys() or "Options" in node["Model"]:
-        raise ValueError("Firstlevels does not support temporal filtering or Model.Options")
+        raise ValueError("Contrasts does not support temporal filtering or Model.Options")
     if not np.isfinite(tr) or tr <= 0:
         raise ValueError("Repetition time must be positive and finite")
     rules = node["Model"]["Software"]["nro"]
     if any(config[key] != value for key, value in rules["denoising"].items()):
-        raise ValueError("Compiled denoising differs from the firstlevels configuration")
+        raise ValueError("Compiled denoising differs from the contrasts configuration")
     outlier_names = rules["outlier_columns"]
     flags = confounds[outlier_names].to_numpy(float)
     if not np.isfinite(flags).all():
@@ -61,7 +61,7 @@ def build_design(
     if not np.isfinite(full.to_numpy()).all():
         raise ValueError("Selected design variables contain nonfinite values")
     if any(name.startswith("global_signal") for name in full):
-        raise ValueError("Firstlevels does not remove global signal")
+        raise ValueError("Contrasts does not remove global signal")
     nuisance_names = rules["nuisance_columns"]
     names = [name for name in full if name not in nuisance_names and name not in outlier_names]
     task = full[names].to_numpy()[retained]

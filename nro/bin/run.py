@@ -192,7 +192,7 @@ def _resume_plan_selection(selection: CoreSelection, rows: list[dict]) -> CoreSe
         dict.fromkeys(
             f"{entity['task']}/{entity['model']}"
             for row, entity in zip(rows, entities)
-            if row["module"] == "firstlevels" and entity.get("task") and entity.get("model")
+            if row["module"] == "contrasts" and entity.get("task") and entity.get("model")
         )
     )
     return replace(
@@ -489,9 +489,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     if (
         (selection.analyses or selection.models or selection.model_sets)
         and modules
-        and "firstlevels" not in modules
+        and "contrasts" not in modules
     ):
-        raise SystemExit("--analysis, --model, and --model-set require -m firstlevels")
+        raise SystemExit("--analysis, --model, and --model-set require -m contrasts")
     if (
         modules
         and set(modules).issubset({"anat", "func"})
@@ -499,7 +499,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     ):
         raise SystemExit(
             "--space and --smoothing apply only when the terminal module is "
-            "clean, dynconn, microparcellation, networks, or firstlevels"
+            "clean, dynconn, microparcellation, networks, or contrasts"
         )
     if set(modules) == {"anat"} and selection.runs:
         raise SystemExit("--run does not apply to the anatomical module")

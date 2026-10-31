@@ -53,8 +53,8 @@ inspect source BIDS images.
 | `-s`, `--space SPACE ...` | Target spaces from clean onward. |
 | `-S`, `--smoothing MM ...` | Nonnegative integer FWHM in mm. |
 | `--task TASK ...` | Source BIDS tasks; intersects `--run task=...` when both are supplied. |
-| `--analysis ANALYSIS ...` | Firstlevels analysis labels from `ANALYSIS/VARIANT`. |
-| `--model MODEL ...` | Firstlevels variants or qualified `ANALYSIS/VARIANT` IDs. |
+| `--analysis ANALYSIS ...` | Contrasts analysis labels from `ANALYSIS/VARIANT`. |
+| `--model MODEL ...` | Contrasts variants or qualified `ANALYSIS/VARIANT` IDs. |
 | `--model-set SET ...` | Memberships declared in first-level model YAML. |
 
 Run selectors combine different keys with AND and values for a key with OR.
@@ -62,7 +62,7 @@ Space and smoothing values expand as a cross-product. Run selectors describe
 acquisitions; `run=01` alone is not necessarily unique across tasks or directions.
 
 For `run`, omitted `--module` selects every endpoint of the module graph,
-currently `dynconn`, `networks`, and `firstlevels`. Explicit modules restrict the targets;
+currently `dynconn`, `networks`, and `contrasts`. Explicit modules restrict the targets;
 their upstream dependencies are included. Workflow, space, and smoothing default
 to `main`, `fsnative`, and `2`. Missing participants/projects select all
 matches. Inspection and cleanup commands ordinarily leave omitted selectors
@@ -72,7 +72,7 @@ private derivative namespace. `publish`, `set`,
 installation commands, and `qc registration` have different parsers, documented
 on their pages; do not assume the common short flags apply to them.
 
-Firstlevels requests without explicit model/set selection use model set `main`.
+Contrasts requests without explicit model/set selection use model set `main`.
 An explicit model bypasses that default; explicit model and set filters
 intersect. Inspection and cleanup have no default model-set restriction.
 See [first-level models](../task-models.md) for examples and freshness rules.

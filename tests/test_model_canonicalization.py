@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from nro.definitions.store import ConfigStore, fingerprint
-from nro.modules.firstlevels.compiler import compile_model
-from nro.modules.firstlevels.contract import (
+from nro.modules.contrasts.compiler import compile_model
+from nro.modules.contrasts.contract import (
     _matches_definition,
     definition_fingerprint,
     estimation_fingerprint,
 )
-from nro.modules.firstlevels.task_models import scientific_model
+from nro.modules.contrasts.task_models import scientific_model
 from nro.orchestration.catalog import canonical_contract
 from nro.orchestration.manifests import _completion_matches_contract
 
@@ -27,7 +27,7 @@ def _source():
 
 
 def test_canonical_model_is_cached_data_free_and_mutation_safe(monkeypatch):
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
 
     def unexpected_read(*args, **kwargs):
         raise AssertionError("Canonicalization must not read files")
@@ -61,7 +61,7 @@ def test_authoring_forms_compile_identically(form):
     else:
         variant["contrasts"] = dict(reversed(list(variant["contrasts"].items())))
     assert fingerprint(scientific_model(source)) == fingerprint(scientific_model(variant))
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     assert compile_model(source, "task/main", config) == compile_model(variant, "task/main", config)
 
 
@@ -79,7 +79,7 @@ def test_scientific_changes_remain_distinct(field, value):
 
 
 def test_estimation_identity_excludes_contrasts_but_includes_hrf():
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     original = compile_model(_source(), "task/main", config)
     contrasts = compile_model(
         {**_source(), "contrasts": {"H": {"H": 1}, "HvE": {"H": 1, "E": -1}}},
@@ -92,7 +92,7 @@ def test_estimation_identity_excludes_contrasts_but_includes_hrf():
 
 
 def test_task_models_reject_module_owned_aggregation():
-    from nro.modules.firstlevels.task_models import validate_task_model
+    from nro.modules.contrasts.task_models import validate_task_model
 
     with pytest.raises(ValueError, match="aggregation"):
         validate_task_model({**_source(), "aggregation": {"weighting": "equal"}})
@@ -120,7 +120,7 @@ def test_explicit_sequence_order_is_preserved():
 
 def test_recorded_contracts_normalize_without_loading_current_model():
     contract = {
-        "module": "firstlevels",
+        "module": "contrasts",
         "processing": {"task_model": _source(), "other_policy": "unchanged"},
     }
     completion = {"artifact_contract": contract, "artifact_fingerprint": fingerprint(contract)}
@@ -140,7 +140,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
 ):
     import yaml
 
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
     from nro.orchestration.artifact_records import file_record
     from nro.orchestration.catalog import module_descriptor
     from nro.orchestration.contracts import WorkItemSpec
@@ -154,29 +154,29 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
     registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
     workflow = ConfigStore().resolve("main")
     registered = registry.register_workflow(workflow)
-    output = tmp_path / "bids/demo/derivatives/nro/firstlevels/main/sub-01" / "output.txt"
+    output = tmp_path / "bids/demo/derivatives/nro/contrasts/main/sub-01" / "output.txt"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("synthetic completed derivative")
     entities = {"task": "task", "model": "main", "space": "T1w", "smoothing": "0"}
     spec = WorkItemSpec.create(
-        key="firstlevels:" + "a" * 64,
-        module="firstlevels",
+        key="contrasts:" + "a" * 64,
+        module="contrasts",
         project="demo",
         participant="01",
         entities=entities,
         scope="subject",
-        module_lineage_id=registered.lineages["firstlevels"],
-        config_fingerprint=workflow.configuration("firstlevels").scientific_fingerprint,
-        directory_label=registered.directory_for("firstlevels"),
-        runtime_config=registry.runtime_config_path(registered, "firstlevels"),
-        command=(sys.executable, "-m", "nro.modules.firstlevels"),
+        module_lineage_id=registered.lineages["contrasts"],
+        config_fingerprint=workflow.configuration("contrasts").scientific_fingerprint,
+        directory_label=registered.directory_for("contrasts"),
+        runtime_config=registry.runtime_config_path(registered, "contrasts"),
+        command=(sys.executable, "-m", "nro.modules.contrasts"),
         dependencies=(),
         input_paths=(),
         output_root=output.parent,
         output_prefix=None,
         resource_class="large",
         expected_outputs=(output,),
-        processing=module_descriptor("firstlevels").processing_for(entities),
+        processing=module_descriptor("contrasts").processing_for(entities),
     )
     work_item_id = registry.register_work_items((spec,))[spec.key]
     row = registry.work_item_rows()[0]
@@ -242,7 +242,7 @@ def test_registry_preview_assessment_and_registration_accept_equivalent_recorded
 
 @pytest.mark.parametrize("runs", [None, ["run-01", "run-02"]])
 def test_saved_compiled_definitions_preserve_run_set_and_configuration(runs):
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     expected = {"model": compile_model(_source(), "task/main", config), "config": config}
     if runs is not None:
         expected["runs"] = runs

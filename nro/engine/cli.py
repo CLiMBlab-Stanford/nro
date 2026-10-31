@@ -19,7 +19,7 @@ from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 def _model_source_tasks(identifier: str, path: str, mtime_ns: int, size: int) -> tuple[str, ...]:
     """Read source tasks once for one observed model-definition revision."""
     del path, mtime_ns, size
-    from nro.modules.firstlevels.task_models import load_task_model, source_tasks
+    from nro.modules.contrasts.task_models import load_task_model, source_tasks
 
     return source_tasks(load_task_model(identifier), identifier)
 
@@ -55,7 +55,7 @@ class CoreSelection:
         if self.analyses:
             entities["analysis"] = self.analyses
         if self.model_sets:
-            from nro.modules.firstlevels.task_models import model_ids_in_sets
+            from nro.modules.contrasts.task_models import model_ids_in_sets
 
             entities["model_id"] = model_ids_in_sets(self.model_sets)
         return entities
@@ -74,7 +74,7 @@ def matches_work_item_selectors(entities: dict, selectors: dict) -> bool:
         if entities.get("model") and entities.get("task"):
             identifier = f"{entities['task']}/{entities['model']}"
             try:
-                from nro.modules.firstlevels.task_models import model_path
+                from nro.modules.contrasts.task_models import model_path
 
                 path = model_path(identifier)
                 stat = Path(path).stat()
@@ -192,19 +192,19 @@ def add_core_selection_arguments(
         "--analysis",
         nargs="+",
         action="extend",
-        help="Select firstlevels analysis labels",
+        help="Select contrasts analysis labels",
     )
     parser.add_argument(
         "--model",
         nargs="+",
         action="extend",
-        help="Select firstlevels variants or ANALYSIS/VARIANT IDs",
+        help="Select contrasts variants or ANALYSIS/VARIANT IDs",
     )
     parser.add_argument(
         "--model-set",
         nargs="+",
         action="extend",
-        help="Select firstlevels model sets; requests default to main unless --model is given",
+        help="Select contrasts model sets; requests default to main unless --model is given",
     )
     if planner_defaults:
         parser.set_defaults(

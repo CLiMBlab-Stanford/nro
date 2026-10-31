@@ -50,7 +50,7 @@ def validate_store(
     from nro.bidsify.config import load_config
     from nro.definitions.events import EventStore, task_key
     from nro.definitions.migrations import validate_store_integrity
-    from nro.modules.firstlevels.task_models import load_task_model, scientific_model
+    from nro.modules.contrasts.task_models import load_task_model, scientific_model
 
     root = Path(root).expanduser().resolve() if root is not None else definitions_root()
     validate_store_integrity(root)

@@ -353,7 +353,7 @@ def test_lesion_true_remains_scientifically_distinct() -> None:
 
 @pytest.mark.parametrize(
     "module",
-    ("func", "clean", "dynconn", "microparcellation", "networks", "firstlevels"),
+    ("func", "clean", "dynconn", "microparcellation", "networks", "contrasts"),
 )
 def test_source_markup_syntax_does_not_define_artifact_identity(module: str) -> None:
     historical = {

@@ -184,7 +184,7 @@ only through the SSH tunnel.
 `render` creates static images from the same combined views as `scene`:
 
 ```bash
-nro render -P nptl -p t20 -m networks firstlevels
+nro render -P nptl -p t20 -m networks contrasts
 nro render -P nptl -p t20 -m dynconn microparcellation --seeds seeds.yml
 ```
 

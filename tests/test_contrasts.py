@@ -1,4 +1,4 @@
-"""Statistical identities, missing conditions and firstlevels publication."""
+"""Statistical identities, missing conditions and contrasts publication."""
 
 import json
 from pathlib import Path
@@ -14,23 +14,23 @@ from nro.definitions.store import ConfigStore
 from nro.engine.bids import BidsRun, discover_raw_runs
 from nro.engine.cifti import indexed_cifti_indices, load_indexed_cifti_map
 from nro.engine.io import read_public_json
-from nro.modules.firstlevels.compiler import compile_model, realize_run_node
-from nro.modules.firstlevels.contract import validate_completion
-from nro.modules.firstlevels.design import build_design as fit_design
-from nro.modules.firstlevels.estimation import meta_records
-from nro.modules.firstlevels.io import load_fit, save_fit
-from nro.modules.firstlevels.models import validate_model
-from nro.modules.firstlevels.module import run_module
-from nro.modules.firstlevels.paths import node_prefix
-from nro.modules.firstlevels.planning import selected_runs
-from nro.modules.firstlevels.statistics import (
+from nro.modules.contrasts.compiler import compile_model, realize_run_node
+from nro.modules.contrasts.contract import validate_completion
+from nro.modules.contrasts.design import build_design as fit_design
+from nro.modules.contrasts.estimation import meta_records
+from nro.modules.contrasts.io import load_fit, save_fit
+from nro.modules.contrasts.models import validate_model
+from nro.modules.contrasts.module import run_module
+from nro.modules.contrasts.paths import node_prefix
+from nro.modules.contrasts.planning import selected_runs
+from nro.modules.contrasts.statistics import (
     Estimate,
     aggregate,
     fit_glm,
     linear_combination,
     percent_signal_change,
 )
-from nro.modules.firstlevels.task_models import load_task_model, register_model
+from nro.modules.contrasts.task_models import load_task_model, register_model
 
 
 def load_model(identifier, config=None):
@@ -38,11 +38,11 @@ def load_model(identifier, config=None):
     return compile_model(
         load_task_model(identifier),
         identifier,
-        config or ConfigStore().load_configuration("firstlevels", "main").values,
+        config or ConfigStore().load_configuration("contrasts", "main").values,
     )
 
 
-def test_stable_input_filter_limits_firstlevel_runs(tmp_path: Path) -> None:
+def test_stable_input_filter_limits_contrast_runs(tmp_path: Path) -> None:
     func = tmp_path / "sub-01" / "func"
     func.mkdir(parents=True)
     runs = tuple(
@@ -63,7 +63,7 @@ def test_stable_input_filter_limits_firstlevel_runs(tmp_path: Path) -> None:
     assert selected == (runs[0],)
 
 
-def test_firstlevel_selection_skips_runs_without_events(tmp_path: Path) -> None:
+def test_contrast_selection_skips_runs_without_events(tmp_path: Path) -> None:
     func = tmp_path / "sub-01" / "func"
     func.mkdir(parents=True)
     runs = tuple(
@@ -85,8 +85,8 @@ def test_multitask_model_selects_and_compiles_declared_source_tasks(
     tmp_path: Path, monkeypatch
 ) -> None:
     from nro.engine.cli import matches_work_item_selectors
-    from nro.modules.firstlevels import task_models
-    from nro.modules.firstlevels.task_models import scientific_model, select_models
+    from nro.modules.contrasts import task_models
+    from nro.modules.contrasts.task_models import scientific_model, select_models
 
     runs = tuple(
         BidsRun(
@@ -111,7 +111,7 @@ def test_multitask_model_selects_and_compiles_declared_source_tasks(
     compiled = compile_model(
         source,
         "language/main",
-        ConfigStore().load_configuration("firstlevels", "main").values,
+        ConfigStore().load_configuration("contrasts", "main").values,
     )
 
     assert selected == runs[:2]
@@ -135,7 +135,7 @@ def test_multitask_model_selects_and_compiles_declared_source_tasks(
 
 
 def test_single_task_model_contract_remains_implicit() -> None:
-    from nro.modules.firstlevels.task_models import scientific_model
+    from nro.modules.contrasts.task_models import scientific_model
 
     assert "tasks" not in scientific_model(load_task_model("langlocSN/main"))
 
@@ -301,10 +301,10 @@ def test_precision_weights_need_not_commute_and_ignore_zero_variance_locations()
 
 
 def test_task_coefficients_remain_nuisance_adjusted_with_rank_protection():
-    from nro.modules.firstlevels.models import event_design
+    from nro.modules.contrasts.models import event_design
 
     rng = np.random.default_rng(63)
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config.update(nuisance_variance_explained=1.0)
     node = load_model("langlocSN/main", config)["Nodes"][0]
     events = pd.DataFrame(
@@ -392,7 +392,7 @@ def test_statsmodels_cannot_enable_temporal_filtering(option):
 
 @pytest.mark.parametrize("option", ["high_pass", "low_pass"])
 def test_filter_configuration_is_removed_and_rejected(option):
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     assert option not in config
     config[option] = None
     with pytest.raises(ValueError, match="does not support temporal filtering"):
@@ -402,15 +402,15 @@ def test_filter_configuration_is_removed_and_rejected(option):
 
 
 def test_contract_declares_unfiltered_fit():
-    from nro.modules.firstlevels.contract import firstlevels_output_contract
+    from nro.modules.contrasts.contract import contrasts_output_contract
 
-    contract = firstlevels_output_contract()
+    contract = contrasts_output_contract()
     assert contract["temporal_filtering"] == "none"
     assert contract["response_scaling"] == ("retained-frame-temporal-mean-percent-signal-change")
 
 
 def test_zero_duration_hrf_events_have_tr_independent_unit_area():
-    from nro.modules.firstlevels.models import event_design
+    from nro.modules.contrasts.models import event_design
 
     node = {
         "Model": {
@@ -527,7 +527,7 @@ def _synthetic_project(tmp_path, domain):
 @pytest.mark.parametrize("domain,smoothing", [("volume", 0), ("volume", 2), ("surface", 0)])
 def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
     root = _synthetic_project(tmp_path, domain)
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config.update(noise_model="ols")
     model = load_task_model("langlocSN/main")
     kwargs = dict(
@@ -586,10 +586,10 @@ def test_module_outputs_omissions_and_resumption(tmp_path, domain, smoothing):
 
 
 def test_contrast_only_edit_reuses_compact_run_fits(tmp_path, monkeypatch):
-    from nro.modules.firstlevels import module
+    from nro.modules.contrasts import module
 
     root = _synthetic_project(tmp_path, "volume")
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config["noise_model"] = "ols"
     model = load_task_model("langlocSN/main")
     kwargs = dict(
@@ -627,7 +627,7 @@ def test_contrast_only_edit_reuses_compact_run_fits(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("domain,smoothing", [("volume", 0), ("volume", 2), ("surface", 0)])
-def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
+def test_branch_contrasts_reads_mixed_owners(tmp_path, domain, smoothing):
     import shutil
 
     from nro.orchestration.branches import BranchPaths
@@ -645,14 +645,14 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
     context = ExecutionContext(
         paths,
         "demo",
-        "firstlevels:test",
+        "contrasts:test",
         (
             InputBinding("main", "func:1", 1, directory, directory, runs[0].stem),
             InputBinding("dev", "func:2", 1, directory, other, runs[1].stem),
         ),
     )
     before = {p: p.read_bytes() for folder in (directory, other) for p in folder.iterdir()}
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config["noise_model"] = "ols"
     output = run_module(
         runs=runs,
@@ -666,7 +666,7 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
         config=config,
         space="T1w" if domain == "volume" else "fsnative",
         smoothing=smoothing,
-        work_root=paths.work / "demo/derivatives/nro/firstlevels/main",
+        work_root=paths.work / "demo/derivatives/nro/contrasts/main",
         execution_context=context,
     )
     assert validate_completion(output)[0]
@@ -678,7 +678,7 @@ def test_branch_firstlevels_reads_mixed_owners(tmp_path, domain, smoothing):
 
 def test_all_censored_run_is_an_explicit_omission(tmp_path):
     root = _synthetic_project(tmp_path, "volume")
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     for path in root.glob("derivatives/nro/func/main/sub-01/ses-01/func/*confounds_timeseries.tsv"):
         frame = pd.read_csv(path, sep="\t")
         frame["motion_outlier00"] = 1
@@ -708,7 +708,7 @@ def test_all_censored_run_is_an_explicit_omission(tmp_path):
 
 def test_run_groupby_and_inherited_events(tmp_path):
     from nro.engine.bids import resolve_bids_table
-    from nro.modules.firstlevels.models import validate_run_groups
+    from nro.modules.contrasts.models import validate_run_groups
 
     root = _synthetic_project(tmp_path, "volume")
     runs = discover_raw_runs(root / "sub-01")
@@ -725,7 +725,7 @@ def test_run_groupby_and_inherited_events(tmp_path):
 
 
 def test_functional_inputs_use_canonical_preprocessed_output(tmp_path):
-    from nro.modules.firstlevels.module import functional_paths
+    from nro.modules.contrasts.module import functional_paths
 
     root = _synthetic_project(tmp_path, "volume")
     run = discover_raw_runs(root / "sub-01")[0]
@@ -733,9 +733,9 @@ def test_functional_inputs_use_canonical_preprocessed_output(tmp_path):
 
 
 def test_absent_named_dummy_contrast_is_recorded():
-    from nro.modules.firstlevels.estimation import run_records
+    from nro.modules.contrasts.estimation import run_records
 
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     node = load_model("langlocSN/main")["Nodes"][0]
     node["Model"]["X"] = ["trial_type.N"]
     node.pop("Contrasts")
@@ -765,7 +765,7 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     specs = build_subject_work_items(
         project="demo",
         participant="01",
-        module="firstlevels",
+        module="contrasts",
         workflow=workflow,
         registered=registered,
         registry=registry,
@@ -773,10 +773,10 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
         spaces=("fsnative", "T1w"),
         smoothing_levels=(0, 2),
     )
-    targets = [s for s in specs if s.module == "firstlevels"]
+    targets = [s for s in specs if s.module == "contrasts"]
     assert len(targets) == 4
     assert len({target.output_root for target in targets}) == 1
-    assert {s.module for s in specs} == {"anat", "func", "firstlevels"}
+    assert {s.module for s in specs} == {"anat", "func", "contrasts"}
     assert all(len(s.dependencies) == 3 for s in targets)
     assert {(s.entities["space"], s.entities["smoothing"]) for s in targets} == {
         ("fsnative", "0"),
@@ -799,8 +799,8 @@ def test_planner_targets_dependencies_runtime_and_purge_isolation(tmp_path):
     assert other not in controlled
 
 
-def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
-    from nro.modules.firstlevels.paths import artifact_root, work_item_prefix
+def test_bootstrap_discovers_existing_contrasts_without_demand(tmp_path):
+    from nro.modules.contrasts.paths import artifact_root, work_item_prefix
     from nro.orchestration.discovery import register_existing_artifacts
     from nro.orchestration.registry import Registry
 
@@ -811,13 +811,13 @@ def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
     registry = Registry.for_project("demo", bids_root=root.parent)
     registered = registry.register_workflow(ConfigStore().resolve("main"))
     directory = (
-        artifact_root(root, registered.directories["firstlevels"], "01") / "task-langlocSN/node-run"
+        artifact_root(root, registered.directories["contrasts"], "01") / "task-langlocSN/node-run"
     )
     directory.mkdir(parents=True)
     prefix = work_item_prefix("01", "langlocSN/main", "T1w", 0)
     (directory / f"{prefix}_partial.txt").write_text("partial artifact")
     register_existing_artifacts(registry, bids_root=root.parent, inventory={"demo": ("01",)})
-    assert any(row["module"] == "firstlevels" for row in registry.work_item_rows())
+    assert any(row["module"] == "contrasts" for row in registry.work_item_rows())
     with registry.connection() as db:
         assert db.execute("SELECT count(*) FROM requests").fetchone()[0] == 0
 
@@ -826,7 +826,7 @@ def test_bootstrap_discovers_existing_firstlevels_without_demand(tmp_path):
 def task_store(tmp_path, monkeypatch):
     import yaml
 
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
 
     source = load_task_model("langlocSN/main")
     root = tmp_path / "configuration"
@@ -844,7 +844,7 @@ def task_store(tmp_path, monkeypatch):
 
 
 def test_model_set_default_and_explicit_selection(task_store):
-    from nro.modules.firstlevels.task_models import select_models
+    from nro.modules.contrasts.task_models import select_models
 
     assert set(select_models()) == {"langlocSN/main"}
     assert set(select_models(models=("dev",))) == {"langlocSN/dev"}
@@ -858,7 +858,7 @@ def test_model_set_default_and_explicit_selection(task_store):
 def test_task_models_use_nearest_definition_in_inheritance_chain(task_store, tmp_path, monkeypatch):
     import yaml
 
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
 
     child = tmp_path / "child"
     (child / "models/langlocSN").mkdir(parents=True)
@@ -884,7 +884,7 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
         build_parser().parse_args(
             [
                 "-m",
-                "firstlevels",
+                "contrasts",
                 "--analysis",
                 "langlocSN",
                 "--task",
@@ -915,7 +915,7 @@ def test_shared_model_selectors_preserve_task_variant_pairs(task_store):
 def test_model_membership_does_not_change_contract_or_configuration(task_store, tmp_path):
     import yaml
 
-    from nro.modules.firstlevels.task_models import model_contract, scientific_model
+    from nro.modules.contrasts.task_models import model_contract, scientific_model
     from nro.orchestration.manifests import _current_contract, assess_registry
     from nro.orchestration.planner import build_subject_work_items
     from nro.orchestration.registry import Registry
@@ -926,14 +926,14 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
     nib.save(nib.Nifti1Image(np.ones((2, 2, 2), np.float32), np.eye(4)), anatomy)
     workflow = ConfigStore().resolve("main")
     assert not {"models", "task", "model_documents"}.intersection(
-        workflow.configuration("firstlevels").values
+        workflow.configuration("contrasts").values
     )
     registry = Registry.for_project("demo", bids_root=root.parent)
     registered = registry.register_workflow(workflow)
     kwargs = dict(
         project="demo",
         participant="01",
-        module="firstlevels",
+        module="contrasts",
         workflow=workflow,
         registered=registered,
         registry=registry,
@@ -943,7 +943,7 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
         models=("main", "dev"),
     )
     specs = build_subject_work_items(**kwargs)
-    targets = {s.entities["model"]: s for s in specs if s.module == "firstlevels"}
+    targets = {s.entities["model"]: s for s in specs if s.module == "contrasts"}
     assert set(targets) == {"main", "dev"}
     ids = registry.register_work_items(specs)
     with registry.connection(write=True) as db:
@@ -978,7 +978,7 @@ def test_model_membership_does_not_change_contract_or_configuration(task_store, 
 @pytest.mark.parametrize("edit", ["membership", "qualified", "defaults", "advanced", "execution"])
 def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
     root = _synthetic_project(tmp_path, "volume")
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config["noise_model"] = "ols"
     source = load_task_model("langlocSN/main")
     kwargs = dict(
@@ -1010,7 +1010,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
     elif edit == "execution":
         config["spatial_block_size"] = 4
     else:
-        from nro.modules.firstlevels.task_models import scientific_model
+        from nro.modules.contrasts.task_models import scientific_model
 
         kwargs["model"] = scientific_model(source)
     run_module(**kwargs)
@@ -1026,7 +1026,7 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
 
 
 def test_event_transforms_and_hrf_are_source_aware():
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     source = {
         "predictors": ["trial_type.*", "modulator"],
         "hrf": "spm",
@@ -1060,7 +1060,7 @@ def test_event_transforms_and_hrf_are_source_aware():
     assert [n["Level"] for n in model["Nodes"]] == ["Run", "Subject"]
     design = build_design(model["Nodes"][0], events, confounds, 1, config)
     resolved = design.metadata["StatsModelNode"]
-    from nro.modules.firstlevels.models import event_design
+    from nro.modules.contrasts.models import event_design
 
     sampled = event_design(resolved, events, confounds, 1)
     assert_allclose(sampled["csf"], confounds["csf"])
@@ -1075,14 +1075,14 @@ def test_event_transforms_and_hrf_are_source_aware():
     "field", ["confounds_regex", "models", "task", "levels", "noise_model", "Nodes"]
 )
 def test_model_yaml_rejects_wrong_ownership(field):
-    from nro.modules.firstlevels.task_models import validate_task_model
+    from nro.modules.contrasts.task_models import validate_task_model
 
     with pytest.raises(ValueError, match="Unsupported first-level model"):
         validate_task_model({**load_task_model("langlocSN/main"), field: "anything"})
 
 
 def test_advanced_blocks_are_validated_and_cannot_select_confounds():
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     source = {
         "predictors": ["trial_type.*"],
         "statsmodels": {
@@ -1096,7 +1096,7 @@ def test_advanced_blocks_are_validated_and_cannot_select_confounds():
         },
     }
     assert compile_model(source, "task/main", config)["Nodes"][0]["Contrasts"][0]["Name"] == "S"
-    from nro.modules.firstlevels.task_models import validate_task_model
+    from nro.modules.contrasts.task_models import validate_task_model
 
     with pytest.raises(ValueError, match="not both"):
         validate_task_model({**source, "conditions": "trial_type"})
@@ -1108,7 +1108,7 @@ def test_advanced_blocks_are_validated_and_cannot_select_confounds():
 
 
 def test_exact_outliers_bypass_nuisance_rank_cap():
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config["minimum_temporal_rank"] = 1000
     model = load_model("langlocSN/main", config)
     events = pd.DataFrame({"onset": [0, 20], "duration": [2, 2], "trial_type": ["S", "N"]})
@@ -1124,7 +1124,7 @@ def test_exact_outliers_bypass_nuisance_rank_cap():
 def test_compiled_contrasts_commute_when_all_conditions_share_runs():
     from types import SimpleNamespace
 
-    from nro.modules.firstlevels.estimation import evaluate_recipe, run_records
+    from nro.modules.contrasts.estimation import evaluate_recipe, run_records
 
     model = load_model("langlocSN/main")
     fits = _fits()
@@ -1153,7 +1153,7 @@ def test_compiled_contrasts_commute_when_all_conditions_share_runs():
 
 def test_disjoint_conditions_produce_subject_contrast_but_no_run_contrasts(tmp_path):
     root = _synthetic_project(tmp_path, "volume")
-    config = ConfigStore().load_configuration("firstlevels", "main").values
+    config = ConfigStore().load_configuration("contrasts", "main").values
     config["noise_model"] = "ols"
     for index, path in enumerate(sorted(root.glob("sub-01/ses-01/func/*events.tsv"))):
         events = pd.read_csv(path, sep="\t")
@@ -1184,8 +1184,8 @@ def test_disjoint_conditions_produce_subject_contrast_but_no_run_contrasts(tmp_p
 
 
 def test_public_adoption_checks_scientific_model_not_set(tmp_path):
-    from nro.modules.firstlevels.contract import firstlevels_output_contract
-    from nro.modules.firstlevels.task_models import scientific_model
+    from nro.modules.contrasts.contract import contrasts_output_contract
+    from nro.modules.contrasts.task_models import scientific_model
     from nro.orchestration.manifests import (
         _public_derivative_completion,
         _PublicDerivativeContractMismatch,
@@ -1199,13 +1199,13 @@ def test_public_adoption_checks_scientific_model_not_set(tmp_path):
             {
                 "complete": True,
                 "task_model": source,
-                "output_metadata_contract": firstlevels_output_contract(),
+                "output_metadata_contract": contrasts_output_contract(),
                 "public_outputs": [],
             }
         )
     )
     row = {
-        "module": "firstlevels",
+        "module": "contrasts",
         "output_root": str(tmp_path),
         "expected_outputs_json": json.dumps([str(path)]),
         "artifact_contract_json": json.dumps({"processing": {"task_model": scientific}}),
@@ -1220,14 +1220,14 @@ def test_public_adoption_checks_scientific_model_not_set(tmp_path):
     row["artifact_contract_json"] = json.dumps(
         {"processing": {"task_model": scientific_model(source)}}
     )
-    with pytest.raises(_PublicDerivativeContractMismatch, match="firstlevels model differs"):
+    with pytest.raises(_PublicDerivativeContractMismatch, match="contrasts model differs"):
         _public_derivative_completion(row, None)
 
 
 def test_invalid_unselected_development_model_does_not_block_main(task_store):
     import yaml
 
-    from nro.modules.firstlevels.task_models import select_models
+    from nro.modules.contrasts.task_models import select_models
 
     path = task_store / "models/langlocSN/dev.yml"
     path.write_text(yaml.safe_dump({"model_set": "dev", "not_implemented_yet": True}))
@@ -1237,7 +1237,7 @@ def test_invalid_unselected_development_model_does_not_block_main(task_store):
 
 
 def test_reference_levels_and_constant_group_handling():
-    from nro.modules.firstlevels.transforms import event_variables
+    from nro.modules.contrasts.transforms import event_variables
 
     events = pd.DataFrame({"trial_type": ["A", "B", "A"], "x": [2.0, 2.0, 2.0]})
     transformed, _, _ = event_variables(

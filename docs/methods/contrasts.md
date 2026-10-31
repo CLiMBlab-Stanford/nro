@@ -1,11 +1,11 @@
 # First-level estimation and inference
 
-The [firstlevels guide](../modules/firstlevels.md) describes inputs, model
+The [contrasts guide](../modules/contrasts.md) describes inputs, model
 registration, processing, and outputs. These equations describe nro's estimator,
 not a requirement of the Stats Models interchange format.
 
 The [first-level model compiler](../task-models.md) combines event predictors with the
-firstlevels configuration's nuisance design. Exact outlier indicators do not
+contrasts configuration's nuisance design. Exact outlier indicators do not
 enter nuisance PCA. The estimator excludes their marked rows, preserving gaps
 in the temporal covariance. For a fixed covariance model, this gives the same
 task estimates and residual DOF as fitting one unconstrained spike coefficient

@@ -5,7 +5,7 @@ that every option in its original publication is used. Retain resolved
 configurations, manifests, container identities, reference maps, and installation
 receipts when reporting an analysis.
 
-[First-level inference](firstlevels.md) uses an nro implementation of grouped
+[First-level inference](contrasts.md) uses an nro implementation of grouped
 GLS and covariance-preserving summaries. Nilearn supplies canonical HRF
 convolution; Workbench supplies geodesic smoothing. BIDS Stats Models supplies
 the model format. FitLins is not a dependency.

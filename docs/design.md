@@ -15,15 +15,15 @@ owns a graph of `Step` declarations and executes them in dependency order.
 ```text
 anat ──► func ──┬─► clean ──┬─► dynconn ────────────┐
   │             │           └─► microparcellation ──┴─► networks
-  │             └─► firstlevels
-  └── direct anatomical inputs ──► {clean, microparcellation, networks, firstlevels}
+  │             └─► contrasts
+  └── direct anatomical inputs ──► {clean, microparcellation, networks, contrasts}
 ```
 
 The sequence is not a chain of monolithic cluster jobs. There are many run-wise
 `func` and `clean` work items, followed by subject-level aggregation. From
 `clean` onward, space and smoothing are independent scheduling entities.
 The module pages specify how `clean`, `microparcellation`, `networks`, and
-`firstlevels` use their direct anatomy dependencies. Microparcellation needs
+`contrasts` use their direct anatomy dependencies. Microparcellation needs
 that dependency only for targets whose native geometry or mask comes from the
 participant anatomy.
 
@@ -31,7 +31,7 @@ A networks configuration selects either dynconn or microparcellation as its
 source. Workflow compilation fixes that choice before planning; it does not
 create a runtime-dependent graph or demand the unselected source.
 
-`firstlevels` follows a separate path from `func`, with a direct `anat`
+`contrasts` follows a separate path from `func`, with a direct `anat`
 dependency for geometry. One participant/model/space/smoothing work item fits its
 runs independently and follows its Stats Models graph to publish within-subject
 summaries. It does not consume `clean` or run population-level analyses.

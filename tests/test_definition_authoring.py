@@ -13,8 +13,8 @@ from nro.definitions import editor as definition_editor
 from nro.definitions import store as store_module
 from nro.definitions.authoring import definition_target, validate_definition
 from nro.definitions.store import ConfigStore
-from nro.modules.firstlevels.authoring import discover_event_files, model_draft
-from nro.modules.firstlevels.task_models import validate_task_model
+from nro.modules.contrasts.authoring import discover_event_files, model_draft
+from nro.modules.contrasts.task_models import validate_task_model
 
 definition_cli = importlib.import_module("nro.bin.def")
 
@@ -135,7 +135,7 @@ def test_draft_maps_unsafe_contrast_names_without_losing_conditions(tmp_path):
         "A-B",
         "trial_type.trial_type.C",
     }
-    from nro.modules.firstlevels.compiler import task_node
+    from nro.modules.contrasts.compiler import task_node
 
     node = task_node(model)
     assert {name for contrast in node["Contrasts"] for name in contrast["ConditionList"]} == {
@@ -148,7 +148,7 @@ def test_draft_maps_unsafe_contrast_names_without_losing_conditions(tmp_path):
 def test_model_draft_uses_compact_shorthand_with_equivalent_compilation(tmp_path):
     from copy import deepcopy
 
-    from nro.modules.firstlevels.compiler import task_node
+    from nro.modules.contrasts.compiler import task_node
 
     text = model_draft([_events(tmp_path / "events.tsv", ["E", "H"])])
     assert "  E: {E: 1}\n" in text

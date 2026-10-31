@@ -19,7 +19,7 @@ nro def edit markup
 Model arguments are `ANALYSIS [VARIANT]`; an omitted variant means `main`.
 Module configurations use `MODULE ID`. Workflow definitions take one ID.
 Markup accepts an optional ID and defaults to `main`. The modules are `anat`,
-`func`, `clean`, `microparcellation`, `dynconn`, `networks`, and `firstlevels`.
+`func`, `clean`, `microparcellation`, `dynconn`, `networks`, and `contrasts`.
 
 The command opens a private draft with `$VISUAL`, then `$EDITOR`. If neither is
 set, it tries `nano` and then `vi`. Editor commands may contain options without

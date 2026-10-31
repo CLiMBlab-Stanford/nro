@@ -1,6 +1,6 @@
 # First-level models
 
-`firstlevels` estimates task effects within a participant. It fits each run
+`contrasts` estimates task effects within a participant. It fits each run
 independently, then forms session and subject summaries from the available
 runs. It produces effect, variance, t, and degrees-of-freedom maps in either
 volume or surface space. It never combines participants or fits
@@ -21,10 +21,10 @@ definitions stores start without models:
 ```bash
 nro models list
 nro models show mytask/main
-nro run -P example -p 01 -m firstlevels -s fsnative -S 2
+nro run -P example -p 01 -m contrasts -s fsnative -S 2
 ```
 
-A bare `nro run` requests `dynconn`, `networks`, and `firstlevels`, including
+A bare `nro run` requests `dynconn`, `networks`, and `contrasts`, including
 GLMs for matching tasks in model set `main`. Use `-m` to restrict the requested
 endpoints.
 Multiple spaces and smoothing values create independent work items. One work
@@ -33,16 +33,16 @@ fits are separate steps within that work item, not separate worker jobs.
 
 Models live in `DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected external
 store. They define source tasks, event predictors, and contrasts; the
-firstlevels configuration defines denoising, estimation, and run aggregation.
+contrasts configuration defines denoising, estimation, and run aggregation.
 Single-task models infer their source task from `ANALYSIS`. Multi-task models
 declare `tasks` explicitly. See [first-level models](../task-models.md) for the YAML
 format, transformations, and model sets, and [model commands](../commands/models.md)
 for registration.
 
 ```bash
-nro run -m firstlevels --analysis language --model main
-nro run -m firstlevels --task langlocSN
-nro run -m firstlevels --model-set development
+nro run -m contrasts --analysis language --model main
+nro run -m contrasts --task langlocSN
+nro run -m contrasts --model-set development
 ```
 
 Analysis, source-task, and model selection are independent of workflow configuration. A model
@@ -106,17 +106,17 @@ normalization preserves the predictor's declared amplitude scale. For a unit-hei
 block, increasing duration prolongs the convolved response and increases its area;
 it does not redefine one predictor unit.
 
-See [estimation and inference](../methods/firstlevels.md) for equations,
+See [estimation and inference](../methods/contrasts.md) for equations,
 assumptions, weighting, and the limitations of conditional AR inference.
 
-`nro render -m firstlevels` creates a separate static image for each named
+`nro render -m contrasts` creates a separate static image for each named
 contrast in each selected statistic file. See the
 [viewing guide](../commands/viewing.md#nro-render).
 
 ## Artifacts
 
 ```text
-derivatives/nro/firstlevels/<CONFIG_ID>-<LINEAGE_DIGEST>/
+derivatives/nro/contrasts/<CONFIG_ID>-<LINEAGE_DIGEST>/
   sub-ID/
     ses-SESSION/task-TASK/node-run/
     ses-SESSION/task-TASK/node-session/
@@ -162,7 +162,7 @@ model template. Model-set membership is excluded from these scientific records.
 The numerical design and its metadata describe the realized PCA fit.
 
 Node manifests list maps, compact fits, design files, contributing records, and
-omissions. The fixed `_desc-firstlevels_manifest.json` under
+omissions. The fixed `_desc-contrasts_manifest.json` under
 `task-TASK/node-run/`
 collects completion evidence for the work item. Deleting a declared output
 invalidates completion. Resumption checks the model/configuration and selected
@@ -190,7 +190,7 @@ These names are BIDS-like, not a claim of validator compliance.
 | `container` | QuNex container settings used for Workbench surface smoothing. |
 | `wb_command` | Workbench command inside the configured container. |
 
-```{literalinclude} ../../nro/definitions/starters/configs/firstlevels/main_firstlevels.yml
+```{literalinclude} ../../nro/definitions/starters/configs/contrasts/main_contrasts.yml
 :language: yaml
 ```
 
@@ -209,7 +209,7 @@ validity alone does not imply identical results from another engine.
 Dataset nodes, cross-subject aggregation, summary-level GLMs, formulas, F tests,
 random effects, HRF derivatives, and temporal filtering are not supported.
 
-Implementation: [compiler](../autoapi/nro/modules/firstlevels/compiler/index.rst),
-[design](../autoapi/nro/modules/firstlevels/design/index.rst),
-[statistics](../autoapi/nro/modules/firstlevels/statistics/index.rst),
-[module](../autoapi/nro/modules/firstlevels/module/index.rst).
+Implementation: [compiler](../autoapi/nro/modules/contrasts/compiler/index.rst),
+[design](../autoapi/nro/modules/contrasts/design/index.rst),
+[statistics](../autoapi/nro/modules/contrasts/statistics/index.rst),
+[module](../autoapi/nro/modules/contrasts/module/index.rst).

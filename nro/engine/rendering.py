@@ -21,7 +21,7 @@ from nro.engine.io import atomic_output_path, atomic_write_text
 from nro.orchestration.registry import RegistryLock
 
 SEED_MODULES = frozenset({"dynconn", "microparcellation"})
-FINITE_MAP_MODULES = frozenset({"firstlevels", "microparcellation", "networks"})
+FINITE_MAP_MODULES = frozenset({"contrasts", "microparcellation", "networks"})
 RENDER_FORMATS = ("png", "jpg", "tiff")
 
 
