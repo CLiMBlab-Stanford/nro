@@ -31,7 +31,14 @@ def _task_directory(root: Path, prefix: str) -> Path:
     return Path(root) / f"task-{task}"
 
 
-def node_prefix(root: Path, prefix: str, node: dict, *, run_stem: str | None = None) -> Path:
+def node_prefix(
+    root: Path,
+    prefix: str,
+    node: dict,
+    *,
+    run_stem: str | None = None,
+    pooled_tasks: bool = False,
+) -> Path:
     """Place node artifacts below a participant task with collision-free filenames."""
     name = f"{prefix}_node-{node['Name']}"
     task_directory = _task_directory(root, prefix)
@@ -47,9 +54,10 @@ def node_prefix(root: Path, prefix: str, node: dict, *, run_stem: str | None = N
                 / task_directory.name
                 / f"node-{node['Level'].lower()}"
             )
-        name += "".join(
-            f"_{key}-{value}" for key, value in entities.items() if key not in {"sub", "task"}
-        )
+        # A model over several tasks shares one task directory, so its run
+        # names keep the source task to keep equal run entities distinct.
+        omitted = {"sub"} if pooled_tasks else {"sub", "task"}
+        name += "".join(f"_{key}-{value}" for key, value in entities.items() if key not in omitted)
     return directory / name
 
 

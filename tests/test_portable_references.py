@@ -12,6 +12,7 @@ from nro.engine.references import (
     ReferenceRoots,
     absolute_path_values,
     bids_uri,
+    configured_reference_roots,
     ensure_derivative_dataset,
     omit_private_path_values,
     portable_path,
@@ -73,6 +74,29 @@ def test_private_receipts_can_name_configured_site_resources(tmp_path: Path) -> 
     assert reference == "nro-site:templates:tpl-demo/template.nii.gz"
     assert resolve_reference(reference, roots) == template.resolve()
     assert portable_path(template, roots, public=True) == reference
+
+
+def test_configured_roots_name_an_absolute_container_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nro.site import configuration
+
+    runtime = tmp_path / "apptainer/runtimes/apptainer-1.4.5/bin/apptainer"
+    monkeypatch.setattr(configuration, "settings", lambda: ({"runtime": str(runtime)}, {}))
+    roots = configured_reference_roots(tmp_path / "BIDS/demo")
+
+    reference = portable_path(runtime, roots, public=True)
+    assert reference == "nro-site:runtime:."
+    assert resolve_reference(reference, roots) == runtime
+
+
+def test_configured_roots_ignore_a_runtime_command_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nro.site import configuration
+
+    monkeypatch.setattr(configuration, "settings", lambda: ({"runtime": "singularity"}, {}))
+    assert "runtime" not in configured_reference_roots(tmp_path / "BIDS/demo").site
 
 
 def test_public_metadata_omits_private_execution_paths(tmp_path: Path) -> None:
