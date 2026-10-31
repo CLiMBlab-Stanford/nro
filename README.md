@@ -31,7 +31,7 @@ The main processing graph contains these modules:
   connectivity.
 - `networks` estimates individualized functional networks from either
   microparcel connectivity or dynamic-connectivity time series.
-- `firstlevels` estimates task effects from `func` outputs. Registered task
+- `contrasts` estimates task effects from `func` outputs. Registered task
   models specify run, session, and subject contrasts; volume and surface
   results include effect, variance, t, and degrees-of-freedom maps.
 
@@ -40,9 +40,9 @@ The arrows show dependencies:
 ```text
 [anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn] ────────────┐
                     │              └──► [microparcellation] ──┴──► [networks]
-                    └──► [firstlevels]
+                    └──► [contrasts]
 
-[anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, firstlevels}
+[anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, contrasts}
 
 Only one of the two configured inputs to `networks` is active in a workflow.
 ```
@@ -96,7 +96,7 @@ nro run -p 01 -P example
 ```
 
 With no `--module`, requests reach every workflow endpoint: currently `dynconn`,
-`networks`, and `firstlevels`. Firstlevels selects models in set `main` for
+`networks`, and `contrasts`. Contrasts selects models in set `main` for
 matching tasks. Shared upstream work runs once.
 
 Run through a particular module, or select several participants:
@@ -122,12 +122,12 @@ Request task-effect maps separately:
 
 ```bash
 nro models list
-nro run -p 01 -P example -m firstlevels -s fsnative -S 2
+nro run -p 01 -P example -m contrasts -s fsnative -S 2
 ```
 
 New definitions stores start without task models. Add reviewed models to set
 `main` when they should run by default. See
-[first-level models](docs/modules/firstlevels.md) for model registration,
+[first-level models](docs/modules/contrasts.md) for model registration,
 supported BIDS Stats Models features, and inference limitations.
 
 Edit a model or create it from a task's BIDS events when it is missing:
@@ -166,7 +166,7 @@ worker slot. Add `--serverless` to run the viewer on the current host instead.
 Render all named maps in a selection as static images:
 
 ```bash
-nro render -p 01 -P example -m networks firstlevels
+nro render -p 01 -P example -m networks contrasts
 ```
 
 Seed-driven connectivity is skipped unless `--seeds` supplies subject-specific

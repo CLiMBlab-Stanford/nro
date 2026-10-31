@@ -224,7 +224,7 @@ def realize_run_node(node: dict, events, confounds, config: dict) -> dict:
     rules = node["Model"]["Software"]["nro"]
     denoising = rules["denoising"]
     if denoising != {key: config[key] for key in NUISANCE_KEYS}:
-        raise ValueError("Compiled denoising differs from the firstlevels configuration")
+        raise ValueError("Compiled denoising differs from the contrasts configuration")
     sparse, factors, convolutions = event_variables(events, node.get("Transformations", {}))
     predictors = expand_columns(
         rules["event_predictors"], list(sparse), factor_variables=tuple(factors)
@@ -264,7 +264,7 @@ def realize_run_node(node: dict, events, confounds, config: dict) -> dict:
         if name not in outliers and re.search(denoising["confounds_regex"], name)
     ]
     if any(name.startswith("global_signal") for name in nuisance):
-        raise ValueError("Firstlevels does not remove global signal")
+        raise ValueError("Contrasts does not remove global signal")
     node["Model"]["X"] = [*predictors, *nuisance, *outliers, 1]
     rules.update(event_columns=predictors, nuisance_columns=nuisance, outlier_columns=outliers)
     return node

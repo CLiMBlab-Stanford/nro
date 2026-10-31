@@ -38,7 +38,7 @@ orchestration
 modules/index
 methods/denoising
 methods/estimation
-methods/firstlevels
+methods/contrasts
 methods/software
 ```
 

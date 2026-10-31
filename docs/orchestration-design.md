@@ -8,7 +8,7 @@ lifecycle are defined in
 [Work-item planning and execution](work-item-lifecycle.md).
 
 The scientific surface includes `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `firstlevels`. Their planner-facing metadata is assembled
+`microparcellation`, `networks`, and `contrasts`. Their planner-facing metadata is assembled
 in one closed built-in catalog. Module-specific work-item construction lives in
 each scientific package; the central planner owns cross-module traversal.
 

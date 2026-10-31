@@ -7,5 +7,5 @@ MODULE_NAMES: tuple[str, ...] = (
     "dynconn",
     "microparcellation",
     "networks",
-    "firstlevels",
+    "contrasts",
 )

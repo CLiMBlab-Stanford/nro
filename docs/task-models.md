@@ -1,7 +1,7 @@
 # First-level models
 
 A first-level model defines event predictors and contrasts for
-[firstlevels](modules/firstlevels.md). Store it as
+[contrasts](modules/contrasts.md). Store it as
 `DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected
 [definitions store](definitions.md); its identifier is
 `ANALYSIS/VARIANT`. For an ordinary single-task model, the analysis label is
@@ -34,15 +34,15 @@ one from matching BIDS events. See
 [definition authoring](commands/authoring.md) for discovery selectors, local
 drafts, and save behavior.
 
-At execution time, firstlevels reads event tables from the BIDS project. Task
+At execution time, contrasts reads event tables from the BIDS project. Task
 repositories and shared event templates may support BIDSification and model
 authoring, but they are not runtime dependencies after the corresponding
 `events.tsv` files have been published.
 
-The firstlevels configuration supplies nuisance regression, temporal outlier
+The contrasts configuration supplies nuisance regression, temporal outlier
 handling, rank protection, run aggregation, and the noise model. First-level
 models cannot override those settings or introduce confounds. This lets the
-same scientific model run under different firstlevels configurations.
+same scientific model run under different contrasts configurations.
 
 ## Basic model
 
@@ -61,10 +61,10 @@ HRF applies to event-derived predictors. Confounds and the intercept are never
 convolved. Timing comes from `onset` and `duration`, adjusted for the functional
 input's `StartTime`; these timing columns are not automatic predictors.
 
-The firstlevels configuration's `aggregation_weighting` setting controls how
+The contrasts configuration's `aggregation_weighting` setting controls how
 available original-run estimates are pooled. The default, `precision`, uses
 inverse estimated marginal variance; `equal` uses an arithmetic mean. See
-[inference](methods/firstlevels.md) for covariance and DOF calculations.
+[inference](methods/contrasts.md) for covariance and DOF calculations.
 
 ## Selection and model sets
 
@@ -77,12 +77,12 @@ model_set: [development, language-experiment]
 ```
 
 ```bash
-nro run -m firstlevels                         # set main
-nro run -m firstlevels --analysis language     # set main within this analysis
-nro run -m firstlevels --task langlocSN        # models that consume this source task
-nro run -m firstlevels --model alternative    # explicit variants, any set
-nro run -m firstlevels --model language/main  # one qualified model
-nro run -m firstlevels --model-set development language-experiment
+nro run -m contrasts                         # set main
+nro run -m contrasts --analysis language     # set main within this analysis
+nro run -m contrasts --task langlocSN        # models that consume this source task
+nro run -m contrasts --model alternative    # explicit variants, any set
+nro run -m contrasts --model language/main  # one qualified model
+nro run -m contrasts --model-set development language-experiment
 ```
 
 Values within a selector are alternatives; different selectors intersect.
@@ -95,7 +95,7 @@ the default set restriction; an explicit `--model-set` still intersects it.
 `--task` and `--run task=...` constrain the same source-task entity.
 
 Registration creates no demand. Bare `nro run` requests `dynconn`, `networks`,
-and `firstlevels`, using model set `main` for matching tasks. Use `-m firstlevels`
+and `contrasts`, using model set `main` for matching tasks. Use `-m contrasts`
 to request only the modeling module and its upstream dependencies. Existing
 registered work remains independent of later changes to model-set membership.
 
@@ -103,8 +103,8 @@ Model sets are execution metadata. Membership changes do not alter work item
 identity, scientific fingerprints, or completion checks. Model file timestamps,
 comments, and `description` do not affect freshness either. Changing predictors,
 contrasts, transforms, or HRFs invalidates the corresponding model's artifacts,
-not every model using that firstlevels configuration. Changing a scientific
-firstlevels setting affects every model fitted with that configuration.
+not every model using that contrasts configuration. Changing a scientific
+contrasts setting affects every model fitted with that configuration.
 
 Status, logs, stop, and purge accept the same explicit model/set filters. Omitted
 selectors on those commands mean all registered work, including development
@@ -214,7 +214,7 @@ The compiler creates the Stats Models document used by the estimator. At run
 time it resolves selected nuisance/outlier columns and event HRFs. The saved
 run document records those choices; numerical design files record the fitted
 PCs, retained rows, parameter mapping, and rank budget. The work item also saves
-its scientific model YAML, resolved firstlevels configuration, and compiled
+its scientific model YAML, resolved contrasts configuration, and compiled
 template. Execution-only set membership is excluded.
 
 ## Model edits and freshness

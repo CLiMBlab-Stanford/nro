@@ -354,7 +354,7 @@ def test_planner_filters_terminal_routes_by_work_item_id(branch_registry, tmp_pa
 def test_all_planned_manifests_use_the_selected_bids_root(branch_registry, tmp_path):
     from nro.orchestration.artifact_resolution import scientific_contracts
 
-    plan = _plan_modules(branch_registry, tmp_path, ("networks", "firstlevels"))
+    plan = _plan_modules(branch_registry, tmp_path, ("networks", "contrasts"))
     work_items = tuple(plan.work_items.values())
     for spec in work_items:
         assert all(path.is_relative_to(spec.output_root) for path in spec.expected_outputs)
@@ -556,7 +556,7 @@ def test_registered_targets_preserve_workflow_associations(branch_registry, tmp_
     assert {request.workflow_id for request in exact.requests} == {"main", "oslom"}
 
 
-@pytest.mark.parametrize("modules", [("func", "firstlevels"), ("firstlevels", "func")])
+@pytest.mark.parametrize("modules", [("func", "contrasts"), ("contrasts", "func")])
 def test_partial_upstream_coverage_keeps_only_uncovered_runs(
     branch_registry,
     tmp_path,
@@ -564,27 +564,27 @@ def test_partial_upstream_coverage_keeps_only_uncovered_runs(
 ):
     plan = _plan_modules(branch_registry, tmp_path, modules)
     requests = {request.module: request for request in plan.requests}
-    assert set(requests) == {"func", "firstlevels"}
+    assert set(requests) == {"func", "contrasts"}
     func = requests["func"]
     assert func.participants == ("01", "02")
     assert len(func.terminal_keys) == 2
     assert {plan.work_items[key].entities["task"] for key in func.terminal_keys} == {"rest"}
     assert {item.participant for item in func.work_items} == {"01", "02"}
     assert all(item.entities.get("task") != "langlocSN" for item in func.work_items)
-    fits = requests["firstlevels"]
+    fits = requests["contrasts"]
     assert fits.participants == ("01", "03")
     planner = Planner(branch_registry, bids_root=tmp_path / "bids")
     planner.register_requests(plan, selectors={}, concurrency=50, partition=None)
-    branch_registry.request_cancellation(modules=("firstlevels",))
+    branch_registry.request_cancellation(modules=("contrasts",))
     demanded = [row for row in branch_registry.work_item_rows() if row["demanded"]]
     assert {row["participant"] for row in demanded} == {"01", "02"}
     assert all(json.loads(row["entities_json"]).get("task") != "langlocSN" for row in demanded)
 
 
-def test_multitask_firstlevels_depends_on_each_declared_task(
+def test_multitask_contrasts_depends_on_each_declared_task(
     branch_registry, tmp_path, monkeypatch
 ) -> None:
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
 
     definitions = tmp_path / "definitions"
     model = definitions / "models/combined/main.yml"
@@ -606,7 +606,7 @@ def test_multitask_firstlevels_depends_on_each_declared_task(
     work_items = build_subject_work_items(
         project="demo",
         participant="01",
-        module="firstlevels",
+        module="contrasts",
         workflow=workflow,
         registered=registered,
         registry=branch_registry,
@@ -617,12 +617,12 @@ def test_multitask_firstlevels_depends_on_each_declared_task(
         selectors={"task": ("rest",)},
     )
     functionals = [item for item in work_items if item.module == "func"]
-    firstlevel = next(item for item in work_items if item.module == "firstlevels")
+    contrast = next(item for item in work_items if item.module == "contrasts")
 
     assert {item.entities["task"] for item in functionals} == {"langlocSN", "rest"}
-    assert firstlevel.entities["task"] == "combined"
-    assert set(firstlevel.dependencies).issuperset(item.key for item in functionals)
-    assert {path.name for path in firstlevel.input_paths} == {
+    assert contrast.entities["task"] == "combined"
+    assert set(contrast.dependencies).issuperset(item.key for item in functionals)
+    assert {path.name for path in contrast.input_paths} == {
         "sub-01_task-langlocSN_run-1_events.tsv",
         "sub-01_task-rest_run-1_events.tsv",
     }
@@ -633,12 +633,10 @@ def test_independent_endpoints_cover_upstream_without_merging_workflows(
     tmp_path,
 ):
     plan = _plan_modules(
-        branch_registry, tmp_path, ("func", "networks", "firstlevels"), ("main", "oslom")
+        branch_registry, tmp_path, ("func", "networks", "contrasts"), ("main", "oslom")
     )
     assert {(request.workflow_id, request.module) for request in plan.requests} == {
-        (workflow, module)
-        for workflow in ("main", "oslom")
-        for module in ("networks", "firstlevels")
+        (workflow, module) for workflow in ("main", "oslom") for module in ("networks", "contrasts")
     }
     assert len(plan.requests) == 4
 

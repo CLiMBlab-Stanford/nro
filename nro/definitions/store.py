@@ -313,7 +313,7 @@ class ConfigStore:
                 f"{path}: {', '.join(forbidden)} are managed by orchestration and cannot "
                 f"be set in a {configuration_class} configuration"
             )
-        if configuration_class == "firstlevels" and set(declared) & {
+        if configuration_class == "contrasts" and set(declared) & {
             "model",
             "models",
             "task",
@@ -321,7 +321,7 @@ class ConfigStore:
             "model_documents",
         }:
             raise WorkflowError(
-                f"{path}: Firstlevels selection keys belong in CLI requests, not configuration"
+                f"{path}: Contrasts selection keys belong in CLI requests, not configuration"
             )
         try:
             override = normalize_fields(
@@ -334,7 +334,7 @@ class ConfigStore:
             raise WorkflowError(f"{path}: {error}") from error
         flexible_filter = (
             override.pop("input_filter", None)
-            if configuration_class in {"dynconn", "firstlevels", "microparcellation"}
+            if configuration_class in {"dynconn", "contrasts", "microparcellation"}
             else None
         )
         values = _deep_merge(base, override)

@@ -17,6 +17,7 @@ import pytest
 from nro.bin.status import main as status_main
 from nro.definitions.store import ConfigStore
 from nro.engine.io import write_public_json
+from nro.modules.contrasts.task_models import model_contract
 from nro.orchestration import completion, dependency_state
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
@@ -130,6 +131,7 @@ def _spec(
     inputs: tuple[Path, ...] = (),
     project: str = "demo",
     resource_class: str = "large",
+    processing: dict | None = None,
 ) -> WorkItemSpec:
     directory_label = runtime_config.stem.rsplit("_", 1)[0]
     command = (
@@ -155,7 +157,7 @@ def _spec(
         output_prefix=None,
         resource_class=resource_class,
         expected_outputs=(output,),
-        processing=module_descriptor(module).processing_contract(),
+        processing={**module_descriptor(module).processing_contract(), **(processing or {})},
     )
 
 
@@ -3200,6 +3202,71 @@ def test_freshness_detects_newly_matching_multirun_input_before_replanning(
         db.execute("UPDATE requests SET state='active'")
     registry.register_worker("waiting-for-replan", resource_class="large")
     assert registry.claim_ready_work_item("waiting-for-replan", ("large",)) is None
+
+
+def test_freshness_detects_added_contrasts_events_table(tmp_path: Path, monkeypatch) -> None:
+    _disable_ownership_writes(monkeypatch)
+    bids = tmp_path / "bids"
+    raw_dir = bids / "demo" / "sub-01" / "func"
+    raw_dir.mkdir(parents=True)
+    for run in ("1", "2"):
+        (raw_dir / f"sub-01_task-langlocSN_run-{run}_bold.nii.gz").write_text("raw")
+        (raw_dir / f"sub-01_task-langlocSN_run-{run}_bold.json").write_text("{}")
+    events = raw_dir / "sub-01_task-langlocSN_run-1_events.tsv"
+    events.write_text("onset\tduration\n0\t1\n")
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    func_base = _spec(
+        key="func:" + "c" * 64,
+        module="func",
+        lineage=registered.lineages["func"],
+        config_fingerprint=workflow.configuration("func").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "func"),
+        output=(
+            bids / "demo/derivatives/nro/func" / registered.directories["func"] / "sub-01/func.txt"
+        ),
+    )
+    func = func_base.evolve(entities={"task": "langlocSN", "run": "1"})
+    entities = {"task": "langlocSN", "model": "main", "space": "T1w", "smoothing": "0"}
+    contrasts_base = _spec(
+        key="contrasts:" + "d" * 64,
+        module="contrasts",
+        lineage=registered.lineages["contrasts"],
+        config_fingerprint=workflow.configuration("contrasts").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "contrasts"),
+        output=(
+            bids
+            / "demo/derivatives/nro/contrasts"
+            / registered.directories["contrasts"]
+            / "sub-01/contrasts.txt"
+        ),
+        dependencies=(func.key,),
+        inputs=(events,),
+        processing=model_contract(entities),
+    )
+    contrasts = contrasts_base.evolve(
+        entities=entities,
+        command=(*contrasts_base.command, "nro.modules.contrasts"),
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="contrasts",
+        selectors={},
+        work_items=(func, contrasts),
+        terminal_work_item_keys=(contrasts.key,),
+        concurrency=1,
+        partition=None,
+    )
+    Worker(registry, resource_class="large", idle_timeout=0.1, poll_interval=0.01).run()
+    row = next(row for row in registry.work_item_rows() if row["module"] == "contrasts")
+    assert assess_registry(registry)[row["id"]][0] == "fresh"
+
+    (raw_dir / "sub-01_task-langlocSN_run-2_events.tsv").write_text("onset\tduration\n0\t1\n")
+    state, reason = assess_registry(registry)[row["id"]]
+
+    assert state == "stale"
+    assert "direct input set changed" in reason
 
 
 def test_successor_reconciles_recovered_oom_at_memory_ceiling(tmp_path: Path, monkeypatch) -> None:

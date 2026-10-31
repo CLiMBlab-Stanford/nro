@@ -38,7 +38,7 @@ def test_code_defines_the_canonical_system_vocabulary() -> None:
         "dynconn",
         "microparcellation",
         "networks",
-        "firstlevels",
+        "contrasts",
     )
     assert CONFIGURATION_CLASSES == MODULES == MODULE_NAMES
     assert tuple(descriptor.name for descriptor in BUILTIN_MODULES) == MODULES

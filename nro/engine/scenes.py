@@ -234,7 +234,7 @@ def public_manifest_paths(module: str, manifest: Path) -> tuple[Path, ...]:
     """Read the public imaging inventory from one module manifest."""
 
     document = read_manifest(manifest)
-    field = "public_outputs" if module in {"func", "clean", "firstlevels"} else "outputs"
+    field = "public_outputs" if module in {"func", "clean", "contrasts"} else "outputs"
     return tuple(
         path for path in manifest_paths(document.get(field), manifest) if is_viewable(path)
     )

@@ -16,7 +16,7 @@ _RUNTIME_SUFFIX = {
     "dynconn": "_dynconn.yml",
     "microparcellation": "_microparcellation.yml",
     "networks": "_networks.yml",
-    "firstlevels": "_firstlevels.yml",
+    "contrasts": "_contrasts.yml",
 }
 
 

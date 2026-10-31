@@ -181,9 +181,9 @@ def _render_report(
 
 
 def _display_entities(row: dict) -> dict:
-    """Return user-facing entities with the firstlevels namespace named accurately."""
+    """Return user-facing entities with the contrasts namespace named accurately."""
     entities = json.loads(row["entities_json"])
-    if row["module"] == "firstlevels" and "task" in entities:
+    if row["module"] == "contrasts" and "task" in entities:
         entities["analysis"] = entities.pop("task")
     return entities
 

@@ -345,7 +345,7 @@ class Planner:
                 "networks",
             }:
                 selectors = None
-            elif target.module == "firstlevels":
+            elif target.module == "contrasts":
                 # The historical derivative layout stores the analysis label
                 # in ``task``.  The qualified model ID below recovers its
                 # actual source tasks.
@@ -353,9 +353,7 @@ class Planner:
             spaces = (entities["space"],) if "space" in entities else None
             smoothing = (int(entities["smoothing"]),) if "smoothing" in entities else None
             models = (
-                (f"{entities['task']}/{entities['model']}",)
-                if target.module == "firstlevels"
-                else ()
+                (f"{entities['task']}/{entities['model']}",) if target.module == "contrasts" else ()
             )
             selected_memory = target.memory_gb if target.memory_gb is not None else memory_gb
             selected_max_memory = (
@@ -518,7 +516,7 @@ class Planner:
         """Build the requested logical work-item graph for one participant."""
         target = normalize_module(module)
         if (target in {"dynconn", "microparcellation", "networks"} and selectors) or (
-            target == "firstlevels" and set(selectors or {}) - {"task"}
+            target == "contrasts" and set(selectors or {}) - {"task"}
         ):
             raise ValueError(
                 "Run selectors cannot define a subject-level multirun derivative. "

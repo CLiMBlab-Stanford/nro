@@ -30,8 +30,8 @@ idle, then exits. This avoids another Slurm wait when work is requested later
 the same day. Users do not manage it. `--no-submit` never starts the controller.
 
 Omitting `--module` requests every endpoint derived from the selected workflow.
-For `main`, these are `dynconn`, `networks`, and `firstlevels`, with shared
-dependencies registered once. Firstlevels selects model set `main` unless a
+For `main`, these are `dynconn`, `networks`, and `contrasts`, with shared
+dependencies registered once. Contrasts selects model set `main` unless a
 model or set is specified. Participants without a
 matching first-level model can still run the connectivity paths. Explicit `--module`
 restricts the endpoints requested; it does not request their downstream modules.
@@ -47,10 +47,10 @@ in one invocation; it does not cancel earlier requests.
 nro run -P nptl -p t20 -m networks -w main -s fsnative -S 2
 ```
 
-For firstlevels, select analysis models independently of the workflow:
+For contrasts, select analysis models independently of the workflow:
 
 ```bash
-nro run -m firstlevels --analysis language --model-set main
+nro run -m contrasts --analysis language --model-set main
 ```
 
 Model sets affect request selection, not artifact freshness. Existing demand

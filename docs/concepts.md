@@ -38,7 +38,7 @@ product
 
 A **configuration class** is the parameter namespace for one scientific module.
 The current classes are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `firstlevels`.
+`microparcellation`, `networks`, and `contrasts`.
 
 A **module configuration** is the complete set of local parameters for one
 configuration class. It has a stable human-readable ID. Configuration files
@@ -68,7 +68,7 @@ steps.
 
 A **module** defines one reusable kind of scientific work and its internal DAG.
 The current modules are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `firstlevels`. A module lineage owns one
+`microparcellation`, `networks`, and `contrasts`. A module lineage owns one
 namespace under `derivatives/nro/MODULE/LINEAGE_ID/`.
 
 A module's graph is determined entirely by resolved BIDS data and its workflow.

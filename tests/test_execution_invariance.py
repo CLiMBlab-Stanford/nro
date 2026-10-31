@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from nro.modules.firstlevels.statistics import fit_glm
+from nro.modules.contrasts.statistics import fit_glm
 from nro.modules.microparcellation.cifti import write_pconn, write_volume_dlabel
 from nro.modules.microparcellation.statistics import (
     _moments,

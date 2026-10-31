@@ -540,7 +540,7 @@ def test_published_scene_copies_inputs_and_records_checksums(tmp_path: Path, mon
         scene_id="scene-01",
         sources=(
             SceneSource(
-                "firstlevels",
+                "contrasts",
                 "derivative",
                 data,
                 "main",

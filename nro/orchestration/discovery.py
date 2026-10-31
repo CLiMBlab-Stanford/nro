@@ -76,7 +76,7 @@ def _recovery_target(path: Path, root: Path, configuration_class: str) -> _Recov
         if pair is None:
             return None
         selected.update(space=pair.group(1), smoothing=str(int(pair.group(2))))
-    if module == "firstlevels":
+    if module == "contrasts":
         if "model" not in entities or "task" not in entities:
             return None
         selected.update(model=entities["model"], task=entities["task"])
@@ -212,7 +212,7 @@ def register_existing_artifacts(
                         if "smoothing" in entities
                         else None,
                         models=(f"{entities['task']}/{entities['model']}",)
-                        if target.module == "firstlevels"
+                        if target.module == "contrasts"
                         else (),
                         model_sets=(),
                         memory_gb=memory_gb,

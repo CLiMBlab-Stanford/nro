@@ -23,7 +23,7 @@ error. Identifiers allow letters, digits, and hyphens in each part. A
 single-task model uses `ANALYSIS` as its source task. A multi-task model declares
 a nonempty `tasks` list.
 
-`compile` prints a Stats Models template combined with the selected firstlevels
+`compile` prints a Stats Models template combined with the selected contrasts
 configuration. This template includes session and subject summaries. Actual
 execution omits session nodes for data without sessions and saves run-specific
 documents with the observed nuisance columns and resolved event HRFs. Variable
@@ -32,9 +32,9 @@ availability and numerical estimability are checked when the data are available.
 The user must have write permission to the definitions store. Coordinate
 model changes with maintainers of a shared installation. Registration alone
 does not request work. Select models with `--analysis`, `--task`, `--model`, or
-`--model-set`; firstlevels requests default to set `main`. See
+`--model-set`; contrasts requests default to set `main`. See
 [first-level models](../task-models.md)
-for syntax and membership rules, and [firstlevels](../modules/firstlevels.md)
+for syntax and membership rules, and [contrasts](../modules/contrasts.md)
 for processing and output layout.
 
 `python -m nro.bin.models` exposes the same parser.

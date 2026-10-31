@@ -15,19 +15,19 @@ from nro.modules.anat.contract import (
 from nro.modules.anat.planning import plan_work_items as plan_anat_work_items
 from nro.modules.clean.contract import clean_output_contract
 from nro.modules.clean.planning import plan_work_items as plan_clean_work_items
-from nro.modules.dynconn.contract import dynconn_output_contract
-from nro.modules.dynconn.planning import plan_work_items as plan_dynconn_work_items
-from nro.modules.firstlevels.contract import firstlevels_output_contract, validate_public_definition
-from nro.modules.firstlevels.planning import direct_inputs as firstlevels_direct_inputs
-from nro.modules.firstlevels.planning import plan_work_items as plan_firstlevels_work_items
-from nro.modules.firstlevels.planning import refresh_command as refresh_firstlevels_command
-from nro.modules.firstlevels.planning import select_model_runs
-from nro.modules.firstlevels.task_models import (
+from nro.modules.contrasts.contract import contrasts_output_contract, validate_public_definition
+from nro.modules.contrasts.planning import direct_inputs as contrasts_direct_inputs
+from nro.modules.contrasts.planning import plan_work_items as plan_contrasts_work_items
+from nro.modules.contrasts.planning import refresh_command as refresh_contrasts_command
+from nro.modules.contrasts.planning import select_model_runs
+from nro.modules.contrasts.task_models import (
     canonical_processing,
     model_contract,
     select_models,
     source_tasks,
 )
+from nro.modules.dynconn.contract import dynconn_output_contract
+from nro.modules.dynconn.planning import plan_work_items as plan_dynconn_work_items
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.func.planning import plan_work_items as plan_func_work_items
 from nro.modules.microparcellation.contract import microparcellation_output_contract
@@ -82,8 +82,8 @@ def _networks_processing_contract() -> Mapping[str, object]:
     return {"output_metadata": networks_output_contract()}
 
 
-def _firstlevels_processing_contract() -> Mapping[str, object]:
-    return {"output_metadata": firstlevels_output_contract()}
+def _contrasts_processing_contract() -> Mapping[str, object]:
+    return {"output_metadata": contrasts_output_contract()}
 
 
 @dataclass(frozen=True)
@@ -187,16 +187,16 @@ BUILTIN_MODULES = (
         processing_contract=_networks_processing_contract,
     ),
     ModuleDescriptor(
-        name="firstlevels",
+        name="contrasts",
         scope="subject",
         output_format="Analysis-model run, session and subject GLM maps and compact covariance",
         resource_class="medium",
-        plan=plan_firstlevels_work_items,
-        processing_contract=_firstlevels_processing_contract,
+        plan=plan_contrasts_work_items,
+        processing_contract=_contrasts_processing_contract,
         select_runs=select_model_runs,
-        direct_inputs=firstlevels_direct_inputs,
+        direct_inputs=contrasts_direct_inputs,
         work_item_processing=model_contract,
-        refresh_command=refresh_firstlevels_command,
+        refresh_command=refresh_contrasts_command,
         select_models=select_models,
         model_source_tasks=source_tasks,
         validate_public_definition=validate_public_definition,

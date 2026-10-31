@@ -45,7 +45,7 @@ CONFIGURATION_FILE_SUFFIX = {
     "dynconn": "dynconn",
     "microparcellation": "microparcellation",
     "networks": "networks",
-    "firstlevels": "firstlevels",
+    "contrasts": "contrasts",
 }
 
 
@@ -99,7 +99,7 @@ class WorkflowRegistry:
                 values["fsaverage_template"] = workflow.configuration("anat").values[
                     "fsaverage_template"
                 ]
-            elif configuration_class in {"clean", "firstlevels"}:
+            elif configuration_class in {"clean", "contrasts"}:
                 values["func_directory"] = directories["func"]
                 values["anat_directory"] = directories["anat"]
             elif configuration_class in {"dynconn", "microparcellation"}:

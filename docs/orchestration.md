@@ -3,7 +3,7 @@
 The orchestration layer turns user selections into scientific work, reuses
 compatible artifacts, and runs ready work items through one shared worker pool.
 It supports `anat`, `func`, `clean`, `dynconn`, `microparcellation`, `networks`,
-and `firstlevels`.
+and `contrasts`.
 
 The configured private control root keeps scheduler state and branch scientific
 records in this layout:
@@ -73,8 +73,8 @@ nro run -p t20 -P nptl -m networks -w main -s fsnative -S 2
 The planner compiles the requested terminal work items and their dependency
 closure. Selecting an endpoint together with an upstream dependency does not
 duplicate demand. A bare invocation derives the endpoints from each selected
-workflow. In `main`, these are `dynconn`, `networks`, and `firstlevels`;
-firstlevels uses model set `main` unless the request selects another model or
+workflow. In `main`, these are `dynconn`, `networks`, and `contrasts`;
+contrasts uses model set `main` unless the request selects another model or
 set. A networks configuration can select dynconn or microparcellation as its
 source without making graph construction runtime-dependent.
 
@@ -173,7 +173,7 @@ python -m nro.modules.microparcellation -p t20 -P nptl -w main \
   --space fsnative --smoothing 2
 python -m nro.modules.networks -p t20 -P nptl -w main \
   --space fsnative --smoothing 2
-python -m nro.modules.firstlevels -p t20 -P nptl -w main \
+python -m nro.modules.contrasts -p t20 -P nptl -w main \
   --task langlocSN --model main --space fsnative --smoothing 2
 ```
 

@@ -14,7 +14,7 @@ import yaml
 from nro.definitions.migrations import refresh_manifest, update_store
 from nro.definitions.repository import _publish, create_store, ensure_store, validate_store
 from nro.definitions.store import CONFIGURATION_CLASSES, ConfigStore
-from nro.modules.firstlevels.task_models import load_task_model, scientific_model, select_models
+from nro.modules.contrasts.task_models import load_task_model, scientific_model, select_models
 from nro.site import configuration as site
 from nro.site.configuration import read_site_definition
 

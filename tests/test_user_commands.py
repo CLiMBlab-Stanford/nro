@@ -40,7 +40,7 @@ def test_run_defaults() -> None:
     selection = core_selection(args)
     assert selection.participants == ()
     assert selection.projects == ()
-    assert selection.modules == ("microparcellation", "networks", "firstlevels")
+    assert selection.modules == ("microparcellation", "networks", "contrasts")
     assert selection.workflows == ("main",)
     assert selection.spaces == ("fsnative",)
     assert selection.smoothing == (2,)
@@ -917,7 +917,7 @@ def test_status_orders_projects_participants_and_module_dag() -> None:
         row(4, "alpha", "02", "anat"),
         row(3, "alpha", "01", "networks"),
         row(2, "alpha", "01", "dynconn", {"run": "02"}),
-        row(7, "alpha", "01", "firstlevels"),
+        row(7, "alpha", "01", "contrasts"),
         row(6, "alpha", "01", "microparcellation"),
         row(1, "alpha", "01", "anat"),
         row(8, "alpha", "01", "func"),
@@ -941,13 +941,13 @@ def test_status_orders_projects_participants_and_module_dag() -> None:
         "anat",
         "func",
         "clean",
+        "contrasts",
         "dynconn",
         "dynconn",
-        "firstlevels",
         "microparcellation",
         "networks",
     ]
-    assert [json.loads(item["entities_json"]).get("run") for item in ordered[3:5]] == [
+    assert [json.loads(item["entities_json"]).get("run") for item in ordered[4:6]] == [
         "01",
         "02",
     ]
@@ -1423,7 +1423,7 @@ def test_run_continues_past_unavailable_participant(
     assert {
         "project": "demo",
         "participant": "01",
-        "module": "firstlevels",
+        "module": "contrasts",
         "reason": f"No raw BOLD runs matched under {available}",
     } in result["unavailable"]
     assert [item for item in result["unavailable"] if item["module"] == "networks"] == [
@@ -1542,19 +1542,19 @@ def test_bare_request_keeps_networks_when_no_task_models_match(
     request = json.loads(capsys.readouterr().out)
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
-    assert request["modules"] == ["microparcellation", "networks", "firstlevels"]
+    assert request["modules"] == ["microparcellation", "networks", "contrasts"]
     assert request["work_items"] == 12
     assert request["concurrency"] == 50
 
 
-@pytest.mark.parametrize("modules", [(), ("networks",), ("firstlevels",)])
+@pytest.mark.parametrize("modules", [(), ("networks",), ("contrasts",)])
 def test_run_requests_each_selected_branch_across_projects(
     tmp_path: Path,
     capsys,
     monkeypatch,
     modules,
 ) -> None:
-    from nro.modules.firstlevels import task_models
+    from nro.modules.contrasts import task_models
 
     models = tmp_path / "config" / "models" / "langlocSN"
     definition = "conditions: trial_type\ncontrasts:\n  S: {S: 1}\n"
@@ -1578,7 +1578,7 @@ def test_run_requests_each_selected_branch_across_projects(
         argv.extend(["-m", *modules])
     run_main(argv)
     result = json.loads(capsys.readouterr().out)
-    selected = modules or ("microparcellation", "networks", "firstlevels")
+    selected = modules or ("microparcellation", "networks", "contrasts")
     assert result["modules"] == list(selected)
     registry = Registry.for_project("alpha", bids_root=bids)
     rows = registry.work_item_rows()
@@ -1590,8 +1590,8 @@ def test_run_requests_each_selected_branch_across_projects(
         subjects = 2 if "networks" in selected else 1
         for module in ("anat", "func"):
             assert sum(row["module"] == module for row in project_rows) == subjects
-        fits = [row for row in project_rows if row["module"] == "firstlevels"]
-        assert len(fits) == int("firstlevels" in selected)
+        fits = [row for row in project_rows if row["module"] == "contrasts"]
+        assert len(fits) == int("contrasts" in selected)
         if fits:
             assert json.loads(fits[0]["entities_json"])["model"] == "main"
         assert sum(row["module"] == "networks" for row in project_rows) == (

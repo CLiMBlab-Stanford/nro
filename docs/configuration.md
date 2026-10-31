@@ -94,10 +94,10 @@ creating a new workflow revision with the updated runtime configuration.
 Artifact contracts use a separate scientific fingerprint that excludes fields
 explicitly marked as execution-only:
 
-- Anat, func, clean, dynconn, firstlevels, microparcellation, and networks
+- Anat, func, clean, dynconn, contrasts, microparcellation, and networks
   `overwrite` settings.
 - Anat, func, and clean `verbose` settings, plus func `io_chunk_vols`.
-- Firstlevels `spatial_block_size`.
+- Contrasts `spatial_block_size`.
 - Microparcellation `connectivity.temporal_block_size`.
 - Networks `oslom.timeout_seconds`.
 
@@ -167,10 +167,10 @@ separate from scientific contracts.
 | `dynconn` | dynconn | `dynconn` | [Dynamic connectivity](modules/dynconn.md) |
 | `microparcellation` | microparcellation | `microparcellation` | [Microparcellation](modules/microparcellation.md) |
 | `networks` | networks | `networks` | [Networks](modules/networks.md) |
-| `firstlevels` | firstlevels | `firstlevels` | [First-level models](modules/firstlevels.md) |
+| `contrasts` | contrasts | `contrasts` | [First-level models](modules/contrasts.md) |
 
-[First-level models](task-models.md) are separate from firstlevels configurations.
-They define event predictors, contrasts, and HRFs. The firstlevels configuration
+[First-level models](task-models.md) are separate from contrasts configurations.
+They define event predictors, contrasts, and HRFs. The contrasts configuration
 supplies denoising, estimation, and run-aggregation choices.
 Analysis/task/model/model-set selectors choose work; model-set membership does not
 contribute to scientific fingerprints.

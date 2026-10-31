@@ -72,9 +72,9 @@ def direct_inputs(
 
 def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
     """Construct each selected model/space/smoothing work item and its func dependencies."""
-    values = context.workflow.configuration("firstlevels").values
+    values = context.workflow.configuration("contrasts").values
     func = {work_item.output_prefix: work_item for work_item in upstream["func"]}
-    directory = context.registered.directories["firstlevels"]
+    directory = context.registered.directories["contrasts"]
     result = []
     for model_id, document in context.analysis_models.items():
         source = scientific_model(document)
@@ -106,7 +106,7 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
                     key=work_item_key(
                         context.project,
                         descriptor.name,
-                        context.registered.lineage_fingerprints["firstlevels"],
+                        context.registered.lineage_fingerprints["contrasts"],
                         context.participant,
                         entities,
                     ),
@@ -115,12 +115,12 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
                     participant=context.participant,
                     entities=entities,
                     scope=descriptor.scope,
-                    module_lineage_id=context.registered.lineages["firstlevels"],
+                    module_lineage_id=context.registered.lineages["contrasts"],
                     config_fingerprint=context.workflow.configuration(
-                        "firstlevels"
+                        "contrasts"
                     ).scientific_fingerprint,
                     directory_label=directory,
-                    runtime_config=context.runtime_config("firstlevels"),
+                    runtime_config=context.runtime_config("contrasts"),
                     command=(
                         sys.executable,
                         "-m",

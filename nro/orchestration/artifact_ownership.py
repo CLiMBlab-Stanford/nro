@@ -99,7 +99,7 @@ def work_item_paths(
                     inventories=inventories,
                 )
             )
-        elif module == "firstlevels":
+        elif module == "contrasts":
             derivative_paths.extend(
                 path
                 for path in output_root.rglob(f"{output_prefix}_*")
@@ -146,10 +146,10 @@ def work_item_paths(
                 / target
                 / sub_id
             )
-        elif module == "firstlevels":
+        elif module == "contrasts":
             work_paths.append(
                 project_work_derivatives
-                / "firstlevels"
+                / "contrasts"
                 / str(work_item["directory_label"])
                 / output_prefix
             )

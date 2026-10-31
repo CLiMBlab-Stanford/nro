@@ -11,7 +11,7 @@ import pandas as pd
 import yaml
 
 from nro.engine.bids import discover_raw_runs, resolve_bids_table
-from nro.modules.firstlevels.task_models import validate_task_model
+from nro.modules.contrasts.task_models import validate_task_model
 
 
 def discover_event_files(
@@ -64,7 +64,7 @@ def model_draft(
 
     Prefer trial_type; otherwise ask choose to select a common event column.
     Numeric predictors and between-condition contrasts are not inferred. Labels
-    use the same pandas parsing as firstlevels execution. The draft has no model
+    use the same pandas parsing as contrasts execution. The draft has no model
     set membership and still needs scientific review.
     """
     tables = []

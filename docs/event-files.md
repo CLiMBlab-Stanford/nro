@@ -4,7 +4,7 @@ The event catalog lives in `DEFINITIONS/events` in the selected
 [definitions store](definitions.md).
 It supplies reusable event TSVs to bidsification without changing an original
 source collection. These files describe stimulus timing and condition
-labels, not firstlevels models or execution requests.
+labels, not contrasts models or execution requests.
 
 Each task directory contains an `index.yml`. For example:
 
