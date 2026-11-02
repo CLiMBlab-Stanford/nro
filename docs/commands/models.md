@@ -1,11 +1,10 @@
 # First-level model registration
 
-`nro models` manages YAML first-level models in the selected definitions store. It does not
-open the registry, request fits, or modify source BIDS data.
-
-Use [create and edit](authoring.md) for event-based initialization and reviewed
-changes to existing definitions. The commands here provide inspection,
-validation, registration of local files, and compilation.
+`nro models` lists, inspects, validates, registers, and compiles the YAML
+first-level models in the selected definitions store. It does not open the
+registry, request fits, or change source BIDS data. To create a model from
+events or to make a reviewed change to an existing one, use the commands in
+[create and edit](authoring.md).
 
 ```bash
 nro models list
@@ -15,26 +14,31 @@ nro models register langlocSN/alternative /path/to/model.yml
 nro models compile langlocSN/main --config main
 ```
 
-`list` prints analysis/variant IDs and set memberships (`-` means no set).
-`show` prints validated YAML. `validate ANALYSIS FILE` checks supported model
-syntax without writing or inspecting a dataset. `register ANALYSIS/VARIANT FILE`
-validates and publishes `models/ANALYSIS/VARIANT.yml`; an existing ID is an
-error. Identifiers allow letters, digits, and hyphens in each part. A
-single-task model uses `ANALYSIS` as its source task. A multi-task model declares
-a nonempty `tasks` list.
+| Subcommand | Behavior |
+| --- | --- |
+| `list` | Print each `ANALYSIS/VARIANT` ID with its set memberships. `-` means the model belongs to no set. |
+| `show ID` | Print the validated YAML of one model. |
+| `validate ANALYSIS FILE` | Check that the file uses supported model syntax. Nothing is written and no dataset is inspected. |
+| `register ANALYSIS/VARIANT FILE` | Validate the file and publish it as `models/ANALYSIS/VARIANT.yml`. Registering an existing ID is an error. |
+| `compile ID [--config CONFIG]` | Print the Stats Models template combined with a contrasts configuration, `main` by default. |
 
-`compile` prints a Stats Models template combined with the selected contrasts
-configuration. This template includes session and subject summaries. Actual
-execution omits session nodes for data without sessions and saves run-specific
-documents with the observed nuisance columns and resolved event HRFs. Variable
-availability and numerical estimability are checked when the data are available.
+Each part of a model ID may contain letters, digits, and hyphens. A
+single-task model uses `ANALYSIS` as its source task. A multi-task model
+declares a nonempty `tasks` list.
 
-The user must have write permission to the definitions store. Coordinate
-model changes with maintainers of a shared installation. Registration alone
-does not request work. Select models with `--analysis`, `--task`, `--model`, or
-`--model-set`; contrasts requests default to set `main`. See
-[first-level models](../task-models.md)
-for syntax and membership rules, and [contrasts](../modules/contrasts.md)
-for processing and output layout.
+The template that `compile` prints includes session and subject summaries. It
+shows the model before any data are attached. During execution, nro omits the
+session nodes for data without sessions and saves run-specific documents with
+the observed nuisance columns and the resolved event HRFs. Whether each
+variable is available and each contrast is estimable is checked only when the
+data are present.
+
+Registering a model requires write permission on the definitions store. On a
+shared installation, coordinate model changes with its maintainers.
+Registration alone requests no work. Select models in `nro run` with
+`--analysis`, `--task`, `--model`, or `--model-set`. Contrasts requests default
+to set `main`. See [first-level models](../task-models.md) for syntax and
+membership rules, and [contrasts](../modules/contrasts.md) for processing and
+output layout.
 
 `python -m nro.bin.models` exposes the same parser.

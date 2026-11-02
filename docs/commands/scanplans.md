@@ -1,18 +1,19 @@
 # Configure scan plans
 
-Sites may connect bidsification to a directory of scan plans. The directory
-may be local or stored in Google Drive. Each site supplies a parser because
-scan-plan formats are not standardized. nro defines the parser output and
-handles source selection, validation, and reconciliation.
+A site can connect [bidsification](bidsify.md) to a directory of scan plans so
+that task names and include decisions come from the plan written for each
+session. The directory may be local or in Google Drive. Scan-plan formats are
+not standardized, so each site supplies a parser. nro defines what the parser
+returns and handles source selection, validation, and reconciliation with the
+prepared images.
 
-This setup belongs in the definitions system. Parser code is trusted code:
-`nro def validate` imports it, and `nro bidsify` runs it as the current
-user. Review parser changes through the definitions store's normal version
-control process.
+The parser belongs to the definitions store, and it is trusted code.
+`nro def validate` imports it, and `nro bidsify` runs it as the current user.
+Review parser changes through the store's normal version-control process.
 
 ## Configure the source
 
-Set the source and optional credential variable in the protected
+Set the source and an optional credential variable in the protected
 `site/site.yml` document:
 
 ```yaml
@@ -22,44 +23,46 @@ bidsify:
     credential_env: null
 ```
 
-Select the parser in `bidsify/main.yml`:
+Select the parser in the conversion profile, `bidsify/main.yml`:
 
 ```yaml
 scanplans:
   parser: scanplans/parser.py
 ```
 
-The source is site-wide. Development branches may change parser code or select
-another parser, but they cannot redirect the shared scan-plan source or its
-authentication setting.
+The source is shared by the whole site. A development branch may change the
+parser code or select another parser, but it cannot redirect the scan-plan
+source or change its authentication setting.
 
 `location` accepts an absolute directory, a path relative to the definitions
 store, or a Google Drive folder URL. A local source includes every regular file
-below the directory, recursively. Symbolic links are ignored.
-Keep source plans outside `DEFINITIONS/scanplans`; that directory contains the
-version-controlled parser only.
+below the directory, recursively, and ignores symbolic links. Keep the plans
+themselves outside `DEFINITIONS/scanplans`, which holds only the
+version-controlled parser.
 
-For Google Drive, install the bidsification dependencies and use one of these
-authentication methods:
+Set `location: null` to review acquisitions without a scan plan. The parser can
+stay installed.
+
+### Google Drive
+
+For a Google Drive source, install the bidsification dependencies and choose
+one way to authenticate:
 
 * Set `credential_env` to the name of an environment variable whose value is
-  an authorized-user or service-account credential JSON file.
+  the path to an authorized-user or service-account credential JSON file.
 * Leave `credential_env` null and configure Google application-default
-  credentials for the account running `nro bidsify`.
+  credentials for the account that runs `nro bidsify`.
 
-nro requests read-only Drive access, traverses the configured folder, and
-downloads only the selected file into a temporary directory for parsing.
-Google-native documents are exported as DOCX. Credentials and source contents
-are not copied into ingestion records.
+nro requests read-only Drive access, walks the configured folder, and downloads
+only the selected file into a temporary directory for parsing. Google-native
+documents are exported as DOCX. Credentials and plan contents are not copied
+into ingestion records.
 
-Set `location: null` to use the ordinary acquisition-review wizard without a
-scan plan. The parser may remain installed.
+## Write the parser
 
-## Implement the parser
-
-The definitions starter includes `scanplans/parser.py`. Its stub raises
-`NotImplementedError`. Replace its body with a parser for the site's source
-format while retaining this interface:
+The definitions starter includes `scanplans/parser.py`, whose stub raises
+`NotImplementedError`. Replace the body with a parser for your site's format
+and keep this interface:
 
 ```python
 from pathlib import Path
@@ -81,59 +84,58 @@ def parse_scanplan(source: Path) -> ScanPlan:
     )
 ```
 
-The input file may use any format. The return value must be a `ScanPlan` whose
-`rows` are in scanner acquisition order. Each `ScanPlanRow` has these fields:
+The input file may be in any format. The function must return a `ScanPlan`
+whose `rows` are in scanner acquisition order. Each `ScanPlanRow` has these
+fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `ordinal` | positive `int` | Stable row order within this plan. Values must be unique and ascending. |
-| `acquisition_type` | `T1w`, `T2w`, `bold`, `sbref`, `fmap`, `localizer`, `shim`, or `other` | Normalized type used for sequence alignment. |
-| `phase_encoding` | `i`, `i-`, `j`, `j-`, `k`, `k-`, or `None` | BIDS direction. `None` leaves this field out of matching. |
-| `include` | `bool` | Whether the aligned acquisition should be published. |
-| `task` | `str` or `None` | BIDS task label transferred to an aligned BOLD acquisition. |
+| `ordinal` | positive `int` | Row order within the plan. Values must be unique and ascending. |
+| `acquisition_type` | `T1w`, `T2w`, `bold`, `sbref`, `fmap`, `localizer`, `shim`, or `other` | Normalized type used to align the plan with the images. |
+| `phase_encoding` | `i`, `i-`, `j`, `j-`, `k`, `k-`, or `None` | BIDS phase-encoding direction. `None` leaves it out of matching. |
+| `include` | `bool` | Whether the matching acquisition should be published. |
+| `task` | `str` or `None` | BIDS task label given to the matching BOLD acquisition. Allowed only on `bold` rows. |
 
-`task` is valid only for `bold` rows. Source identity fields and event-file
-assignments do not belong in this output. The BIDS destination selected in the
-wizard remains authoritative.
+Do not return source identity fields or event-file assignments. The BIDS
+destination chosen in the wizard always takes precedence.
 
-Run `nro def validate` after changing the parser. Validation checks
-that the module loads and exports a callable `parse_scanplan`. Parser output is
-validated when a source file is selected.
+Run `nro def validate` after changing the parser. Validation checks that the
+module loads and exports a callable `parse_scanplan`. The parser's output is
+validated later, when a plan is selected.
 
-## Machine-readable fallback
+## TSV fallback
 
-If the configured parser raises `NotImplementedError`, `nro bidsify` asks for a
-tab-separated scan plan before review can continue. The TSV must have this
-exact header:
+While the parser still raises `NotImplementedError`, `nro bidsify` asks for a
+tab-separated scan plan before review can continue. This lets a site use scan
+plans before it has written a parser. The TSV must have exactly this header:
 
 ```text
 ordinal	acquisition_type	phase_encoding	include	task
 ```
 
-Use `true` or `false` for `include`. Empty optional fields are allowed. The same
-field rules as the Python API apply. This fallback lets a site use scan plans
-before it has automated its parser; it does not infer missing rows.
+Write `true` or `false` for `include`. Optional fields may be empty. The field
+rules are the same as for the Python API, and nro does not infer missing rows.
 
 ## Reconciliation
 
-Image inspection and preparation are submitted before interactive scan-plan
-selection, so conversion can run while the operator works on metadata. After
-preparation, nro aligns the plan and image sequences. The alignment uses type,
-phase encoding, and order. Task names do not affect matching because DICOM
-metadata do not establish them.
+nro submits image inspection and preparation before it asks you to pick a scan
+plan, so conversion runs while you work on metadata. After preparation, nro
+aligns the plan with the image sequence using acquisition type, phase encoding,
+and order. Task names are not used for matching because DICOM metadata do not
+establish them.
 
-Review proceeds only when the alignment is unique and has no differences.
-Otherwise, nro reports missing, extra, or conflicting rows. Edit the source
-scan plan and rerun `nro bidsify`; nro notices the changed source revision and
-parses it again. The wizard does not store a private correction layer. Once the
-sequences align, task identifiers transfer to their corresponding BOLD
-acquisitions. Event-file selection then follows the ordinary bidsification
-review, using the task ID to find candidates in the event definitions store.
-Excluded rows are omitted from publication.
+Review continues only when the alignment is unique and has no differences.
+Otherwise nro reports the missing, extra, or conflicting rows. Edit the source
+plan and run `nro bidsify` again. nro notices the new revision and parses it
+again. The wizard does not keep its own correction layer.
 
-Changes to the selected source or parser are detected when the request resumes
-and clear any pending publication approval.
+Once the sequences align, each task ID moves to its matching BOLD acquisition,
+and rows with `include` false are left out of publication. Event-file selection
+then continues in the ordinary review, using the task ID to find candidates in
+the [standard event catalog](../event-files.md).
 
-One source file can be assigned to only one ingestion session within a
-configured source location. This prevents concurrent requests from silently
-using the same plan.
+If the selected plan or the parser changes, nro detects it when the request
+resumes and clears any pending publication approval.
+
+Within one source location, each plan file can be assigned to only one
+ingestion session. This keeps concurrent requests from using the same plan.

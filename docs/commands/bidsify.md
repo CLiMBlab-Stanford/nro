@@ -1,30 +1,36 @@
 # Bidsify
 
-`nro bidsify` downloads selected Flywheel acquisitions, prepares a BIDS session,
-and asks before publishing it. A terminal wizard collects decisions. Cluster
-workers perform the downloads and conversions without holding the terminal
-open. No AI service is used.
+`nro bidsify` turns Flywheel scanning sessions into published raw BIDS
+sessions. You select sessions and answer review questions in a terminal
+wizard. Cluster workers download and convert the images in the background, so
+the terminal does not need to stay open. nro publishes a session only after you
+approve the exact validated files. No AI service is involved.
 
-Ingestion shares the [worker pool](../orchestration.md) and concurrency limit
-with derivative processing. It does not create derivative work items or request
-preprocessing. After publication, use `nro run` to request derivatives.
+Ingestion uses the same [worker pool](../orchestration.md) and concurrency
+limit as derivative processing. It does not create derivative work items or
+request preprocessing. After a session is published, use `nro run` to request
+its derivatives.
 
 ## Before first use
 
-Install the Python dependencies with `./install --with-bidsify`. For an existing
-shared installation, its maintainer runs `./install --maintain --with-bidsify`
-and confirms an interactive drain if work is active. The extra includes the
-Flywheel SDK, dcm2bids, pydicom, and the Google Drive client. Existing processing installations without
-the extra can still report ingestion state with `nro status`.
+### Install the dependencies
 
-The default conversion commands use the installation's QuNex image for
-dcm2niix and its SynthStrip image for skull stripping. Supply a BIDS validator
-on the workers' PATH, or configure an absolute command in the ingestion profile.
-The default is `bids-validator`; this external program is not installed by the
-Python extra. Worker nodes need network access to Flywheel and shared staging.
+Install the ingestion extra with `./install --with-bidsify`. For an existing
+shared installation, the maintainer runs `./install --maintain --with-bidsify`
+and confirms an interactive drain if work is active. The extra adds the
+Flywheel SDK, dcm2bids, pydicom, and the Google Drive client. An installation
+without the extra can still report ingestion state with `nro status`.
 
-Each site defines its Flywheel servers and remote project scopes in the
-protected `site/site.yml` document. For example, the CLIMBLAB definitions
+The default conversion commands run dcm2niix from the installation's QuNex
+image and skull stripping from its SynthStrip image. The BIDS validator is an
+external program that the extra does not install. Put `bids-validator` on the
+workers' PATH, or configure an absolute command in the conversion profile.
+Worker nodes also need network access to Flywheel and to shared staging.
+
+### Configure Flywheel servers
+
+Each site lists its Flywheel servers and the remote projects nro may read in
+the protected `site/site.yml` document. For example, the CLIMBLAB definitions
 store contains:
 
 | Server | Host | Remote project scope |
@@ -32,40 +38,45 @@ store contains:
 | `cni` | `cni.flywheel.io` | `cashain/climblab` |
 | `lucas` | `lucascenter.flywheel.io` | `shain/shain1` |
 
-Each user stores a key for a configured server with a hidden prompt:
+### Store your Flywheel key
+
+Each user stores their own API key for each server they use. The key is read
+from a hidden prompt:
 
 ```bash
 nro fw addkey cni
 nro fw list
 ```
 
-The key may be a token or a matching `HOST:TOKEN` value accepted by `fw login`.
-`nro fw addkey SERVER KEY` is also accepted, but the positional value may be
-recorded in shell history or a process listing. Omit it for normal use.
+The key may be a token or a matching `HOST:TOKEN` value of the kind `fw login`
+accepts. `nro fw addkey SERVER KEY` also works, but the key may then be
+recorded in shell history or visible in a process listing, so omit it in
+normal use. `nro fw removekey SERVER` removes your key for that server.
 
 Keys live in the ignored `.definition-secrets` directory of the shared
-definitions store. They are separated by Unix user. Key files are writable but
-not readable by the store's group, so store maintainers can replace or delete
-them without learning their contents. They are absent from Git, the definitions
-manifest, request records, worker scripts, and branch definitions. Updating a
-key does not affect derivative freshness. `nro fw removekey SERVER` removes
-the invoking user's key.
+definitions store, separated by Unix user. The store's group can write key
+files but not read them, so store maintainers can replace or delete a key
+without learning it. Keys never appear in Git, the definitions manifest,
+request records, worker scripts, or branch definitions. Changing a key does not
+affect derivative freshness.
 
-`nro bidsify` asks to collect and store a missing key before it contacts a
-selected server. Workers do not prompt. A worker that cannot read the submitting
-user's key stops with the matching `nro fw addkey SERVER` command. nro creates
-an isolated SDK client and does not change Flywheel CLI login state.
+If you have no key for a selected server, `nro bidsify` asks for one and stores
+it before contacting Flywheel. Workers never prompt. A worker that cannot read
+the submitting user's key stops and prints the `nro fw addkey SERVER` command to
+run. nro uses its own SDK client and does not change your Flywheel CLI login.
 
-The definitions migration removes legacy Flywheel credential-environment
-references but never reads or copies environment values. After upgrading from
-that layout, each user runs `nro fw addkey SERVER` once for each server they
-use.
+Older definitions stores referred to Flywheel credentials through environment
+variables. The definitions migration removes those references without reading
+or copying the values. After upgrading from that layout, each user runs
+`nro fw addkey SERVER` once for each server they use.
 
-A site may also connect a local or Google Drive scan-plan directory and a
-site-owned parser. See [configure scan plans](scanplans.md) for the parser API,
-fixed fallback table, authentication, and reconciliation rules.
+### Optional scan plans
 
-## Select, review, and publish
+A site can also connect a local or Google Drive directory of scan plans,
+together with a site-owned parser. See [configure scan plans](scanplans.md) for
+the parser API, the TSV fallback, authentication, and reconciliation rules.
+
+## Choose sources and sessions
 
 ```bash
 nro bidsify ls
@@ -76,229 +87,224 @@ nro bidsify --request REQUEST_ID
 nro bidsify --cancel REQUEST_ID
 ```
 
-`nro bidsify ls` lists configured server/project pairs and the sessions visible
-to the current user's credentials. The `-f` and `-F` options narrow the remote
-inventory. Listing does not create a request, inspect the registry, or start
-scheduler coordination.
+`nro bidsify ls` lists the configured server and project pairs and the sessions
+your key can see. `-f` and `-F` narrow the listing. Listing does not create a
+request, read the registry, or start scheduler coordination.
 
-`-P` names one destination BIDS project. `--flywheel-project GROUP/PROJECT`
-names its source on Flywheel. These names need not match:
+To start ingestion, name one destination BIDS project with `-P`. The source
+Flywheel project, given with `-F`/`--flywheel-project GROUP/PROJECT`, may have a
+different name:
 
 ```bash
 nro bidsify -f cni -F cashain/climblab -P climblab_multisession
 ```
 
-A configured `project_sources` mapping lists the sources allowed for the
-BIDS project, including sources at different scanning sites. nro selects the
-sole matching source or asks the user to choose one by server/project name or
-number. `-f`/`--flywheel-server` and `-F`/`--flywheel-project` narrow that
-choice. If either option is omitted, bidsify uses its corresponding site
-default when configured. This selection happens before any sessions are listed.
-Only that Flywheel project is queried; sessions from other projects are not
-pooled into the list. Explicit selectors that match none of the configured
-sources are rejected. Without a mapping, all configured server/project pairs
-are available for selection.
+nro chooses a single source Flywheel project before it lists any sessions.
+If the site maps the BIDS project to sources in `project_sources`, only those
+sources are candidates, and they may come from different scanning sites.
+Without a mapping, every configured server and project pair is a candidate.
+`-f`/`--flywheel-server` and `-F` narrow the candidates. An omitted option
+falls back to its site default when one is configured. If one candidate
+remains, nro uses it. Otherwise it asks you to choose by server and project
+name or by number. Selectors that match no configured source are rejected.
+nro queries only the chosen project and does not pool sessions from others.
 
-Saved requests are offered for the selected server and destination BIDS
-project; the source selector controls new session discovery. `--request`
-resumes one request directly without source selection or remote discovery.
-Existing-session matching searches all raw projects under the BIDS root, so
-data already stored in another project are also omitted by default.
+The wizard also offers saved requests for the selected server and destination
+project. `--request` resumes one request directly, without choosing a source
+or listing remote sessions.
 
-1. The wizard offers unfinished requests first. Resume selected requests or
-   choose new sessions. Before listing new work, nro omits known existing BIDS
-   sessions using publication records and the protected site's `session_rules`. It
-   reports how many were omitted. The remote list shows session IDs and labels. Select
-   numbers or `all`. Matching server rules supply the BIDS session label when
-   they agree; otherwise the wizard asks for it. Supply the participant label
-   if known, or press Enter to leave it pending. Confirm the inspection
-   request. No images are downloaded during inspection.
-2. Workers inventory the DICOM files, then download and convert them in
-   node-local temporary storage. dcm2niix supplies the initial type. Anatomy is
-   stripped before reaching shared staging. These stages require no terminal
-   interaction.
-3. When a scan-plan source is configured, choose one unassigned plan while
-   image preparation runs. nro parses it and later compares its acquisition
-   sequence with the prepared images. Correct any difference in the source
-   plan. An unimplemented parser triggers the documented TSV fallback.
-4. The next invocation shows the converted metadata and proposed type for each
-   acquisition. Supported non-derived guesses are accepted automatically.
-   Confirm proposed ignores or replace them with a supported type, then supply
-   BIDS entities. For task BOLD, select a suggested `TASK/VARIANT` from the
-   [standard event store](../event-files.md), or supply an events TSV and
-   confirm that it contains no identifying text. The wizard also requests an
-   SBRef and opposite-encoding fieldmap pair for each BOLD acquisition.
-   Numbered candidates must have compatible geometry, encoding, and readout
-   time. Explicit `none` is allowed. Missing identity does not prevent image
-   preparation. Type `skip` to leave the session for later, or `q` to exit;
-   completed decisions remain saved.
-5. A worker organizes the sanitized images through dcm2bids, writes the reviewed
-   reference associations, and runs the validator. Failure prevents approval.
-6. The next invocation lists the validated files and their SHA-256 hashes.
-   Approve those exact files, edit the decisions, or leave them staged. A worker
-   publishes only after approval and after rechecking both staged and existing
-   file hashes.
+nro hides sessions that already exist in BIDS. To find them, it searches every
+raw project under the BIDS root, so a session already stored in a different
+project is also hidden. See [Sessions already in BIDS](#sessions-already-in-bids).
 
-Participant and session labels must both be resolved before step 5. Until then,
-images remain under request-specific staging paths outside BIDS; no placeholder
-subject is published. `nro status` displays unresolved labels as `(pending)`.
-Use an unfiltered invocation or `--request` to resume a request whose participant
-is still unknown. Completing its identity does not repeat image preparation.
-Each supplied label is saved under the review lease. Resolved labels cannot be
-reassigned by creating another request or using `--rebidsify`.
+## Review and publish a session
 
-A source session is identified by its server and immutable remote session ID.
-Its first request reserves one destination BIDS project, even if the participant
-is still pending. Later requests must retain that project and any resolved
-participant/session labels. Re-bidsification creates a new attempt at the same
-destination. Cancellation stops work but does not release the identity mapping.
-There is no destination-reassignment command yet; correcting a mistaken mapping
-requires a separate, explicit maintenance operation.
+A request moves through the following stages. Stages that need your input
+release their workers while they wait.
 
-The wizard leases only the session it is currently reviewing, including its
-publication-approval prompts. Selecting multiple sessions does not lock the
-whole selection. Other users can review other sessions concurrently. An
-occupied session is skipped with the reviewer's user, host, and process ID.
-The lease is released before moving to the next session, including after
-`skip`, `q`, an interrupt, or an error.
+1. **Select sessions.** The wizard first offers unfinished requests. Resume
+   them or choose new sessions. nro reports how many known BIDS sessions it
+   omitted, then lists the remaining remote sessions by ID and label. Enter
+   numbers or `all`. If the server's session rules agree on a BIDS session
+   label, nro uses it. Otherwise the wizard asks for one. Enter the participant
+   label if you know it, or press Enter to leave it pending. Confirm the
+   request. Nothing is downloaded yet.
+2. **Prepare images.** Workers inventory the DICOM files, then download and
+   convert them in node-local temporary storage. dcm2niix proposes an initial
+   type for each acquisition. Anatomical images are skull stripped before they
+   reach shared staging. This stage needs no input.
+3. **Choose a scan plan.** If a scan-plan source is configured, choose one
+   unassigned plan while the images are prepared. nro parses it and later
+   compares its acquisition sequence with the prepared images. Fix any
+   difference in the source plan itself. If the parser is not implemented,
+   nro asks for the TSV fallback instead.
+4. **Review acquisitions.** The next invocation shows the converted metadata
+   and proposed type of each acquisition. Supported non-derived types are
+   accepted automatically. Confirm each proposed ignore or replace it with a
+   supported type, then supply the BIDS entities. For task BOLD, pick a
+   suggested `TASK/VARIANT` from the [standard event store](../event-files.md),
+   or supply an events TSV and confirm that it contains no identifying text.
+   For each BOLD acquisition, the wizard also asks for an SBRef and a pair of
+   opposite-encoding fieldmaps. Numbered candidates must have compatible
+   geometry, encoding, and readout time. You may answer `none`. Type `skip` to
+   leave the session for later or `q` to exit. Decisions you have completed
+   stay saved.
+5. **Organize and validate.** A worker organizes the sanitized images with
+   dcm2bids, writes the reviewed reference associations, and runs the
+   validator. If validation fails, the session cannot be approved.
+6. **Approve.** The next invocation lists the validated files with their
+   SHA-256 hashes. Approve those exact files, edit your decisions, or leave the
+   session staged. A worker publishes only after approval, and only after it
+   rechecks the hashes of both the staged files and any existing files.
 
-Leases renew every 30 seconds while the terminal waits for input and expire
-after two minutes without renewal. A terminal that loses its lease cannot
-renew expired ownership or save more decisions. Reopen the session to resume.
-Review saves use a dedicated short-lived ingestion-state lock, never a scheduler
-database lock and never while the user answers prompts. Registered requests
-remain in place even when nobody holds a review lease. A request reserves its
-BIDS destination once both labels are known; filling a missing label checks for
-another request or an existing destination.
+### Participant and session labels
 
-Decision saves require both the active lease and the current record revision.
-Event TSV snapshots are written under the same checks and use content-addressed
-filenames; a rejected edit cannot overwrite an accepted file. Unfinished
-acquisition answers stay in memory until that acquisition's review is saved.
-Running requests cannot be edited, and workers cannot claim a leased request.
-Changes made during review clear publication approval. Stages release their
-workers while waiting for input.
+Both the participant and session labels must be known before stage 5. A
+missing label does not block image preparation. Until both are known, the
+images stay in request-specific staging outside BIDS, and no placeholder
+subject is published. `nro status` shows a missing label as `(pending)`.
 
-For events, nro checks required `onset` and `duration` columns, finite values,
-nonnegative durations, and event onsets relative to the stored run duration
-when known. Negative onsets are allowed. Rest does not require events. The
-operator remains responsible for synchronization with the first stored volume,
-condition labels, and the absence of identifying text. See the
+To finish a request whose participant is unknown, run `nro bidsify` without
+filters or with `--request`. Supplying the label later does not repeat image
+preparation. Each label is saved under the review lease when you enter it. Once resolved, a
+label cannot be changed by creating another request or by using `--rebidsify`.
+
+nro identifies a source session by its server and its immutable remote session
+ID. The first request for a session reserves one destination BIDS project, even
+while the participant is pending. Later requests for that session must keep the
+same project and any resolved labels. Re-bidsifying creates a new attempt at
+the same destination. Cancelling a request stops its work but keeps the
+mapping. There is no command yet to change a destination. Correcting a mistaken
+mapping requires a separate, explicit maintenance operation.
+
+When both labels are known, the request reserves its BIDS destination. Filling
+in a missing label checks for a conflicting request or an existing
+destination.
+
+### Event files
+
+For each events table, nro checks that the `onset` and `duration` columns
+exist, that their values are finite, that durations are not negative, and that
+onsets fit within the stored run duration when it is known. Negative onsets
+are allowed. Rest runs do not need events. You remain responsible for
+synchronizing events with the first stored volume, for the condition labels,
+and for removing identifying text. See the
 [BIDS events specification](https://bids-specification.readthedocs.io/en/stable/modality-agnostic-files/events.html).
 
-Reviewed fieldmaps receive `B0FieldIdentifier` and `IntendedFor`; BOLD receives
-`B0FieldSource`. The additional `NROReferencePolicy` and `NROSBRef` fields make
-both an assigned SBRef and an explicit absence authoritative for `func`.
-Preprocessing does not replace these choices with temporal matching.
+### Fieldmap and SBRef associations
+
+Reviewed fieldmaps receive `B0FieldIdentifier` and `IntendedFor`, and BOLD
+runs receive `B0FieldSource`. The `NROReferencePolicy` and `NROSBRef` fields
+record the SBRef choice for `func`. Both an assigned SBRef and an explicit
+`none` are authoritative, and preprocessing does not replace them with matching
+by acquisition time.
+
+### Reviewing alongside other users
+
+Several users can review different sessions at the same time. The wizard
+leases only the session it is reviewing, including its approval prompts.
+Selecting several sessions does not lock all of them. If another user holds a
+session, nro skips it and shows that reviewer's user, host, and process ID.
+The lease is released before the wizard moves to the next session, including
+after `skip`, `q`, an interrupt, or an error.
+
+A lease renews every 30 seconds while the terminal waits for input and expires
+after two minutes without renewal. A terminal that loses its lease cannot
+reclaim it or save more decisions; reopen the session to continue. Requests stay
+registered when nobody holds a lease. Workers cannot claim a leased request,
+and you cannot edit a request while a stage is running.
+
+Each save checks both the active lease and the current record revision. Event
+TSV snapshots follow the same checks and use content-addressed filenames, so a
+rejected edit cannot overwrite an accepted file. Answers for an acquisition stay
+in memory until you finish reviewing that acquisition. Saves take a dedicated,
+short-lived ingestion lock. They never take a scheduler database lock, and no
+lock is held while you answer prompts. Any change made during review clears a
+pending publication approval.
+
+## Sessions already in BIDS
+
+nro treats a remote session as already bidsified when it matches an existing
+`sub-…/ses-…` directory. Matching uses publication records and the protected
+site's [session rules](#existing-session-rules). nro does not validate data
+produced elsewhere, inspect its images, or create publication receipts for it.
+It never silently treats an existing destination as safe to replace.
+
+Subject-only intake layouts, such as `climblab/sub-ex123/`, do not count as
+bidsified. Sessions organized by subject and session, such as
+`climblab_multisession/sub-t20/ses-ex123/`, do. nro does not remove or migrate
+the old intake files.
+
+`--rebidsify` includes sessions that already exist in BIDS, whichever tool
+produced them, and allows a replacement proposal. Approval is still required. A
+re-bidsified external session must keep its matched project, participant, and
+session. Ambiguous matches must be resolved before nro registers a replacement
+request.
+
+Unfinished nro requests keep their own recovery workflow even when their BIDS
+destination exists. They are never offered again as new sessions, even with
+`--rebidsify`. When unfinished requests belong to another project, nro prints a
+count and points to `nro status`. A remote session with several possible BIDS
+destinations, or several remote sessions that match one destination, is shown
+as an ambiguous mapping with its candidate paths.
+
+## Status, cancellation, and failures
+
+`nro status` shows unfinished requests in a separate Bidsification section,
+and JSON reports include a `bidsification` list. Project, participant, and
+session filters apply, and selectors that apply only to derivatives hide the
+section. Status never contacts Flywheel or starts a review.
+
+For a failed or interrupted request, the wizard offers to retry, review
+decisions, cancel, or leave it as is. `nro bidsify --cancel REQUEST_ID` also
+cancels queued or partly reviewed work and asks the worker to stop an executing
+stage. nro marks a request interrupted only when its worker is confirmed dead.
+A stale heartbeat alone does not prove that the work stopped.
 
 ## Options
 
 | Option | Meaning |
 | --- | --- |
 | `ls` | List configured servers, projects, and accessible remote sessions without creating work. |
-| `-f`, `--flywheel-server NAME` | Profile name, such as `cni` or `lucas`. |
+| `-f`, `--flywheel-server NAME` | Configured server, such as `cni` or `lucas`. |
 | `-P`, `--project NAME` | One destination BIDS project. |
 | `-F`, `--flywheel-project GROUP/PROJECT` | One configured source Flywheel project for new sessions. |
-| `-p`, `--participant LABEL ...` | Filter saved requests; a single label also supplies the default for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
+| `-p`, `--participant LABEL ...` | Filter saved requests. A single label also becomes the default participant for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
 | `--session ID ...` | Filter by remote session IDs, not BIDS session labels. |
 | `--request ID` | Resume one saved request without listing remote sessions. |
-| `--cancel ID` | Cancel one saved request. An executing stage stops after its worker acknowledges the request. |
-| `--config PATH` | Complete ingestion profile YAML for new requests. |
-| `--rebidsify` | Include sessions already in BIDS, regardless of which tool produced them, and permit a replacement proposal. Approval is still required. |
-| `--no-submit` | Do not supply new workers. Existing workers may still claim queued stages. |
+| `--cancel ID` | Cancel one saved request. An executing stage stops once its worker acknowledges the cancellation. |
+| `--config PATH` | Use another complete conversion profile for new requests. |
+| `--rebidsify` | Include sessions already in BIDS and allow a replacement proposal. Approval is still required. |
+| `--no-submit` | Do not submit new workers. Existing workers may still claim queued stages. |
 
-The global site configuration selects the BIDS root. Bidsification cannot
-publish to a different root for one invocation.
-
-Matching a remote session to an existing `sub-…/ses-…` directory is sufficient to
-treat it as already bidsified. nro does not validate externally produced data,
-inspect image contents, or create publication receipts for them. An existing
-destination is never silently treated as safe to replace.
-
-Subject-only intake layouts, such as `climblab/sub-ex123/`, do not suppress
-bidsification. Properly organized sessions, such as
-`climblab_multisession/sub-t20/ses-ex123/`, do. The old intake files are not
-removed or migrated. An explicitly requested re-bidsification of an external
-session must retain its matched project, participant, and session. Ambiguous
-matches must be resolved before a replacement request can be registered.
-
-Unfinished nro requests retain their recovery workflow even if their BIDS
-destination exists. They are not offered again as new sessions, including with
-`--rebidsify`. A count points to `nro status` when unfinished requests belong to
-another project. Multiple possible BIDS destinations, or multiple remote
-sessions matching the same destination, remain visible as ambiguous mappings.
-Their candidate paths are shown for review.
-
-`nro status` displays unfinished requests in a separate Bidsification section;
-JSON reports include a `bidsification` list. Project, participant, and session
-filters apply. Derivative-only selectors suppress the section. Status never
-contacts Flywheel or starts a review.
-
-Failed and interrupted requests offer retry, decision review, cancellation, or
-leave-as-is. `nro bidsify --cancel REQUEST_ID` also cancels queued or partially
-reviewed work and asks the worker to stop an executing stage. Requests whose
-workers are confirmed dead are marked interrupted; a stale heartbeat alone is
-not proof that work stopped.
+`--request` and `--cancel` cannot be combined. The BIDS root always comes from
+the global site configuration, so one invocation cannot publish to a different
+root.
 
 ## Configuration
 
-The shared `DEFINITIONS/site/site.yml` document owns ingestion sources and
-routing. It contains Flywheel servers, destination-to-source project mappings,
-scan-plan locations, session rules, and event lookup rules. These settings are
-common to every development branch. Private Flywheel keys remain outside this
-tracked document.
+Ingestion settings come from two places. The protected site document holds the
+sources and routing that every development branch shares. A conversion profile
+holds settings that a branch may change.
 
-The default conversion profile is `DEFINITIONS/bidsify/main.yml`.
-`--config FILE` selects another complete profile. Profiles control conversion
-commands, worker resources, protocol classification, and scan-plan parser code.
-Unknown keys and missing required keys are rejected. Each request saves its
-resolved profile, so later edits apply to new requests. Changes to a selected
-scan-plan file are detected and reparsed when the request resumes.
+### Protected site settings
+
+The shared `DEFINITIONS/site/site.yml` document lists the Flywheel servers,
+maps destination projects to source projects, and holds scan-plan locations,
+session rules, and event lookup rules. Private Flywheel keys are stored
+outside this tracked document.
 
 | Protected site key | Purpose |
 | --- | --- |
-| `servers` | Named `host` and `projects` lists. Credential values are managed by `nro fw`. |
-| `project_sources` | BIDS project names mapped to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list; duplicate pairs are rejected. |
-| `scanplans.location`, `scanplans.credential_env` | Shared source and authentication variable described in [configure scan plans](scanplans.md). A null location disables scan-plan integration. |
-| `event_rules` | Additional `task` and absolute glob `pattern` pairs for candidates outside the catalog. All matches are shown; no ambiguous candidate is selected automatically. |
-| `session_rules` | Explicit remote-identity rules for recognizing existing raw BIDS subjects and sessions. |
-
-| Conversion profile key | Purpose |
-| --- | --- |
-| `staging` | Absolute shared directory outside BIDS. `null` uses `WORK/bidsify`. |
-| `dcm2niix` | Command argument list; `null` resolves the configured QuNex container command. |
-| `synthstrip` | Command argument list; `null` resolves the configured SynthStrip container command. |
-| `validator` | Command argument list. The staged dataset path is appended. Nonzero exit blocks publication. |
-| `memory_gb`, `cpus`, `hours` | Worker allocation settings; defaults 32 GiB, 2 CPUs, 12 hours. |
-| `concurrency` | Requested shared limit; defaults to `execution.concurrency`. `nro site set execution.concurrency=N` changes the durable site limit and relays it to a live scheduler. |
-| `protocols` | Ordered metadata refinements with `pattern`, `datatype`, and `suffix`. The first rule matching `SeriesDescription`, `ProtocolName`, or `SequenceName` applies after dcm2niix supplies a supported `BidsGuess`. |
-| `scanplans.parser` | Branch-selectable parser implementation. A null value requests the packaged stub. |
-
-The standard event catalog is always `DEFINITIONS/events`. Requests record its
-resolved path as runtime metadata, alongside the selected event snapshots.
-
-### Vendor metadata enrichment
-
-Preparation keeps valid dcm2niix metadata and fills approved missing fields
-from bounded vendor protocol data. It never silently replaces a converter
-value. Conflicting converter, DICOM, series, or site values block publication;
-an optional field that cannot be derived produces a warning and remains absent.
-
-For GE data, fractional `NEX` supplies phase-direction `PartialFourier` when
-fractional echo is absent. `PHASEFOV` describes spatial coverage and is not used
-in that calculation. A fractional-echo acquisition is left without a derived
-fraction because exported metadata do not establish its readout fraction.
-
-GE `THREEDGW` supplies `GradientCorrectionMode` when present. Otherwise, a
-matching [hardware profile](../definitions.md#gradient-unwarping-hardware) may
-assert the mode. The public values are `2D`, `3D`, and `none`; unknown modes are
-omitted. Private preparation records retain bounded field provenance and the
-reason for underivable values without retaining vendor protocol text.
+| `servers` | Named entries with a `host` and a `projects` list. Keys are managed by `nro fw`. |
+| `project_sources` | Maps BIDS project names to nonempty lists of `{server, project}` sources. Each source must appear in that server's `projects` list. Duplicate pairs are rejected. |
+| `scanplans.location`, `scanplans.credential_env` | Shared scan-plan source and its authentication variable, described in [configure scan plans](scanplans.md). A null location turns scan plans off. |
+| `event_rules` | Extra `task` and absolute glob `pattern` pairs for event files outside the catalog. All matches are shown, and an ambiguous candidate is never chosen automatically. |
+| `session_rules` | Explicit rules that recognize existing raw BIDS subjects and sessions from remote identities. |
 
 ### Default source projects
 
-For a BIDS dataset receiving sessions at both sites, the protected site mapping
-can be:
+For a BIDS dataset that receives sessions from both sites, the mapping can be:
 
 ```yaml
 project_sources:
@@ -309,26 +315,26 @@ project_sources:
       project: shain/shain1
 ```
 
-Then `nro bidsify -P climblab_multisession` offers the two sources.
-Adding `-f cni` selects the CNI source without another prompt.
-Mappings are site-specific; new stores leave them empty. Multiple BIDS datasets
-may draw different sessions from the same source project, but a source session
-has only one destination. An unmapped BIDS dataset requires source selection
-when multiple sources match its selectors. Selecting a source in the
-wizard does not edit the protected site document; use `nro site set` or edit
-and validate that document through site maintenance to retain the default.
+`nro bidsify -P climblab_multisession` then offers both sources, and adding
+`-f cni` selects the CNI source without a prompt.
+
+Mappings are specific to each site, and new stores leave them empty. Several
+BIDS datasets may take different sessions from the same source project, but
+each source session has only one destination. Choosing a source in the wizard
+does not edit the protected site document. To keep a choice as the default,
+use `nro site set`, or edit and validate the document through site maintenance.
 
 ### Existing-session rules
 
-Each rule applies to one configured `server` and `remote_project`. `match`
-contains full-match regular expressions for one or more remote fields:
-`id`, `label` (session label), or `subject_code`. Every pattern must match;
-repeated named groups must have the same value. The resulting named groups
-populate BIDS label templates. nro does not use fuzzy matching or silently
-sanitize labels. Labels that cannot produce valid BIDS identifiers do not match.
+A session rule tells nro how a remote session's identity maps to BIDS labels.
+Each rule applies to one configured `server` and `remote_project`. Its `match`
+mapping holds full-match regular expressions for one or more remote fields:
+`id`, `label` (the session label), or `subject_code`. Every pattern must match,
+and a named group that appears more than once must capture the same value each
+time. The named groups fill the BIDS label templates.
 
-For example, this lab's CNI session label `31381` corresponds to exam `ex31381`.
-The following rule recognizes that session under any participant:
+For example, this lab's CNI session label `31381` corresponds to exam
+`ex31381`. This rule recognizes that session under any participant:
 
 ```yaml
 session_rules:
@@ -339,111 +345,172 @@ session_rules:
     session: 'ex{exam}'
 ```
 
-`participant: null` searches for the exact session label under any participant.
-Rules without a session label cannot match a completed destination.
-Supplying both labels matches that exact participant and
-session. `derivatives`, `sourcedata`, and directories without a valid nro project
-name (including hidden and underscore-prefixed directories) are excluded.
-For new work, nro also uses the session label from these rules when all matching
-non-null session labels agree. In the example, selecting remote session `31381`
-supplies `ses-ex31381` without another prompt. Conflicting or absent session
-rules leave the label for review. The wizard does not copy an unconfigured
-remote display label, strip punctuation, or infer a stable participant from
-an exam identifier. The proposed destination appears before the user
-confirms the request.
+`participant: null` looks for the exact session label under any participant. A
+rule that supplies both labels matches only that participant and session. A
+rule without a session label cannot match a completed destination. The search
+skips `derivatives`, `sourcedata`, and directories that are not valid nro
+project names, including hidden and underscore-prefixed directories.
 
-Configure rules for other server naming conventions explicitly, then run
-`nro def validate`. New stores supply no naming assumptions. CLIMBLAB's
-CNI rules do not apply to Lucas. Publication always uses a subject/session
-hierarchy.
+nro also uses these rules to propose labels for new work. When all matching
+rules that give a session label agree, nro uses that label. In the example,
+selecting remote session `31381` supplies `ses-ex31381` without a prompt. If
+the rules conflict or none match, you enter the label during review. nro does
+not use fuzzy matching or sanitize labels. Labels that would not be valid BIDS
+identifiers do not match. The wizard also does not copy an unconfigured remote
+label, strip punctuation, or infer a stable participant from an exam
+identifier. The proposed destination is shown before you confirm the request.
 
-Command lists are executed without a shell. In conversion and skull-stripping
-commands, `{staging}` expands to the acquisition's working directory. Default
-container commands bind that directory. Custom wrappers must preserve the raw
-anatomy boundary and return nonzero on failure. A validator wrapper must really
-validate the dataset; approval relies on its exit status.
+New stores contain no naming rules. Add rules for each server's naming
+convention, then run `nro def validate`. CLIMBLAB's CNI rules do not apply to
+Lucas. Published sessions always use a subject and session hierarchy.
+
+### Conversion profile
+
+The default conversion profile is `DEFINITIONS/bidsify/main.yml`, and
+`--config FILE` selects another complete profile. Unknown keys and missing
+required keys are rejected. Each request saves its resolved profile, so later
+profile edits affect only new requests. If the selected scan-plan file changes,
+nro reparses it when the request resumes.
+
+| Conversion profile key | Purpose |
+| --- | --- |
+| `staging` | Absolute shared directory outside BIDS. `null` uses `WORK/bidsify`. |
+| `dcm2niix` | Command argument list. `null` uses the configured QuNex container command. |
+| `synthstrip` | Command argument list. `null` uses the configured SynthStrip container command. |
+| `validator` | Command argument list. nro appends the staged dataset path. A nonzero exit blocks publication. |
+| `memory_gb`, `cpus`, `hours` | Worker allocation. The defaults are 32 GiB, 2 CPUs, and 12 hours. |
+| `concurrency` | Requested shared limit. Defaults to `execution.concurrency`. `nro site set execution.concurrency=N` changes the durable site limit and passes it to a running scheduler. |
+| `protocols` | Ordered rules with `pattern`, `datatype`, and `suffix` that refine types. After dcm2niix supplies a supported `BidsGuess`, the first rule that matches `SeriesDescription`, `ProtocolName`, or `SequenceName` applies. |
+| `scanplans.parser` | Parser implementation, which a branch may change. Null selects the packaged stub. |
+
+Commands run without a shell. In the conversion and skull-stripping commands,
+`{staging}` expands to the acquisition's working directory, and the default
+container commands bind that directory. A custom wrapper must keep raw anatomy
+out of shared staging and must exit nonzero on failure. A validator wrapper must
+actually validate the dataset, because approval relies on its exit status.
+
+The standard event catalog is always `DEFINITIONS/events` and is not a profile
+setting. Each request records its resolved path as runtime metadata, along with
+the selected event snapshots.
+
+### Acquisition type proposals
+
+During conversion, dcm2niix derives a `BidsGuess` from the DICOM metadata. nro
+accepts supported non-derived guesses, then applies the `protocols` rules for
+known refinements, such as telling an SBRef apart from BOLD data. Missing,
+derived, discarded, and unsupported guesses are proposed as ignored. The wizard
+reports each of these and asks you to confirm or replace it. An override runs
+preparation again before conversion continues.
+
+### Vendor metadata enrichment
+
+Preparation keeps valid dcm2niix metadata and fills approved missing fields
+from bounded vendor protocol data. It never silently replaces a converter
+value. A conflict among converter, DICOM, series, or site values blocks
+publication. An optional field that cannot be derived produces a warning and is
+left out.
+
+For GE data, fractional `NEX` supplies the phase-direction `PartialFourier`
+when fractional echo is absent. `PHASEFOV` describes spatial coverage and is
+not used in that calculation. A fractional-echo acquisition gets no derived
+fraction, because the exported metadata do not establish its readout fraction.
+
+GE `THREEDGW` supplies `GradientCorrectionMode` when present. Otherwise, a
+matching [hardware profile](../definitions.md#gradient-unwarping-hardware) may
+assert the mode. The published values are `2D`, `3D`, and `none`, and unknown
+modes are left out. Private preparation records keep bounded provenance for
+each field and the reason a value could not be derived, without keeping vendor
+protocol text.
 
 ## Staging, privacy, and replacement
 
-Shared staging is organized as `STAGING/REQUEST_ID/`, with sanitized helpers,
-reviewed events, generated dcm2bids configurations, and a proposed `bids/` tree.
-Raw archives, DICOMs, initial converted images, and skull-stripping intermediates
-use only:
+### Where files live
+
+Raw archives, DICOMs, initial converted images, and skull-stripping
+intermediates stay in node-local temporary storage:
 
 ```text
 /tmp/nro/bidsify/SERVER/REMOTE_SESSION_ID/REQUEST_ID/ACQUISITION_ID/
 ```
 
-`dcm2niix` derives `BidsGuess` from DICOM metadata during conversion. nro accepts
-supported non-derived guesses, then applies configured metadata rules for known
-refinements such as distinguishing an SBRef from BOLD data. Missing, derived,
-discarded, and unsupported guesses are proposed as ignored. The wizard reports
-each such decision and asks the user to confirm or replace it. An override
-causes preparation to run again before conversion continues.
+Shared staging is organized as `STAGING/REQUEST_ID/`. It holds sanitized helper
+images, reviewed events, generated dcm2bids configurations, and the proposed
+`bids/` tree. Raw acquisition files never enter shared staging. Accepted helper
+images and an allowlist of metadata enter it only after conversion,
+sanitization, and skull stripping where needed.
 
-Temporary staging rejects symlinks, world access, and ownership outside the
-executing user or shared group. Administrators must provision a suitable shared
-group if several users need access. Raw acquisition files never enter shared
-staging. Accepted helper images and an allowlist of metadata enter shared
-staging only after conversion, sanitization, and skull stripping when needed.
+Temporary staging rejects symlinks, world access, and ownership by anyone other
+than the executing user or the shared group. If several users need access,
+administrators must provision a suitable shared group.
 
-Successful preparation and handled failures remove raw acquisition files.
-Cancellation runs cleanup where the process can handle the termination signal.
-A forced kill or node failure can leave raw data on that node's `/tmp`; a later
-attempt on another node cannot clean the old node. The saved request records
-the worker hostname. Site-managed temporary cleanup is still required. `/tmp`
-does not guarantee a retention interval, exclusion from backups, or secure
-erasure. Verify those properties with the cluster administrator.
+### Cleanup
 
-Archive members receive opaque temporary filenames. NIfTI text fields and
-extensions are cleared, and JSON output retains an acquisition-metadata
-allowlist. This reduces identifying metadata; it is not a certification of
-DICOM de-identification. Raw converter/provider diagnostics are suppressed
-because they can contain identifying labels. Safe failures appear in
-`REGISTRY/ingestion/REQUEST_ID.log`; unexpected failures report their exception
-type without the original message.
+Successful preparation and handled failures remove the raw acquisition files.
+Cancellation runs cleanup when the process can handle the termination signal. A
+forced kill or node failure can leave raw data in that node's `/tmp`, and a
+later attempt on another node cannot clean it. The saved request records the
+worker hostname, but the site must still manage
+temporary cleanup. `/tmp` does not guarantee a retention period, exclusion from
+backups, or secure erasure. Check those properties with the cluster
+administrator.
 
-Publication copies the approved session to a hidden sibling on the destination
-filesystem, verifies it, and renames it into place. Replacing a session uses a
-durable transaction journal and two same-filesystem renames. The old session is
-first moved to a hidden backup, and the complete new session is then moved into
-place. No partially copied session appears at the destination. If execution is
-interrupted between the renames, the next attempt either finishes publication
-or restores the old session from the backup based on the approved file hashes.
-The backup is removed only after a durable receipt records the new session.
-Other sessions are untouched. Existing raw `dataset_description.json` metadata
-is preserved; an absent description is created.
+### Identifying information
 
-Replacement requires no active nro derivative attempts in the destination
-project at commit time. Stop external readers before approving replacement;
-nro cannot coordinate programs outside its registry. Re-publication does not
-rebuild derivatives automatically.
+Archive members get opaque temporary filenames. NIfTI text fields and
+extensions are cleared, and JSON output keeps only an allowlist of acquisition
+metadata. This reduces identifying metadata but does not certify DICOM
+de-identification. Raw converter and provider diagnostics are suppressed
+because they can contain identifying labels. Safe failure messages appear in
+`REGISTRY/ingestion/REQUEST_ID.log`. Unexpected failures report only their
+exception type, without the original message.
+
+### Publication and replacement
+
+Publication copies the approved session to a hidden sibling directory on the
+destination filesystem, verifies it, and renames it into place, so a partly
+copied session never appears at the destination. Other sessions are untouched.
+An existing raw `dataset_description.json` is preserved, and a missing one is
+created.
+
+Replacing a session uses a durable transaction journal and two renames on the
+same filesystem. The old session moves to a hidden backup, then the complete
+new session moves into place. If execution stops between the renames, the next
+attempt uses the approved file hashes to either finish publication or restore
+the old session from the backup. The backup is removed only after a durable
+receipt records the new session.
+
+Replacement requires that no nro derivative attempts be active in the
+destination project when it commits. nro cannot coordinate programs outside
+its registry, so stop external readers before approving a replacement.
+Publishing again does not rebuild derivatives automatically.
 
 Records, logs, and publication receipts live under `REGISTRY/ingestion/` and
-survive derivative registry repair. Sanitized staging also remains available
-for review and recovery. Cancellation does not delete this shared evidence.
+survive derivative registry repair. Sanitized staging also stays available for
+review and recovery. Cancellation does not delete either.
 
 ## Current limits
 
-This version accepts individual Flywheel acquisition files of type `dicom`,
-with one converted NIfTI per selected file. Supported outputs are T1w, T2w,
-BOLD, SBRef, and opposite-encoding EPI fieldmaps. Other source formats,
-multi-output archives, multiecho conversion, and behavioral-log parsers need
-explicit adapters. Scan-plan input uses the documented site-parser contract. A
-failure in those cases does not publish a partial
-session. An SBRef currently belongs to one BOLD acquisition; a fieldmap pair
-may serve several runs. Unassigned SBRefs are not published.
+This version accepts individual Flywheel acquisition files of type `dicom` and
+produces one converted NIfTI per selected file. It supports T1w, T2w, BOLD,
+SBRef, and opposite-encoding EPI fieldmaps. Other source formats, archives with
+several outputs, multiecho conversion, and behavioral-log parsers need explicit
+adapters. Scan-plan input goes through the site-parser contract. In all of
+these cases, a failure never publishes a partial session.
 
-The wizard suggests catalog entries from complete task-name matches, ignoring
-case and separators. It does not infer stimulus set/run from BIDS run numbering.
-After exact sequence alignment, a scan plan supplies the task ID. The wizard
-then finds event-file candidates by task. Multiple variants require an explicit
-choice.
-The wizard validates supplied event files but does not infer their scientific
-meaning or invent missing event times. Skull stripping is performed locally;
-this version does not consume Flywheel gear output as an alternative source.
+An SBRef belongs to one BOLD acquisition, while a fieldmap pair may serve
+several runs. Unassigned SBRefs are not published.
 
-Tests cover the state machine, scheduler accounting, privacy routing,
+The wizard suggests catalog event files only when the whole task name matches,
+ignoring case and separators. It does not infer the stimulus set or run from
+the BIDS run number. When a scan plan aligns exactly, it supplies the task ID,
+and the wizard then looks up event-file candidates for that task. If several
+variants match, you must choose one. The wizard validates event files but does
+not interpret their scientific meaning or invent missing event times.
+
+Skull stripping always runs locally. This version does not use Flywheel gear
+output as an alternative source.
+
+Tests cover the request state machine, scheduler accounting, privacy routing,
 publication recovery, and dcm2bids organization with synthetic images. Live
-Flywheel access, cluster conversion, and the site's validator require an
+Flywheel access, cluster conversion, and the site's validator need an
 operator-supervised first session before routine use.

@@ -1,127 +1,157 @@
 # Installation, cleanup, and publication
 
+This page covers the commands that maintain an installation and its data. It
+starts with setup, site settings, and `nro doctor`. It then describes the three
+cleanup commands, `purge`, `gc`, and `freshen`, followed by the project-level
+operations `project rename` and `migrate`, and finally `publish`.
+
 ## `./install` and `nro setup`
 
-Both use the same installer. First setup accepts `--mode personal`,
-`--mode shared`, or `--mode branch`; the one-letter forms `p`, `s`, and `b` are
-also accepted. The interactive prompt accepts the same values. A new checkout uses
-branch mode automatically when the user's dispatcher has a default installation.
-An existing shared checkout connects
-the caller's launcher unless `--maintain` is given. See the
-[installation guide](../installation.md) for effects and permissions.
+`./install` and `nro setup` run the same installer. The first setup of a
+checkout declares its role with `--mode personal`, `--mode shared`, or
+`--mode branch`, or the one-letter forms `p`, `s`, and `b`. The interactive
+prompt accepts the same values. A new checkout uses branch mode automatically
+when your dispatcher already has a default installation. Running setup in an
+existing shared checkout connects your launcher to it, unless you pass
+`--maintain`. The [installation guide](../installation.md) describes the
+effects of each mode and the permissions it needs.
 
 | Option | Meaning |
 | --- | --- |
-| `--mode personal/shared/branch` | Declare the first installation's role; branch mode reuses an existing site read-only. |
-| `--maintain` | Permit shared environment/resource maintenance. |
-| `--drain` | Permit noninteractive shared maintenance to drain the worker pool while preserving demand. |
-| `--site PATH` | Choose the generated definitions-locator file during first setup. |
-| `--bin-dir PATH` | Place the user's launcher in this directory. |
-| `--default` | Make this checkout the user's default outside registered checkouts. |
+| `--mode personal/shared/branch` | Declare the role of the first installation. Branch mode reuses an existing site read-only. |
+| `--maintain` | Allow maintenance of the shared environment and resources. |
+| `--drain` | Allow noninteractive shared maintenance to drain the worker pool. Demand is preserved. |
+| `--site PATH` | Choose the location of the generated definitions-locator file during first setup. |
+| `--default-parent-dir PATH` | Choose the parent directory for the storage and resource paths proposed during first setup. |
+| `--bin-dir PATH` | Put your launcher in this directory. |
+| `--default` | Make this checkout your default outside registered checkouts. |
 | `--replace-launcher` | Back up and replace a recognized older fixed-path launcher. |
-| `--convert-to-branch` | Convert a quiescent shared checkout to branch mode. |
-| `--non-interactive` | Use supplied settings without prompts. |
-| `--offline` | Forbid new resource downloads; require cached/installed dependencies. |
+| `--convert-to-branch` | Convert a quiescent shared checkout to branch mode, keeping its environment. |
+| `--non-interactive` | Use the supplied settings without prompting. |
+| `--offline` | Forbid new resource downloads. Dependencies must already be cached or installed. |
 | `--without-oslom` | Omit OSLOM and its Python dependencies for this invocation. |
-| `--with-bidsify` | Include Flywheel, dcm2bids, DICOM, and Google Drive dependencies. |
-| `--with-cicada` | Include the pinned pycicada classification backend. |
-| `--with-lesion` | Include lesion-masking dependencies. |
 | `--without-marss` | Omit the official MARSS package and its Python dependencies. |
-| `--dev` | Include locked test dependencies. |
-| `--accept-qunex-license` | Acknowledge terms for unattended image acquisition. |
+| `--without-viewer` | Omit Connectome Workbench support for scene viewing and rendering. |
+| `--with-bidsify` | Include the Flywheel, dcm2bids, DICOM, and Google Drive dependencies. |
+| `--with-cicada` | Include the pinned pycicada classification backend. |
+| `--with-lesion` | Include the lesion-masking dependencies. |
+| `--dev` | Include the locked test dependencies. |
+| `--accept-qunex-license` | Accept the QuNex terms so images can be acquired unattended. |
 | `--local` | Do not require Slurm. |
 
-Ctrl-C exits with status 130 and one cancellation message. Incomplete shared
-setup resumes with `./install --maintain`; accepting defaults does not eliminate
-the need for license files and suitable host permissions.
+Ctrl-C exits with status 130 and prints one cancellation message. To resume an
+incomplete shared setup, run `./install --maintain`. Accepting the defaults
+does not remove the need for license files and suitable host permissions.
 
 ## `nro site`
 
-`ls [PREFIX]` lists settings, effective values, and application lifecycles.
-`get [KEY ...]` prints selected values. `set KEY=VALUE ...` validates and
-atomically saves updates in the protected definitions document. `edit` runs the
-interactive editor, and `validate` checks the current document. Storage and
-installation-resource changes on a shared site require `--maintain`; live
-execution limits are relayed to an existing scheduler automatically. No site
-operation starts a scheduler solely to apply a setting.
+`nro site` reads and changes site settings:
 
-`nro paths`, `nro get`, and `nro set` remain compatibility aliases.
+* `ls [PREFIX]` lists settings with their effective values and lifecycles.
+* `get [KEY ...]` prints selected values.
+* `set KEY=VALUE ...` validates the updates and saves them atomically in the
+  protected definitions document.
+* `edit` opens the interactive editor.
+* `validate` checks the current document.
+
+On a shared site, changes to storage and installation resources require
+`--maintain`. Changes to live execution limits are passed to a running
+scheduler automatically, as described under
+[site execution policy](work.md#site-execution-policy). No site operation
+starts a scheduler only to apply a setting.
+
+`nro paths`, `nro get`, and `nro set` remain as compatibility aliases.
 
 ## `nro doctor`
 
-Report the checkout, branch, environment, executable, and site settings selected
-for this invocation. The default checks Python package and configured-resource
-availability, filesystem access, and Slurm executables. `--deep` additionally
-imports scientific libraries, validates all definitions, starts containers, and
-checks tool availability, template checksums, and image receipts. `--local`
-makes Slurm optional; `--without-oslom` makes OSLOM optional. `--json` emits
-structured results. Failed required checks exit nonzero. Doctor does not install
-resources or process subject data.
+`nro doctor` reports the checkout, branch, environment, executable, and site
+settings that this invocation selects, and checks that they work. By default it
+checks Python packages, configured resources, filesystem access, and the Slurm
+executables. `--deep` also imports the scientific libraries, validates all
+definitions, starts containers, and checks tool availability, template
+checksums, and image receipts.
+
+`--local` makes Slurm optional and `--without-oslom` makes OSLOM optional.
+`--json` prints structured results. The command exits nonzero when a required
+check fails. It does not install resources or process subject data.
 
 ## `nro purge`
 
-Delete owned public derivatives, private intermediates, and associated logs.
-Selectors narrow scope; absent selectors mean all. Ownership receipts and
-module contracts distinguish nro outputs from unrelated derivatives.
+`nro purge` deletes owned public derivatives, private intermediates, and their
+logs. Selectors narrow the scope, and an omitted selector matches everything.
+nro tells its own outputs apart from unrelated derivatives by ownership
+receipts and module contracts.
 
 ```bash
 nro purge -P nptl -p t20 -m clean --dry-run
 nro purge -P nptl -p t20 -m clean
 ```
 
-The normal invocation displays a pageable list of public/private removal paths
-and asks for confirmation. `-f`/`--force` skips confirmation. `--dry-run` reports
-without deleting. `-l`/`--logs` removes matching attempt logs and inactive-worker
-logs only. `--json` supplies a structured result; `--work-root` overrides the
-private-file root. Selected work items must have no active attempts.
+The command shows a pageable list of the public and private paths it will
+remove and asks for confirmation. `-f`/`--force` skips the confirmation, and
+`--dry-run` reports without deleting. `-l`/`--logs` removes only matching
+attempt logs and logs of inactive workers. `--json` prints a structured result,
+and `--work-root` overrides the root for private files. The selected work items
+must have no active attempts.
 
-Use `--excluded` after adding source paths to markup:
+Deletion is permanent. Files are not moved to a trash directory. A bare
+`nro purge` selects every controlled derivative owned by the current branch in
+every project, including historical lineages. Inherited outputs are excluded.
+`--force` only skips the prompt. It does not make it safe to delete work that
+another user needs. After removing files, purge removes empty parent
+directories within the controlled derivative, WORK, control, and log trees, and
+keeps the roots of those trees.
+
+### Effects on other work
+
+Purge withdraws existing demand for the selected work and for the targets that
+depend on it. Unrelated targets from the same request stay active.
+
+Deleting an upstream artifact also invalidates its consumers and requests
+cancellation of their active attempts, even when those consumers were not
+selected. Their files are not deleted. Purge reserves the selected outputs and
+waits up to 30 seconds for the consumers to confirm shutdown, without holding
+the registry lock while it waits. If shutdown is not confirmed, purge deletes
+nothing, and you can retry after the attempts stop. The invalidation and
+cancellation stay in effect. `--dry-run` neither invalidates nor cancels work.
+
+After a successful deletion, the scheduler removes purged work-item records
+that no surviving registered artifact refers to. A purged upstream record stays
+when a surviving downstream artifact needs it to describe its DAG. Purging that
+downstream artifact later makes the ancestor record eligible for removal.
+
+### Interrupted purges
+
+Repeat an interrupted purge to recover its mutation lock and reservation. The
+scheduler keeps an approved purge and finishes it before later requests, even
+if the invoking terminal disconnects. Large purges report validation and
+deletion progress on stderr. Registry repair refuses to run while a mutation
+reservation is unresolved, so that it cannot discard the barrier while files
+might still be changing.
+
+### Removing work that uses excluded inputs
+
+After you exclude source paths in markup, run purge with `--excluded`:
 
 ```bash
 nro purge --excluded --dry-run
 nro purge --excluded
 ```
 
-This mode finds owned work items whose recorded raw inputs are excluded by their
-current markup and follows the registered DAG through every downstream consumer.
-It purges that complete affected closure and withdraws its demand, so a clean run
-or subject-level aggregate cannot preserve or protect a derivative contaminated
-by an excluded run. Other selectors narrow the affected roots; downstream
-consumers are still included even when they fall outside a module or entity
-selector. Work configured with `markup: null` is unaffected. `--excluded` cannot
-be combined with `--logs` or `--cache`, and it still refuses active attempts.
+This mode finds owned work items whose recorded raw inputs are now excluded by
+their current markup. It follows the registered DAG to every downstream
+consumer, purges that whole closure, and withdraws its demand. A clean run or a
+subject-level aggregate therefore cannot keep a derivative that was built from
+an excluded run. Other selectors narrow the affected roots, but downstream
+consumers are included even when they fall outside a module or entity
+selector. Work configured with `markup: null` is unaffected. `--excluded`
+cannot be combined with `--logs` or `--cache`, and it still refuses work with
+active attempts.
 
-Deleting an upstream artifact also invalidates its consumers and requests
-cancellation of their active attempts, even when those consumers were not selected
-for deletion. Their files are not purged. Purge withdraws existing demand for
-the selected work and for targets that depend on it; unrelated targets from the
-same request remain active. The command reserves the selected
-outputs and waits up to 30 seconds for confirmed consumer shutdown without holding
-the registry lock while waiting. If shutdown is not confirmed, it deletes no
-outputs; retry after the attempts stop. Invalidation and cancellation remain in
-effect. `--dry-run` does not invalidate or cancel work.
+### Removing unused source snapshots
 
-After successful deletion, the scheduler removes purged work-item records that
-no surviving registered artifact references. A missing upstream record remains
-when it is needed to describe a surviving downstream artifact's DAG. Purging that
-downstream artifact later makes the retained ancestor eligible for removal.
-
-After an interrupted purge, repeat the operation to recover its mutation lock and
-reservation. The scheduler retains an approved purge and finishes it before later
-requests, even if the invoking terminal disconnects. Large purges report their
-validation and deletion progress on stderr. Registry repair refuses unresolved
-mutation reservations. This prevents repair from discarding the barrier while
-files might still be changing.
-
-Deletion is destructive and does not move files to trash. A bare invocation
-selects every controlled derivative owned by the current branch across all
-projects, including historical lineages. Inherited outputs are excluded. Force
-does not mean it is safe to delete a shared user's needed work. After removing
-selected files, purge also removes empty parent directories within the controlled
-derivative, WORK, control, and log trees. It preserves the roots of those trees.
-
-Use `--cache` to remove unused executable-source snapshots and captured site
-settings across the shared installation:
+`--cache` removes unused executable-source snapshots and captured site settings
+across the whole shared installation:
 
 ```bash
 nro purge --cache --dry-run
@@ -132,23 +162,24 @@ nro purge --cache --force
 This mode ignores all artifact selectors, including project, participant,
 module, and workflow. It uses the BIDS and registry roots from the global site
 configuration. It does not remove derivatives, logs, definitions, container
-images, or dependency downloads, and cannot be combined with `--logs`.
+images, or downloaded dependencies, and it cannot be combined with `--logs`.
 
-Cache cleanup is conservative: outstanding demand, attempts, workers, scheduler
-submissions, or queued/running ingestion defer collection across the whole
-pool. Unknown registry state also preserves the cache. `--force` skips the
-prompt; it never overrides these checks. State is checked again after
-confirmation. Old snapshots are not needed to assess derivative freshness.
+Cache cleanup is conservative. Any outstanding demand, attempt, worker,
+scheduler submission, or queued or running ingestion defers collection for the
+whole pool. Unknown registry state also preserves the cache. `--force` skips
+the prompt but never overrides these checks, and the state is checked again
+after confirmation. Old snapshots are not needed to assess derivative
+freshness.
 
-Normal requests and worker shutdown also attempt cleanup automatically. A
-process running from a snapshot retains its own source and site file; a later
-command can reclaim those after it exits. Unknown entries and partial capture
-directories are not automatically removed.
+Normal requests and worker shutdown also try to clean the cache automatically.
+A running process keeps its own source snapshot and site file, and a later
+command can reclaim them after the process exits. Unknown entries and partial
+capture directories are never removed automatically.
 
 ## `nro gc`
 
-Remove unclaimed files from nro's public derivative and private WORK namespaces
-while preserving registered artifacts and work directories:
+`nro gc` removes unclaimed files from nro's public derivative namespace and its
+private WORK namespace. Registered artifacts and work directories are kept.
 
 ```bash
 nro gc -P nptl -p t20 -m clean --dry-run
@@ -156,108 +187,124 @@ nro gc -P nptl -p t20 -m clean
 ```
 
 `gc` accepts the same artifact selectors as `purge`. Selectors limit the
-directories inspected; they do not make other registered artifacts eligible for
-deletion. A bare invocation checks every project and module owned by the current
-branch. Inherited branch data lies outside the branch's writable roots and is not
-collected.
+directories inspected. They never make a registered artifact eligible for
+deletion. A bare invocation checks every project and module owned by the
+current branch. Inherited branch data lies outside the branch's writable roots
+and is never collected.
 
-The command reports public and WORK files separately and asks for confirmation.
-Use `-f`/`--force` to skip the prompt, `--dry-run` to report without deleting, or
-`--json` for structured output. Collection refuses a scope with queued, running,
-or cancel-requested attempts. It verifies the candidate set again after
-confirmation and removes directories made empty by the selected files.
+The command reports public and WORK files separately and asks for
+confirmation. `-f`/`--force` skips the prompt, `--dry-run` reports without
+deleting, and `--json` prints structured output. Collection refuses a scope
+that has queued, running, or cancel-requested attempts. It checks the candidate
+set again after confirmation and removes directories that the deletion leaves
+empty.
 
-Ownership is conservative. Fixed artifacts are protected by exact paths or
-filename prefixes. Directory-producing artifacts and registered work-item
-directories protect their complete directory trees because third-party tools can
-create files that are not known in advance. As a result, `gc` removes orphaned
-lineages and unmatched files in shared directories but does not remove an
-unrecognized file placed inside an owned directory tree. Control records, logs,
-and executable caches are outside this command's scope.
+Ownership is conservative. Artifacts with fixed outputs protect their exact
+paths or filename prefixes. Artifacts that produce directories, and registered
+work-item directories, protect their whole directory trees, because
+third-party tools can create files that nro cannot predict. As a result, `gc`
+removes orphaned lineages and unmatched files in shared directories, but it
+leaves an unrecognized file inside an owned directory tree. Control records,
+logs, and executable caches are outside the scope of `gc`.
 
 ## `nro freshen`
 
-Recover completed derivatives after an erroneous upstream rebuild without rerunning
-scientifically unchanged work:
+`nro freshen` recovers completed derivatives after an upstream artifact was
+rebuilt by mistake, without rerunning work whose science did not change:
 
 ```bash
 nro freshen -P climb -p c001 -m func clean --dry-run
 nro freshen -P climb -p c001 -m func clean
 ```
 
-The command validates matching work items in dependency order. It accepts only stale
-items whose current scientific contract, direct-input fingerprints, dependency set,
-and recorded artifacts are unchanged. It refuses missing or corrupt artifacts,
-changed contracts or inputs, and active attempts. A rejected upstream also rejects
-its selected descendants.
+The command validates matching work items in dependency order. It accepts a
+stale item only when its current scientific contract, direct-input
+fingerprints, dependency set, and recorded artifacts are all unchanged. It
+refuses missing or corrupt artifacts, changed contracts or inputs, and active
+attempts. When an upstream item is rejected, its selected descendants are
+rejected too.
 
-For accepted items, `freshen` advances output timestamps past their validated inputs
-and rebinds completion records to the current upstream generations. It does not
-advance artifact generations or change file contents. This is an explicit recovery
-operation for incorrect invalidation; it is not a substitute for rerunning work after
-a scientific change.
+For each accepted item, `freshen` moves output timestamps past those of the
+validated inputs and rebinds the completion records to the current upstream
+generations. It does not advance artifact generations or change file contents.
+Use it only to correct a wrong invalidation. After a scientific change, rerun
+the work instead.
 
-The default command pages through the validation report and asks for confirmation.
-Use `--dry-run` to stop after the preview, `-f`/`--force` to skip confirmation, or
-`--json` with either noninteractive mode for structured output.
+By default the command pages through the validation report and asks for
+confirmation. `--dry-run` stops after the preview, and `-f`/`--force` skips the
+confirmation. `--json` prints structured output in either of those
+noninteractive modes.
 
 ## `nro project rename`
 
-Rename a BIDS project after stopping its demand and active work:
+`nro project rename OLD NEW` renames a BIDS project. Stop the project's demand
+and active work first.
 
 ```bash
 nro project rename climblab_multisession climb
 nro project rename climblab_multisession climb --dry-run
 ```
 
-The default command opens a read-only preview in the pager and then asks for
-confirmation. It reports every managed directory move and the affected work
-items, ownership receipts, Workbench scenes, BIDSification records, structured
-metadata, and definition files.
-Use `--dry-run` to stop after the preview or `-f`/`--force` to skip confirmation.
-The command is available only from the registered main checkout.
+The command opens a read-only preview in the pager and then asks for
+confirmation. The preview lists every managed directory move and the affected
+work items, ownership receipts, Workbench scenes, BIDSification records,
+structured metadata, and definition files. `--dry-run` stops after the
+preview, `-f`/`--force` skips the confirmation, and `--json` prints
+machine-readable output. The command runs only from the registered main
+checkout.
 
-The command starts the central scheduler when one is not already running. Both
-the preview and execution therefore run in the scheduler's Slurm allocation,
-not in the invoking login-shell process.
+The command starts the central scheduler if it is not already running. Both the
+preview and the rename run in the scheduler's Slurm allocation, not in your
+login shell.
 
-The rename covers the shared BIDS and WORK projects, every registered branch's
-development BIDS and WORK projects, project log directories, scheduler and
-branch registries, ownership receipts, BIDSification records, Workbench scene
-metadata, markup, and BIDSification project routing. Directory moves must be
-atomic on their filesystem. The command refuses symbolic-link roots, an existing
-destination, active demand, active attempts or resource steps, and active
-BIDSification for the source project.
-Run `nro migrate -P PROJECT` before renaming a project. Migration materializes
-raw-data links and repairs nonportable links in nro derivatives. Rename treats that
-validation as a prerequisite. It inventories SQL artifact records and the fixed
-ownership and scene namespaces, but it does not repeat migration's traversal of raw
-data or scientific derivatives. Relative links remain valid because each project tree
+### What a rename changes
+
+The rename covers the shared BIDS and WORK projects, the development BIDS and
+WORK projects of every registered branch, project log directories, the
+scheduler and branch registries, ownership receipts, BIDSification records,
+Workbench scene metadata, markup, and BIDSification project routing.
+
+Numerical scientific outputs are not rewritten. Indexed structured metadata in
+derivatives and WORK that contains absolute project paths is translated, and
+the registry updates its observations of those exact files. Work item
+identities and current control contracts that depend on the project name are
+translated, so existing artifacts keep their state under the new name.
+Definition changes go through the managed definitions transaction and update
+its integrity manifest.
+
+### Requirements
+
+Run `nro migrate -P PROJECT` before renaming. Migration materializes raw-data
+links and repairs nonportable links in nro derivatives, and rename relies on
+that. Rename inventories SQL artifact records and the fixed ownership and scene
+namespaces, but it does not repeat migration's traversal of raw data or
+scientific derivatives. Relative links stay valid because each project tree
 moves as a unit.
 
-Numerical scientific outputs are not rewritten. Indexed structured derivative and
-WORK metadata containing absolute project paths is translated, and the registry
-updates observations for those exact files. Project-sensitive work-item
-identities and current control contracts are translated so that existing
-artifacts retain their state under the new project name. Definition changes use
-the managed definitions transaction and update its integrity manifest.
+Directory moves must be atomic on their filesystem. The command refuses
+symbolic-link roots, an existing destination, active demand, active attempts or
+resource steps, and active BIDSification for the source project.
 
-The command writes the validated preview to uncompressed private control state until
-confirmation. It survives a scheduler restart and has no time-based expiry. Execution
-checks that branch topology, definitions, managed roots, work-item count, guarded files
-and links, and active-work barriers still match, then applies the preparation without
-repeating discovery. A relevant change fails closed and requires a new preview;
-successful execution or interactive cancellation deletes the preparation.
+### Preview, execution, and recovery
 
-Execution creates a recovery journal under the shared private control store and
-backs up the scheduler registry, branch registries, and edited metadata. A
-failure before the registry commit reverses directory moves and restores edited
-state. Keep external readers and writers stopped until the command completes.
+Until you confirm, the validated preview is kept in uncompressed private
+control state. It survives a scheduler restart and does not expire. On
+execution, the command checks that the branch topology, definitions, managed
+roots, work-item count, guarded files and links, and active-work barriers still
+match the preview. It then applies the prepared changes without repeating
+discovery. Any relevant change makes the command fail, and you must preview
+again. Successful execution or interactive cancellation deletes the preview.
+
+Execution creates a recovery journal in the shared private control store and
+backs up the scheduler registry, the branch registries, and the edited
+metadata. A failure before the registry commit reverses the directory moves and
+restores the edited state. Keep external readers and writers stopped until the
+command completes.
 
 ## `nro migrate`
 
-Bring source BIDS metadata and nro-owned derivative metadata into the current
-representation:
+`nro migrate` brings source BIDS metadata and nro-owned derivative metadata up
+to the current representation:
 
 ```bash
 nro migrate -P PROJECT
@@ -265,48 +312,65 @@ nro migrate -P PROJECT --dry-run
 nro migrate -P PROJECT -f
 ```
 
-Pass multiple project IDs after `-P` to migrate them together. Omitting `-P`
-selects every BIDS project. Other scientific selectors do not apply to project
-migration and are rejected.
+Pass several project IDs after `-P` to migrate them together. Omitting `-P`
+selects every BIDS project. The command rejects the other scientific
+selectors.
 
-The default pages through a read-only plan and asks for confirmation before applying
-it. `--dry-run` stops after the preview. `-f`/`--force` applies the plan without a
-prompt. The command starts or joins the central Slurm scheduler before preparing the
-preview; starting it does not create scientific demand. Execution covers the selected
-source project plus main and registered branch derivatives. It requires a quiet worker
-pool, removes obsolete source `EventsFile` fields, converts durable contracts to
-field-level source metadata snapshots, and updates integrity records without advancing
-artifact generations. It also copies a versioned FreeSurfer `fsaverage` template into
-the project's hidden nro template namespace when an older anatomical derivative links
-to a container-internal template, then replaces that link with a relative project-local
-link. Raw BIDS symbolic links become hard links when their targets are on the same
-filesystem and metadata-preserving copies otherwise. Directory links become
-metadata-preserving directory copies. A durable journal rolls back incomplete file conversion and
-resumes an interrupted registry update. See [portable derivative
-provenance](../portable-provenance.md) for the reference model and migration boundary.
-The scheduler writes the prepared file rewrites to uncompressed private control state
-before displaying the preview. The preparation has no time-based expiry and survives a
-scheduler restart. Execution verifies each file or link that it will modify without
-rescanning or reparsing the project. A changed target requires a new preview; unrelated
-files added after the preview remain for a later migration. Successful execution or an
-interactive cancellation deletes the preparation. A newer preview for the same projects
-and nro version supersedes the older one.
+By default the command pages through a read-only plan and asks for
+confirmation. `--dry-run` stops after the preview and `-f`/`--force` applies the
+plan without a prompt. Before preparing the preview, the command starts or
+joins the central Slurm scheduler. Starting it creates no scientific demand.
+
+### What migration changes
+
+Execution covers the selected source projects and their derivatives in main and
+in every registered branch. It requires an idle worker pool. It makes these
+changes:
+
+* Removes obsolete `EventsFile` fields from source metadata.
+* Converts durable contracts to field-level snapshots of source metadata.
+* Updates integrity records without advancing artifact generations.
+* When an older anatomical derivative links to a template inside a container,
+  copies a versioned FreeSurfer `fsaverage` template into the project's hidden
+  nro template namespace and replaces the link with a relative link inside the
+  project.
+* Replaces raw BIDS symbolic links with hard links when the target is on the
+  same filesystem, and with metadata-preserving copies otherwise. Directory
+  links become metadata-preserving directory copies.
+
+A durable journal rolls back an incomplete file conversion and resumes an
+interrupted registry update. See
+[portable derivative provenance](../portable-provenance.md) for the reference
+model and the limits of migration.
+
+### Preview and execution
+
+The scheduler writes the prepared file rewrites to uncompressed private control
+state before it shows the preview. The preparation survives a scheduler restart
+and does not expire. On execution, nro verifies each file or link it will
+modify, without rescanning or reparsing the project. A changed target requires
+a new preview. Unrelated files added after the preview are left for a later
+migration. Successful execution or interactive cancellation deletes the
+preparation, and a newer preview for the same projects and nro version replaces
+an older one.
 
 ## `nro publish`
+
+`nro publish` copies the public outputs of a completed request into a new
+dataset directory:
 
 ```bash
 nro publish REQUEST_ID /destination -P PROJECT
 ```
 
-Assess a completed request, copy terminal public files to a staging directory,
-verify checksums, embed recursive provenance, and recheck source generations
-before publishing. `destination` must not already exist. The source root comes
-from the global site configuration. `--no-validate` skips the optional external
-BIDS validator.
-Otherwise the validator runs only if available on PATH.
+The command assesses the request and copies its terminal public files to a
+staging directory. It verifies checksums, embeds recursive provenance, and
+checks the source generations again before publishing. The destination must not
+exist yet. The source root comes from the global site configuration.
 
-Publication writes `dataset_description.json` and `.nro-publication.json`.
-It is a separate snapshot operation, not an assertion that every working
-derivative format meets the BIDS validator. Inspect the published files and
-validation output before distributing the dataset; the command does not upload
-anything or create a release.
+The published dataset includes `dataset_description.json` and
+`.nro-publication.json`. If the external BIDS validator is on `PATH`, the
+command runs it, and `--no-validate` skips it. Publishing creates a snapshot. It
+does not claim that every working derivative format passes the BIDS validator.
+Inspect the published files and the validation output before you distribute the
+dataset. The command does not upload anything or create a release.

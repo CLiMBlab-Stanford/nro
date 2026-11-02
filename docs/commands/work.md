@@ -1,17 +1,21 @@
 # Request, inspect, and stop work
 
-[Common selectors](index.md#shared-selectors) apply to every command here except `start`,
-`set`, and `get`.
+This page covers the commands for day-to-day processing: requesting
+derivatives with `nro run`, following them with `nro status` and `nro log`,
+and cancelling them with `nro stop`. All of these commands take the
+[shared selectors](index.md#shared-selectors). `nro start` and the site
+execution settings at the end of the page do not.
 
 ## `nro start`
 
-Start the shared scheduler without requesting or planning scientific work. If a
-scheduler is already running, or its Slurm allocation is pending, `nro start`
-reports that state and exits without changing the existing allocation.
+`nro start` starts the shared scheduler without requesting any scientific work.
+If a scheduler is already running, or its Slurm allocation is pending, the
+command reports that state and exits without changing the allocation.
 
-When it creates a scheduler, `--partition`, `--account`, `--time`, `--memory`,
-and `--cpus` configure that scheduler's Slurm allocation. They do not configure
-derivative workers; use `nro run` for worker resources and demand.
+When the command creates a scheduler, `--partition`, `--account`, `--time`,
+`--memory`, and `--cpus` set the scheduler's own Slurm allocation. The defaults
+come from site settings: 24 hours, 8 GB, and 4 CPUs. These options do not
+affect derivative workers. Set worker resources with `nro run`.
 
 ```bash
 nro start --partition sphinx --account nlp --time 24 --memory 4 --cpus 4
@@ -19,232 +23,282 @@ nro start --partition sphinx --account nlp --time 24 --memory 4 --cpus 4
 
 ## `nro run`
 
-Plan requested terminal work items, register upstream demand, assess outputs,
-and supply workers. Fresh intermediates can be skipped even when the work item
-needs execution. No upfront catalog of all space/smoothing combinations is needed.
-The command admits demand without starting a persistent service. If ready work
-needs worker capacity, it starts the ephemeral scheduler controller and sends
-requests directly over TCP. Concurrent invocations share the same controller.
-The controller remains available for 12 hours after work and workers become
-idle, then exits. This avoids another Slurm wait when work is requested later
-the same day. Users do not manage it. `--no-submit` never starts the controller.
-
-Omitting `--module` requests every endpoint derived from the selected workflow.
-For `main`, these are `dynconn`, `networks`, and `contrasts`, with shared
-dependencies registered once. Contrasts selects model set `main` unless a
-model or set is specified. Participants without a
-matching first-level model can still run the connectivity paths. Explicit `--module`
-restricts the endpoints requested; it does not request their downstream modules.
-
-Selecting an endpoint together with its dependencies creates no extra upstream
-demand when the endpoint covers those same work items. For example,
-`-m microparcellation networks` is equivalent to `-m networks`. If an endpoint
-uses only some upstream runs, an explicit upstream selection keeps demand for
-the remaining runs. This reduction applies within each project and workflow
-in one invocation; it does not cancel earlier requests.
+`nro run` requests derivatives. It plans the selected terminal work items,
+registers demand for them and for their upstream dependencies, checks which
+outputs already exist and are fresh, and supplies workers for the rest. A fresh
+intermediate is skipped even when a later work item that depends on it must
+run. You do not need to list every space and smoothing combination in advance.
 
 ```bash
 nro run -P nptl -p t20 -m networks -w main -s fsnative -S 2
 ```
 
-For contrasts, select analysis models independently of the workflow:
+### What a request selects
+
+When `--module` is omitted, the request covers every endpoint of the selected
+workflow. For `main` the endpoints are `dynconn`, `networks`, and `contrasts`.
+Their shared dependencies are registered once. Participants without a matching
+first-level model still run the connectivity modules.
+
+An explicit `--module` restricts the endpoints. It does not add the modules
+downstream of the one you name. Naming an endpoint together with its
+dependencies adds no extra upstream demand when the endpoint already uses those
+same work items, so `-m microparcellation networks` is equivalent to
+`-m networks`. When an endpoint uses only some upstream runs, naming the
+upstream module explicitly keeps demand for the remaining runs. This reduction
+applies within each project and workflow of one invocation. It does not cancel
+earlier requests.
+
+For contrasts, select first-level models independently of the workflow:
 
 ```bash
 nro run -m contrasts --analysis language --model-set main
 ```
 
-Model sets affect request selection, not artifact freshness. Existing demand
-is not cancelled when a model leaves a set. See [first-level models](../task-models.md).
+Contrasts requests use model set `main` unless you name a model or a set.
+Model sets affect which work a request selects. They do not affect whether an
+artifact is fresh, and removing a model from a set does not cancel its existing
+demand. See [first-level models](../task-models.md).
 
-New requests capture source code and resolved site settings for execution.
-Editing the checkout after submission does not change that captured source;
-editing it during planning rejects the request so it can be retried. Source
-capture does not freeze Python environments or container images. See the
-[development limits](../development.md#branch-isolation-work) before maintaining
-dependencies or using a separate checkout with the shared pool.
+Most selectors match everything when omitted. A new request is the exception
+for `--workflow`, which defaults to `main` so that a bare request does not
+expand across every defined workflow. The space and smoothing defaults also
+apply only to new requests. `--resume`, described below, uses neither default.
 
-`run` submits or joins a scheduler. The terminal waits for the FIFO planning
-request to finish but performs no module planning itself. The scheduler executes
-each branch's pinned planner in an isolated child process while its service threads
-continue worker coordination. `--no-submit` still requires the scheduler because it
-compiles and registers demand; it suppresses derivative workers only.
-`purge` uses the active scheduler when one exists and otherwise runs through a
-fenced one-shot coordinator.
+### Options
 
-The first request for a participant and scientific selection compiles the full
-dependency closure and saves a content-addressed planning entry. Later
-equivalent requests reuse it. Changes to source-BIDS inventory or metadata,
-imaging headers, compiled definitions, first-level models, markup, protected site
-settings, or execution source select a new entry automatically. File timestamps
-may cause conservative replanning, but they do not make derivatives stale;
-freshness remains based on artifact contracts and content evidence.
-
-Registration validates reusable artifacts relevant to the submitted graph; it
-does not reassess every historical work item in the project. Use
-`nro status --update` when the intended operation is an exhaustive registry and
-filesystem reconciliation.
-
-| Additional option | Behavior/default |
+| Option | Behavior and default |
 | --- | --- |
-| `--concurrency N` | Shared limit; defaults to `execution.concurrency`. |
-| `--cpus N` | CPUs and scientific-process threads per worker, default 2. |
-| `--time HOURS` | Worker allocation duration, default 24 hours. |
-| `--memory GB` | Initial worker memory, default 32 GB. |
-| `--max-memory GB` | Maximum retry memory tier, default 256 GB. |
-| `--partition`, `--account` | Site-configured Slurm routing. |
-| `--worker-idle-timeout SECONDS` | Idle exit delay, default 30 seconds. |
-| `--drain-minutes N` | Stop claiming work before allocation expiry, default 15. |
-| `--local` | Execute a worker locally, without submitting a Slurm allocation. |
-| `--no-submit` | Register/assess demand without launching workers. |
+| `--concurrency N` | Shared worker limit. Defaults to the site setting `execution.concurrency`. |
+| `--cpus N` | CPUs per worker, which also sets the thread count of scientific processes. Default 2. |
+| `--time HOURS` | Worker allocation length. Default 24 hours. |
+| `--memory GB` | Initial worker memory. Default 32 GB. |
+| `--max-memory GB` | Highest memory tier used for retries. Default 256 GB. |
+| `--long-time HOURS`, `--long-cpus N` | Allocation for long CPU workers, which run work such as MSMAll anatomy. Defaults 48 hours and 8 CPUs. |
+| `--partition`, `--account` | Slurm routing. Defaults come from site settings. |
+| `--worker-idle-timeout SECONDS` | How long an idle worker waits before exiting. Default 30 seconds. |
+| `--drain-minutes N` | How long before allocation expiry a worker stops claiming work. Default 15. |
+| `--local` | Run one worker locally instead of submitting a Slurm allocation. |
+| `--no-submit` | Register and assess demand without launching workers. |
 | `--no-inherit` | In a development branch, compute matching work locally instead of reusing ancestor artifacts. |
-| `--resume` | Recreate demand for matching resumable work already known to the registry. |
-| `--json` | Structured planning result. |
-| `--repair` | Rebuild this branch's scientific registry after central activation; see below. |
+| `--resume` | Restore demand for matching resumable work already in the registry. |
+| `--repair` | Rebuild registry records without creating demand. See below. |
+| `--json` | Print the planning result as JSON. |
 
-Selectors normally narrow a command and match every value when omitted. A new
-request made by `nro run` is the exception: when `--workflow` is omitted, it
-selects workflow `main` so that a bare request does not expand across every
-defined workflow. The other planning defaults, including space and smoothing,
-apply only to new requests.
+The worker resource defaults come from the site's `execution` settings, so a
+site can change them.
 
-Inheritance is enabled by default. `--no-inherit` affects only the new request;
-it does not delete ancestor outputs or change the registered branch tree. The
-option is unavailable before branch execution is activated.
+### How a request is executed
 
-Use `--resume` when the original sequence of requests is inconvenient to
-reconstruct. A bare invocation selects registered work with status `Queued`,
-`Waiting`, `Stopped`, `Timeout`, or `Error`. It also selects `Missing`, `Stale`, or
-`Blocked` work that still has demand. Those three states do not create demand
-on their own.
-The shared selectors narrow the selection; omitted selectors mean all existing
-resumable work rather than the new-request workflow and target defaults. Use
-`--workflow main` when resumption should be limited to that workflow.
+The terminal that runs `nro run` waits for its planning request to finish, but
+it does no module planning itself. The request goes to the scheduler, which
+handles planning requests in FIFO order. It runs each branch's pinned planner
+in an isolated child process while its other threads keep coordinating workers.
+Concurrent invocations share one scheduler.
 
-Resume replans only the selected work item identities against the current BIDS
-data and definitions, then captures the current execution source. It does not
-request work that has never carried demand. If an old identity no longer exists
-under the current scientific definitions, the command reports that it cannot
-be resumed instead of substituting different work. Add `--no-submit` to restore
-demand without supplying workers.
+If ready work needs worker capacity, `nro run` starts the scheduler controller
+when none is running and sends requests to it over TCP. You do not manage the
+controller. It stays available for 12 hours after work and workers become idle
+and then exits, so a later request the same day does not wait for another Slurm
+allocation.
 
-With an activated central scheduler, `--repair` covers the current branch across
-all projects. It restores scientific records from the admitted graph history,
-cancels that branch's demand, and asks before stopping its active attempts. Other
-branches and the shared worker pool are retained. The old scientific database is
-copied to `registry-before-repair.sqlite3`. This does not replace the shared
+`--no-submit` registers and plans demand but launches no derivative workers.
+If the scheduler controller is running, the request goes to it. Otherwise
+`nro run` starts a one-shot scheduler process that admits and plans the request
+and then exits, without starting the long-lived controller. Either way the
+command requires an activated main scheduler installation.
+
+Each new request captures the source code and resolved site settings it will
+run with. Editing the checkout after submission does not change the captured
+source. Editing it during planning rejects the request, and you can retry.
+Source capture does not freeze Python environments or container images. Read
+the [development limits](../development.md#branch-isolation-work) before you
+change dependencies or use a separate checkout with the shared pool.
+
+The first request for a participant and a scientific selection compiles the
+full dependency closure and saves it as a content-addressed planning entry.
+Later equivalent requests reuse that entry. A new entry is selected
+automatically after changes to any of these inputs: the source BIDS inventory or
+metadata, imaging headers, compiled definitions, first-level models, markup,
+protected site settings, or execution source. File timestamps can cause
+conservative replanning, but they never make a derivative stale. Freshness
+depends on artifact contracts and content evidence.
+
+A request validates only the reusable artifacts in the submitted graph. It does
+not reassess every historical work item in the project. Run
+`nro status --update` when you want a full reconciliation of the registry with
+the filesystem.
+
+### Inheritance in development branches
+
+Inheritance is on by default. `--no-inherit` affects only the new request. It
+does not delete ancestor outputs or change the registered branch tree. The
+option is unavailable until branch execution is activated.
+
+### Resuming work
+
+Use `--resume` when you cannot easily reconstruct the original sequence of
+requests. A bare `nro run --resume` selects registered work with status
+`Queued`, `Waiting`, `Stopped`, `Timeout`, or `Error`. It also selects work in
+`Missing`, `Stale`, or `Blocked` that still has demand. Those three states do
+not create demand on their own.
+
+The shared selectors narrow the selection. Omitted selectors match all
+resumable work and do not apply the workflow and target defaults of a new
+request. Add `--workflow main` to limit resumption to that workflow.
+
+Resume replans the selected work item identities against the current BIDS data
+and definitions, then captures the current execution source. It never requests
+work that has never had demand. If an old identity no longer exists under the
+current scientific definitions, the command reports that it cannot resume it
+instead of substituting different work. Add `--no-submit` to restore demand
+without supplying workers. `--resume` cannot be combined with `--repair`.
+
+### Repairing the registry
+
+`--repair` rebuilds registry records from durable state and creates no new
+demand. It always covers all projects, and it rejects every selector option.
+Do not use it for routine error recovery or in unattended scripts. What it
+repairs depends on the checkout and on whether the central scheduler is active.
+
+In a development branch, `--repair` rebuilds that branch's scientific registry
+from the admitted graph history. It cancels the branch's demand and asks before
+stopping its active attempts. Other branches and the shared worker pool keep
+running. The old scientific database is copied to
+`registry-before-repair.sqlite3`. The repair does not replace the shared
 scheduler database or recompute derivatives.
-Shared scheduler replacement is a separate
+
+In the main checkout after central activation, `--repair` repairs the lab-wide
+scheduler and asks before stopping the worker pool. This is a
 [main-maintainer operation](releases.md#shared-scheduler-repair).
 
-Before central activation, `--repair` is site-wide even when selectors name one project. It asks before
-stopping active workers, rebuilds private orchestration state, discovers BIDS
-sources and existing owned derivatives, and creates no new demand. It does
-not rebuild scientific outputs merely to repair registry state. Historical
-attempt/request information in the replaced registry is not retained as active
-state. Branch registrations, captured execution source and site settings, and
-ingestion records are retained. Do not use repair as routine error recovery or
-in unattended scripts.
+Before central activation, `--repair` asks before stopping active workers. It
+then rebuilds private orchestration state and discovers BIDS sources and
+existing owned derivatives. It does not rebuild scientific outputs merely to
+repair registry state. Branch registrations, captured execution source and site
+settings, and ingestion records are kept. Attempt and request history from the
+replaced registry is not kept as active state.
 
-That pre-activation recovery starts from derivatives on disk. Ownership records restore their
-work items directly, including work items whose original workflow no longer exists.
-For unrecorded files in a current workflow's output directories, repair plans only
-the matching module, participant, run, model, space, and smoothing, plus required
-upstream work items. It does not plan unrelated source participants or unused
-combinations of spaces and smoothing levels. Source discovery still catalogs all
-projects and participants; it does not create demand.
+This pre-activation recovery starts from the derivatives on disk. Ownership
+records restore their work items directly, including work items whose original
+workflow no longer exists. For unrecorded files in the output directories of a
+current workflow, repair plans only the matching module, participant, run,
+model, space, and smoothing, plus their required upstream work items. It does
+not plan unrelated participants or unused combinations of space and smoothing.
+Source discovery still catalogs every project and participant, but it creates
+no demand.
 
 ## `nro status`
 
-Report registered work items, including errors and blocked-dependency summaries.
-Source discovery alone does not create status rows; existing owned artifacts
-can be adopted without demand. An empty registry prints headers without rows.
+`nro status` reports registered work items with their states, errors, and
+summaries of blocked dependencies. An empty registry prints the column headers
+and no rows. Discovering source data does not by itself create rows, and
+existing owned artifacts can be adopted without demand.
 
-By default, status uses the last atomic scheduler snapshot without starting a
-controller or checking files.
-`--update` performs the full assessment, updates the registry, and reports the
-result. It uses the live controller or a fenced local update process, without
-submitting a controller to Slurm. Use `--json` for structured output or
-`--no-pager` to bypass `less`.
-The pager uses colors and pinned headers when supported.
+By default the command reads the last atomic scheduler snapshot. It does not
+start a controller, check files, or recompile anything. `--update` runs a full
+assessment, updates the registry, and reports the result. It uses the live
+controller if there is one and otherwise a fenced local process. It never
+submits a controller to Slurm.
 
-Rows are ordered by project, participant, and module dependency depth. Independent
-modules at the same depth use lexical order. Within one module, lineage and displayed
-entity values provide stable tie-breaks. Selectors do not change the relative module
-order because status derives it from the complete visible dependency graph.
+After central activation, `--update` first recompiles the registered selections
+with the scientific code of the invoking checkout, without creating demand.
+Central code then verifies the resulting contracts against filesystem evidence.
+Historical lineages that no current workflow represents keep their registered
+contracts.
 
-The `ELAPSED` column reports execution time accumulated by the work item's
-current scientific revision. It includes CPU and GPU attempts, retries, and
-resource handoffs—including attempts interrupted by worker-allocation expiry—but
-excludes time spent queued or waiting on dependencies.
-JSON output provides the same value as `elapsed_seconds`.
+Output goes through `less`, with colors and pinned headers when the terminal
+supports them. `--no-pager` prints directly, and `--json` prints structured
+output.
 
-After central activation, `--update` first recompiles registered selections
-using the invoking checkout's scientific code, without creating demand. Central
-code then verifies the resulting contracts and filesystem evidence. Default
-status performs no recompilation or filesystem assessment.
-Historical lineages no longer represented by current workflows retain their
-registered contracts.
+### Reading the report
 
-`Success` describes fresh artifacts. For registered work without active demand
-or an active or unresolved failed attempt, `Missing` means required outputs or
-completion evidence are absent. `Stale` means the result needs updating, for
-example because its contract or an upstream dependency changed. The JSON `reason`
-field gives the specific cause; `Stale` does not guarantee all files still exist.
-`Corrupt` means files exist but contradict their own artifact contract or
-completion evidence. A matching request rebuilds the artifact; successful
-publication replaces the corrupt state.
-Both reporting modes use the same status labels. `Queued` indicates demanded
-work whose dependencies are complete and which is waiting for worker capacity.
-`Waiting` indicates demanded work held behind unfinished dependencies.
-`Blocked` indicates demanded work held behind an upstream error.
-`Running` and `Error` describe current execution or an unresolved failed attempt.
-`Timeout` is reserved for a work-item execution limit. A reusable worker reaching
-its Slurm wall-time interrupts its current attempt and returns the work item to
-`Queued`; allocation lifetime is not a property of the work item.
-`Stopping` means cancellation is awaiting worker confirmation. `Stopped` means
-the latest attempt ended because a user cancelled its demand; it is not an
-execution failure. A new matching `nro run` request returns that work to the
-queue.
-`Unavailable` can describe historical lineages no current workflow can request.
-Inspect the reason field and upstream/downstream error summaries rather than
-inferring filesystem state from submission state alone.
+Rows are ordered by project, then participant, then module dependency depth.
+Independent modules at the same depth appear in lexical order. Within a module,
+lineage and the displayed entity values break ties. Status derives the module
+order from the complete visible dependency graph, so selectors do not change
+it.
+
+The `ELAPSED` column shows the execution time accumulated by the current
+scientific revision of a work item. It includes CPU and GPU attempts, retries,
+and resource handoffs, among them attempts interrupted when a worker allocation
+expired. It excludes time spent queued or waiting on dependencies. JSON output
+reports the same value as `elapsed_seconds`.
 
 The `LINEAGE` column identifies the complete configured route to a module.
-Pass `--show-lineages` to append the route and registered workflow associations
-for each displayed work item. Use `-i`/`--lineage` to select an exact route.
-Qualify a repeated ID as `MODULE/ID`. A workflow can reach a work item, but it
-does not own that work item.
+`--show-lineages` appends the route and its registered workflow associations to
+each row. Select an exact route with `-i`/`--lineage`, and write `MODULE/ID`
+when an ID repeats. A workflow can reach a work item, but it does not own it.
+
+Both reporting modes use the same states:
+
+| State | Meaning |
+| --- | --- |
+| `Success` | The artifacts are fresh. |
+| `Queued` | Demanded work whose dependencies are complete, waiting for worker capacity. |
+| `Waiting` | Demanded work held behind unfinished dependencies. |
+| `Blocked` | Demanded work held behind an upstream error. |
+| `Running` | An attempt is executing. |
+| `Error` | The latest attempt failed and the failure is unresolved. |
+| `Timeout` | The work item reached its own execution limit. |
+| `Stopping` | Cancellation is waiting for the worker to confirm. |
+| `Stopped` | A user cancelled the demand for the latest attempt. |
+| `Missing` | Required outputs or completion evidence are absent. |
+| `Stale` | The result needs updating, for example because its contract or an upstream dependency changed. |
+| `Corrupt` | Files exist but contradict their own artifact contract or completion evidence. |
+| `Unavailable` | A historical lineage that no current workflow can request. |
+
+`Missing` and `Stale` apply to registered work that has no active demand and no
+active or unresolved failed attempt. `Stale` does not mean all the files still
+exist. The JSON `reason` field gives the specific cause. A matching request
+rebuilds a `Corrupt` artifact, and the corrupt state clears once the new result
+is published.
+
+`Timeout` refers only to a limit on the work item. When a reusable worker
+reaches its Slurm wall time, its current attempt is interrupted and the work
+item returns to `Queued`, because the allocation's lifetime is not a property
+of the work item. `Stopped` is not an execution failure, and a new matching
+`nro run` request returns the work to the queue.
+
+Read the `reason` field and the upstream and downstream error summaries before
+drawing conclusions about the filesystem. The submission state alone does not
+tell you which files exist.
 
 ## `nro log`
 
-Browse the current attempt logs for matching work items in `less`. Pass
-`--worker` to browse the Slurm worker logs instead. Logs separate command stdout
-and stderr; a message on stderr is not by itself a failed command. Worker logs
-are not one-to-one with derivatives because workers execute multiple work items.
-Pass `--running` to keep only matching work that currently has a running attempt.
-The option composes with the standard selectors.
+`nro log` opens the current attempt logs for matching work items in `less`.
+`--worker` opens the Slurm worker logs instead. Worker logs do not map one to
+one onto derivatives, because each worker runs several work items. `--running`
+keeps only matching work that has a running attempt, and it combines with the
+standard selectors.
 
-Use `nro log -m bidsify` to browse the dedicated logs for matching bidsification
-requests. In this command, `bidsify` is a logging selector, not a scientific
-module. Project and participant selectors apply, and `-r ses=LABEL` selects a
-BIDS session. `--worker` does not change bidsification log selection.
-For bidsification, `--running` keeps only sessions with an active ingestion stage.
+Logs keep a command's stdout and stderr separate. A message on stderr does not
+by itself mean the command failed.
+
+`nro log -m bidsify` opens the logs of matching bidsification requests. Here
+`bidsify` selects ingestion logs and is not a scientific module. Project and
+participant selectors apply, and `-r ses=LABEL` selects a BIDS session.
+`--worker` does not change which bidsification logs are shown. With
+`--running`, only sessions with an active ingestion stage are shown.
 
 ## `nro stop`
 
-Cancel selected demand and, by default, its downstream dependents. Other users'
-demand can keep shared work alive. `--only` limits cancellation to the selected
-derivative. `-f`/`--force` cancels matching demand from all users and stops the
-shared attempt; it does not delete outputs or history.
+`nro stop` cancels your demand for the selected work and, by default, for its
+downstream dependents. Demand from other users can keep shared work running.
+`--only` limits cancellation to the selected derivative. `-f`/`--force` cancels
+matching demand from all users and stops the shared attempt. Neither form
+deletes outputs or history.
 
-`-W`/`--worker` stops every worker and active work-item attempt. `--workers`
-remains an alias. `--scheduler` does the same and then stops the scheduler.
-These global controls do not accept selectors, `--only`, or `--force`; combining
-`--worker --scheduler` is equivalent to `--scheduler`. They do not remove
-demand or completed outputs. Coordinate with other users before using either
-control.
+Two global controls stop work regardless of demand. `-W`/`--worker` stops every
+worker and every active work-item attempt, and `--workers` is an alias.
+`--scheduler` does the same and then stops the scheduler. Combining `--worker`
+and `--scheduler` is the same as `--scheduler`. These controls do not accept
+selectors, `--only`, or `--force`, and they do not remove demand or completed
+outputs. They affect every user, so coordinate before using them.
 
 ## Site execution policy
+
+The site stores durable concurrency limits for the shared worker pool:
 
 ```bash
 nro site ls execution
@@ -252,12 +306,12 @@ nro site get execution.concurrency execution.gpu_concurrency
 nro site set execution.concurrency=60 execution.gpu_concurrency=2
 ```
 
-The concurrency values are durable site policy. The general limit defaults to
-50; the GPU limit defaults to one. `nro site set` saves all assignments
-atomically and rejects unknown keys. When a scheduler is live, it receives these
-two changes immediately. With no scheduler, the saved values apply when
-coordination resumes.
+`execution.concurrency` defaults to 50 and `execution.gpu_concurrency` to 1.
+`nro site set` validates and saves all assignments atomically, and it rejects
+unknown keys. A live scheduler receives changes to these two limits
+immediately. Without a scheduler, the saved values apply when coordination
+resumes.
 
-Changing a limit does not create demand or immediately terminate workers.
-Workers observe it during normal scheduler coordination. `nro run` continues to
-offer invocation-specific overrides without changing the durable defaults.
+Changing a limit does not create demand or stop running workers. Workers see
+the new limit during normal scheduler coordination. `nro run --concurrency`
+overrides the limit for one invocation without changing the saved value.

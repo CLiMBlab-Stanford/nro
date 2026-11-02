@@ -1,12 +1,14 @@
 # Standard event files
 
-The event catalog lives in `DEFINITIONS/events` in the selected
-[definitions store](definitions.md).
-It supplies reusable event TSVs to bidsification without changing an original
-source collection. These files describe stimulus timing and condition
-labels, not contrasts models or execution requests.
+The event catalog holds reusable events TSVs for bidsification. When you
+review a task BOLD run in `nro bidsify`, you can pick a catalog entry instead
+of supplying a file. The catalog lives in `DEFINITIONS/events` in the selected
+[definitions store](definitions.md). Its files describe stimulus timing and
+condition labels. They do not define contrasts models or request processing.
 
-Each task directory contains an `index.yml`. For example:
+## Catalog layout
+
+Each task directory contains an `index.yml`:
 
 ```yaml
 tasks: [langlocSN]
@@ -16,73 +18,78 @@ files:
     source_names: [langlocSN_set1_run1_events.tsv]
 ```
 
-The logical event ID is `langlocSN/set1_run1`. `tasks` lists the task names
-that should suggest this index's entries. `path` is relative to the catalog
-root and must point to a TSV directly inside the index's own task directory.
-`source_names` records names from the one-off import. Runtime lookup
-uses the index, not the original naming conventions. Add explicitly supported
-task names to `tasks`; an empty list excludes an index from automatic matching.
+This entry has the event ID `langlocSN/set1_run1`. `tasks` lists the task
+names that should suggest the index's entries. An empty list keeps the index
+out of automatic suggestions. `path` is relative to the catalog root and must
+point to a TSV directly inside the index's own task directory.
+`source_names` records the original filenames from the one-off import. Lookup
+uses only the index, not those naming conventions.
 
-## Bidsification
+## Selecting events during bidsification
 
-After the user supplies a BOLD task name, `nro bidsify` lists every matching
-catalog variant. Matching compares the complete name after removing separators
-and folding case: `langloc-SN` matches `langlocSN`, but not `langlocSNW`.
-Versions and digits remain significant. No substring or fuzzy match chooses
-a scientifically different task.
+After you give a BOLD task name, `nro bidsify` lists every catalog variant for
+that task. Matching compares the whole name after removing separators and
+ignoring case. `langloc-SN` matches `langlocSN`, but not `langlocSNW`. Versions
+and digits count, and no substring or fuzzy match can pick a scientifically
+different task.
 
-Choose a displayed `TASK/VARIANT` ID or supply a TSV path. A sole candidate is
-offered as a default, still requiring confirmation. Several candidates leave
-the choice open. The BIDS `run` entity is not assumed to identify the stimulus
-run or set. A [site scan-plan parser](commands/scanplans.md) can supply the task
-ID, but event-file selection remains a downstream bidsification step.
+Enter a displayed `TASK/VARIANT` ID or the path to a TSV. A single candidate is
+offered as the default but still needs confirmation. With several candidates,
+you must choose. nro does not assume that the BIDS `run` entity identifies the
+stimulus run or set. A [site scan-plan parser](commands/scanplans.md) can
+supply the task ID, but you still select the event file during review.
 
-The selected TSV is validated and copied into the session's immutable review
-snapshots under its review lease. The request records the catalog ID and
-snapshot SHA-256; published BOLD metadata includes them as `NROEventsSource`.
-Later catalog edits do not alter an accepted session snapshot or published
-events. Explicit event paths and the protected site's additional `event_rules` remain
-available. The catalog path follows the selected definitions root; it is not
-a conversion-profile setting.
+nro validates the chosen TSV and copies it into the session's immutable review
+snapshots. The request records the catalog ID and the snapshot's SHA-256, and
+published BOLD metadata includes both as `NROEventsSource`. Later catalog edits
+do not change an accepted snapshot or published events.
 
-## Editing and adding files
+You can still supply an explicit event path, and the protected site's
+`event_rules` can add candidates from outside the catalog. The catalog path
+always follows the selected definitions root and is not a conversion-profile
+setting.
 
-Add a TSV and its entry to the appropriate task index. An entry needs `path`
-and `source_names`; use an empty source-name list for a new file. The TSV must
-have finite `onset` and `duration` values, nonnegative durations, and at least
-one row. Other columns are preserved. Scientific timing and condition labels
-still require human review. No `create events` or `edit events` command is
-provided yet.
+## Adding and editing files
 
-Within one task, several logical IDs may point to one physical TSV when their
-imported contents were identical. Editing that TSV affects every referencing
-ID in that task. To change only one variant, create a separate TSV and update
-only that entry's path. Check the task's index before deleting a shared TSV.
-Distinct tasks keep separate TSVs even when their contents match, so editing
-one task's events does not change another's. Cross-task references are rejected.
+To add a file, put the TSV in its task directory and add an entry to that
+task's index. Each entry needs `path` and `source_names`. Use an empty
+`source_names` list for a new file. The TSV must have at least one row, finite
+`onset` and `duration` values, and no negative durations. Other columns are
+kept. A person still needs to review the timing and condition labels. There is
+no `create events` or `edit events` command yet.
 
-The `unassigned` index preserves files whose names did not identify a task.
-Its empty `tasks` list prevents automatic suggestions; its IDs can still be
-selected explicitly after review.
+Within one task, several event IDs may point to the same TSV when their
+imported contents were identical. Editing that TSV changes every ID that refers
+to it. To change only one variant, create a separate TSV and update only that
+entry's `path`. Check the index before deleting a shared TSV.
+
+Different tasks always keep separate TSVs, even when the contents match, so
+editing one task's events never changes another task's. References across
+tasks are rejected.
+
+The `unassigned` index holds files whose names did not identify a task. Its
+empty `tasks` list keeps them out of suggestions, but you can still select
+their IDs explicitly after reviewing them.
 
 ## Initial import
 
-The following counts describe this lab's one-off import, not the contents of
-a new nro installation. New definitions stores have empty event catalogs.
+New definitions stores start with an empty catalog. The counts below describe
+this lab's one-off import only.
 
-The one-off import from `/juice6/u/nlp/climblab/eventfiles` accepted 395 source
-TSVs into 343 logical IDs, stored in 289 physical TSVs across 54 task directories.
-It avoided 106 duplicate copies within tasks. Deduplication compared complete text after
-normalizing UTF-8 BOMs, line endings, and terminal newlines; it did not round
-numbers, reorder rows, or remove columns. The stored TSVs occupy about 12.1 MB.
+The import from `/juice6/u/nlp/climblab/eventfiles` accepted 395 source TSVs
+as 343 event IDs, stored in 289 TSVs across 54 task directories. It avoided 106
+duplicate copies within tasks. Duplicates were found by comparing the complete
+text after normalizing UTF-8 BOMs, line endings, and final newlines. Numbers
+were not rounded, and rows and columns were not reordered or removed. The
+stored TSVs take about 12.1 MB.
 
-Twelve naming conflicts had different contents under names that would otherwise
-produce the same ID. Both were kept with distinct IDs. These were story files
-with `_events.tsv` and plain `.tsv` variants; the suffix is not sufficient to
-establish that their contents are interchangeable.
+Twelve name collisions had different contents under names that would have
+produced the same ID. Both files were kept, with distinct IDs. These were story
+files with `_events.tsv` and plain `.tsv` variants, and the suffix alone does
+not show that their contents are interchangeable.
 
-The import excluded 18 backups and one provenance/audit table that lacks event
+The import skipped 18 backups and one provenance table that has no event
 timing columns. Another 43 TSVs could not be read because of filesystem
-permissions and have not been imported. Source bytes and permissions were not
-changed. The detailed local audit, including hashes, duplicate groups, conflicts,
-and exclusions, is saved as `plans/evidence/EVENT_FILES_IMPORT.json`.
+permissions and were not imported. Source files and their permissions were not
+changed. The detailed audit, with hashes, duplicate groups, conflicts, and
+exclusions, is saved as `plans/evidence/EVENT_FILES_IMPORT.json`.

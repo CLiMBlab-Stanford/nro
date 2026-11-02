@@ -1,82 +1,102 @@
 # Cleaning
 
-`clean` processes each run independently in one space at one smoothing FWHM.
-Its direct inputs are functional derivatives and the anatomy needed for masks
-or surface smoothing. It retains the full frame count and records which frames
+`clean` removes nuisance signal from one functional run in one space at one
+smoothing FWHM, and band-pass filters the result. Read this page to see what
+the cleaning model does, how censored frames are handled, and what the quality
+metadata in each sidecar means.
+
+Each run is processed independently. The inputs are the run's `func`
+derivatives and confounds, plus the anatomy needed for masks or surface
+smoothing. The output keeps every original frame and records which frames
 downstream analyses must exclude.
 
-## Processing sequence and conditions
+## Processing
 
-1. Resolve matching functional derivatives and confounds for the run. The
-   default regex selects the 36 expanded motion and tissue/global-signal
-   regressors; it does not select outlier one-hot columns. A separate
-   `temporal_mask_regex` selects the union of excluded frames.
-2. Spatial smoothing precedes temporal projection when FWHM is positive.
-   Workbench performs surface or volume smoothing in the selected geometry.
-   Volumetric gray-matter masking uses the configured threshold. Zero FWHM
-   omits smoothing.
-3. Build the real Fourier basis inside `high_pass`–`low_pass` Hz. Fit it using
-   retained frames. Construct task terms when `regress_out_task` is true and
-   events exist; detrending contributes exact model terms when enabled.
-4. Project exact and nuisance regressors into passband coordinates. Remove
-   exact task/detrending directions, standardize the remaining nuisance design,
-   and perform PCA. Retain the variance target subject to both absolute and
-   fractional residual-rank protections. If the pre-nuisance rank is already
-   below the absolute floor, skip nuisance regression rather than spend the
-   remaining dimensions.
-5. Fit the remaining clean-passband basis to retained BOLD frames and evaluate
-   it at every original frame. This is one physical data pass with a combined
-   projection, not three successive full-volume regressions. If the retained
-   passband/exact model is unidentifiable, write zero-valued data and mark
-   `CleaningDefined: false` with a reason.
-6. With `standardize`, estimate location/scale from retained frames and apply
-   it to the full result. Stream data-quality summaries and write sidecars and
-   the completion manifest.
+1. **Select confounds and the temporal mask.** nro resolves the run's
+   functional derivatives and confounds. `confounds_regex` selects continuous
+   nuisance candidates. `temporal_mask_regex` selects one-hot outlier columns,
+   and the union of their marked frames is excluded from fitting.
+2. **Smooth.** When FWHM is positive, Workbench smooths in the selected
+   surface or volume geometry before any temporal modeling. Volumetric
+   gray-matter masking uses `gm_mask_threshold`. Zero FWHM skips smoothing.
+3. **Build the temporal model.** nro builds a real Fourier basis for the band
+   between `high_pass` and `low_pass` Hz and fits it on retained frames. Task
+   terms are added when `regress_out_task` is true and events exist. With
+   `detrend`, detrending adds exact model terms.
+4. **Reduce the nuisance design.** Exact and nuisance regressors are projected
+   into passband coordinates. nro removes the exact task and detrending
+   directions, standardizes the remaining nuisance design, and runs PCA. It
+   keeps components up to the `nuisance_variance_explained` target while
+   protecting both an absolute and a fractional amount of residual rank. If
+   the rank before nuisance removal is already below the absolute floor, nro
+   skips nuisance regression instead of spending the remaining dimensions.
+5. **Fit and reconstruct.** The remaining clean-passband basis is fitted to
+   retained BOLD frames and evaluated at every original frame. This takes one
+   pass over the data with a combined projection. If the passband and exact
+   model are unidentifiable on the retained frames, nro writes zero-valued
+   data and sets `CleaningDefined: false` with a reason.
+6. **Standardize and publish.** With `standardize`, location and scale are
+   estimated from retained frames and applied to the whole result. nro then
+   streams data-quality summaries and writes sidecars and the completion
+   manifest.
 
-The full reconstruction at excluded frames is a model prediction, not a
-recovered observation. Connectivity drops those frames. Other downstream
-analyses must honor the mask too. Undefined zero outputs are sentinels, not
-valid signals. The [denoising methods page](../methods/denoising.md) explains
-the rank protections and the outlier rationale.
-The [estimation equations](../methods/estimation.md) give the retained-frame
-projection and distinguish undefined models from input-validation errors.
+Values at excluded frames are model predictions, not recovered observations.
+Connectivity modules drop those frames, and any other downstream analysis must
+honor the mask too. Zero-valued outputs from an undefined model are sentinels
+and must not be read as signal.
 
-## Public artifacts and quality metadata
+The [denoising methods page](../methods/denoising.md) explains the rank
+protections and why outliers are censored. The
+[estimation equations](../methods/estimation.md) give the retained-frame
+projection and separate undefined models from input-validation errors.
 
-Outputs are under
-`derivatives/nro/clean/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/[ses-ID/]/` and retain
-run, space, hemisphere where applicable, and `smoothing-Nmm` in their filenames.
-The output set includes NIfTI or paired GIFTI cleaned time courses, JSON
-sidecars, and a run/space/smoothing-specific manifest. Different combinations
-share the configuration-lineage directory but not file identities.
+## Outputs and quality metadata
 
-Sidecars report the temporal mask, retained-frame statistics, passband and
-exact-design ranks, nuisance selection, final algebraic rank, participation
-effective rank, dominant temporal variance fraction, and whether cleaning was
-defined. Quality estimates also identify the spatial sample used. These fields
-support downstream admission decisions without reloading all data. Exact names
-and types are defined in the [clean contract](../autoapi/nro/modules/clean/contract/index.rst).
+Outputs go under
+`derivatives/nro/clean/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/[ses-ID/]` and keep
+run, space, hemisphere where applicable, and `smoothing-Nmm` in their
+filenames. Each run, space, and smoothing combination has cleaned NIfTI or
+paired GIFTI time courses, JSON sidecars, and its own manifest. Combinations
+share the configuration-lineage directory but have distinct files.
+
+Sidecars report:
+
+* the temporal mask and retained-frame statistics;
+* passband and exact-design ranks;
+* the nuisance selection and the final algebraic rank;
+* participation effective rank and dominant temporal variance fraction;
+* whether cleaning was defined;
+* the spatial sample used for the quality estimates.
+
+Downstream modules use these fields to admit or reject runs without reloading
+the data. The [clean contract](../autoapi/nro/modules/clean/contract/index.rst)
+defines the exact names and types.
 
 ## Configuration
 
 `markup` selects the source-markup document described in
-[definitions stores](../definitions.md#source-markup); `null` ignores markup.
-`confounds_regex` controls continuous nuisance selection; `temporal_mask_regex`
-controls censoring. `nuisance_variance_explained` is a fraction, not a percentage.
-The default nuisance candidates are global signal, FD, six base motion
-parameters, five aCompCor components, cosine drifts, and outlier columns. The
-outlier columns also define the temporal mask, so they are zero throughout the
-retained fitting rows and are discarded before nuisance PCA.
-`minimum_temporal_rank` and `minimum_temporal_rank_fraction` constrain nuisance
-PCA; they are not connectivity admission thresholds. `min_trs` rejects inputs
-with too few original frames before graph construction. `gm_mask_threshold`
-selects gray-matter support. `regress_out_task`, `detrend`, `standardize`, and
-passband bounds alter the model. Smoothing is a work-item selector, not a clean
-configuration key.
+[definitions stores](../definitions.md#source-markup). `null` ignores markup.
 
-Container settings select Workbench and other external execution resources;
-`overwrite` and `verbose` control execution and reporting. `wb_command` is the tool
-command used inside the configured execution environment.
+**Nuisance selection.** `confounds_regex` selects continuous nuisance
+candidates, and `temporal_mask_regex` selects the censoring columns. The
+default candidates are global signal, FD, the six base motion parameters, the
+first five aCompCor components, cosine drifts, and outlier columns. The outlier
+columns also define the temporal mask, so they are zero on every retained row
+and are dropped before nuisance PCA. `nuisance_variance_explained` is a
+fraction, not a percentage.
+
+**Rank and input limits.** `minimum_temporal_rank` and
+`minimum_temporal_rank_fraction` constrain nuisance PCA. They are not
+connectivity admission thresholds. `min_trs` rejects runs with too few original
+frames before graph construction.
+
+**Model.** `gm_mask_threshold` sets gray-matter support. `regress_out_task`,
+`detrend`, `standardize`, `high_pass`, and `low_pass` change the model.
+Smoothing is selected per work item and is not a `clean` configuration key.
+
+**Execution.** Container settings select Workbench and other external
+execution resources. `wb_command` is the Workbench command inside that
+environment. `overwrite` and `verbose` control re-execution and logging.
 
 ```{literalinclude} ../../nro/definitions/starters/configs/clean/main_clean.yml
 :language: yaml

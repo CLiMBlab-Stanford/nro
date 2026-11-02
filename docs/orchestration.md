@@ -1,165 +1,159 @@
 # Running derivative workflows
 
-The orchestration layer turns user selections into scientific work, reuses
-compatible artifacts, and runs ready work items through one shared worker pool.
-It supports `anat`, `func`, `clean`, `dynconn`, `microparcellation`, `networks`,
-and `contrasts`.
+This page is for users who request processing with `nro run` and want to know
+what nro does with that request. It covers how selectors become work, how nro
+decides what to rerun, and how work reaches CPU and GPU workers. It applies to
+the `anat`, `func`, `clean`, `dynconn`, `microparcellation`, `networks`, and
+`contrasts` modules. [Orchestration design](orchestration-design.md) documents
+the internals for developers.
 
-The configured private control root keeps scheduler state and branch scientific
-records in this layout:
+## Requesting work
 
-```text
-CONTROL/
-  shared/scheduler/registry.sqlite3
-  shared/scheduler/service/{progress,status.json,status-static-*,status-dynamic-*}
-  branches/<branch-id>/registry.sqlite3
-```
-
-The scheduler database is the sole authority for requests, attempts, workers,
-Slurm submissions, and the concurrency limit. An ephemeral Slurm controller is
-its only long-lived client. Commands and workers use direct TCP requests while
-the controller is active. Retryable requests remain in SQLite until their result
-commits. Cached status reads an atomic JSON snapshot.
-A branch
-database records that branch's compiled scientific contracts, workflow
-lineages, and artifact observations. All projects and branches therefore share
-worker capacity without requiring the scheduler to import development code. The
-`status.json` manifest combines a reusable static graph with a small dynamic-state
-component, so routine execution changes do not rewrite the complete cached report.
-
-The scheduler retains current state rather than an unbounded request and allocation
-history. It preserves active demand, existing derivative provenance, unresolved
-diagnostics, and their dependency closures. Terminal publication handles contain only
-terminal identities, while inherited-input reconciliation plans use compressed storage.
-Periodic transactional compaction removes superseded attempts and terminal worker or
-Slurm records. It keeps started attempts on a work item's current revision so that
-`ELAPSED` in `nro status` includes interrupted and retried attempts; incremental vacuuming reclaims the resulting free pages gradually.
-
-`nro run` starts or joins the scheduler. The scheduler records planning requests
-in FIFO order and processes one at a time using the requesting branch's pinned
-source in an isolated subprocess. The child does not open the scheduler registry.
-Worker coordination continues on separate scheduler threads while planning runs.
-The scheduler remains available for a 12-hour idle grace period.
-
-The worker pool has general, long-CPU, and GPU resource classes. General and
-long-CPU workers claim complete work items and share the global CPU concurrency
-limit. The long-CPU profile is reserved for explicitly calibrated MSMAll anatomy
-and starts with 48 hours, eight CPUs, and at least 64 GB of memory. A runner may
-yield at a step marked for GPU
-execution; the scheduler then records a durable step task, releases the general
-worker, and starts a GPU worker only when that task is ready. The GPU worker
-reconstructs the same fixed module graph, verifies the same inputs and contract,
-and executes only the named step. The parent work item then returns to the front
-of the general queue and resumes from its fresh step outputs.
-
-GPU workers never claim complete work items and exit as soon as no GPU step is
-ready. CPU and GPU pools have independent concurrency limits. `concurrency`
-limits general derivative and ingestion work; `gpu_concurrency` defaults to one
-and limits GPU step tasks. Resource classes, device identifiers, and handoffs
-are execution policy. They do not change scientific contracts or freshness.
-
-## Requests
-
-The common selector interface narrows projects, participants, modules,
-workflows, runs, spaces, smoothing levels, tasks, and models. Omitted selectors
-mean all applicable values. A new `nro run` request is the workflow exception:
-an omitted workflow selects `main` so that a bare request does not run every
-defined workflow. For example:
+A request names the work you want with selectors. Selectors narrow projects,
+participants, modules, workflows, runs, spaces, smoothing levels, tasks, and
+models. An omitted selector means all applicable values, with one exception:
+when a new `nro run` request omits the workflow, nro selects `main`. A bare
+request therefore does not run every defined workflow.
 
 ```bash
 nro run -p t20 -P nptl -m networks -w main -s fsnative -S 2
 ```
 
-The planner compiles the requested terminal work items and their dependency
-closure. Selecting an endpoint together with an upstream dependency does not
-duplicate demand. A bare invocation derives the endpoints from each selected
-workflow. In `main`, these are `dynconn`, `networks`, and `contrasts`;
-contrasts uses model set `main` unless the request selects another model or
-set. A networks configuration can select dynconn or microparcellation as its
-source without making graph construction runtime-dependent.
+nro compiles the requested terminal work items and everything they depend on.
+Selecting an endpoint together with one of its upstream modules does not
+create duplicate demand. A request that names no module takes its endpoints
+from each selected workflow. In `main`, the endpoints are `dynconn`,
+`networks`, and `contrasts`. Contrasts uses model set `main` unless the request
+selects another model or model set. The networks configuration chooses
+`dynconn` or `microparcellation` as its source, and that choice is fixed before
+planning.
 
-From `clean` onward, space and smoothing are independent work item entities.
-Multiple values request their cross-product. The planner does not register
-unused combinations in advance. Exact run selectors use
-`--run ENTITY=VALUE[,VALUE...]`; alternatives for one entity are OR choices,
-while different entities are combined with AND.
+From `clean` onward, space and smoothing are separate work-item entities.
+Giving several values requests every combination. nro does not register
+combinations that no request uses.
 
-Commands that operate on registered state do not repeat this expansion.
-`run --resume` treats every omitted selector, including workflow, as all
-matching registered work. It and `status --update` preserve each work item's
-recorded workflow and entity values. Registry repair works backward from
-derivatives that exist. These operations never combine selector values
-collected from different rows.
+Exact run selectors take the form `--run ENTITY=VALUE[,VALUE...]`. Values for
+one entity are alternatives, and different entities must all match. For
+example, `--run task=Rest,Movie run=01` selects run 01 of either task.
 
-See [work commands](commands/work.md) for every selector, execution resource,
+Commands that act on work already in the registry do not expand selectors this
+way. `run --resume` treats every omitted selector as all matching registered
+work, including the workflow. Both `run --resume` and `status --update` keep
+each work item's recorded workflow and entity values. Registry repair starts
+from derivatives that already exist. None of these operations combine selector
+values taken from different registry rows.
+
+[Work commands](commands/work.md) lists every selector, execution resource,
 status mode, cancellation rule, and repair boundary.
 
-## Planning and execution
+## What happens after you submit
 
-The scheduler's isolated planner child returns complete work item specifications before
-the scheduler submits work.
-Workers request ready work items from the controller and run each one in a
-separate subprocess. A module constructs its complete runner graph before
-freshness is checked. The shared runner then executes or skips each declared
-step and writes the completion record.
+`nro run` starts the scheduler if it is not already running, or joins the one
+that is. The scheduler queues planning requests and handles them one at a time
+in the order they arrive. Each request is planned from the requesting branch's
+pinned source in a separate subprocess, which does not open the scheduler
+registry. Separate scheduler threads keep coordinating workers while planning
+runs. After the last activity, the scheduler stays available for 12 hours
+before it exits.
 
-Participant plans are cached by their scientific inputs. The cache key covers
-the compiled workflow and module lineages, relevant first-level models and markup,
-protected site definitions, execution source, and the participant's source-BIDS
-inventory and metadata. Repeating an equivalent request can therefore recover
-the already compiled dependency graph instead of rebuilding every module plan.
+The planner returns complete work-item specifications before any work is
+submitted. Workers then ask the scheduler for ready work items and run each one
+in its own subprocess. Inside a work item, the module builds its complete
+runner graph before checking freshness. The shared runner executes or skips
+each declared step and writes the completion record.
+
+### Reuse of earlier plans
+
+Planning a participant can take time, so nro caches each participant's plan.
+The cache key covers the compiled workflow and module lineages, the relevant
+first-level models and markup, protected site definitions, the execution
+source, and the participant's source-BIDS inventory and metadata. Repeating an
+equivalent request recovers the compiled dependency graph instead of
+rebuilding every module plan. Later requests also see cache entries and
+scientific revisions written by earlier ones, so they compile only scopes that
+changed or are new.
+
 Adding, removing, or changing relevant source metadata invalidates the entry.
-For imaging files, planning fingerprints the header and inventory; workers and
-authoritative assessment still verify artifact inputs by content. The planning
-cache is an optimization and never establishes artifact freshness.
-Later planning requests observe cache entries and scientific revisions written
-by earlier requests, so they compile only changed or previously unseen scopes.
+For imaging files, planning fingerprints the header and the inventory, while
+workers and authoritative assessment still check artifact inputs by content.
+The cache only speeds up planning. It never decides whether an artifact is
+fresh.
 
-Admission reassesses only fresh artifacts whose scientific contracts could
-satisfy the submitted graph, together with their dependency closure. Missing,
-stale, and unrelated historical records cannot be reused and are not traversed.
-Periodic scheduler maintenance applies the same check only to active attempts,
-pending resource-specific steps, and their upstream closure. Queued demand does
-not hold worker claims behind a scan of unrelated history. An exhaustive
-filesystem reconciliation remains an explicit `nro status --update` operation.
+### Reuse of earlier results
 
-Every step uses the same freshness and publication rules. A GPU handoff does
-not strengthen or weaken upstream validation: claims capture the current
-upstream generations, and completion is rejected if the work-item contract,
-generation, or captured dependencies changed during either CPU or GPU
-execution.
+When the scheduler admits a request, it reassesses only fresh artifacts whose
+scientific contracts could satisfy the submitted graph, along with their
+dependency closure. Missing, stale, and unrelated historical records cannot be
+reused, so nro does not examine them.
 
-Development requests send their compiled graph and execution recipe to the
-installed central scheduler. The scheduler resolves compatible ancestor
-artifacts and branch-owned output paths. The attempt runs from captured source
-and site settings chosen at submission; a worker can therefore serve different
-branches in succession without retaining a branch's imports. See
-[development](development.md#requests-and-execution) for inheritance and
-cross-branch invalidation.
+Periodic maintenance applies the same check, limited to active attempts,
+pending resource-specific steps, and their upstream closure. Queued work never
+waits on a scan of unrelated history. A full filesystem reconciliation happens
+only when you run `nro status --update`.
+
+## Workers and resources
+
+The worker pool has three resource classes: general, long-CPU, and GPU.
+
+General and long-CPU workers claim complete work items and share the global CPU
+concurrency limit. The long-CPU class is reserved for calibrated MSMAll
+anatomy. Its workers start with 48 hours, eight CPUs, and at least 64 GB of
+memory.
+
+GPU workers run single steps. When a runner reaches a step marked for GPU
+execution, it yields. The scheduler records a durable step task, releases the
+general worker, and starts a GPU worker once that task is ready. The GPU worker
+rebuilds the same fixed module graph, verifies the same inputs and contract,
+and runs only the named step. The parent work item then returns to the front of
+the general queue and resumes from the fresh step outputs. GPU workers never
+claim complete work items, and they exit as soon as no GPU step is ready.
+
+CPU and GPU pools have separate limits. The site setting `concurrency` limits
+general derivative and ingestion work. `gpu_concurrency` limits GPU step tasks
+and defaults to one. Resource classes, device identifiers, and handoffs affect
+only how work runs. They do not change scientific contracts or freshness.
+
+A GPU handoff leaves upstream validation unchanged. Every step follows the same
+freshness and publication rules. A claim records the current upstream
+generations. nro rejects completion if the work-item contract, its generation,
+or those captured dependencies changed while the work ran on either the CPU or
+the GPU.
 
 ## Configuration and freshness
 
 Workflows select one configuration ID per configuration class from the external
 [definitions store](definitions.md). Resolution produces a complete scientific
-configuration and a separate execution snapshot. Equivalent compiled
-definitions share work even when their source YAML differs in formatting.
+configuration and a separate execution snapshot. Compiled definitions that are
+equivalent share work even when their YAML is formatted differently.
+[Workflows and configuration](configuration.md) explains which settings are
+scientific.
 
-Work item contracts record substantive configuration, direct inputs, dependency
-topology and generations, processing policy, and required outputs. Command
-formatting, scheduler resources, Git identity, and source-capture paths are not
-freshness inputs. The filesystem remains authoritative for whether outputs
-exist and satisfy their contracts.
+A work-item contract records the substantive configuration, direct inputs,
+dependency topology and generations, processing policy, and required outputs.
+Command formatting, scheduler resources, Git identity, and source-capture paths
+do not affect freshness. The filesystem remains the authority on whether
+outputs exist and satisfy their contracts.
 
 By default, `nro status` reports saved state without checking files.
 `nro status --update` performs the authoritative assessment and updates the
-registry; it may cancel an active attempt whose contract is obsolete. See
-[work item planning and
-execution](work-item-lifecycle.md) for the complete state model.
+registry. It may cancel an active attempt whose contract is obsolete.
+[Work-item planning and execution](work-item-lifecycle.md) describes the full
+state model.
+
+## Requests from development branches
+
+A development checkout sends its compiled graph and execution recipe to the
+installed central scheduler. The scheduler finds compatible artifacts from
+ancestor branches and assigns output paths that the branch owns. Each attempt
+runs from the source and site settings captured at submission, so one worker
+can serve different branches in turn without keeping any branch's imports. See
+[development](development.md#requests-and-execution) for inheritance and
+cross-branch invalidation.
 
 ## Direct module execution
 
-The installed `nro` interface is the normal entry point. Direct scientific
-entry points remain available for diagnosis:
+The installed `nro` command is the normal entry point. For diagnosis, each
+module can also be run directly:
 
 ```bash
 python -m nro.modules.anat -p t20 -P nptl -w main
@@ -178,5 +172,46 @@ python -m nro.modules.contrasts -p t20 -P nptl -w main \
 ```
 
 These commands use the same configuration compiler, execution context, runner,
-and artifact contracts as scheduled work. They do not define alternate
-scientific or freshness behavior.
+and artifact contracts as scheduled work. Scientific results and freshness
+rules are the same either way.
+
+## Scheduler internals
+
+Most users can skip this section. It describes where the scheduler keeps its
+state, which matters when you inspect the control root or diagnose the
+scheduler itself.
+
+The configured private control root has this layout:
+
+```text
+CONTROL/
+  shared/scheduler/registry.sqlite3
+  shared/scheduler/service/{progress,status.json,status-static-*,status-dynamic-*}
+  branches/<branch-id>/registry.sqlite3
+```
+
+The scheduler database is the only authority for requests, attempts, workers,
+Slurm submissions, and the concurrency limit. Its only long-lived client is a
+Slurm controller job that runs while the scheduler is active. Commands and
+workers send it direct TCP requests. A request that can be retried stays in
+SQLite until its result commits.
+
+Each branch database records that branch's compiled scientific contracts,
+workflow lineages, and artifact observations. All projects and branches share
+worker capacity this way, and the scheduler never imports development code.
+
+Cached status reads an atomic JSON snapshot. The `status.json` manifest
+combines a reusable static graph with a small dynamic-state component, so
+routine execution changes do not rewrite the whole cached report.
+
+The scheduler keeps current state, not an unbounded history of requests and
+allocations. It preserves active demand, the provenance of existing
+derivatives, unresolved diagnostics, and the dependency closures of all three.
+Records for finished publications store only terminal identities, and plans for
+reconciling inherited inputs are stored compressed.
+
+Periodic compaction runs in transactions. It removes superseded attempts and
+finished worker and Slurm records. It keeps every started attempt on a work
+item's current revision, so `ELAPSED` in `nro status` includes interrupted and
+retried attempts. Incremental vacuuming then reclaims the freed pages
+gradually.

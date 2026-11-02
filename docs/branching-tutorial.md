@@ -1,20 +1,25 @@
 # Develop on a branch
 
-nro uses Git branches to isolate development code and outputs. Each registered
-branch has one scientific registry shared by all of its checkouts. Development
-branches inherit compatible artifacts from their registered ancestors and write
+This tutorial walks a developer through the life of an nro branch: creating and
+registering it, testing on it, merging it into its parent, and releasing `dev`
+into `main`.
+
+nro isolates development code and outputs by Git branch. Each registered branch
+has one scientific registry that all of its checkouts share. A development
+branch inherits compatible artifacts from its registered ancestors and writes
 new artifacts beneath the site's development directory.
 
-This tutorial assumes that a tagged `main` release is installed as the shared
-scheduler. It uses `dev` as the integration branch and `feature/example` as a
-feature branch. Replace paths, names, versions, and pull-request references with
-the values for your work.
+The steps assume that a tagged `main` release is installed as the shared
+scheduler. They use `dev` as the integration branch and `feature/example` as a
+feature branch. Replace the paths, names, versions, and pull-request references
+with your own.
 
 ## Create and register a branch
 
-Use a separate checkout for each branch. An installed checkout is bound to its
-current branch, and changing that branch makes nro reject the installation. A
-Git worktree avoids another full clone:
+Use a separate checkout for each branch. An installed checkout is bound to the
+branch it had at installation, and nro rejects the installation if you switch
+that checkout to another branch. A Git worktree gives you a separate checkout
+without another full clone:
 
 ```bash
 cd /path/to/nro-dev
@@ -26,33 +31,36 @@ cd /path/to/nro-feature-example
 nro branch show
 ```
 
-`git worktree add` creates and checks out the Git branch. `./install` creates its
-editable environment, connects it to the shared site, and registers the branch
-with parent `dev`. If the branch is already registered, the installer attaches
-the new checkout to its existing scientific registry. `--dev` installs test and
-lint dependencies; it does not select the Git branch named `dev`.
+`git worktree add` creates the Git branch and checks it out. `./install` then
+creates the checkout's editable environment, connects it to the shared site,
+and registers the branch with parent `dev`. If the branch is already
+registered, the installer attaches the new checkout to the existing scientific
+registry instead. The `--dev` option installs test and lint dependencies. It
+does not refer to the Git branch named `dev`.
 
-To register explicitly, invoke `nro branch register` through an already working
-nro installation:
+Most users need only the installer. You can also register a branch explicitly
+by running `nro branch register` through an nro installation that already
+works:
 
 ```bash
 cd /tmp
 nro branch register --checkout /path/to/nro-feature-example --parent dev
 ```
 
-Most users need only the installer. Explicit registration is useful when an
-environment is already prepared or when a non-default parent must be recorded
-before setup. A later installer recognizes the registration and attaches the
-checkout. Use `nro branch attach --checkout PATH` when adding another checkout
-for a branch that is already registered.
+Explicit registration helps when an environment is already prepared or when you
+need to record a parent other than `dev` before setup. A later installer run
+recognizes the registration and attaches the checkout. To add another checkout
+for a branch that is already registered, use `nro branch attach --checkout PATH`.
 
-Branch names are globally reserved in the shared nro installation. Retiring a
-branch does not release its name. Choose a unique, descriptive Git branch name.
+Branch names are reserved across the whole shared nro installation, and retiring
+a branch does not release its name. Choose a unique, descriptive Git branch
+name.
 
 ### Base a branch on another development branch
 
-The Git base and the nro parent should describe the same relationship. Register
-the desired parent explicitly before installing:
+The Git base and the nro parent should describe the same relationship. To base
+a branch on another development branch, register the parent explicitly before
+installing:
 
 ```bash
 cd /path/to/nro-parent
@@ -73,13 +81,13 @@ the relationship before requesting work:
 nro branch reparent feature/child --parent feature/parent
 ```
 
-Run `reparent` from an attached checkout of the branch being changed. It updates
-artifact inheritance and reconciles affected requests. It does not change Git
-history, move outputs, or merge code.
+Run `reparent` from an attached checkout of the branch you are changing. It
+updates artifact inheritance and reconciles affected requests. It does not
+change Git history, move outputs, or merge code.
 
 ## Develop and test
 
-Normal commands select the branch from the current working directory:
+Ordinary nro commands select the branch from the current working directory:
 
 ```bash
 nro doctor
@@ -87,14 +95,14 @@ nro status -P nptl -p t20
 nro run -P nptl -p t20 -m networks
 ```
 
-The central scheduler applies the lab-wide concurrency limit. The feature branch
-uses its captured code and environment, reads compatible ancestor artifacts, and
-writes new outputs to its branch directory. Use `nro branch show` to confirm the
-selected branch, parent, registry, and definitions store.
+The feature branch runs its captured code and environment, reads compatible
+ancestor artifacts, and writes new outputs to its branch directory. The central
+scheduler still applies the lab-wide concurrency limit. Run `nro branch show` to
+confirm the selected branch, parent, registry, and definitions store.
 
 By default, a development branch reads the shared definitions store without
-write access. Select a branch-specific definitions checkout when the feature
-changes configs, workflows, models, or events:
+write access. If your feature changes configs, workflows, models, or events,
+select a branch-specific definitions checkout:
 
 ```bash
 nro branch definitions --definitions /path/to/feature-definitions
@@ -107,10 +115,10 @@ ownership and validation rules.
 ## Merge one development branch into another
 
 The destination should be an ancestor of the source in both Git and nro. If the
-merge destination changed during development, reparent the source branch and
-repeat its relevant tests before opening the pull request.
+destination changed during development, reparent the source branch and repeat
+its relevant tests before you open the pull request.
 
-Commit and publish the source branch through the normal Git workflow:
+Commit and push the source branch through the normal Git workflow:
 
 ```bash
 cd /path/to/nro-feature-example
@@ -134,10 +142,10 @@ git fetch origin
 git merge --ff-only origin/dev
 ```
 
-The Git merge makes the code available to the parent. It does not copy existing
+The Git merge makes the code available to the parent but does not copy any
 development artifacts. If the source branch produced expensive artifacts that
-remain scientifically equivalent under the merged code, preview and promote
-the selected artifacts from the accepting checkout:
+are still scientifically equivalent under the merged code, preview and then
+promote them from the accepting checkout:
 
 ```bash
 nro promote --from feature/example --pr CLiMBlab-Stanford/nro#123 \
@@ -148,11 +156,11 @@ nro promote --from feature/example --pr CLiMBlab-Stanford/nro#123 \
 
 Promotion is optional. Without it, the parent reuses its existing fresh outputs
 and computes missing or stale work on demand. `nro promote` verifies current
-contracts and copies eligible artifacts; it does not merge Git branches or
+contracts and copies eligible artifacts. It does not merge Git branches or
 delete source files.
 
-Before retiring the merged branch, reparent any active child branches from each
-child's attached checkout:
+Before you retire the merged branch, reparent any active child branches. Run
+this from each child's attached checkout:
 
 ```bash
 cd /path/to/nro-child
@@ -166,24 +174,31 @@ cd /path/to/nro-feature-example
 nro branch retire feature/example
 ```
 
-Retirement cancels that branch's demand and prevents future checkouts. It keeps
-its registry and outputs. Purge unwanted branch-owned artifacts before retiring
-if they should not be retained. Git worktree and remote-branch cleanup are
-separate operations and should happen only after the working tree is clean and
-the merge is confirmed.
+Retirement cancels the branch's demand and prevents future checkouts. It keeps
+the branch's registry and outputs, so purge any branch-owned artifacts you do
+not want to keep before retiring. Removing the Git worktree and remote branch
+are separate steps. Do them only after the working tree is clean and the merge
+is confirmed.
 
 ## Merge `dev` into `main`
 
 `main` contains releases only. Every pull request into `main` must advance the
-semantic version in `pyproject.toml` by at least one patch. Complete the release
-notes and version change on `dev`, run focused checks for the change, then push `dev`.
-GitHub runs the complete release suite before the pull request can merge:
+semantic version in `pyproject.toml` by at least one patch.
+
+Prepare the release on `dev`. Update its checkout:
 
 ```bash
 cd /path/to/nro-dev
 git fetch origin
 git pull --ff-only origin dev
-# Edit pyproject.toml and the applicable release documentation.
+```
+
+Edit the version in `pyproject.toml` and the applicable release documentation,
+and run focused checks for the change. Then commit, push `dev`, and open the
+pull request. GitHub runs the complete release suite before the pull request can
+merge:
+
+```bash
 git add pyproject.toml PATHS_TO_RELEASE_NOTES
 git commit
 git push origin dev
@@ -203,9 +218,12 @@ git tag -a vMAJOR.MINOR.PATCH -m "nro MAJOR.MINOR.PATCH"
 git push origin vMAJOR.MINOR.PATCH
 ```
 
-Replace `MAJOR.MINOR.PATCH` with the version in `pyproject.toml`. Pushing a valid
-version tag starts the GitHub Release workflow. Confirm that the
-workflow created the corresponding GitHub Release. Do not move a published tag.
+Replace `MAJOR.MINOR.PATCH` with the version in `pyproject.toml`. Pushing a
+valid version tag starts the GitHub Release workflow. Confirm that the workflow
+created the corresponding GitHub Release, then edit the release so that it
+begins with a concise, human-written summary of the important changes, as the
+[contribution policy](https://github.com/CLiMBlab-Stanford/nro/blob/dev/CONTRIBUTING.md#releases-and-compatibility)
+requires. Do not move a published tag.
 
 Install and activate the new release from the shared `main` checkout:
 
@@ -217,11 +235,11 @@ nro doctor
 
 The installer checks that `main` is clean, tagged, and present on `origin/main`.
 It records the release and activates that checkout for future scheduler work. If
-work is active, it offers to finish current attempts or stop them immediately
-while preserving demand. No separate branch-registration or release-approval
-command is needed.
+work is active, it offers to let current attempts finish or to stop them
+immediately, and either way it keeps their demand. No separate
+branch-registration or release-approval command is needed.
 
-After activation, equivalent `dev` artifacts may be promoted with the accepted
+After activation, you may promote equivalent `dev` artifacts using the accepted
 pull-request reference:
 
 ```bash
@@ -230,7 +248,7 @@ nro promote --from dev --pr CLiMBlab-Stanford/nro#124 --attest-merged \
 ```
 
 Finally, fast-forward the dedicated `dev` checkout to the release commit and
-push it so new feature work starts from the current spine:
+push it, so that new feature work starts from the current release:
 
 ```bash
 cd /path/to/nro-dev
@@ -239,12 +257,12 @@ git merge --ff-only origin/main
 git push origin dev
 ```
 
-Do not retire `dev`; it remains the integration branch beneath `main` in nro's
-fixed branch topology.
+Do not retire `dev`. It is the permanent integration branch beneath `main` in
+nro's fixed branch topology.
 
 ## Command responsibilities
 
-Git and nro track different state:
+Git and nro track different state. This table shows which tool changes what:
 
 | Operation | Command | Effect |
 | --- | --- | --- |

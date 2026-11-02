@@ -1,13 +1,39 @@
 # Command-line reference
 
-Run `nro help` for task guides and an inventory of installed commands. Use
-`nro help TOPIC` for common workflows, `nro help --command COMMAND` for the
-current command syntax, or `nro COMMAND --help` directly. `nro --version`
-reports the selected installation's package version.
+These pages describe every `nro` command, its options, and its defaults. Use
+them when you know what you want to do and need the exact syntax or the
+behavior behind it.
 
-Commands are discovered from public executable modules in `nro/bin`;
-`python -m nro.bin.COMMAND` is equivalent when using the correct interpreter.
-The engine's Python modules are not automatically exposed as commands.
+## Getting help
+
+`nro help` prints task guides and a list of the installed commands. `nro help
+TOPIC` explains a common workflow. For the syntax of one command, run `nro help
+--command COMMAND` or `nro COMMAND --help`. Every command accepts `-h` and
+`--help`. `nro --version` prints the package version of the selected
+installation.
+
+Each public executable module in `nro/bin` becomes a command. With the correct
+interpreter, `python -m nro.bin.COMMAND` is equivalent to `nro COMMAND`. Other
+Python modules in the engine are not exposed as commands.
+
+All commands exit nonzero on a parse failure or an operational error. Progress
+and error messages can go to stderr even when a command offers `--json`. Every
+command uses the BIDS root from the global site configuration.
+
+## Where each command is documented
+
+| Page | Commands |
+| --- | --- |
+| [Request, inspect, and stop work](work.md) | `start`, `run`, `status`, `log`, `stop`, and the execution settings in `site` |
+| [Installation, cleanup, and publication](maintenance.md) | `./install`, `setup`, `site`, `doctor`, `purge`, `gc`, `freshen`, `project rename`, `migrate`, `publish` |
+| [Viewing and quality control](viewing.md) | `scene`, `wb_view`, `viz`, `render`, `qc registration` |
+| [First-level model registration](models.md) | `models` |
+| [Manage definitions](authoring.md) | `def edit`, `def init`, and other `def` subcommands |
+| [Bidsify](bidsify.md) | `bidsify` |
+| [Configure scan plans](scanplans.md) | scan-plan parsers used by `bidsify` |
+| [Branch registration](branches.md) | `branch` |
+| [Installed releases](releases.md) | `release` and shared-scheduler repair |
+| [Accepting development artifacts](promotion.md) | `promote` |
 
 ```{toctree}
 :maxdepth: 1
@@ -24,23 +50,24 @@ releases
 promotion
 ```
 
-`nro def init [PATH]` initializes a site-owned definitions store.
-`nro def validate [PATH]` checks every definition and reference without
-changing files. `nro def apply` publishes local files through a
-full-store transaction, and `nro def migrate` applies the current store
-schema in place. See [definitions stores](../definitions.md) for their layout,
-validation scope, and version-control policy.
+`nro def` also manages the site-owned definitions store itself. `nro def init [PATH]` creates
+one. `nro def validate [PATH]` checks every definition and reference without
+changing files. `nro def apply` publishes local files through a transaction
+that covers the full store, and `nro def migrate` updates the store to the
+current schema in place. See [definitions stores](../definitions.md) for the
+layout, the validation scope, and the version-control policy.
 
-`nro fw addkey SERVER` stores the current user's private Flywheel key for a
-configured site server. `nro fw list` reports which servers have usable keys,
-and `nro fw removekey SERVER` removes one. See [bidsification](bidsify.md).
+`nro fw`, which has no page of its own, manages your private Flywheel keys. `nro fw addkey SERVER` stores a key
+for a server configured for the site. `nro fw list` shows which servers have
+usable keys, and `nro fw removekey SERVER` removes one. See
+[bidsification](bidsify.md).
 
 ## Shared selectors
 
-`run`, `status`, `stop`, `log`, `purge`, `gc`, `freshen`, `promote`, `scene`,
-and `render` use the common selector engine. Their remaining options are
-command-specific. `find` uses the project, participant, run, and task subset to
-inspect source BIDS images.
+Most commands that act on derivatives choose their work items with the same
+selector options. These commands are `run`, `status`, `stop`, `log`, `purge`,
+`gc`, `freshen`, `promote`, `scene`, and `render`. Each command adds its own
+options, documented on its page.
 
 | Option | Meaning |
 | --- | --- |
@@ -48,53 +75,57 @@ inspect source BIDS images.
 | `-P`, `--project PROJECT ...` | Projects beneath the configured BIDS root. |
 | `-m`, `--module MODULE ...` | One or more scientific modules. |
 | `-w`, `--workflow WORKFLOW ...` | Workflow IDs from the definitions store. |
-| `-i`, `--lineage ID ...` | Select module-lineage IDs shown by `nro status`; accepts `MODULE/ID` to disambiguate. |
-| `-r`, `--run KEY=VALUE[,VALUE...] ...` | Joint BIDS run-entity matching. |
-| `-s`, `--space SPACE ...` | Target spaces from clean onward. |
-| `-S`, `--smoothing MM ...` | Nonnegative integer FWHM in mm. |
-| `--task TASK ...` | Source BIDS tasks; intersects `--run task=...` when both are supplied. |
-| `--analysis ANALYSIS ...` | Contrasts analysis labels from `ANALYSIS/VARIANT`. |
-| `--model MODEL ...` | Contrasts variants or qualified `ANALYSIS/VARIANT` IDs. |
-| `--model-set SET ...` | Memberships declared in first-level model YAML. |
+| `-i`, `--lineage ID ...` | Module-lineage IDs shown by `nro status`. Use `MODULE/ID` when an ID is repeated across modules. |
+| `-r`, `--run KEY=VALUE[,VALUE...] ...` | BIDS run entities to match jointly. |
+| `-s`, `--space SPACE ...` | Target spaces, for modules from `clean` onward. |
+| `-S`, `--smoothing MM ...` | Smoothing FWHM in mm, as nonnegative integers. |
+| `--task TASK ...` | Source BIDS tasks. Combined with `--run task=...`, the two lists intersect. |
+| `--analysis ANALYSIS ...` | Contrasts analysis labels, the first part of `ANALYSIS/VARIANT`. |
+| `--model MODEL ...` | Contrasts variants, or qualified `ANALYSIS/VARIANT` IDs. |
+| `--model-set SET ...` | Model sets declared in first-level model YAML. |
 
-Run selectors combine different keys with AND and values for a key with OR.
-Space and smoothing values expand as a cross-product. Run selectors describe
-acquisitions; `run=01` alone is not necessarily unique across tasks or directions.
+In `-r`, different keys combine with AND and the values for one key combine
+with OR. Run selectors describe acquisitions, so `run=01` alone may match
+several runs that differ by task or direction. Space and smoothing values
+expand as a cross-product.
 
-For `run`, omitted `--module` selects every endpoint of the module graph,
-currently `dynconn`, `networks`, and `contrasts`. Explicit modules restrict the targets;
-their upstream dependencies are included. Workflow, space, and smoothing default
-to `main`, `fsnative`, and `2`. Missing participants/projects select all
-matches. Inspection and cleanup commands ordinarily leave omitted selectors
-unrestricted. Bare `purge` covers all projects owned by the current branch;
-inherited outputs are excluded. Bare `gc` checks every current-branch public and
-private derivative namespace. `publish`, `set`,
-installation commands, and `qc registration` have different parsers, documented
-on their pages; do not assume the common short flags apply to them.
+Inspection and cleanup commands treat an omitted selector as unrestricted. A
+new `nro run` request is the exception, because it applies planning defaults:
 
-Contrasts requests without explicit model/set selection use model set `main`.
-An explicit model bypasses that default; explicit model and set filters
-intersect. Inspection and cleanup have no default model-set restriction.
-See [first-level models](../task-models.md) for examples and freshness rules.
+* An omitted `--module` selects every endpoint of the module graph, currently
+  `dynconn`, `networks`, and `contrasts`. Explicit modules restrict the targets,
+  and their upstream dependencies are included.
+* Workflow, space, and smoothing default to `main`, `fsnative`, and `2`.
+* Omitted participants and projects select every match.
 
-All commands support `-h`/`--help`. Parse failures and operational errors exit
-nonzero. Progress/errors may go to stderr even when a command offers `--json`.
-Commands always use the BIDS root from the global site configuration.
+Contrasts requests that name no model or model set use model set `main`. An
+explicit `--model` bypasses that default, and explicit model and set filters
+intersect. Inspection and cleanup apply no default model set. See
+[first-level models](../task-models.md) for examples and freshness rules.
+
+A bare `purge` covers every project owned by the current branch and excludes
+inherited outputs. A bare `gc` checks every public and private derivative
+namespace of the current branch.
+
+Some commands have their own parsers: `publish`, `site`, the installation
+commands, `viz`, and `qc registration`. Their pages document their options. Do
+not assume the shared short flags mean the same thing there.
 
 ## Finding source images
 
-`nro find` prints absolute paths to source BIDS images and does not inspect
-derivatives or registry records. Project names are exact. Participant, task,
-and `-r` entity values are full regular expressions:
+`nro find` prints absolute paths to source BIDS images. It does not inspect
+derivatives or registry records. It accepts the project, participant, run, and
+task selectors. Project names must match exactly. Participant, task, and `-r`
+entity values are full regular expressions:
 
 ```bash
 nro find -P nptl -p 't(12|20)' -r 'task=Rest.*' 'run=0[1-3]'
 nro find -P nptl -r datatype=anat suffix='T1w|T2w'
 ```
 
-Different entity keys combine with AND. Comma-delimited expressions for one
-key combine with OR, as in `task=Rest,langloc`. Parenthesized groups, character
-classes, and repetition bounds can contain commas without being split. An empty
-expression, such as `task=`, requires that entity to be absent. `--json` emits
-the selected paths as a JSON array. Derivative-only selectors such as module,
-workflow, lineage, model, space, and smoothing are rejected.
+Different entity keys combine with AND. Comma-separated expressions for one key
+combine with OR, as in `task=Rest,langloc`. Commas inside parenthesized groups,
+character classes, and repetition bounds do not split the expression. An empty
+expression such as `task=` requires the entity to be absent. `--json` prints
+the selected paths as a JSON array. The command rejects derivative-only
+selectors: module, workflow, lineage, model, space, and smoothing.

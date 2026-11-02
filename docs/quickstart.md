@@ -1,23 +1,42 @@
 # Quickstart for a new installation
 
-This guide is for people setting up `nro` at a new site or on a personal Linux
-system. CLIMBLAB members should use the
-[internal installation quickstart](climblab-quickstart.md).
+This guide takes you from a fresh Linux host to a first processed result. It is
+for people setting up `nro` at a new site or on a personal system. CLIMBLAB
+members should use the [CLIMBLAB quickstart](climblab-quickstart.md) instead,
+because the lab installation is already configured.
+
+`nro` expects MRI source data organized as BIDS. Setup installs its own Python
+environment and downloads the supported processing containers, Workbench,
+templates, and OSLOM. It does not install Git, a host compiler, or cluster
+software.
 
 ## Prepare the host
 
-`nro` needs Linux, Git, `curl` or `wget`, `sha256sum`, and `tar`. The default
-OSLOM installation also needs a C++ compiler. A
-[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html) is
-required before running FreeSurfer-dependent processing, but not for setup.
+Before setup, you need:
 
-Cluster installations need Slurm commands on `PATH`. Their data, work,
-registry, installation, and processing resources must be visible at the same
-paths on login and compute nodes. A local installation can omit Slurm. The host
-must permit unprivileged containers; nro installs a managed Apptainer runtime by
-default.
+- Linux on an architecture covered by the installer's pinned uv archives;
+- Git, `curl` or `wget`, `sha256sum`, and `tar`;
+- a C++ compiler if you want the default OSLOM installation;
+- enough persistent storage for BIDS data, derivatives, work files, containers,
+  and templates;
+- Slurm commands on `PATH` for cluster execution, or permission to process on
+  the local host; and
+- a host that permits unprivileged containers.
 
-## Install
+The host does not need its own Python. By default, setup installs a managed
+Apptainer runtime, so compute nodes do not need a system Singularity or
+Apptainer command.
+
+On a cluster, the data, work, registry, installation, and processing resources
+must be mounted at the same paths on login and compute nodes. Before installing
+on a managed system, ask the cluster administrator about container support, the
+Slurm partition and account, filesystem permissions, and local policy.
+
+You also need a
+[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html)
+before FreeSurfer-dependent processing runs. Setup does not require it.
+
+## Get the source
 
 Clone the repository and enter the checkout:
 
@@ -26,56 +45,71 @@ git clone https://github.com/CLiMBlab-Stanford/nro.git
 cd nro
 ```
 
-Create a personal installation on a Slurm system:
+Keep the checkout at a stable absolute path. The installation records it, and
+the launcher selects installations by checkout.
+
+## Install
+
+For one user or one administrative account, create a personal installation:
 
 ```bash
 ./install --mode personal
 ```
 
-Use `--local` on a machine without Slurm:
+On a machine without Slurm, add `--local`:
 
 ```bash
 ./install --mode personal --local
 ```
 
-Outside CLIMBLAB, the path editor proposes directories under `~/nro`. Review
-every setting. In particular:
+The installer first shows the proposed site settings. Outside CLIMBLAB, storage
+defaults to directories under `~/nro`. Accept them only if that location has
+enough space and is visible from every compute node that will run work. If you
+decline, the editor asks for each setting in turn.
 
-- `bids` contains project directories with source BIDS data.
-- `work` contains temporary and resumable processing files.
-- `registry` contains private scheduler state, logs, and source snapshots.
-- `definitions` selects the version-controlled site repository containing
-  protected site settings, workflows, configurations, models, and event files.
-- `images`, `templates`, and `oslom` contain processing resources. `workbench`
-  contains the optional native scene viewer and renderer.
-- `license` names the FreeSurfer license used by processing commands. The file
-  may be added after installation.
-- `runtime` selects managed Apptainer by its default bare name. An absolute path
-  selects an administrator-provided Singularity or Apptainer executable.
-- `partition` and `account` must match the Slurm site. Enter `-` for no account.
-- `viewing_partition` selects the Slurm partition for X11 scene-viewing jobs.
-- `flywheel_server` and `flywheel_project` may select the usual ingestion
-  source. Enter `-` to leave either value unset.
+| Setting | Purpose |
+| --- | --- |
+| `bids` | Directory containing one subdirectory per BIDS project. |
+| `work` | Temporary and resumable processing files. |
+| `registry` | Private scheduler state, logs, and source snapshots. |
+| `definitions` | Version-controlled repository of protected site settings, workflows, module configurations, task models, and event files. |
+| `development` | Isolated outputs for development branches. |
+| `images`, `templates`, `oslom` | Installed processing resources. |
+| `workbench` | Optional native scene viewer and renderer. |
+| `license` | FreeSurfer `license.txt`. The file may be added after setup. |
+| `runtime` | Container runtime. The default bare name selects managed Apptainer; an absolute path selects an administrator-provided Singularity or Apptainer executable. |
+| `partition`, `account` | Slurm submission settings. Enter `-` for no account. Unused with `--local`. |
+| `viewing_partition` | Slurm partition for X11 scene-viewing jobs. |
+| `flywheel_server`, `flywheel_project` | Optional default ingestion source. Enter `-` to leave either unset. |
 
-The path editor writes durable settings to `site/site.yml` in that repository.
-The small local TOML file is only a generated locator. The Slurm fields are
-unused with `--local`. Review the linked QuNex terms before
-approving downloads. Setup creates an editable `.nro-env`, obtains missing
-resources, checks them, and installs `~/.local/bin/nro`. Repeat the same command
-after correcting any reported failure.
+The installer saves these values in `site/site.yml` inside the definitions
+repository. Keep that repository under version control. The small local TOML
+file is only a generated pointer to the repository, and setup can recreate it.
 
-Read [installation](installation.md) before creating a multiuser shared
-installation, using offline setup, or changing resource acquisition.
+Review the linked QuNex terms before you approve downloads. Setup then builds a
+locked Python environment, downloads missing resources, checks them, and
+installs the launcher `~/.local/bin/nro`. If setup is interrupted or a check
+fails, correct the reported problem and run the same `./install` command again.
+
+Personal installations run from a staged copy of the checkout. Pulling new
+commits does not change the active command until you run `./install` again.
+
+A multiuser deployment needs a shared installation instead. One maintainer
+creates it from a clean, tagged `main` checkout, and other users connect to it.
+Read [shared installations](installation.md#shared-installations) before using
+`--mode shared`. The [installation guide](installation.md) also covers offline
+setup, optional components, and resource acquisition.
 
 ## Check the installation
 
-For Bash, add the launcher directory to `~/.bashrc`:
+Add the launcher's directory to your shell startup file. For Bash, add this line
+to `~/.bashrc`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Then run:
+Load the change and check the installation:
 
 ```bash
 source ~/.bashrc
@@ -86,36 +120,53 @@ nro doctor --local         # installation without Slurm
 nro site ls
 ```
 
-No environment activation is needed. Run `nro doctor --deep` inside a compute
-allocation when compute nodes have different mounts or container policies. Use
-`nro doctor --deep --local` when Slurm is not part of the installation.
+No environment activation is needed. The first `nro` reported by `type -a`
+should be `~/.local/bin/nro`. If an activated environment or shell alias takes
+precedence, use `~/.local/bin/nro` directly while you correct `PATH`.
 
-## Add data and request work
+If compute nodes have different mounts or container policies from the login
+node, run `nro doctor --deep` inside a compute allocation. Use
+`nro doctor --deep --local` when the installation does not use Slurm.
 
-Place each BIDS dataset in its own project directory beneath the configured
-`bids` root:
+## Add a BIDS project
+
+Place each BIDS dataset in its own directory beneath the configured `bids`
+root. `nro` treats each direct child as a project:
 
 ```text
 BIDS_ROOT/
     example/
         dataset_description.json
         sub-01/
+        sub-02/
 ```
 
-Validate the source dataset through your site's BIDS procedure. Then request a
-small, explicitly selected target:
+Validate the dataset with your site's BIDS procedure before processing. `nro`
+can also ingest selected Flywheel data, but that workflow needs extra
+dependencies and server configuration. See the
+[bidsification guide](commands/bidsify.md).
+
+## Request the first result
+
+Start with a small, explicitly selected target:
 
 ```bash
 nro run -P example -p 01 -m anat
 ```
 
-Use a local worker when the installation does not use Slurm:
+On an installation created with `--local`, add `--local` to run one local
+worker:
 
 ```bash
 nro run -P example -p 01 -m anat --local
 ```
 
-Inspect progress and logs:
+The planner finds the selected BIDS data, records your request, reuses fresh
+outputs, and adds any required upstream work. Results go under the project's
+`derivatives` directory. Temporary and resumable files go under the configured
+`work` directory.
+
+Follow the request:
 
 ```bash
 nro status -P example -p 01
@@ -125,18 +176,31 @@ nro log -P example -p 01 -m anat
 By default, `nro status` quickly reports the registry's saved state. Run
 `nro status --update` when you need it to check files and update that state.
 
-Requesting a downstream endpoint automatically adds its dependencies. For
-example:
+Once anatomical processing works, request a downstream endpoint such as
+`microparcellation`. The planner adds the required functional preparation and
+cleaning:
 
 ```bash
 nro run -P example -p 01 -m microparcellation
 ```
 
-Add `--local` to each request when Slurm is unavailable. Omitted selectors mean
-all matches. A new `nro run` request is the workflow exception: an omitted
-workflow selects `main`. With `nro run --resume`, it matches every workflow with
-resumable work. Avoid bare `nro run` and `nro purge` commands until you
-understand their scope.
+Add `--local` again when the site does not use Slurm.
 
-Continue with the [command reference](commands/index.md),
-[module guides](modules/index.md), and [configuration guide](configuration.md).
+## Selector scope
+
+Omitted selectors mean all matching values. A new `nro run` request has one
+exception: it uses workflow `main` when `--workflow` is omitted. A bare request
+can still cover every participant in every project. With `nro run --resume`, an
+omitted workflow matches every workflow with resumable work.
+
+Avoid bare `nro run` and `nro purge` commands until you understand their scope.
+After confirmation, purge deletes controlled derivatives and logs.
+
+## Next steps
+
+- [Installation and maintenance](installation.md)
+- [Command reference](commands/index.md)
+- [Module inputs, processing, and outputs](modules/index.md)
+- [Configuration and workflows](configuration.md)
+- [Definitions stores](definitions.md)
+- [Troubleshooting work](commands/work.md)

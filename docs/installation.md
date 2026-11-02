@@ -1,343 +1,182 @@
 # Installation
 
+This guide is for people who install, maintain, or develop against an `nro`
+installation. It covers each installation mode, the settings setup asks for,
+the resources it downloads, and how to check and maintain the result. For a
+first personal setup, the [new-installation quickstart](quickstart.md) is
+shorter.
+
+## Installation modes
+
 Run `./install` from a Linux checkout. The script finds its own checkout even
-when invoked from another directory. First setup asks for `personal`, `shared`,
-or `branch` mode and saves that role in the untracked `.nro-installation.json`.
+when you invoke it from another directory. First setup asks for one of three
+modes and saves the choice in the untracked `.nro-installation.json`:
+
+- `personal` installs a tagged `main` release for one user or account.
+- `shared` installs a tagged `main` release that other users connect to. See
+  [shared installations](#shared-installations).
+- `branch` installs a development checkout that uses an existing site. See
+  [development checkouts](#development-checkouts).
 
 Personal and shared installations both publish the scheduler implementation.
-Ordinary `run` commands start or join the scheduler, which launches pinned planner
-children inside its allocation; personal mode does not plan or submit scientific
-workers directly from the calling process.
-Installation maintenance alone may access the registry before that binding exists.
-Install a tagged main release in either mode; use branch mode for development.
+Ordinary `run` commands start or join the scheduler, which launches pinned
+planner children inside its allocation. Personal mode does not plan or submit
+scientific workers directly from the calling process. Only installation
+maintenance may access the registry before the scheduler binding exists.
 
-The bootstrap is a POSIX shell script and does not use the host's Python. It
-selects a checksum-pinned standalone uv archive for the host architecture and
-libc, then installs the repository's exact uv-managed CPython version. The host
-needs `curl` or `wget`, `sha256sum`, and `tar`. A platform without a pinned uv
-archive fails before setup changes the installation.
-
-The bootstrap environment is content-addressed under `.nro-bootstraps/`, and
-the stable `.nro-bootstrap` symlink selects its active version. It contains only
-the pinned bootstrap Python package; the standalone uv binary lives under
-`.nro-tools/`. Application dependency layers use the same exact managed Python
-version and the locked packages in `uv.lock`. The interpreter supplies SQLite
-3.35 or newer, independent of the host's Python and SQLite libraries.
-
-Personal and shared installations use staged, immutable application and
-dependency layers. A failed or interrupted setup leaves the previous
-installation active; a failed first setup publishes no active installation.
-The one-time conversion of a legacy bootstrap directory is journaled and
-recoverable. Pulling a checkout therefore does not change the active command
-before setup completes. Branch environments remain editable. Python
-distributions downloaded by uv stay in `.nro-python`, so a shared environment
-does not depend on the maintainer's home directory. Existing Conda environments
-are not modified.
-Pass `--dev` to include test dependencies.
-Pass `--with-bidsify` for Flywheel, DICOM, and Google Drive ingestion
-dependencies. The
-[bidsification guide](commands/bidsify.md) covers the required validator,
-server credentials, and staging configuration.
-Ordinary setup acquires pinned FreeSurfer 7.4.1 and FastSurfer 2.5.4 images for
-the selectable anatomical reconstruction engines.
-Pass `--with-lesion` to install PyTorch, MONAI, safetensors, and SOCKS proxy
-support used by lesion-aware anatomy. It also acquires the pinned SynthStroke
-model under the site-managed `synthstroke_data` path. Setup verifies every
-model file against a pinned SHA-256, and workers perform no model downloads.
-The lesion scaffold is synthesized on a CPU with `mri_synthsr` from the pinned
-FreeSurfer image, so it requires no separate checkpoint download or lesion-only
-GPU allocation. This optional stack is omitted from ordinary installations.
-Shared installations use
-`./install --maintain --with-lesion`; development branches use
-`./install --with-lesion` from their checkout.
-
-Pass `--with-cicada` to install the pinned pycicada classifier. CICADA is an
-optional functional-processing backend; installations that do not request it
-do not install its package or validate its availability.
-The installer includes the pinned official MARSS package. Pass `--without-marss`
-to omit it. `diagnose` does not import MARSS, but the default `auto` mode needs
-it whenever the multiband-factor threshold calls for correction.
 Pass `--local` when setting up a host without Slurm.
 
-Definitions changed directly outside the authoring commands normally block
-setup. To recover an intentional direct edit, run `./install
---adopt-definitions` (with `--maintain` for a shared installation). The
-installer validates and publishes all current definition-store drift before
-continuing. Validation runs in the staged candidate environment, so recovery
-does not depend on packages available to the system Python. This exceptional
-recovery option is unavailable to development branches.
+## What setup installs
 
-The launcher goes in `~/.local/bin/nro`. Add `~/.local/bin` to your shell's PATH
-if setup reports that it is absent. No environment activation is needed.
-The launcher selects an installed checkout when invoked inside its directory
-tree, and the user's default installation elsewhere. Adding another checkout
-does not change that default. Use `./install --default` to explicitly select
-the successfully connected checkout as your default. This changes only your
-launcher index, not other users' defaults or the checkout's write authority.
-Working-directory selection still takes precedence inside connected checkouts.
+The host needs `curl` or `wget`, `sha256sum`, and `tar`. It does not need its
+own Python. The `./install` bootstrap is a POSIX shell script. It selects a
+checksum-pinned standalone uv archive for the host architecture and libc, then
+installs the repository's exact uv-managed CPython version. On a platform
+without a pinned uv archive, it fails before changing the installation.
+
+The bootstrap environment is content-addressed under `.nro-bootstraps/`, and
+the stable `.nro-bootstrap` symlink selects its active version. That
+environment contains only the pinned bootstrap Python package. The standalone
+uv binary lives under `.nro-tools/`. Application dependency layers use the same
+managed Python version and the locked packages in `uv.lock`. The interpreter
+supplies SQLite 3.35 or newer, independent of the host's Python and SQLite
+libraries. Python distributions downloaded by uv stay in `.nro-python`, so a
+shared environment does not depend on the maintainer's home directory. Setup
+does not modify existing Conda environments.
+
+Personal and shared installations use staged, immutable application and
+dependency layers. Pulling new commits into the checkout therefore does not
+change the active command until setup completes. A failed or interrupted setup
+leaves the previous installation active, and a failed first setup publishes no
+active installation. The one-time conversion of a legacy bootstrap directory is
+journaled and recoverable. Branch installations instead use an editable
+environment in the checkout's `.nro-env`.
+
+## Optional components
+
+Setup includes the components most sites need. These options change what it
+installs:
+
+- `--dev`: Include the locked test dependencies.
+- `--with-bidsify`: Install Flywheel, DICOM, and Google Drive ingestion dependencies. The
+  [bidsification guide](commands/bidsify.md) covers the required validator,
+  server credentials, and staging configuration.
+- `--with-lesion`: Install PyTorch, MONAI, safetensors, and SOCKS proxy support for
+  lesion-aware anatomy, and acquire the pinned SynthStroke model. See
+  [lesion-aware anatomy](#lesion-aware-anatomy).
+- `--with-cicada`: Install the pinned pycicada classifier. CICADA is an optional
+  functional-processing backend. Installations that do not request it neither
+  install its package nor check that it is available.
+- `--without-marss`: Omit the pinned official MARSS package, which setup includes by default.
+  `diagnose` does not import MARSS, but its default `auto` mode needs it
+  whenever the multiband-factor threshold calls for correction.
+- `--without-oslom`: Skip OSLOM and its Python dependencies for this setup or maintenance run.
+  ICA and clustering do not need OSLOM. Existing OSLOM binaries are not
+  deleted.
+- `--without-viewer`: Skip the Workbench image and launcher checks when scene viewing and
+  rendering are not needed. Scientific processing is unaffected, and a later
+  installation without the flag restores viewer support.
+
+Ordinary setup always acquires pinned FreeSurfer 7.4.1 and FastSurfer 2.5.4
+images for the selectable anatomical reconstruction engines.
+
+## The launcher
+
+Setup installs the launcher as `~/.local/bin/nro`. If setup reports that
+`~/.local/bin` is not on your `PATH`, add it to your shell startup file. No
+environment activation is needed.
+
+Inside the directory tree of an installed checkout, the launcher selects that
+checkout. Elsewhere, it selects your default installation. Connecting another
+checkout does not change the default. Run `./install --default` to make the
+connected checkout your default. This changes only your own launcher index. It
+does not change other users' defaults or the checkout's write authority, and
+working-directory selection still takes precedence inside connected checkouts.
+Launcher checkout bindings live in `.nro-launchers.json` beside the launcher,
+not in the shared registry.
+
+The managed launcher must be the `nro` command that `PATH` selects. A shell
+alias or an activated environment's own `nro` can bypass it. Use `type -a nro`
+to see how the shell resolves the command. The launcher excludes ambient Python
+import paths when it selects an interpreter.
 
 If your installed command is the earlier fixed-path nro launcher, add
-`--replace-launcher` to authorize replacement. The installer checks its format
-and installation record, retains a `nro.previous-...` backup beside it, and
-installs the dispatcher. Without `--default`, its previous default is preserved.
-Unrelated commands, modified shell scripts, and symlinks are refused even with
-this flag; choose `--bin-dir` or move them aside explicitly. The installer prints
-the resulting default and any retained backup path.
-`python -m nro.bin.run` remains available through the installation's interpreter;
-it does not use working-directory selection.
+`--replace-launcher` to authorize its replacement. The installer checks the old
+launcher's format and installation record, keeps a `nro.previous-...` backup
+beside it, and installs the dispatcher. Without `--default`, the previous
+default is preserved. Unrelated commands, modified shell scripts, and symlinks
+are refused even with this flag. Choose another directory with `--bin-dir` or
+move them aside yourself. The installer prints the resulting default and any
+backup path.
 
-## Development checkouts
-
-With a default installation already connected to the user's launcher, running
-`./install` in another, new checkout selects branch mode and reuses that site's
-settings. Without that connection, select an existing site explicitly:
-
-```bash
-./install --mode branch --site /path/to/site.toml
-```
-
-Branch setup creates an editable environment in that checkout's `.nro-env`,
-checks shared dependencies without installing them, and registers or attaches
-the Git branch with the central store. It does not update the production
-environment, site settings, or definitions. `--maintain` is rejected in branch
-mode. Main cannot be installed as a development branch.
-
-The branch remains selected in checkout subdirectories. After leaving the
-checkout, the launcher selects the previous default. If only a branch has been
-installed, there is no outside-checkout default. An incomplete installation,
-switched or detached branch, or revoked registration produces an error instead
-of falling back to production. The launcher excludes ambient Python import
-paths when selecting an interpreter.
-
-The managed launcher must be the `nro` command selected by PATH. A shell alias
-or an activated environment's own `nro` command can bypass it; use `type -a nro`
-to inspect shell resolution. Launcher checkout bindings live in
-`.nro-launchers.json` beside the user launcher, not in the shared registry.
-
-Branch processing requires an [installed, active main scheduler](commands/releases.md).
-The normal commands then use branch-owned outputs, compatible ancestor inputs,
-and the shared worker pool. Shared definition/site editing remains blocked from
-development installations. Use `nro branch`, `nro doctor`, and `nro site ls`
-to inspect setup. See [development](development.md#branch-isolation-work) for
-execution and maintenance boundaries.
-
-## Shared installations
-
-The shared checkout must be on a clean `main` commit with an annotated release
-tag that matches `pyproject.toml` and belongs to `origin/main`. The first
-maintainer selects shared mode:
-
-```bash
-./install --mode shared
-```
-
-The installer registers or attaches the checkout as `main`, records the checked-out
-release, and activates its environment for future workers. These actions use local
-Git state and require no separate `nro branch` or `nro release` commands. A new site
-can start at the current release without recording every earlier release.
-
-Subsequent users run the same `./install`. It reads the installation record
-and creates their launcher. It does not synchronize Python dependencies or
-write into the checkout. An incomplete installation cannot onboard users.
-
-Maintenance is explicit:
-
-```bash
-./install --maintain
-```
-
-The installer uses the active scheduler or a fenced one-shot update process.
-Maintenance does not start a scheduler, request a Slurm allocation, or wait for
-capacity in the scientific partition.
-
-Shared setup verifies container images by checksum without launching them on the login
-host. To test container execution explicitly, run `nro doctor --deep` in the same kind
-of Slurm allocation used for scientific work.
-
-When shared work is active, the installer reports it and offers three choices. A
-graceful drain prevents new claims, lets running derivative and ingestion stages
-finish, and then stops the workers. An immediate stop interrupts running work and
-preserves its demand so it can be queued again. The installer waits for Slurm to
-confirm that every allocation has ended before changing the environment. Cancelling
-makes no registry change. Installation continues when the pool is quiet. Ctrl-C after
-choosing an action leaves the maintenance barrier and action in place; repeat
-`./install --maintain` to resume. `--drain` authorizes a graceful drain during
-noninteractive maintenance. Without that option, noninteractive maintenance refuses
-an active pool.
-
-After updating `main` to a newer tagged release, `./install --maintain` records and
-activates that release automatically. Runtime checks compare the installation's
-commit, tree, package version, environment, site, and source fingerprint with the
-active release record. Maintenance first audits every scheduler and branch database
-and every public ownership record without changing them. It reports all corrupt or
-obsolete records together. Schema differences request migration or reconstruction;
-SQLite or branch-identity failures stop maintenance before the active installation
-changes.
-
-Shared maintenance separates third-party dependencies from nro source. The dependency
-environment is addressed by the locked dependency set, selected extras, Python version,
-and platform under `.nro-environments/dependencies-*`. A later release reuses that
-environment when these inputs are unchanged. A changed lock, extra selection, Python
-version, or platform creates a new environment without modifying the active one.
-During the first maintenance run after this layout was introduced, the installer asks
-uv to verify the active environment against the selected locked dependencies and adopts
-it when they match. This avoids rebuilding an equivalent environment solely to change
-the installation layout.
-
-The candidate nro source is stored separately as a verified, content-addressed
-application snapshot. Setup and command launch combine that snapshot with the selected
-dependency interpreter. After resource checks and registry maintenance pass, the
-installer publishes the scheduler binding and installation record while the installation
-barrier is held. A failed cutover restores both prior records. A successful cutover may
-remove dependency environments that are no longer active.
-
-Large container checksums are associated with the file's device, inode, size, and
-timestamps after verification. Unchanged images therefore avoid repeated multi-gigabyte
-reads. A changed identity triggers a new checksum before the cached identity is updated.
-Container identity checks inspect pinned OCI metadata without starting scientific
-software on the installation host; explicit execution probes remain part of local deep
-validation.
-
-After the pool is quiet, schemas at or after the supported baseline are migrated on
-staged database copies. Each copy must match the generated target schema and pass
-foreign-key and SQLite integrity checks before an atomic swap. Older schemas are
-reconstructed from durable ownership records and public artifacts. The previous
-scheduler state and every changed branch database are retained as rollback copies.
-A durable phase record lets a repeated invocation resume the same maintenance
-transaction. Corrupt or obsolete derivatives are reported and are never silently
-assigned to a new lineage. See [registry migrations](registry-migrations.md).
-
-The pull-request release gate rehearses the transition from the target release. Run the
-same check locally when installation, orchestration schemas, migrations, or release
-management changed:
-
-```bash
-./install --rehearse-upgrade
-```
-
-Pass a Git ref after the option to select another baseline. The rehearsal clones that
-revision into a temporary directory, gives it an isolated registry and BIDS root, then
-replaces its executable source with the current working tree. It exercises any required
-schema migration or reconstruction, candidate maintenance, and the real one-shot
-scheduler. It does not alter the configured site, shared installation, user launcher,
-or scientific data. The check
-does not install or validate third-party scientific software; use `nro doctor --deep`
-for those deployment checks.
-
-The shared checkout, environment, and site file must be readable and traversable
-by users. Restrict write access to maintainers using filesystem ownership or
-ACLs. Shared setup creates new files with a readable umask; it does not rewrite
-permissions on existing trees. BIDS derivatives, WORK, and the registry need
-the site's shared write permissions independently of the software tree.
-
-The shared checkout supplies the installed scheduler implementation. New work
-captures its selected source before submission; editing the checkout does not
-change already launched attempts. Use registered development checkouts for
-feature work instead of editing the shared installation.
-
-### Replacing the original shared development checkout
-
-An existing shared installation can remain in use while a separate shared
-checkout is prepared. Select the existing site with `--site` when installing
-the replacement; do not reset the registry or copy a virtual environment or
-`.nro-installation.json` between checkouts. If the generated definitions locator
-lives inside the old development checkout, recreate it from the protected
-definitions repository. Do not copy it as though it were authoritative
-configuration.
-
-After the replacement shared installation is ready, connect it as your default:
-
-```bash
-./install --default --replace-launcher
-```
-
-The replacement flag is needed only for the earlier fixed-path launcher.
-Each user connects their own default; one user's installation does not change
-another user's shell resolution. The successfully installed tagged checkout is
-already the active main release.
-
-To convert the old shared checkout to development mode, coordinate a maintenance
-window with all clients, finish or cancel demand, and stop workers and pending
-allocations. Resolve active ingestion and review leases too. Then, from that
-checkout:
-
-```bash
-./install --convert-to-branch
-```
-
-Conversion requires a named non-main Git branch and a different, ready shared
-default. It uses that default's site file, which must be outside the development
-checkout and resolve to the same paths and settings as the original site.
-It does not synchronize dependencies, delete the environment, move artifacts,
-reset registries, or change your default. It registers or attaches the branch
-and retains the original record in `.nro-installation-transition.json`.
-
-Interrupted conversion blocks scientific execution. Repeat the same command to
-resume; do not restore the old shared record manually. If only launcher connection
-failed after conversion, reconnect with the same command. Other users whose
-default still selects the converted checkout must connect to the replacement
-shared installation. They will not silently fall back to production.
-
-After conversion, the checkout uses branch-owned outputs, compatible ancestor
-inputs, and the shared scheduler. Conversion itself creates no demand and moves
-no derivatives.
+`python -m nro.bin.run` remains available through the installation's
+interpreter. It does not use working-directory selection.
 
 ## Site settings
 
-Durable site settings live in `site/site.yml` in the shared
+Durable site settings live in `site/site.yml` in the
 [definitions repository](definitions.md#protected-site-settings). Keep that
 repository under version control. The document covers storage roots, external
 resources, execution settings, and ingestion sources shared by every checkout
 connected to the scheduler.
 
-Each installation also has a generated TOML locator. Personal installations
-default to `$XDG_CONFIG_HOME/nro/site.toml`, or `~/.config/nro/site.toml`.
-Shared installations default to `.nro-site.toml` beside the checkout. The
-locator contains only the definitions repository path and is not the source of
-durable settings. Choose another locator with
-`./install --site /absolute/site.toml` during first setup.
-`NRO_SITE_CONFIG` selects one before an installation is registered. Personal,
-shared, and branch installations enforce their recorded path so every command
-reaches the scheduler and registry configured during installation.
+### Choosing paths during setup
 
-The path editor displays all proposed paths before asking for changes. It
-offers lab defaults when `/juice6/u/nlp/climblab` is readable and traversable.
-Otherwise, setup proposes paths under the user's resolved home directory:
-`~/nro/bids`, `~/nro/work`, `~/nro/templateflow`, and related resource directories.
-The generic private-control root is `~/nro/.nro`, independent of checkout
-location. Users joining a shared deployment should select its existing root;
-branch installation inherits it from the selected site.
-These are suggestions, not directories created by the editor. Previously
-configured paths and environment overrides are retained even if unavailable.
-Interactive and noninteractive setup use the same resolved defaults.
+The path editor shows all proposed settings before it asks for changes. Accept
+them all to keep the displayed values. If you decline, it prompts for each
+setting in turn. Enter keeps a value and Tab completes paths. A final
+confirmation saves the choices. Use `-` for an empty Slurm account.
 
-Use `./install --default-parent-dir /path/to/parent` during a first personal or
-shared installation to propose `/path/to/parent` instead of `~/nro` for all
-site storage and resource paths. The option does not move the checkout,
-launcher, or site locator, and it cannot modify an existing site or branch
-installation.
+When `/juice6/u/nlp/climblab` is readable and traversable, the editor offers
+the lab defaults. Otherwise it proposes paths under your resolved home
+directory, such as `~/nro/bids`, `~/nro/work`, `~/nro/templateflow`, and related
+resource directories. The generic private-control root is `~/nro/.nro`,
+independent of the checkout location. Users joining a shared deployment should
+select its existing root. Branch installations inherit it from the selected
+site.
 
-The `definitions` locator selects the site-owned repository. It defaults to
+The editor does not create these directories. Previously configured paths and
+environment overrides are kept even if they are unavailable. Interactive and
+noninteractive setup use the same resolved defaults.
+
+During a first personal or shared installation,
+`./install --default-parent-dir /path/to/parent` proposes `/path/to/parent`
+instead of `~/nro` for all site storage and resource paths. The option does not
+move the checkout, launcher, or site locator. It cannot modify an existing site
+or branch installation.
+
+### The definitions repository and site locator
+
+The `definitions` setting selects the site-owned repository. It defaults to
 `/juice6/u/nlp/climblab/nro-definitions` when lab storage is accessible and to
 `~/nro/definitions` otherwise. Setup creates a missing store from generic
-starters and validates an existing store. New stores
-have no first-level models, event tables, or configured Flywheel servers. During the
-first maintenance run after this layout is introduced, setup moves old TOML
-settings and protected ingestion fields into `site/site.yml`, then reduces the
-TOML file to its locator. Commit the migrated definitions repository after
-review.
+starters and validates an existing one. New stores have no first-level models,
+event tables, or configured Flywheel servers.
+
+Each installation also has a generated TOML locator that contains only the
+definitions repository path. Personal installations default to
+`$XDG_CONFIG_HOME/nro/site.toml`, or `~/.config/nro/site.toml`. Shared
+installations default to `.nro-site.toml` beside the checkout. Choose another
+locator with `./install --site /absolute/site.toml` during first setup.
+`NRO_SITE_CONFIG` selects one before an installation is registered. Personal,
+shared, and branch installations enforce their recorded locator so that every
+command reaches the scheduler and registry configured during installation.
+
+Older sites kept settings in the TOML file. During the first maintenance run
+after the current layout was introduced, setup moves those settings and the
+protected ingestion fields into `site/site.yml` and reduces the TOML file to its
+locator. Commit the migrated definitions repository after review.
 
 Definitions stores have their own schema. Shared maintenance applies required
-migrations to a staged copy, validates it, and then rewrites affected files in
-place. This preserves readable files and the definitions repository's Git
-history. A branch installation may migrate only its selected private overlay;
-shared and parent stores are read-only and must already use the current schema.
+migrations to a staged copy, validates it, and then rewrites the affected files
+in place. This keeps the files readable and preserves the repository's Git
+history. A branch installation may migrate only its selected private overlay.
+Shared and parent stores are read-only to a branch and must already use the
+current schema.
 
-Accept all defaults to keep the displayed settings. If declined, the editor
-prompts for each setting independently. Enter keeps that value; Tab completes
-paths. A final confirmation saves the choices.
-Use `-` for an empty Slurm account. Scripted editing is also available through
-one typed site interface:
+### Viewing and changing settings
+
+`nro site` reads and edits the site document after setup:
 
 ```bash
 nro site ls
@@ -346,37 +185,35 @@ nro site set execution.runtime=/usr/bin/apptainer
 nro site get slurm.partition slurm.scheduler.time_hours
 ```
 
-Storage and installation-resource edits on a shared site require `--maintain`,
-write permission, and a stopped worker pool. Operational settings do not. The
-command updates `site/site.yml`; it does not relocate files or migrate a registry.
-Each setting declares when it takes effect. Changes to live scheduler limits are
-relayed automatically when a scheduler exists and otherwise apply when
-coordination resumes. Worker attempts retain their immutable execution snapshot.
-
-Private state uses the [shared/branch hierarchy](commands/branches.md#storage-and-safeguards).
-An existing flat-layout control store predates the supported registry baseline and
-is rejected before a scheduler is created. Archive or remove that obsolete private
-state before initializing the current layout. Installation and repair never adopt it.
-
 `nro site ls` lists storage, resources, execution policy, Slurm profiles, and
-bidsification defaults with their effective values and application lifecycle.
-`workbench` names `wb_command`; `wb_view` is expected beside it. `qunex`,
-`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `synthstroke_data`, and
-`mni_template` can override
-individual resources otherwise derived from their parent directories. `binds`
-is a TOML list.
-Generic defaults omit CLIMBLAB's `/juice6` bind.
+bidsification defaults with their effective values and when changes take
+effect. `nro site set` updates `site/site.yml`. It does not relocate files or
+migrate a registry.
+
+On a shared site, storage and installation-resource edits require `--maintain`,
+write permission, and a stopped worker pool. Operational settings do not.
+Changes to live scheduler limits are relayed automatically when a scheduler
+exists, and otherwise apply when coordination resumes. Worker attempts keep
+their immutable execution snapshot.
+
+### Resource and Slurm settings
+
+`workbench` names `wb_command`, and `wb_view` is expected beside it. `qunex`,
+`synthstrip`, `synbold`, `gradient_unwarp`, `fastsurfer`, `synthstroke_data`,
+and `mni_template` can override individual resources that are otherwise derived
+from their parent directories. `binds` is a TOML list. Generic defaults omit
+CLIMBLAB's `/juice6` bind.
 
 `partition` routes scientific workers. `viewing_partition` separately routes
-the persistent, user-specific X11 allocation created by `nro scene --open`;
-CLIMBLAB uses `john`. Both partitions use the `nlp` account. The viewer profile
-defaults to 2 CPUs and 32 GB for up to 12 hours and is configurable under
-`slurm.viewer`. It does not enter nro's worker pool or shared concurrency
-accounting.
+the persistent, user-specific X11 allocation that `nro scene --open` creates.
+CLIMBLAB uses `john` for viewing, and both partitions use the `nlp` account.
+The viewer profile defaults to 2 CPUs and 32 GB for up to 12 hours and is
+configurable under `slurm.viewer`. Viewer allocations do not enter nro's worker
+pool or shared concurrency accounting.
 
 `flywheel_server` and `flywheel_project` are optional defaults for
-`nro bidsify`. The project uses the `GROUP/PROJECT` form. Command-line values
-override these defaults for one invocation. For example:
+`nro bidsify`. The project uses the `GROUP/PROJECT` form, and command-line
+values override these defaults for one invocation:
 
 ```bash
 nro site set bidsify.default_server=cni bidsify.default_project=cashain/climblab
@@ -384,111 +221,145 @@ nro site set bidsify.default_server=cni bidsify.default_project=cashain/climblab
 
 Personal installations also honor `NRO_WORK_PATH`, `NRO_WB_COMMAND`,
 `TEMPLATEFLOW_HOME`, and `FS_LICENSE`. Every installation reads the BIDS root
-from the protected site document. `nro site ls` reports resolved values and when
-changes take effect. The engine supplies the
-FreeSurfer license and thread settings to processing commands.
+from the protected site document. The engine supplies the FreeSurfer license
+and thread settings to processing commands.
 
-Scientific YAML uses explicit `site:KEY` resource references. Resolution with
-the unmodified CLIMBLAB defaults preserves existing workflow fingerprints.
-Changing a resolved resource path can still change a configuration
-fingerprint; this release does not infer scientific equivalence after resource
-relocation.
+Scientific YAML refers to resources with explicit `site:KEY` references.
+Resolving them with the unmodified CLIMBLAB defaults preserves existing
+workflow fingerprints. Changing a resolved resource path can still change a
+configuration fingerprint, because this release does not infer scientific
+equivalence after a resource moves.
+
+### Private state
+
+Private state uses the
+[shared/branch hierarchy](commands/branches.md#storage-and-safeguards). A
+control store in the older flat layout predates the supported registry baseline
+and is rejected before a scheduler is created. Archive or remove that obsolete
+private state before initializing the current layout. Installation and repair
+never adopt it.
 
 ## Dependencies and downloads
 
 Python requirements are declared in `pyproject.toml` and resolved in `uv.lock`.
-Maintainers regenerate the lock when changing dependencies. Normal setup uses
-the existing lock and does not upgrade dependencies implicitly.
+Maintainers regenerate the lock when they change dependencies. Normal setup
+uses the existing lock and never upgrades dependencies implicitly.
 
-The `lesion` extra provides nro's built-in SynthStroke adapter. nro owns this
-adapter so the anatomical graph does not depend on an unversioned site wrapper.
-The adapter checks the pinned model configuration and weight hashes, performs
-inference on a canonical 1 mm grid, and restores the lesion probability map to
-the exact source grid before thresholding. Setup downloads these files once to
-the configured `synthstroke_data` directory. A site may still set
-`lesion.masker_command` to an executable that implements the same command
-interface.
+### Container images
 
-Setup obtains QuNex 1.5.1, SynthStrip 1.7, and SynBOLD-DISCO 1.4 from pinned
-OCI digests. A site with an active gradient-unwarping profile also gets the
-pinned HCP base image that provides the correction tools. Sites without such a
-profile do not download or require that image. Existing configured images are
-reused and tested. Downloads use temporary paths and resource locks, then
-publish completed files atomically. Image receipts record the source and the
-generated SIF's SHA-256. A receipt documents acquisition, not historical
-provenance for pre-existing resources.
+Setup obtains QuNex 1.5.1, SynthStrip 1.7, SynBOLD-DISCO 1.4, and FastSurfer
+2.5.4 from pinned OCI digests. A site with an active gradient-unwarping profile
+also gets the pinned HCP base image that provides the correction tools. Sites
+without such a profile neither download nor require that image.
 
-Setup obtains FastSurfer 2.5.4 from its pinned OCI digest for the optional
-anatomical reconstruction engine. With `--with-lesion`, it additionally obtains
-the pinned SynthStroke model revision from Hugging Face. Every model file is
-checked against a pinned SHA-256 before publication. Workers use these
-site-managed resources read-only, so a scientific job never downloads or
-silently replaces model weights. Lesion scaffold synthesis uses the `mri_synthsr`
-model bundled with the pinned FreeSurfer image.
+Existing configured images are reused and tested. Downloads use temporary paths
+and resource locks, then publish completed files atomically. Image receipts
+record the source and the SHA-256 of the generated SIF. A receipt documents
+acquisition, not the history of a resource that already existed.
 
-Workbench 2.2.1 is installed from the checksum-pinned
-[`nro-workbench`](https://github.com/CLiMBlab-Stanford/nro-workbench)
-Apptainer image. The image
-contains the GUI, Qt, X11, and software-rendering libraries used by `nro scene`,
-`nro view`, and `nro render`; these commands do not depend on compatible host
-graphics libraries. Small `wb_command` and `wb_view` launchers bind the site's
-managed paths into the image. A working executable configured outside an
-nro-managed Workbench directory remains an explicit native override.
+After a large container's checksum is verified, nro associates it with the
+file's device, inode, size, and timestamps, so unchanged images avoid repeated
+multi-gigabyte reads. A changed identity triggers a new checksum before the
+cached identity is updated. Container identity checks inspect pinned OCI
+metadata without starting scientific software on the installation host.
+Explicit execution probes belong to `nro doctor --deep`.
 
-Scientific modules run their Workbench commands inside the pinned QuNex image.
-Use `./install --without-viewer` when scene viewing and rendering are not
-needed. This skips the Workbench image and launcher checks without disabling
-scientific processing. A later installation without the flag restores viewer
-support.
+Review the [QuNex access terms](https://qunex.yale.edu/access/) before
+approving downloads. For unattended setup, `--accept-qunex-license` accepts
+them without a prompt.
 
-The template catalog pins MNI T1w and GM probability maps and fsaverage surface
-geometry by S3 object version and checksum. It includes the 41k geometry needed
-by the default fsaverage6 target. Setup derives the corresponding midthickness
-surface deterministically from its pinned white and pial surfaces. It downloads
-only these selected files. The TemplateFlow Python client is not needed at
-runtime or setup.
+### Container runtime
 
-The default `singularity` or `apptainer` setting selects nro's managed,
+The default `singularity` or `apptainer` runtime setting selects nro's managed,
 unprivileged Apptainer 1.4.5-1 bundle. Setup verifies the bundle checksum,
 installs its complete relocatable tree beside the image directory, records a
 file inventory, and stores the absolute executable in the site definition.
 Compute nodes therefore do not need a system Singularity or Apptainer command.
-Offline setup reuses the verified tree or its cached bundle and reports the
+Offline setup reuses the verified tree or its cached bundle, and reports the
 missing artifact otherwise.
 
 The bundle includes `squashfuse_ll` and `fuse-overlayfs`, which let Apptainer
 mount a SIF image without unpacking it. When `/dev/fuse` is readable and
 writable, setup checks and scientific jobs append the bundle's `bin` directory
-to `PATH` so Apptainer can find them. Helpers already on `PATH` take precedence.
-Without FUSE, Apptainer unpacks each image into a temporary sandbox at every
-launch. That is slow for large images and fails on hosts that refuse
+to `PATH` so Apptainer can find these helpers. Helpers already on `PATH` take
+precedence. Without FUSE, Apptainer unpacks each image into a temporary sandbox
+at every launch. That is slow for large images and fails on hosts that refuse
 unprivileged overlay mounts.
 
-Set `execution.runtime` to an absolute executable to select an administrator-
-provided runtime instead. Setup preserves that choice and does not fall back to
-the managed bundle. Both modes require host support for unprivileged containers;
-nro cannot change kernel or cluster security policy. See the
+To use an administrator-provided runtime, set `execution.runtime` to its
+absolute executable. Setup keeps that choice and does not fall back to the
+managed bundle. Both choices require host support for unprivileged containers,
+and nro cannot change kernel or cluster security policy. See the
 [Apptainer installation guide](https://apptainer.org/docs/admin/1.4/installation.html).
 
-Review the [QuNex access terms](https://qunex.yale.edu/access/). Supply your
-[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html);
-setup reports a missing license as optional and does not request credentials or
-register on your behalf. FreeSurfer-dependent work fails before execution until
-the configured license file exists.
+### Workbench
 
-Setup includes OSLOM, `igraph`, and `leidenalg` by default. If `oslom_undir` is absent,
-setup downloads the official [OSLOM source](http://www.oslom.org/software.htm),
-checks its pinned SHA-256, and builds the undirected solver using `g++`.
-The host must provide the compiler. Setup fits the bundled example graph before
-publishing the executable and saves a receipt with the source checksum, compiler,
-build arguments, and binary checksum. Existing binaries are reused.
+Workbench 2.2.1 is installed from the checksum-pinned
+[`nro-workbench`](https://github.com/CLiMBlab-Stanford/nro-workbench)
+Apptainer image. The image contains the GUI, Qt, X11, and software-rendering
+libraries that `nro scene`, `nro view`, and `nro render` use, so these commands
+do not depend on compatible host graphics libraries. Small `wb_command` and
+`wb_view` launchers bind the site's managed paths into the image. A working
+executable configured outside an nro-managed Workbench directory remains an
+explicit native override.
 
-The official archive is served over HTTP. This is the sole HTTP exception in
-the downloader and requires the pinned checksum. That checksum detects changes
-to the accepted archive; it does not authenticate the initial HTTP acquisition.
-ICA and clustering do not need OSLOM. Pass `--without-oslom` to skip it and
-its Python dependencies for a setup or maintenance invocation. Existing OSLOM
-binaries are not deleted when this option is used.
+Scientific modules run their Workbench commands inside the pinned QuNex image,
+so `--without-viewer` does not affect processing.
+
+### Templates
+
+The template catalog pins MNI T1w and GM probability maps and fsaverage surface
+geometry by S3 object version and checksum. It includes the 41k geometry needed
+by the default fsaverage6 target. Setup derives the matching midthickness
+surface deterministically from the pinned white and pial surfaces. It downloads
+only these selected files, and neither setup nor processing needs the
+TemplateFlow Python client.
+
+### OSLOM
+
+Setup includes OSLOM, `igraph`, and `leidenalg` by default. If `oslom_undir` is
+absent, setup downloads the official
+[OSLOM source](http://www.oslom.org/software.htm), checks its pinned SHA-256,
+and builds the undirected solver with `g++`. The host must provide the
+compiler. Before publishing the executable, setup fits the bundled example
+graph and saves a receipt with the source checksum, compiler, build arguments,
+and binary checksum. Existing binaries are reused.
+
+The official archive is served over HTTP. It is the downloader's only HTTP
+exception, and it requires the pinned checksum. The checksum detects changes to
+the accepted archive, but it does not authenticate the first HTTP download.
+
+### Lesion-aware anatomy
+
+The `lesion` extra installed by `--with-lesion` provides nro's built-in
+SynthStroke adapter. nro owns this adapter so the anatomical graph does not
+depend on an unversioned site wrapper. The adapter checks the pinned model
+configuration and weight hashes, runs inference on a canonical 1 mm grid, and
+restores the lesion probability map to the exact source grid before
+thresholding.
+
+Setup downloads the pinned SynthStroke model revision from Hugging Face once,
+into the site-managed `synthstroke_data` directory. Every model file is checked
+against a pinned SHA-256 before publication. Workers use these resources
+read-only, so a scientific job never downloads or silently replaces model
+weights. A site may instead set `lesion.masker_command` to an executable that
+implements the same command interface.
+
+The lesion scaffold is synthesized on a CPU with the `mri_synthsr` model
+bundled in the pinned FreeSurfer image. It needs no separate checkpoint download
+or lesion-only GPU allocation. Shared installations add the stack with
+`./install --maintain --with-lesion`. Development branches use
+`./install --with-lesion` from their checkout.
+
+### FreeSurfer license
+
+Supply your own
+[FreeSurfer license](https://surfer.nmr.mgh.harvard.edu/registration.html).
+Setup reports a missing license as optional, and it never requests credentials
+or registers on your behalf. FreeSurfer-dependent work fails before execution
+until the configured license file exists.
+
+## Unattended and offline setup
 
 For unattended setup, prepare the site file first:
 
@@ -497,31 +368,250 @@ For unattended setup, prepare the site file first:
   --non-interactive --accept-qunex-license
 ```
 
-`--offline` forbids new resource downloads and tells uv to use its cache.
-It requires the cached standalone uv archive, managed interpreter, bootstrap
-package, Python dependencies, and all required external resources. An
-interrupted maintenance run leaves the preceding installation active; rerunning
-recovers any incomplete bootstrap transition and resumes from installed
-resources.
+`--offline` forbids new resource downloads and tells uv to use its cache. It
+requires the cached standalone uv archive, managed interpreter, bootstrap
+package, Python dependencies, and every required external resource.
+
 Ctrl-C exits with a cancellation message and status 130. Interrupted path
-editing leaves the saved settings unchanged. To resume shared setup, use
-`./install --maintain`.
+editing leaves the saved settings unchanged. An interrupted maintenance run
+leaves the preceding installation active. Rerunning it recovers any incomplete
+bootstrap transition and resumes from the installed resources. To resume shared
+setup, use `./install --maintain`.
 
 ## Checking an installation
 
-`nro doctor` first reports the checkout, branch, environment, executable, and site
-settings selected for the invocation. It then checks Python package and resource
-availability, directory access, and Slurm commands without importing the scientific
-libraries or parsing every definition. `--local` makes Slurm optional;
-OSLOM checks are mandatory by default; `--without-oslom` makes them optional.
+`nro doctor` first reports the checkout, branch, environment, executable, and
+site settings selected for the invocation. It then checks Python packages,
+resource availability, directory access, and Slurm commands. It does not import
+the scientific libraries or parse every definition. `--local` makes the Slurm
+checks optional. OSLOM checks are mandatory unless you pass `--without-oslom`.
 `--json` returns structured results.
 
-`nro doctor --deep` also imports the scientific libraries, validates every stored
-definition, starts each container, checks the required tools and license bind in
-QuNex, checks the HCP Pipelines, MSM, pyFIX, Octave, FIX-model, template, and
-dedrifting resources required by optional MSMAll anatomy, and verifies pinned
-template checksums and existing image acquisition
-receipts. These probes do not process subject data. Run the
-command within a compute allocation as well as on the login node to check shared mounts and
-runtime policy there. Setup runs deep checks before marking an installation
-ready. A GUI display is only needed when opening Workbench scenes.
+`nro doctor --deep` goes further without processing subject data. It:
+
+- imports the scientific libraries and validates every stored definition;
+- starts each container and checks the required tools and license bind in
+  QuNex;
+- checks the HCP Pipelines, MSM, pyFIX, Octave, FIX-model, template, and
+  dedrifting resources that optional MSMAll anatomy requires; and
+- verifies pinned template checksums and existing image acquisition receipts.
+
+Setup runs the deep checks before it marks an installation ready. Run
+`nro doctor --deep` inside a compute allocation as well as on the login node to
+check shared mounts and runtime policy there. A GUI display is only needed to
+open Workbench scenes.
+
+## Shared installations
+
+A shared installation lets many users run the same release and worker pool.
+The shared checkout must be on a clean `main` commit with an annotated release
+tag that matches `pyproject.toml` and belongs to `origin/main`. The first
+maintainer selects shared mode:
+
+```bash
+./install --mode shared
+```
+
+The installer registers or attaches the checkout as `main`, records the
+checked-out release, and activates its environment for future workers. It uses
+local Git state, so no separate `nro branch` or `nro release` command is
+needed. A new site can start at the current release without recording every
+earlier release.
+
+Other users then run `./install` in the same checkout. It reads the
+installation record and creates their launcher. It does not synchronize Python
+dependencies or write into the checkout. Users cannot connect to an incomplete
+installation.
+
+### Permissions
+
+Users must be able to read and traverse the shared checkout, environment, and
+site file. Restrict write access to maintainers through filesystem ownership or
+ACLs. Shared setup creates new files with a readable umask, but it does not
+rewrite permissions on existing trees. BIDS derivatives, the work directory, and
+the registry need the site's shared write permissions independently of the
+software tree.
+
+The shared checkout supplies the installed scheduler implementation. New work
+captures its selected source before submission, so editing the checkout does
+not change attempts that have already launched. Use registered development
+checkouts for feature work instead of editing the shared installation.
+
+### Maintenance
+
+Maintenance is an explicit step:
+
+```bash
+./install --maintain
+```
+
+The installer works through the active scheduler or a fenced one-shot update
+process. Maintenance does not start a scheduler, request a Slurm allocation, or
+wait for capacity in the scientific partition. Shared setup verifies container
+images by checksum without launching them on the login host. To test container
+execution, run `nro doctor --deep` in the same kind of Slurm allocation that
+scientific work uses.
+
+When shared work is active, the installer reports it and offers three choices:
+
+- A graceful drain prevents new claims, lets running derivative and ingestion
+  stages finish, and then stops the workers.
+- An immediate stop interrupts running work and keeps its demand so it can be
+  queued again.
+- Cancelling makes no registry change.
+
+For either stop, the installer waits for Slurm to confirm that every allocation
+has ended before changing the environment. Installation continues once the
+pool is quiet. Pressing Ctrl-C after choosing an action leaves the maintenance
+barrier and the chosen action in place. Repeat `./install --maintain` to
+resume. Noninteractive maintenance refuses an active pool unless `--drain`
+authorizes a graceful drain.
+
+### Upgrading to a new release
+
+After you update `main` to a newer tagged release, `./install --maintain`
+records and activates that release automatically. Runtime checks compare the
+installation's commit, tree, package version, environment, site, and source
+fingerprint with the active release record.
+
+Maintenance first audits every scheduler and branch database and every public
+ownership record without changing them, and it reports all corrupt or obsolete
+records together. Schema differences call for migration or reconstruction.
+SQLite or branch-identity failures stop maintenance before the active
+installation changes.
+
+Once the pool is quiet, schemas at or after the supported baseline are
+migrated on staged database copies. Each copy must match the generated target
+schema and pass foreign-key and SQLite integrity checks before an atomic swap.
+Older schemas are reconstructed from durable ownership records and public
+artifacts. The previous scheduler state and every changed branch database are
+kept as rollback copies. A durable phase record lets a repeated invocation
+resume the same maintenance transaction. Corrupt or obsolete derivatives are
+reported and never silently assigned to a new lineage. See
+[registry migrations](registry-migrations.md).
+
+Shared maintenance keeps third-party dependencies separate from nro source.
+The dependency environment lives under `.nro-environments/dependencies-*`,
+addressed by the locked dependency set, selected extras, Python version, and
+platform. A later release reuses it when these inputs are unchanged. A changed
+lock, extra selection, Python version, or platform creates a new environment
+without modifying the active one. During the first maintenance run after this
+layout was introduced, the installer asks uv to verify the active environment
+against the selected locked dependencies and adopts it when they match, which
+avoids rebuilding an equivalent environment.
+
+The candidate nro source is stored separately as a verified, content-addressed
+application snapshot. Setup and command launch combine that snapshot with the
+selected dependency interpreter. After resource checks and registry maintenance
+pass, the installer publishes the scheduler binding and installation record
+while it holds the installation barrier. A failed cutover restores both
+previous records. A successful cutover may remove dependency environments that
+are no longer active.
+
+### Rehearsing an upgrade
+
+The pull-request release gate rehearses the upgrade from the target release.
+Run the same check locally when you change installation, orchestration schemas,
+migrations, or release management:
+
+```bash
+./install --rehearse-upgrade
+```
+
+By default the baseline is the newest release tag. Pass a Git ref after the
+option to select another one. The rehearsal clones that revision into a
+temporary directory, gives it an isolated registry and BIDS root, and then
+replaces its executable source with the current working tree. It exercises any
+required schema migration or reconstruction, candidate maintenance, and the
+real one-shot scheduler. It does not alter the configured site, shared
+installation, user launcher, or scientific data. It also does not install or
+validate third-party scientific software. Use `nro doctor --deep` for those
+deployment checks.
+
+### Recovering direct definition edits
+
+Changes made to the definitions store outside the authoring commands normally
+block setup. To keep an intentional direct edit, run
+`./install --adopt-definitions`, adding `--maintain` for a shared installation.
+The installer validates and publishes all current drift in the definitions
+store before continuing. Validation runs in the staged candidate environment,
+so recovery does not depend on packages in the system Python. Development
+branches cannot use this option.
+
+### Replacing the original shared development checkout
+
+An existing shared installation can stay in use while you prepare a separate
+shared checkout. Select the existing site with `--site` when you install the
+replacement. Do not reset the registry or copy a virtual environment or
+`.nro-installation.json` between checkouts. If the generated definitions
+locator lives inside the old development checkout, recreate it from the
+protected definitions repository rather than copying it as configuration.
+
+When the replacement shared installation is ready, connect it as your default:
+
+```bash
+./install --default --replace-launcher
+```
+
+`--replace-launcher` is needed only for the earlier fixed-path launcher. Each
+user connects their own default, and one user's choice does not change another
+user's shell resolution. The successfully installed tagged checkout is already
+the active main release.
+
+To convert the old shared checkout to development mode, schedule a maintenance
+window with all clients. Finish or cancel demand, stop workers and pending
+allocations, and resolve active ingestion and review leases. Then run this from
+the old checkout:
+
+```bash
+./install --convert-to-branch
+```
+
+Conversion requires a named non-main Git branch and a different, ready shared
+default. It uses that default's site file, which must lie outside the
+development checkout and resolve to the same paths and settings as the original
+site. Conversion registers or attaches the branch and keeps the original record
+in `.nro-installation-transition.json`. It does not synchronize dependencies,
+delete the environment, move artifacts, reset registries, create demand, or
+change your default.
+
+An interrupted conversion blocks scientific execution. Repeat the same command
+to resume, and do not restore the old shared record by hand. If only the
+launcher connection failed after conversion, reconnect with the same command.
+Other users whose default still selects the converted checkout must connect to
+the replacement shared installation. Their launchers will not silently fall
+back to production.
+
+After conversion, the checkout uses branch-owned outputs, compatible ancestor
+inputs, and the shared scheduler.
+
+## Development checkouts
+
+A development checkout is a branch installation that shares a site's scheduler
+and worker pool but writes its own outputs. If your launcher already has a
+default installation, running `./install` in a new checkout selects branch mode
+and reuses that site's settings. Otherwise, select an existing site explicitly:
+
+```bash
+./install --mode branch --site /path/to/site.toml
+```
+
+Branch setup creates an editable environment in the checkout's `.nro-env`,
+checks shared dependencies without installing them, and registers or attaches
+the Git branch with the central store. It does not update the production
+environment, site settings, or definitions. Branch mode rejects `--maintain`,
+and `main` cannot be installed as a development branch.
+
+The branch stays selected in the checkout's subdirectories. Outside the
+checkout, the launcher selects the previous default. If only a branch has been
+installed, there is no default outside the checkout. An incomplete
+installation, a switched or detached branch, or a revoked registration produces
+an error instead of falling back to production.
+
+Branch processing requires an
+[installed, active main scheduler](commands/releases.md). The normal commands
+then use branch-owned outputs, compatible ancestor inputs, and the shared
+worker pool. Development installations cannot edit shared definitions or site
+settings. Use `nro branch`, `nro doctor`, and `nro site ls` to inspect the
+setup. See [development](development.md#branch-isolation-work) for execution
+and maintenance boundaries.

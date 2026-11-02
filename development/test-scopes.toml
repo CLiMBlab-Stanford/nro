@@ -72,7 +72,7 @@ tests = ["tests/test_contrasts.py"]
 boundaries = ["tests/test_scene.py", "tests/test_render.py"]
 
 [scope.documentation]
-paths = ["README.md", "QUICKSTART.md", "CLIMBLAB_QUICKSTART.md", "CONTRIBUTING.md", "WRITING_POLICY.md", "AI_PROVENANCE.md", "docs/**", "plans/**", "AGENTS.md", "tests/test_documentation.py", "tests/test_terminology.py"]
+paths = ["README.md", "CONTRIBUTING.md", "WRITING_POLICY.md", "AI_PROVENANCE.md", "docs/**", "plans/**", "AGENTS.md", "tests/test_documentation.py", "tests/test_terminology.py"]
 tests = ["tests/test_documentation.py", "tests/test_terminology.py"]
 boundaries = []
 
