@@ -1,16 +1,31 @@
-# Design and scope
+# How nro works
 
-nro supports repeated processing of many runs and participants on a shared
-Linux cluster. It separates scientific computation from scheduling so modules
-can describe their work without implementing worker management, retry logic,
-or a second system of dependency tracking.
+This page is for users who want a working picture of nro before they run it or
+change its configuration. It covers how nro divides processing into work, when
+it reuses earlier results, how several users share one scheduler, and how
+outputs are named. [Core concepts](concepts.md) defines each term precisely.
+
+nro is built for repeated processing of many runs and participants on a shared
+Linux cluster. Scientific modules describe what to compute. A separate
+scheduler decides when and where that computation runs, retries it after
+failures, and tracks dependencies between results. Module code therefore does
+not manage workers or keep its own dependency records.
 
 ## Two dependency graphs
 
-The planner builds a graph of **work items**: one participant's anatomy, one
-functional run, or one subject-level connectivity result. Workers claim ready
-work items from the site-wide registry. Within each work item, a shared `Runner`
-owns a graph of `Step` declarations and executes them in dependency order.
+nro plans work at two levels.
+
+The outer graph connects **work items**. A work item is one schedulable piece
+of processing, such as one participant's anatomy, one functional run, or one
+participant's connectivity result. The planner builds this graph and registers
+it in a site-wide registry. Workers then claim work items as their dependencies
+finish.
+
+The inner graph lives inside a single work item. Each module declares its
+processing as `Step` objects, and a shared `Runner` executes those steps in
+dependency order.
+
+The outer graph for one participant looks like this:
 
 ```text
 anat ──► func ──┬─► clean ──┬─► dynconn ────────────┐
@@ -19,84 +34,114 @@ anat ──► func ──┬─► clean ──┬─► dynconn ────�
   └── direct anatomical inputs ──► {clean, microparcellation, networks, contrasts}
 ```
 
-The sequence is not a chain of monolithic cluster jobs. There are many run-wise
-`func` and `clean` work items, followed by subject-level aggregation. From
-`clean` onward, space and smoothing are independent scheduling entities.
-The module pages specify how `clean`, `microparcellation`, `networks`, and
-`contrasts` use their direct anatomy dependencies. Microparcellation needs
-that dependency only for targets whose native geometry or mask comes from the
-participant anatomy.
+Each arrow can stand for many work items. nro creates one `func` and one
+`clean` work item per run, and later modules aggregate runs at the subject
+level. From `clean` onward, each space and smoothing level is a separate work
+item, so a request for two spaces schedules two independent branches.
 
-A networks configuration selects either dynconn or microparcellation as its
-source. Workflow compilation fixes that choice before planning; it does not
-create a runtime-dependent graph or demand the unselected source.
+Several modules also read anatomy directly. The module pages describe how
+`clean`, `microparcellation`, `networks`, and `contrasts` use that input.
+`microparcellation` needs it only for targets whose native geometry or mask
+comes from the participant's anatomy.
 
-`contrasts` follows a separate path from `func`, with a direct `anat`
-dependency for geometry. One participant/model/space/smoothing work item fits its
-runs independently and follows its Stats Models graph to publish within-subject
-summaries. It does not consume `clean` or run population-level analyses.
+`networks` reads from either `dynconn` or `microparcellation`. The networks
+configuration chooses one, and that choice is fixed when the workflow is
+compiled, before planning. nro does not demand the source it did not choose,
+and the graph never changes shape at runtime.
 
-Graphs are defined by BIDS inputs and resolved configuration before execution.
-Freshness determines which declared steps execute, not which steps exist.
-Factories return `Step` objects. Larger construction stages return immutable
-`StagePlan` values containing steps and typed downstream products. Only the module
-entry point passes these declarations to `Runner.add_step()` or
-`Runner.add_steps()`. Module constructors must not execute image processing while
-building the graph.
+`contrasts` runs on `func` outputs and reads anatomy for geometry. It does not
+use `clean`. Each contrasts work item covers one participant, model, space, and
+smoothing level. It fits each run independently, then follows its
+[Stats Models](task-models.md) graph to publish within-subject summaries. It
+does not run population-level analyses.
 
-## Reuse and ownership
+Both graphs are fixed before anything runs. The BIDS inputs and the resolved
+configuration decide which steps exist. Existing outputs only decide whether
+each step runs or is skipped.
 
-Workflows select one configuration for each module. Every module publishes below
-`derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. Functional variants that select equivalent
-anatomy reuse the same anatomical work item and `anat` directory. Configuration
-lineages include upstream choices, allowing equivalent workflows to share
-results. A short lineage digest distinguishes configurations with the same name
-but incompatible upstream inputs. Because the label is content-addressed, a
-registry rebuild cannot rename a lineage by discovering it in a different
-order. Directory labels are readable projections of lineage identity, not
-substitutes for the full fingerprint.
+For module authors, this has a concrete consequence. Factories return `Step`
+objects, and larger construction stages return immutable `StagePlan` values
+that hold steps and typed downstream products. Only the module entry point
+passes these declarations to `Runner.add_step()` or `Runner.add_steps()`.
+Module constructors must not process images while they build the graph.
 
-Public artifacts are durable results under a project's `derivatives/nro` tree.
-Private intermediates live under WORK and support resumption. Ownership receipts
-form a hidden, lineage-local recovery index; SQLite remains authoritative during
-normal operation. Registry reconstruction starts from receipts backed by declared
-public outputs and retains the dependency receipts needed to describe those
-artifacts. Purge removes unreferenced receipts and empty directories, but preserves
-a missing upstream receipt while a surviving artifact still depends on it.
-Completion requires the current output contract, not merely a directory or a
-successful historical attempt.
+## Reuse of earlier results
 
-Changes in configuration, inputs, dependencies, or output contracts can make
-artifacts stale. Scheduler resources and command formatting are not scientific
-changes. nro does not automatically infer that arbitrary code edits are
-scientifically equivalent; maintainers must update substantive contracts when
-they change methods or required metadata.
+A workflow selects one configuration for each module. Each module writes its
+results below `derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`.
+
+The lineage digest records every upstream configuration choice as well as the
+module's own. Two workflows that make the same choices for a module and
+everything upstream of it use the same directory and share its results. For
+example, functional variants that select the same anatomy configuration reuse
+one `anat` work item and one `anat` directory. When two configurations share
+a name but depend on incompatible upstream inputs, the digest gives them
+different directories.
+
+The digest is computed from content, so rebuilding the registry cannot rename a
+lineage because it found lineages in a different order. The directory label is
+a readable summary of the lineage identity. It does not replace the full
+fingerprint that nro stores.
+
+nro writes two kinds of output. Public artifacts are the durable results under
+a project's `derivatives/nro` tree. Private intermediates live under WORK and
+let interrupted work resume.
+
+A work item is complete only when its outputs satisfy the current output
+contract. An existing directory or a past successful attempt is not enough.
+Results become stale when their configuration, inputs, dependencies, or output
+contract change. Scheduler resources and command formatting do not count as
+scientific changes.
+
+nro cannot tell whether an arbitrary code edit leaves results scientifically
+equivalent. When maintainers change a method or its required metadata, they
+must update the affected contracts themselves.
+
+### Ownership receipts
+
+Each lineage directory holds hidden ownership receipts. These receipts let nro
+rebuild its registry from the files on disk. The SQLite registry remains the
+authority during normal operation.
+
+Reconstruction starts from receipts whose declared public outputs exist. It
+keeps the dependency receipts needed to describe those artifacts. Purge removes
+receipts that nothing references and deletes empty directories. It keeps a
+receipt for a missing upstream result while a surviving artifact still depends
+on it.
 
 ## Shared operation
 
-The central scheduler registry stores demand, attempts, workers, and Slurm
-submissions. Each registered Git branch also has a scientific registry for its
-compiled contracts and artifact observations. The filesystem remains
-authoritative for output existence and validity. Several requests can share a
-work item; cancelling one request need not stop work still demanded by another.
-Concurrency limits apply across projects and development branches.
+One scheduler serves every project and every development branch at a site. Its
+central registry records demand for work, attempts, workers, and Slurm
+submissions. Each registered Git branch also has its own scientific registry,
+which stores that branch's compiled contracts and observations of its
+artifacts. The filesystem remains the authority on whether outputs exist and
+are valid.
 
-An installed `main` release runs the scheduler. Registered development
-checkouts submit compiled work through that scheduler, inherit compatible
-ancestor artifacts, and write new outputs to branch-owned directories. Each
-attempt runs from captured source selected at submission, so workers can serve
-different branches without importing their modules into the scheduler. See
-[branch registration](commands/branches.md) and
+Several requests can share a work item. Cancelling one request does not stop
+work that another request still needs. Concurrency limits apply across all
+projects and branches together.
+
+The scheduler runs from an installed `main` release. A registered development
+checkout submits its compiled work to that scheduler. It reuses compatible
+artifacts from its ancestor branches and writes new outputs to directories that
+the branch owns. Each attempt runs from source captured at submission, so one
+worker can serve different branches in turn without loading their code into the
+scheduler. See [branch registration](commands/branches.md) and
 [development](development.md#branch-isolation-work).
 
 ## Naming and portability
 
-Names preserve BIDS entities when practical, but working derivatives are not
-claimed to be BIDS-validator compliant. In particular, `smoothing` is an nro
-filename entity, and generated Workbench scenes use an nro-specific layout.
-Do not infer metadata from a directory name when a manifest supplies it.
+Output names keep BIDS entities where practical, but nro does not claim that
+its working derivatives pass the BIDS validator. For example, `smoothing` is an
+nro-specific filename entity, and generated Workbench scenes use an nro layout.
+When a manifest supplies metadata, read it from the manifest instead of parsing
+a directory name.
 
-The default deployment uses Slurm, Singularity or Apptainer, and shared storage.
-`run --local` executes a worker locally but still needs processing dependencies
-and the configured filesystem. [Core concepts](concepts.md) defines the terms;
-[work-item lifecycle](work-item-lifecycle.md) explains the typed records.
+The default deployment uses Slurm, Singularity or Apptainer, and shared
+storage. `run --local` runs a worker on the current machine. It still needs the
+processing dependencies and the configured filesystem.
+
+[Running derivative workflows](orchestration.md) explains what happens when you
+request work. [Work-item planning and execution](work-item-lifecycle.md)
+describes the typed records behind each work item.

@@ -1,14 +1,16 @@
 # Network-labeling reference maps
 
-These 16 population reference maps are runtime resources for heuristic labels
-on individualized networks. They were copied byte-for-byte from
-`climbprep/climbprep/resources/`, where they support the reference-correlation
-implementation in `climbprep.parcellate`:
+These 16 population reference maps let `networks` attach heuristic labels to
+individualized networks:
 
 - `LanA_n806.nii`
 - the 15 `DU15_*.nii.gz` maps
 
-`nro.modules.networks.labeling` projects each map into the target CIFTI space and ranks
-the top configured number of individualized networks independently for each
-reference. These resources are scientific inputs and must not be modified or
-silently replaced; changing one changes the networks work item inputs.
+`nro.modules.networks.labeling` projects each map into the target CIFTI space.
+For each reference separately, it ranks the individualized networks and keeps
+the configured number of top candidates.
+
+The files were copied byte-for-byte from `climbprep/climbprep/resources/`,
+where they support the reference-correlation code in `climbprep.parcellate`.
+They are scientific inputs. Do not modify or silently replace them, because
+changing one changes the inputs of every networks work item.

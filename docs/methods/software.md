@@ -1,14 +1,10 @@
 # Software and methodological sources
 
-The module guides describe what nro executes. Citing a method does not imply
-that every option in its original publication is used. Retain resolved
-configurations, manifests, container identities, reference maps, and installation
-receipts when reporting an analysis.
-
-[First-level inference](contrasts.md) uses an nro implementation of grouped
-GLS and covariance-preserving summaries. Nilearn supplies canonical HRF
-convolution; Workbench supplies geodesic smoothing. BIDS Stats Models supplies
-the model format. FitLins is not a dependency.
+Use this page to cite the software and published methods behind an nro
+analysis. The module guides describe what nro actually executes. Citing a
+method does not mean that nro uses every option from its original publication.
+When reporting an analysis, keep the resolved configurations, manifests,
+container identities, reference maps, and installation receipts.
 
 ## Processing dependencies
 
@@ -36,63 +32,84 @@ the model format. FitLins is not a dependency.
 | igraph/leidenalg | Leiden initialization of OSLOM. | [leidenalg](https://leidenalg.readthedocs.io/) |
 | OSLOM 2.5 | Overlapping graph communities. | [Official source](http://www.oslom.org/software.htm) |
 
-SynBOLD-DisCo runs from its separate image for synthetic-reference distortion
-correction. Its configured image and the wrapper policy are recorded in the
-functional manifest. Installation pins QuNex 1.5.1, SynthStrip 1.7, the official
-FreeSurfer 7.4.1 image, SynBOLD-DisCo 1.4, and Workbench 2.2.1 acquisition
-sources. Existing configured
-resources are reused, so those pins do not establish the versions of every
-executable already present at a site. Python versions are locked in `uv.lock`;
-TemplateFlow object versions/checksums are in the installed resource catalog.
-See [installation](../installation.md) for acquisition and verification.
+SynBOLD-DisCo runs from its own image to provide synthetic-reference distortion
+correction. The functional manifest records its configured image and the
+wrapper policy.
 
-Lesion-aware anatomy uses the SynthStroke SynthPlus model at the revision
-recorded in the anatomical contract. nro implements the inference adapter and
-follows the architecture and preprocessing policy from its recorded upstream
-source revision. It checks the downloaded model files against pinned SHA-256
-digests. Inference uses the optional `lesion` Python extra and does not copy the
-upstream training implementation into nro.
+### Versions
 
-Ordinary anatomy can use FastSurfer 2.5.4 as an alternative to FreeSurfer.
-FastSurferVINN segmentation runs at 1 mm on an on-demand GPU worker; surface
+Installation pins the acquisition sources for QuNex 1.5.1, SynthStrip 1.7, the
+official FreeSurfer 7.4.1 image, SynBOLD-DisCo 1.4, and Workbench 2.2.1. If a
+site already has configured resources, nro reuses them, so these pins do not
+establish the version of every executable present at that site. Python package
+versions are locked in `uv.lock`. TemplateFlow object versions and checksums are
+in the installed resource catalog. See [installation](../installation.md) for
+acquisition and verification.
+
+## Component notes
+
+### First-level inference
+
+[First-level inference](contrasts.md) uses nro's own implementation of grouped
+GLS and covariance-preserving summaries. Nilearn supplies canonical HRF
+convolution, Workbench supplies geodesic smoothing, and BIDS Stats Models
+supplies the model format. FitLins is not a dependency.
+
+### Anatomical reconstruction
+
+Ordinary anatomy can use FastSurfer 2.5.4 instead of FreeSurfer.
+FastSurferVINN segmentation runs at 1 mm on an on-demand GPU worker. Surface
 reconstruction runs on a general CPU worker and produces the
-FreeSurfer-compatible files consumed by later anatomical steps.
+FreeSurfer-compatible files that later anatomical steps consume.
 
 Optional MSMAll anatomy uses the HCP Pipelines, MSM, pyFIX, FSL, FreeSurfer,
 Workbench, Octave, the HCP dedrifting assets, and the
 `HCP_Style_Single_Multirun_Dedrift` FIX model bundled in the pinned QuNex image.
-The selected resting-state calibration runs are fixed in source markup. nro
-adapts the HCP route to its skull-stripped source contract with explicit FNIRT
-masks, expresses each major HCP operation as an ordinary anatomical runner step,
-and publishes only the surface registrations, atlas geometry, QC, and version
-records required to use the resulting space.
+The resting-state calibration runs are selected in source markup. nro adapts
+the HCP route to its skull-stripped source contract with explicit FNIRT masks.
+Each major HCP operation runs as an ordinary anatomical runner step. nro
+publishes only the surface registrations, atlas geometry, QC, and version
+records needed to use the resulting space.
 
-Lesion-aware anatomy uses FreeSurfer's `mri_synthsr` all-purpose model to
-synthesize a complete 1 mm T1w scaffold from the pose-normalized source image
-before N4 correction. The model reconstructs the whole brain without receiving
-the SynthStroke lesion mask. Negative synthesized intensities are clipped to
-zero, and the configured FreeSurfer or FastSurfer backend reconstructs the
-synthetic image through the ordinary reconstruction interface. SynthStroke
-remains the independent authority for the lesion mask and the later surface cut.
+### Lesion-aware anatomy
 
-MARSS is an optional GPLv3 package invoked through a process boundary. nro does
-not copy or modify its implementation. The integration follows Tubiolo,
+Lesion-aware anatomy uses the SynthStroke SynthPlus model at the revision
+recorded in the anatomical contract. nro implements the inference adapter
+itself, following the architecture and preprocessing policy of the recorded
+upstream source revision. It checks the downloaded model files against pinned
+SHA-256 digests. Inference requires the optional `lesion` Python extra. nro
+does not copy the upstream training implementation.
+
+Before N4 correction, FreeSurfer's `mri_synthsr` all-purpose model synthesizes
+a complete 1 mm T1w scaffold from the pose-normalized source image. The model
+reconstructs the whole brain without seeing the SynthStroke lesion mask.
+Negative synthesized intensities are clipped to zero. The configured FreeSurfer
+or FastSurfer backend then reconstructs the synthetic image through the
+ordinary reconstruction interface. SynthStroke remains the independent source
+of the lesion mask and of the later surface cut.
+
+### MARSS
+
+MARSS is an optional GPLv3 package that nro calls as a separate process. nro
+does not copy or modify its implementation. The integration follows Tubiolo,
 Williams, and Van Snellenberg (2024),
 [*Characterization and Mitigation of a Simultaneous Multi-Slice fMRI Artifact*](https://doi.org/10.1002/hbm.70066).
 The official package estimates and subtracts the artifact. nro validates its
 outputs and replaces the full 4D artifact file with a slice-wise rank-one
-factorization whose reconstruction error is checked and recorded.
+factorization, checking and recording the reconstruction error.
 
-pycicada is also invoked through a process boundary. The optional
-`--with-cicada` installation extra pins its package separately; nro supplies
-prepared images and an adapted MELODIC
-directory, then reads its one-based signal and noise labels. nro applies the
-configured component regression itself so AROMA and CICADA comparisons share
-the same MELODIC estimation policy and regression implementation.
+### CICADA
+
+pycicada is also called as a separate process. The optional `--with-cicada`
+installation extra pins its package separately. nro supplies prepared images
+and an adapted MELODIC directory, then reads the one-based signal and noise
+labels that pycicada returns. nro applies the configured component regression
+itself, so AROMA and CICADA comparisons share the same MELODIC estimation
+policy and regression implementation.
 
 ## Methods
 
-[Denoising](denoising.md) adapts the following methods:
+[Denoising](denoising.md) adapts these methods:
 
 - Afyouni and Nichols (2018), *Insight and inference for DVARS*,
   [doi:10.1016/j.neuroimage.2017.12.098](https://doi.org/10.1016/j.neuroimage.2017.12.098).
@@ -103,21 +120,23 @@ the same MELODIC estimation policy and regression implementation.
 
 Microparcellation uses edge-based local-variation coarsening from Loukas (2019),
 [*Graph Reduction with Spectral and Cut Guarantees*](https://jmlr.org/papers/v20/18-680.html).
-Spatial-neighbor restrictions, streaming reliability weights, iterative targets,
-and null diagnostics are nro implementation choices; theoretical guarantees
-should not be assumed to transfer unchanged to every processed dataset.
+The spatial-neighbor restrictions, streaming reliability weights, iterative
+targets, and null diagnostics are nro implementation choices. Do not assume
+that the paper's theoretical guarantees carry over unchanged to every processed
+dataset.
 
 Network clustering and reference labeling adapt Shain and Fedorenko (2026),
 [*A language network in the individualized functional connectomes of 1199 human
 brains doing arbitrary tasks*](https://www.nature.com/articles/s41467-026-75745-8).
 nro uses sparse microparcel connectivity profiles, mini-batch fitting, and
-multiple ranked reference candidates. It is not the study's complete voxel-level
-protocol. OSLOM follows Lancichinetti et al. (2011),
+several ranked reference candidates. It does not reproduce the study's full
+voxel-level protocol. OSLOM follows Lancichinetti et al. (2011),
 [*Finding statistically significant communities in networks*](https://doi.org/10.1371/journal.pone.0018961).
-Record sparsification, initialization, and internal search counts when reporting it.
+When reporting OSLOM results, record the sparsification, initialization, and
+internal search counts.
 
-The 16 bundled references are scientific inputs, not interchangeable labels.
-Their resource provenance note is:
+The 16 bundled network references are scientific inputs and cannot be swapped
+for one another as if they were labels. Their resource provenance note follows.
 
 ```{literalinclude} ../../nro/modules/networks/resources/README.md
 :language: text

@@ -1,108 +1,151 @@
 # Installed releases
 
-A successful shared installation registers and activates the exact release checked
-out on `main`. The installer requires a clean tree, an annotated tag matching the
-package version, and a tagged commit on `origin/main`. It records the tag, commit,
-tree, tagger, installation user, and main registry identity. A new site can begin
-with the current release; it does not need records for earlier versions.
+A shared nro installation runs a tagged release of `main`. Maintainers of the
+shared installation use `./install` to record and activate releases,
+`nro release` to inspect them, and `nro release --repair-scheduler` to rebuild
+shared scheduling state.
 
-Omit the version from `nro release` to inspect the recorded history:
+## Install and record a release
+
+A shared installation runs the exact release checked out on `main`. When
+`./install` succeeds, it records that release and activates it for workers.
+The installer requires a clean tree, an annotated tag that matches the package
+version, and a tagged commit on `origin/main`. It records the tag, commit,
+tree, tagger, installing user, and main registry identity. A new site can start
+with the current release and needs no records for earlier versions.
+
+To see the recorded history, run `nro release` without a version:
 
 ```bash
 nro release
 ```
 
-Records are stored in `CONTROL/shared/releases.json` under the same edit lock as
-branch registrations. The older explicit attestation options remain available for
-installations created before automated release binding. Routine installation and
-upgrades should use `./install`, which infers the release from Git and does not ask
-the maintainer to repeat pull-request metadata.
+Records are stored in `CONTROL/shared/releases.json` under the same edit lock
+as branch registrations. Use `./install` for routine installation and
+upgrades. It infers the release from Git and does not ask you to repeat
+pull-request metadata. The older explicit attestation options of
+`nro release` remain for installations created before releases were bound
+automatically.
 
 ## Scheduler activation
 
-The shared installer designates its verified installation for future workers. No
-separate activation command is needed. After updating a shared checkout to a new
-release, run:
+The shared installer marks its verified installation as the one future workers
+use, so no separate activation step is needed. After updating a shared
+checkout to a new release, run:
 
 ```bash
 ./install --maintain
 ```
 
-If work is active, the installer offers to finish current attempts, stop them
-immediately while preserving demand, or cancel maintenance. Activation records
-the central checkout, dependency interpreter, site settings path, source fingerprint,
-and installed release in `CONTROL/shared/scheduler/implementation.json`. The checkout's
-installation record binds that interpreter to the verified application snapshot used
-by interactive commands.
+If work is active, the installer offers three choices: let current attempts
+finish, stop them immediately while keeping their demand, or cancel the
+maintenance. Activation writes
+`CONTROL/shared/scheduler/implementation.json`, which records the central
+checkout, the dependency interpreter, the site settings path, a source
+fingerprint, and the installed release. The checkout's installation record
+binds that interpreter to the verified application snapshot that interactive
+commands use.
 
-Once activated, Slurm submissions and `run --local` use this orchestration
-installation. Job subprocesses use their separately registered scientific code
-and environments. Missing or changed central source fails rather than selecting
-the requesting branch's implementation. Before activation, a standalone
-installation uses its own worker code; a development installation cannot use
-that fallback.
+To activate an approved installation without running the installer, run:
 
-Runtime validation checks the recorded commit, tree, version, environment, site,
-and source fingerprint before starting workers. Registered development checkouts
-then use the central execution service with their own scientific code and output
-paths.
+```bash
+nro release --activate
+```
+
+This makes the approved checkout the scheduler installation for future
+workers. `--checkout PATH` selects a checkout other than the current directory.
+Activation does not change Git refs or users' launchers. Approval and activation are separate operations, so `--activate`
+cannot be combined with `--pr`, `--attest-merged`, or `--bootstrap`. If you
+pass a version, it must match the approved release. Activation fails when:
+
+- the checkout is not a ready personal or shared installation;
+- the installation's registry or BIDS root belongs to another site;
+- its interpreter is missing; or
+- the pool is not quiescent: the scheduler service is running, or there is
+  outstanding demand, an active attempt, worker, or Slurm submission, or
+  registry maintenance in progress. Stop or drain that work first.
+
+After activation, Slurm submissions and `run --local` use this orchestration
+installation. Job subprocesses use their own registered scientific code and
+environments. If the central source is missing or has changed, the work fails
+instead of falling back to the requesting branch's code. Before activation, a
+standalone installation uses its own worker code. A development installation
+has no such fallback.
+
+Before starting workers, nro checks the recorded commit, tree, version,
+environment, site, and source fingerprint. Registered development checkouts
+then use the central execution service with their own scientific code and
+output paths.
 
 ## Git release policy
 
-`main` contains released code and is the repository's default branch. Changes enter
-it through pull requests. Every merge must update `pyproject.toml` to a later
-`MAJOR.MINOR.PATCH` version. The smallest permitted change is the next patch version.
-The `Version advances` check runs on pull requests to enforce this rule. The same check
-also requires formatting, lint, all tests, an isolated upgrade rehearsal, and a
-warning-free documentation build. Make it a required check in the repository settings.
+`main` holds released code and is the repository's default branch. Changes
+reach it only through pull requests. Every merge must raise the version in
+`pyproject.toml` to a later `MAJOR.MINOR.PATCH`. The smallest allowed change is
+the next patch version.
 
-Use patch releases for compatible fixes and minor releases for new features or
-intentional interface changes during the 0.x series. Tag an approved release as
-`vMAJOR.MINOR.PATCH`; the package version omits the `v`. Do not move or replace a
-published release tag. Run `./install --rehearse-upgrade` before merging; pass an
-explicit Git ref when the intended baseline is not the newest reachable release tag.
+The `Version advances` check enforces this rule on pull requests. It also
+requires formatting, lint, the full test suite, an isolated upgrade rehearsal,
+and a documentation build with no warnings. Make it a required check in the
+repository settings. Run `./install --rehearse-upgrade` before merging. Pass an
+explicit Git ref when the baseline should not be the newest reachable release
+tag.
 
-Pushing a version tag starts the GitHub Release workflow. It rejects a tag whose
-version differs from `pyproject.toml`, whose target is not on `main`, or whose name is
-not a plain semantic version prefixed by `v`. Release tags must be annotated. A valid
-tag creates a GitHub Release with generated notes and marks it as the latest release.
-After the workflow succeeds, edit the release so that it begins with a brief
-human-written summary of the important changes. Generated notes can follow the
-summary. Verify the workflow and the final release description. A tag without its
-GitHub Release, or a release containing only generated notes, is not a complete
-publication.
+nro follows [Semantic Versioning](https://semver.org/). Major version zero
+means initial development, so interfaces may change between minor releases.
+During the 0.x series, use patch releases for compatible fixes and minor
+releases for new features or intentional interface changes. Compatibility code
+may stay when it has a clear use and does not add much code complexity,
+runtime cost, or maintenance burden.
 
-Version changes, tags, and GitHub Releases remain separate from scientific freshness,
-which is based on artifact contracts and inputs.
+### Publish a release
 
-nro follows [Semantic Versioning](https://semver.org/). Major version zero denotes
-initial development, so interfaces may change between minor releases. Compatibility
-code may be retained when it has a clear use and does not materially increase code
-complexity, runtime cost, or maintenance burden.
+Tag an approved release as `vMAJOR.MINOR.PATCH`. The package version is the
+same without the `v`. Release tags must be annotated. Never move or replace a
+published release tag.
+
+Pushing a version tag starts the GitHub Release workflow. The workflow rejects
+a tag whose version differs from `pyproject.toml`, whose target is not on
+`main`, or whose name is not a plain semantic version prefixed with `v`. For a
+valid tag, it creates a GitHub Release with generated notes and marks it as the
+latest release.
+
+After the workflow succeeds, edit the release so that it opens with a short
+summary of the important changes, written by a person. Generated notes may
+follow the summary. Check both the workflow result and the final release
+description. A tag without a GitHub Release, or a release with only generated
+notes, is not a complete publication.
+
+Versions, tags, and GitHub Releases have no effect on scientific freshness,
+which depends only on artifact contracts and inputs.
 
 ## Shared scheduler repair
 
-On a development branch, `nro run --repair` repairs that branch's scientific database.
-On `main`, it replaces shared scheduling state. The explicit release command provides
-the same shared repair operation:
+On a development branch, `nro run --repair` repairs only that branch's
+scientific database. On `main`, it replaces the shared scheduling state. The
+release command runs the same shared repair:
 
 ```bash
 nro release --repair-scheduler
 ```
 
-Shared repair asks for confirmation when work is active. It stops the entire pool, discards
-active scheduling history, and keeps a backup with an index of original paths.
-Branch scientific databases, runtime configurations, ingestion records, and
-public derivatives remain in place. Completion evidence belongs to the replaced
-scheduler database and is retained only inside its backup.
+`--repair-scheduler` cannot be combined with other `nro release` options.
+Shared repair asks for confirmation when work is active. It stops the entire
+worker pool, discards active scheduling history, and keeps a backup with an
+index of the original paths. Branch scientific databases, runtime
+configurations, ingestion records, and public derivatives stay in place.
+Completion evidence belonged to the replaced scheduler database, so it survives
+only inside the backup. Repair needs the old worker-control state to stay
+readable long enough to confirm that workers have shut down.
 
-Repair migrates a branch scientific database when its schema is at or after the
-supported baseline. It retains the previous database. Older schemas are rebuilt from
-durable ownership records and public artifacts; later requests register any remaining
-current scientific contracts on demand.
+A branch scientific database whose schema is at or after the supported baseline
+is migrated, and the previous database is kept. An older schema is rebuilt from
+durable ownership records and public artifacts, and later requests register any
+remaining current scientific contracts as needed.
 
-Main artifacts are rediscovered from disk without creating demand. Other branches
-register their outputs against current compiled contracts when work is next
-requested. It requires old worker-control state to remain readable long enough to
-confirm shutdown. After a release update, `./install --maintain` performs the required
-migration or reconstruction before it installs and activates the release.
+Repair rediscovers main artifacts from disk without creating demand. Other
+branches register their outputs against current compiled contracts the next
+time work is requested.
+
+After a release update, `./install --maintain` performs any required migration
+or reconstruction before it installs and activates the release.

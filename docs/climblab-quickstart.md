@@ -1,89 +1,139 @@
 # CLIMBLAB quickstart
 
-This guide is for CLIMBLAB members joining the lab's internal `nro`
-installation. Outside users should follow the
-[new-installation quickstart](quickstart.md). The shared software, paths,
-registry, definitions, and Slurm worker pool are already configured.
+This guide is for CLIMBLAB members who want to use the lab's internal `nro`
+installation. The processing software, data paths, registry, definitions, and
+Slurm worker pool are already configured, so you only need to connect your
+account. Outside users should follow the
+[new-installation quickstart](quickstart.md).
 
 ## Connect your account
 
-On a lab server, run:
+Log in to a lab server and run the installer from the shared checkout:
 
 ```bash
 cd /juice6/u/nlp/climblab/nro
 ./install --default
 ```
 
-This creates `~/.local/bin/nro` and selects the lab installation as your
-default. It does not create another Python environment or change shared
-settings. Do not use `--maintain`; maintainers use it during coordinated
-updates.
+This creates the launcher `~/.local/bin/nro` and selects the shared checkout as
+your default installation. It does not create another Python environment,
+download software, or change shared settings. Do not use `--maintain`.
+Maintainers use it during coordinated updates of the shared installation.
 
-For Bash, add this line to `~/.bashrc` if needed:
+If `~/.local/bin` is not already on your `PATH`, add this line to `~/.bashrc`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Load and check the setup:
+Then load the change in your current shell:
 
 ```bash
 source ~/.bashrc
 hash -r
+```
+
+You do not need to activate a Conda or Python virtual environment. The launcher
+selects the environment maintained with the shared checkout.
+
+## Check the setup
+
+Confirm which command your shell runs, then check the installation and the
+configured lab paths:
+
+```bash
 type -a nro
 nro doctor
 nro site ls
 ```
 
-The first `nro` found should be `~/.local/bin/nro`. No Conda or virtual
-environment activation is required. If another command takes precedence,
-deactivate that environment or remove the shell alias. Use
-`~/.local/bin/nro` directly while correcting `PATH`.
+The first path reported by `type -a nro` should be `~/.local/bin/nro`.
+`nro doctor` should report `OK` for every required check. `nro site ls` should
+show the shared CLIMBLAB data, work, definitions, TemplateFlow, and registry
+locations. These settings live in the version-controlled
+`nro-definitions/site/site.yml`. The checkout's site TOML file only points to
+that repository.
 
-## Inspect and request work
+If another `nro` appears first, an activated environment, shell alias, or shell
+function is taking precedence. Deactivate the environment or remove the alias,
+then run `hash -r`. You can use `~/.local/bin/nro` directly while you fix your
+shell configuration.
 
-Always begin with explicit project and participant selectors. Project uses
-uppercase `-P`; participant uses lowercase `-p`:
+If `nro doctor` fails or reports that setup is incomplete, contact the
+maintainer of the shared installation. Onboarding never requires editing paths,
+updating dependencies, repairing the registry, or changing the shared checkout.
+
+## Inspect existing work
+
+Most commands accept the same selectors. Project uses uppercase `-P` and
+participant uses lowercase `-p`:
 
 ```bash
 nro status -P nptl -p t20
+```
+
+Replace `nptl` and `t20` with the project and participant you need. Participant
+labels may include or omit the `sub-` prefix. By default, `nro status` quickly
+reports the registry's saved state without checking files. Run
+`nro status --update` when you need it to check files and update that state.
+
+Omitted selectors mean **all matching values**. A new `nro run` request has one
+exception: it uses workflow `main` when `--workflow` is omitted, so it does not
+request every defined workflow. Even so, a bare `nro run` can request `main`
+work across the whole lab, and a bare `nro purge` can delete every derivative
+under `nro` control after confirmation. With `nro run --resume`, an omitted
+workflow again matches every workflow with resumable work. During onboarding,
+always give a project and participant.
+
+## Request processing
+
+Request work by naming an endpoint module. The planner adds the upstream
+modules it needs and reuses existing fresh results:
+
+```bash
 nro run -P nptl -p t20 -m microparcellation
 ```
 
-By default, `nro status` quickly reports the registry's saved state. Run
-`nro status --update` when you need it to check files and update that state.
+You do not need to list upstream modules. For example,
+`-m microparcellation` includes the required `anat`, `func`, and `clean` work.
+Without `-m`, `run` requests every endpoint in the selected workflow.
 
-Replace the example values with the project and participant you need. The
-planner adds upstream modules and reuses fresh results. Omitted selectors mean
-all matches. A new `nro run` request is the workflow exception: it selects
-workflow `main` when `--workflow` is omitted. A bare request can still cover the
-whole lab, and a bare `nro purge` can delete every controlled derivative after
-confirmation. With `nro run --resume`, an omitted workflow again means all
-matching workflows.
-
-Current defaults are workflow `main`, space `fsnative`, and 2 mm FWHM
-smoothing. Multiple spaces and smoothing values request their cross-product:
+The current defaults are workflow `main`, space `fsnative`, and 2 mm FWHM
+smoothing. Select other spaces or smoothing values only when you need them.
+Multiple values request their cross-product:
 
 ```bash
 nro run -P nptl -p t20 -m networks -s fsnative T1w -S 0 2
 ```
 
+Run `nro run --help` to see the task, model, run, workflow, and other
+selectors.
+
 ## Follow or stop a request
+
+Check status or read logs for the selected work:
 
 ```bash
 nro status -P nptl -p t20
 nro log -P nptl -p t20 -m func
+```
+
+Status shows blocked work and the upstream error that blocked it. The default
+log view groups output by processing work item.
+
+To withdraw your matching request without deleting completed derivatives, run:
+
+```bash
 nro stop -P nptl -p t20
 ```
 
-Status reports upstream errors that block downstream work. The default log view
-groups output by processing work item. Stop withdraws your matching demand
-without deleting completed derivatives or another user's demand.
+Other users' requests for the same work stay active. Do not use `nro purge`
+until you have read the [maintenance command guide](commands/maintenance.md).
+Purge removes shared derivatives and logs, not just your request.
 
-Read the [maintenance command guide](commands/maintenance.md) before using
-purge. Contact the shared-installation maintainer if `nro doctor` fails or setup
-is reported as incomplete. Onboarding does not require path edits, dependency
-updates, registry repair, or changes to the shared checkout.
+## Next steps
 
-Continue with the [command reference](commands/index.md),
-[module guides](modules/index.md), and [viewing guide](commands/viewing.md).
+- [Command reference](commands/index.md)
+- [Processing module guides](modules/index.md)
+- [Viewing completed outputs](commands/viewing.md)
+- [Task models](task-models.md)

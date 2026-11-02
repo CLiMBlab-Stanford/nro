@@ -1,26 +1,19 @@
 # nro
 
+[![Documentation](https://readthedocs.org/projects/nro/badge/?version=latest)](https://nro.readthedocs.io/en/latest/)
+[![Tests](https://github.com/CLiMBlab-Stanford/nro/actions/workflows/main-release-version.yml/badge.svg)](https://github.com/CLiMBlab-Stanford/nro/actions/workflows/main-release-version.yml)
+[![Release](https://github.com/CLiMBlab-Stanford/nro/actions/workflows/publish-release.yml/badge.svg)](https://github.com/CLiMBlab-Stanford/nro/actions/workflows/publish-release.yml)
+
 `nro` processes anatomical and functional MRI from BIDS datasets. It produces
 preprocessed images, cleaned time courses, dynamic-connectivity series, small
-brain parcels, and individualized functional networks. Users request results;
-the orchestration layer finds their dependencies and distributes ready work
-across a site-wide Slurm worker pool.
+brain parcels, individualized functional networks, and task-effect maps. You
+request the results you want. nro finds their dependencies, reuses existing
+work, and distributes ready work across a site-wide Slurm worker pool or local
+workers.
 
-The design separates scientific computation from scheduling. Modules declare
-their complete steps before execution; a common runner handles freshness,
-logging, and resumption. Public outputs have explicit contracts. Changed inputs,
-configurations, or contracts can invalidate results, while equivalent requests
-share existing work.
-
-Derivatives are produced by _modules_ with configurable settings. Sequences of
-configured modules are organized into _workflows_.
-
-All module artifacts live under
-`BIDS/PROJECT/derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. Anatomy and functional
-processing have separate directories, so workflows can select either
-configuration independently.
-
-The main processing graph contains these modules:
+Each kind of result comes from a _module_ with configurable settings. A
+_workflow_ selects a configuration for each module. The main processing graph
+contains these modules:
 
 - `anat` prepares anatomical images.
 - `func` prepares each functional run.
@@ -31,9 +24,8 @@ The main processing graph contains these modules:
   connectivity.
 - `networks` estimates individualized functional networks from either
   microparcel connectivity or dynamic-connectivity time series.
-- `contrasts` estimates task effects from `func` outputs. Registered task
-  models specify run, session, and subject contrasts; volume and surface
-  results include effect, variance, t, and degrees-of-freedom maps.
+- `contrasts` estimates task effects from `func` outputs using registered task
+  models.
 
 The arrows show dependencies:
 
@@ -47,205 +39,94 @@ The arrows show dependencies:
 Only one of the two configured inputs to `networks` is active in a workflow.
 ```
 
-nro follows
-[Semantic Versioning](https://semver.org/), and `main` contains released code.
-Each published version has an annotated Git tag and a corresponding GitHub Release.
-During the 0.x series, public interfaces may still change. The project retains
-older behavior when the benefit is clear and the implementation remains small,
-readable, and inexpensive to run. See the
-[development guide](docs/development.md#release-and-compatibility-policy) for
-the release policy and the [branching tutorial](docs/branching-tutorial.md) for
-development and release workflows.
+Module outputs live under
+`BIDS/PROJECT/derivatives/nro/MODULE/CONFIG_ID-LINEAGE_DIGEST/`. Their files
+use BIDS-like names, but nro does not claim full BIDS compliance. Changed inputs,
+configurations, or output contracts make results stale, while equivalent
+requests share existing work. [How nro works](docs/design.md) explains this
+model.
 
 ## Installation
 
-Choose the guide for your site:
+Choose the guide for your situation:
 
-- [New installation quickstart](QUICKSTART.md) for outside users configuring
-  `nro`, its storage, and its processing dependencies.
-- [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md) for lab members connecting to
-  the existing internal installation.
+- The [new-installation quickstart](docs/quickstart.md) is for outside users
+  configuring `nro`, its storage, and its processing dependencies.
+- The [CLIMBLAB quickstart](docs/climblab-quickstart.md) is for lab members
+  connecting to the existing internal installation.
 
-From a Linux checkout, run `./install`. First setup creates a locked Python
-environment and asks where data, work files, private state, and processing
-resources belong. Personal and development installations are editable. Shared
-releases use staged, non-editable environments so a checkout update cannot
-alter the active command before maintenance succeeds. The system can use Slurm
-or run workers locally.
-
-The user launcher is installed in `~/.local/bin`; no environment activation is
-needed. The POSIX shell bootstrap downloads checksum-pinned uv and CPython, so
-the host does not need Python. It does require `curl` or `wget`, `sha256sum`,
-and `tar`. A FreeSurfer license is required when FreeSurfer-dependent processing
-runs, but not during installation. Some managed hosts need an administrator to
-enable the container runtime. See
-[installation details](docs/installation.md) for shared deployments,
+Both start by running `./install` from a Linux checkout. The installer needs
+`curl` or `wget`, `sha256sum`, and `tar`, but not a host Python. It installs a
+launcher in `~/.local/bin`, so no environment activation is needed. The
+[installation guide](docs/installation.md) covers shared deployments,
 unattended setup, permissions, and dependency acquisition.
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-nro doctor
-```
 
 ## Basic usage
 
-Run the complete workflow for one participant:
+Run the complete `main` workflow for one participant of project `example`:
 
 ```bash
 nro run -p 01 -P example
 ```
 
-With no `--module`, requests reach every workflow endpoint: currently `dynconn`,
-`networks`, and `contrasts`. Contrasts selects models in set `main` for
-matching tasks. Shared upstream work runs once.
-
-Run through a particular module, or select several participants:
+With no `--module`, the request reaches every workflow endpoint: currently
+`dynconn`, `networks`, and `contrasts`. Shared upstream work runs once. To stop
+at a particular module or select several participants:
 
 ```bash
 nro run -p 01 02 -P example -m microparcellation
 ```
 
-`clean` and downstream modules default to `fsnative` at 2 mm smoothing.
-Request only the space/smoothing combinations you need; multiple values
-produce their cross-product:
-
-```bash
-nro run -p 01 -P example -m networks \
-  --space fsnative T1w --smoothing 0 2
-```
-
-The `main` workflow estimates networks from microparcellation with ICA. Select
-repeated clustering with `-w clustering`, the slower OSLOM backend with
-`-w oslom`, or dynconn-backed ICA with `-w dynconn-networks`.
-
-Request task-effect maps separately:
-
-```bash
-nro models list
-nro run -p 01 -P example -m contrasts -s fsnative -S 2
-```
-
-New definitions stores start without task models. Add reviewed models to set
-`main` when they should run by default. See
-[first-level models](docs/modules/contrasts.md) for model registration,
-supported BIDS Stats Models features, and inference limitations.
-
-Edit a model or create it from a task's BIDS events when it is missing:
-
-```bash
-nro def edit model newtask
-nro def edit model newtask main
-```
-
-The same command supports `config CLASS ID`, `workflow ID`, and source markup. See
-[definition authoring](docs/commands/authoring.md) for validation, local drafts,
-and shared-store safeguards.
-
-Run `nro help` for task-oriented guidance from the installed CLI, or
-`nro help --command COMMAND` for a command's current syntax. `nro --version`
-reports which package release the selected installation uses.
-
-Check progress and inspect a failed task:
+Check progress and inspect the logs of a failed task:
 
 ```bash
 nro status -P example
 nro log -p 01 -P example -m func
 ```
 
-Create one Workbench scene from matching completed derivatives:
-
-```bash
-nro scene -p 01 -P example -s fsnative -S 2 --open
-```
-
-The default scene links to its source derivatives. Add `--publish` to copy its
-inputs into a portable scene directory. `--open` runs `wb_view` through an X11
-Slurm allocation on the site's viewing partition; it does not consume an nro
-worker slot. Add `--serverless` to run the viewer on the current host instead.
-
-Render all named maps in a selection as static images:
-
-```bash
-nro render -p 01 -P example -m networks contrasts
-```
-
-Seed-driven connectivity is skipped unless `--seeds` supplies subject-specific
-T1w coordinates. See the [viewing guide](docs/commands/viewing.md) for the seed
-file format and rendering controls.
-
-Common controls are:
-
-```bash
-nro stop -p 01 -P example
-nro set ls
-nro get
-nro set concurrency=100
-nro purge -p 01 -P example
-nro purge --excluded
-nro gc -p 01 -P example
-```
-
-`purge` previews and confirms destructive cleanup. A bare purge selects all
-nro-controlled derivatives across all projects; `--logs` limits cleanup to
-eligible logs. `purge --excluded` removes derivatives that used paths now
-excluded by source markup, together with their downstream consumers. `gc`
-preserves controlled derivatives while removing unclaimed files from the
-matching public and private derivative namespaces.
-
-The direct module form remains equivalent, for example:
-
-```bash
-.nro-env/bin/python -m nro.bin.run -p 01 -P example
-```
-
-Registration quality-control images can be generated separately:
-
-```bash
-nro qc registration 01 -p example
-```
-
-The equivalent engine entry point is
-`.nro-env/bin/python -m nro.qc registration 01 -p example`.
-
-Workflow settings are selected with `-w`; the default is `main`. Configuration,
-model, optional source-markup, and protected site settings live in a separate,
-version-controlled [definitions store](docs/definitions.md). Use
-`nro paths show` to find it and `nro def validate` to check its contents.
+`nro help` gives task-oriented guidance from the installed CLI, and
+`nro help --command COMMAND` shows a command's current syntax. The
+[command reference](docs/commands/index.md) covers spaces and smoothing,
+alternative workflows, task models, viewing, rendering, and cleanup.
 
 ## Documentation
 
-The [documentation home](docs/index.md) links the full guide. Pages build as a
-Sphinx site compatible with Read the Docs.
+The latest documentation is published at
+<https://nro.readthedocs.io/en/latest/>. Its source is under `docs/`, starting
+from [docs/index.md](docs/index.md).
 
 | Topic | Guide |
 | --- | --- |
-| First use | [New installation quickstart](QUICKSTART.md), [CLIMBLAB quickstart](CLIMBLAB_QUICKSTART.md), [installation](docs/installation.md) |
-| Work structure | [Design](docs/design.md), [concepts](docs/concepts.md), [work-item lifecycle](docs/work-item-lifecycle.md) |
+| First use | [New-installation quickstart](docs/quickstart.md), [CLIMBLAB quickstart](docs/climblab-quickstart.md), [installation](docs/installation.md) |
+| How work is organized | [How nro works](docs/design.md), [concepts](docs/concepts.md), [work-item lifecycle](docs/work-item-lifecycle.md) |
+| Commands | [Command reference](docs/commands/index.md), [viewing and rendering](docs/commands/viewing.md), [maintenance and cleanup](docs/commands/maintenance.md) |
+| Configuration | [Workflows and parameters](docs/configuration.md), [definitions stores](docs/definitions.md), [task models](docs/task-models.md) |
 | Scientific processing | [Module guides](docs/modules/index.md), [denoising](docs/methods/denoising.md), [software and methods sources](docs/methods/software.md) |
-| Configuration | [Workflows and parameters](docs/configuration.md) |
-| Command-line interface | [Command reference](docs/commands/index.md) |
 | Cloud acquisition | [Flywheel-to-BIDS ingestion](docs/commands/bidsify.md) |
-| Python development | [API guide](docs/api.md), [development and documentation builds](docs/development.md) |
+| Development | [Architecture and validation scopes](docs/architecture-map.md), [API guide](docs/api.md), [development guide](docs/development.md), [branching tutorial](docs/branching-tutorial.md) |
 
-The module guides describe conditional processing paths and public artifact layouts.
-Working derivatives use BIDS-like names but are not claimed to be fully BIDS
-compliant. Publication and destructive cleanup are separate user commands.
+## Versions and development
 
-## Development
+nro follows [Semantic Versioning](https://semver.org/), and `main` contains
+released code. Each published version has an annotated Git tag and a
+corresponding GitHub Release. During the 0.x series, public interfaces may
+still change. `nro --version` reports the release that the selected
+installation uses. The
+[development guide](docs/development.md#release-and-compatibility-policy)
+describes the release and compatibility policy.
 
-Run the test suite with:
+Development work happens in branch installations, which have editable
+environments. Install with `--dev` to include test dependencies, then run the
+default development suite from the checkout:
 
 ```bash
 .nro-env/bin/python -m pytest -q
 ```
 
-The default command runs the development suite. The
-[development guide](docs/development.md#tests) gives commands for the integration
-tier and the complete suite.
-
-Install with `--dev` to include test dependencies. The documentation build needs
-only `docs/requirements.txt`; it does not install neuroimaging containers or
-import the processing package. See the development guide for the build command.
+The [development guide](docs/development.md#tests) gives commands for the
+integration tier and the complete suite. The documentation build needs only
+`docs/requirements.txt`. It does not install neuroimaging containers or import
+the processing package.
 
 ## AI-assisted development
 

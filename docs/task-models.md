@@ -1,12 +1,63 @@
 # First-level models
 
-A first-level model defines event predictors and contrasts for
-[contrasts](modules/contrasts.md). Store it as
-`DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected
-[definitions store](definitions.md); its identifier is
-`ANALYSIS/VARIANT`. For an ordinary single-task model, the analysis label is
-also the source BIDS task and the YAML does not repeat it. A model that pools
-several tasks declares them explicitly:
+A first-level model tells the [contrasts](modules/contrasts.md) module which
+event predictors to fit and which contrasts to report. This guide shows how to
+write one, starting from a minimal model and adding options as they are needed.
+
+## A minimal model
+
+Store each model as `DEFINITIONS/models/ANALYSIS/VARIANT.yml` in the selected
+[definitions store](definitions.md). Its identifier is `ANALYSIS/VARIANT`. For
+an ordinary single-task model, the analysis label is also the source BIDS task,
+so the YAML does not repeat it.
+
+```{literalinclude} examples/task-model.yml
+:language: yaml
+```
+
+`conditions` names a categorical column in `events.tsv`. nro includes every
+category it observes in that column, even categories that no contrast uses. In
+this short form, a contrast key such as `S` resolves to `trial_type.S`.
+Contrast weights are finite numbers or fraction strings such as `"1/2"`.
+Output contrast names may contain only letters, digits, dots, underscores, and
+hyphens.
+
+`nro def edit model ANALYSIS [VARIANT]` opens an existing model, or drafts a
+missing one from matching BIDS events. See
+[definition authoring](commands/authoring.md) for discovery selectors, local
+drafts, and save behavior.
+
+### HRF and event timing
+
+`hrf` defaults to `glover`. The other accepted values are `spm` and `null`.
+The selected HRF applies to event-derived predictors. Confounds and the
+intercept are never convolved.
+
+Timing comes from the `onset` and `duration` columns, adjusted for the
+functional input's `StartTime`. These timing columns are not predictors
+themselves.
+
+### What the model does not control
+
+The contrasts configuration supplies nuisance regression, temporal outlier
+handling, rank protection, run aggregation, and the noise model. A first-level
+model cannot override those settings or add confounds. This separation lets the
+same scientific model run under different contrasts configurations.
+
+For example, the configuration's `aggregation_weighting` setting controls how
+the available original-run estimates are pooled. The default, `precision`,
+weights by inverse estimated marginal variance. `equal` takes an arithmetic
+mean. See [first-level estimation and inference](methods/contrasts.md) for the
+covariance and DOF calculations.
+
+At execution time, contrasts reads event tables from the BIDS project. Task
+repositories and shared event templates can help with BIDSification and model
+authoring. Once the corresponding `events.tsv` files are published, they are no
+longer runtime dependencies.
+
+## Models that pool several tasks
+
+A model that pools several source tasks lists them in `tasks`:
 
 ```yaml
 tasks: [ActPassBlock, ActPassEvent]
@@ -19,103 +70,23 @@ contrasts:
     trial_type.passivePlausible: -0.25
 ```
 
-`Input.task` in the compiled Stats Models document contains the declared source
-tasks. Each run is still fitted independently. Session and subject summaries
-pool the available primitive effects across tasks, so a contrast may become
-estimable even when no individual run contains all of its conditions.
+Each run is still fitted on its own. Session and subject summaries then pool
+the available primitive effects across tasks, so a contrast can become
+estimable even when no single run contains all of its conditions. In the
+compiled Stats Models document, `Input.task` lists the declared source tasks.
 
-The current derivative layout predates multi-task models and encodes the
-analysis label as `task-ANALYSIS`. This is an on-disk compatibility convention;
-it does not mean that the analysis label is a source BIDS task. The public model
-snapshot and compiled Stats Models document retain the actual source tasks.
-
-`nro def edit model ANALYSIS [VARIANT]` opens an existing model or drafts a missing
-one from matching BIDS events. See
-[definition authoring](commands/authoring.md) for discovery selectors, local
-drafts, and save behavior.
-
-At execution time, contrasts reads event tables from the BIDS project. Task
-repositories and shared event templates may support BIDSification and model
-authoring, but they are not runtime dependencies after the corresponding
-`events.tsv` files have been published.
-
-The contrasts configuration supplies nuisance regression, temporal outlier
-handling, rank protection, run aggregation, and the noise model. First-level
-models cannot override those settings or introduce confounds. This lets the
-same scientific model run under different contrasts configurations.
-
-## Basic model
-
-```{literalinclude} examples/task-model.yml
-:language: yaml
-```
-
-`conditions` names a categorical column in `events.tsv`. nro includes every
-observed category, including categories absent from the contrast definitions.
-In this short form, contrast keys such as `S` resolve to `trial_type.S`.
-Contrast weights are finite numbers or fraction strings such as `"1/2"`.
-Output contrast names must use letters, digits, dots, underscores, or hyphens.
-
-`hrf` defaults to `glover`; `spm` and `null` are also supported. The selected
-HRF applies to event-derived predictors. Confounds and the intercept are never
-convolved. Timing comes from `onset` and `duration`, adjusted for the functional
-input's `StartTime`; these timing columns are not automatic predictors.
-
-The contrasts configuration's `aggregation_weighting` setting controls how
-available original-run estimates are pooled. The default, `precision`, uses
-inverse estimated marginal variance; `equal` uses an arithmetic mean. See
-[inference](methods/contrasts.md) for covariance and DOF calculations.
-
-## Selection and model sets
-
-`model_set` is a name or list of names. Omission means no set membership.
-Assign development models to a separate set, or leave them unassigned, to keep
-them out of default requests.
-
-```yaml
-model_set: [development, language-experiment]
-```
-
-```bash
-nro run -m contrasts                         # set main
-nro run -m contrasts --analysis language     # set main within this analysis
-nro run -m contrasts --task langlocSN        # models that consume this source task
-nro run -m contrasts --model alternative    # explicit variants, any set
-nro run -m contrasts --model language/main  # one qualified model
-nro run -m contrasts --model-set development language-experiment
-```
-
-Values within a selector are alternatives; different selectors intersect.
-`--analysis` matches the first component of `ANALYSIS/VARIANT`. `--task` matches
-a model's declared source BIDS tasks. Either selector selects whole models; a
-task selection does not remove the model's other declared source tasks. Use a
-qualified `--model ANALYSIS/VARIANT` to select one model without ambiguity.
-`--model main` matches that variant across analyses. Explicit `--model` bypasses
-the default set restriction; an explicit `--model-set` still intersects it.
-`--task` and `--run task=...` constrain the same source-task entity.
-
-Registration creates no demand. Bare `nro run` requests `dynconn`, `networks`,
-and `contrasts`, using model set `main` for matching tasks. Use `-m contrasts`
-to request only the modeling module and its upstream dependencies. Existing
-registered work remains independent of later changes to model-set membership.
-
-Model sets are execution metadata. Membership changes do not alter work item
-identity, scientific fingerprints, or completion checks. Model file timestamps,
-comments, and `description` do not affect freshness either. Changing predictors,
-contrasts, transforms, or HRFs invalidates the corresponding model's artifacts,
-not every model using that contrasts configuration. Changing a scientific
-contrasts setting affects every model fitted with that configuration.
-
-Status, logs, stop, and purge accept the same explicit model/set filters. Omitted
-selectors on those commands mean all registered work, including development
-models. Registry discovery considers existing artifacts from all model sets.
+The derivative layout predates multi-task models and encodes the analysis label
+as `task-ANALYSIS`. This is an on-disk compatibility convention, and the
+analysis label need not be a source BIDS task. The public model snapshot and
+the compiled Stats Models document record the actual source tasks.
 
 ## Predictors and transformations
 
-Use `predictors` instead of `conditions` when the design includes numeric
-variables, interactions, or selected category indicators. Predictors and
-transformation inputs refer only to events, never to confounds. Wildcards match
-event variable names; transformations cannot access arbitrary Python code.
+Use `predictors` instead of `conditions` when the design needs numeric
+variables, interactions, or only some category indicators. Predictors and
+transformation inputs can refer only to event variables, never to confounds.
+Wildcards match event variable names. Transformations cannot run arbitrary
+Python code.
 
 ```yaml
 model_set: development
@@ -137,9 +108,9 @@ contrasts:
 ```
 
 Instructions run in order on event amplitudes, before HRF convolution and
-sampling. Multiplication therefore constructs event-level modulation; it does
-not multiply convolved predictors. Grouping for centering is explicit. No
-automatic orthogonalization of modulators is applied.
+sampling. A `Product` therefore builds event-level modulation and does not
+multiply convolved predictors. Grouping for centering must be stated
+explicitly. nro does not orthogonalize modulators automatically.
 
 | Instruction | Supported options and behavior |
 | --- | --- |
@@ -151,12 +122,13 @@ automatic orthogonalization of modulators is applied.
 | `Select` | Keep only the named variables. Select indicators after `Factor` to restrict modeled categories. |
 | `Convolve` | Apply explicit `Model: spm` or `glover`. No amplitude transformations may follow convolution. |
 
-`Input` accepts one variable or a list. `Output` accepts one name; for Demean
-and Scale with Output, Input must resolve to one variable. `Groupby` is the
-transformation option; Stats Models node grouping uses the separate `GroupBy`
-field. Unsupported options are errors, not ignored hints.
+`Input` accepts one variable or a list. `Output` accepts one name. When
+`Demean` or `Scale` has an `Output`, its `Input` must resolve to one variable.
+`Groupby` is the transformation option. Stats Models node grouping uses the
+separate `GroupBy` field. Unsupported options are errors and are never silently
+ignored.
 
-Override the default HRF for individual event predictors with `hrf_overrides`:
+To change the HRF for individual event predictors, use `hrf_overrides`:
 
 ```yaml
 hrf_overrides:
@@ -165,17 +137,20 @@ hrf_overrides:
 ```
 
 Each override must match an event predictor. Overlapping overrides, repeated
-convolution, and an override conflicting with explicit convolution are errors.
-Absent category indicators contribute no estimable effect; within event algebra,
-an absent explicitly named category has zero amplitude. Selected nonfinite
-predictors are errors.
+convolution, and an override that conflicts with an explicit `Convolve` are
+errors.
+
+A category indicator for a category that never occurs contributes no estimable
+effect. Within event algebra, an explicitly named category that is absent has
+zero amplitude. A selected predictor with nonfinite values is an error.
 
 ## Advanced Stats Models blocks
 
-`statsmodels` accepts `Transformations` and `Contrasts`. These replace the
-corresponding shorthand sections; they do not patch the generated model.
-Advanced Transformations also replaces automatic `conditions` expansion, so
-use an explicit `predictors` list with it.
+The `statsmodels` key accepts `Transformations` and `Contrasts` blocks in BIDS
+Stats Models form. Each block replaces the corresponding shorthand section
+instead of patching the generated model. Advanced `Transformations` also
+replaces the automatic `conditions` expansion, so use an explicit `predictors`
+list with it.
 
 ```yaml
 predictors: [trial_type.*]
@@ -192,67 +167,126 @@ statsmodels:
       Test: t
 ```
 
-The same supported transformation semantics apply to both forms. Advanced
-contrasts must be linear t contrasts. Raw Nodes, Edges, Model, Software, and
-Options blocks are not accepted. Supporting a Stats Models field requires an
-estimator implementation and tests, not just a schema-valid JSON document.
+Both forms support the same transformation semantics. Advanced contrasts must
+be linear t contrasts. Raw `Nodes`, `Edges`, `Model`, `Software`, and `Options`
+blocks are not accepted. A Stats Models field becomes supported only when the
+estimator implements it and tests cover it; a schema-valid JSON document is not
+enough.
+
+## Selecting models and model sets
+
+Registering a model creates no work by itself. Bare `nro run` requests
+`dynconn`, `networks`, and `contrasts`, and fits the models in set `main` for
+matching tasks. Use `-m contrasts` to request only the modeling module and its
+upstream dependencies.
+
+`model_set` assigns a model to one named set or a list of sets. A model without
+`model_set` belongs to no set. To keep development models out of default
+requests, put them in a separate set or leave them unassigned.
+
+```yaml
+model_set: [development, language-experiment]
+```
+
+```bash
+nro run -m contrasts                         # set main
+nro run -m contrasts --analysis language     # set main within this analysis
+nro run -m contrasts --task langlocSN        # models that consume this source task
+nro run -m contrasts --model alternative    # explicit variants, any set
+nro run -m contrasts --model language/main  # one qualified model
+nro run -m contrasts --model-set development language-experiment
+```
+
+Values given to one selector are alternatives, and different selectors
+intersect. `--analysis` matches the first component of `ANALYSIS/VARIANT`.
+`--task` matches a model's declared source BIDS tasks and is the same source-task
+entity that `--run task=...` constrains. Both selectors choose whole models, so
+selecting one task does not drop the model's other declared tasks.
+
+`--model main` matches that variant in every analysis. Use a qualified
+`--model ANALYSIS/VARIANT` to select exactly one model. An explicit `--model`
+bypasses the default set restriction, while an explicit `--model-set` still
+intersects with it.
+
+Status, logs, stop, and purge accept the same model and set filters. On those
+commands, omitting the selectors means all registered work, including
+development models. Registry discovery considers existing artifacts from every
+model set.
+
+Model sets are execution metadata. Changing membership does not alter work item
+identity, scientific fingerprints, or completion checks, and work that is
+already registered is unaffected by later membership changes.
 
 ## Levels, missing effects, and saved definitions
 
-nro always plans run and subject outputs, plus session outputs when sessions
-exist. Sessions group original run estimates; subject summaries also pool
-original runs directly. Saving session results does not give a session with
-one run the same weight as a session with four runs. A summary with one
-contributing run retains that run's uncertainty.
+nro always plans run and subject outputs, and adds session outputs when the
+dataset has sessions. Session summaries group original run estimates, and
+subject summaries also pool original runs directly. Saving session results
+therefore does not give a one-run session the same weight as a four-run
+session. A summary with one contributing run keeps that run's uncertainty.
 
-Missing conditions produce omission metadata instead of zero-valued maps.
-Contrasts can become estimable after pooling conditions from different runs.
-Shared-run covariance is retained. Numerical estimability changes the emitted
-contrast inventory, not the execution graph.
+A missing condition produces omission metadata instead of a zero-valued map. A
+contrast can become estimable after conditions from different runs are pooled,
+and shared-run covariance is retained. Numerical estimability changes which
+contrasts are emitted. It does not change the execution graph.
 
-The compiler creates the Stats Models document used by the estimator. At run
-time it resolves selected nuisance/outlier columns and event HRFs. The saved
-run document records those choices; numerical design files record the fitted
-PCs, retained rows, parameter mapping, and rank budget. The work item also saves
-its scientific model YAML, resolved contrasts configuration, and compiled
-template. Execution-only set membership is excluded.
+The compiler produces the Stats Models document that the estimator uses. At run
+time it resolves the selected nuisance and outlier columns and the event HRFs.
+The saved run document records those choices. Numerical design files record
+the fitted PCs, retained rows, parameter mapping, and rank budget. The work
+item also saves its scientific model YAML, the resolved contrasts
+configuration, and the compiled template. Execution-only set membership is left
+out.
 
 ## Model edits and freshness
 
-Freshness compares canonical compiled task definitions, not YAML text or file
-timestamps. Short condition names and their qualified forms, shorthand and
-equivalent advanced blocks, omitted defaults and their explicit values, and
-equivalent numeric contrast weights produce the same contract. Mapping key
-order, comments, `description`, and `model_set` do not change it.
+nro decides whether existing results are still current by comparing canonical
+compiled task definitions. YAML text and file timestamps play no part. Edits
+that only change authoring style keep the same contract:
 
-Compilation for this comparison uses metadata only. It does not read event
-tables or images, build design matrices, or fit a model. A bounded in-process
-cache reuses compilation for identical model contents. Edited contents get a
-new cache entry; file timestamps are not cache keys.
+- short condition names versus their qualified forms;
+- shorthand blocks versus equivalent advanced blocks;
+- omitted defaults versus their explicit values;
+- equivalent numeric contrast weights;
+- mapping key order, comments, `description`, and `model_set`.
 
 Predictor lists, transformation sequences, and explicit advanced contrast lists
-remain ordered. Changes to those sequences, HRFs, contrast weights, or
-aggregation rules can change the contract. nro does not attempt to prove
+stay ordered, so reordering them can change the contract. So can changes to
+HRFs, contrast weights, or aggregation rules. nro does not try to prove
 arbitrary algebraic equivalence or equivalence that depends on event values.
 
-Changing only contrasts or aggregation rules republishes the affected maps and
-summaries without refitting the time series. Each run manifest retains the
-compact coefficient and covariance fit for every design predictor. nro reuses
-that fit only when its input data are still fresh and its predictors, HRF,
-transformations, nuisance model, response scaling, and estimator settings are
-unchanged. Predictor, transformation, HRF, denoising, or estimator changes
-require a new GLM fit. Explicit overwrite requests also refit.
+A change invalidates only the artifacts of the model it touches. Changing
+predictors, contrasts, transformations, or HRFs affects that one model and not
+every model fitted with the same contrasts configuration. Changing a scientific
+setting in the contrasts configuration affects every model fitted with it.
 
-Planning, status assessment, public-output adoption, and execution use this
-normalization. Recorded contracts are normalized as well as current ones, so
-an authoring-style change alone does not invalidate an existing derivative.
-Resumed steps also compare the compiled model and configuration, preserving
-column and internal contrast identifiers. Summary completion checks retain
-the selected run set. Input, dependency, and output checks still apply.
+Changing only contrasts or aggregation rules republishes the affected maps and
+summaries without refitting the time series. Each run manifest keeps the
+compact coefficient and covariance fit for every design predictor. nro reuses
+that fit only while its input data are fresh and its predictors, HRF,
+transformations, nuisance model, response scaling, and estimator settings are
+unchanged. Changes to predictors, transformations, HRF, denoising, or the
+estimator require a new GLM fit. Explicit overwrite requests also refit.
+
+The comparison compiles metadata only. It does not read event tables or images,
+build design matrices, or fit a model. A bounded in-process cache reuses the
+compilation for identical model contents. Edited contents get a new cache
+entry, and file timestamps are not cache keys.
+
+Planning, status assessment, public-output adoption, and execution all use this
+normalization. Recorded contracts are normalized in the same way as current
+ones, so a change in authoring style alone does not invalidate an existing
+derivative. Resumed steps also compare the compiled model and configuration,
+which keeps column and internal contrast identifiers stable. Summary completion
+checks retain the selected run set. Input, dependency, and output checks still
+apply.
+
+## Compatibility with other Stats Models engines
 
 Adaptive denoising and covariance-aware estimation are described under
 [`Model.Software.nro`](https://bids-standard.github.io/stats-models/_autosummary/bsmschema.models.Model.html).
 Another Stats Models engine must implement those rules to reproduce the fit.
 Transformation instructions follow the supported subset of the
-[named transformer interface](https://bids-standard.github.io/stats-models/_autosummary/bsmschema.models.Transformations.html);
-the generated format does not claim unrestricted PyBIDS or FitLins compatibility.
+[named transformer interface](https://bids-standard.github.io/stats-models/_autosummary/bsmschema.models.Transformations.html).
+The generated format does not claim unrestricted PyBIDS or FitLins
+compatibility.

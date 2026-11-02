@@ -1,10 +1,13 @@
 # Core concepts
 
-This document defines the language used to describe `nro`. These terms are
-architectural contracts: code, tests, logs, and other documentation should use
-them consistently.
+This page defines the terms nro uses for its scientific and scheduling
+structures. Code, tests, logs, and documentation use these terms with the
+meanings given here. For an overview of how the pieces fit together, read
+[How nro works](design.md) first.
 
 ## The scientific hierarchy
+
+Each level below contains or applies the level after it.
 
 ```text
 workflow
@@ -34,121 +37,129 @@ product
   is one file or atomic directory within an artifact
 ```
 
-### Configuration class and configuration
+### Configuration class and module configuration
 
-A **configuration class** is the parameter namespace for one scientific module.
-The current classes are `anat`, `func`, `clean`, `dynconn`,
+A **configuration class** is the set of parameters that one scientific module
+accepts. The current classes are `anat`, `func`, `clean`, `dynconn`,
 `microparcellation`, `networks`, and `contrasts`.
 
-A **module configuration** is the complete set of local parameters for one
-configuration class. It has a stable human-readable ID. Configuration files
-contain the authority; Python does not maintain a second default parameter map.
+A **module configuration** gives a value for every local parameter of one
+configuration class. It has a stable, readable ID. Configuration files are the
+only source of these values. Python code does not keep a second map of default
+parameters.
 
-A **module lineage** identifies one module configuration together with the
-complete upstream closure of module configurations on which it depends. A
-lineage is independent of participant, run, space, smoothing, and other data
-entities. Several workflows can select the same lineage, and equivalent
-lineages share a derivative namespace. A substantive configuration change
-changes the applicable work-item contract and invalidates affected results when
-they are reassessed.
+### Module lineage
 
-Anatomy lineage depends only on the `anat` configuration. Functional lineages
-that select the same anatomy reuse it. Each downstream lineage includes its
-local configuration ID and upstream lineage, so incompatible inputs cannot
-write into the same namespace.
+A **module lineage** is a module configuration together with every upstream
+module configuration it depends on. A lineage does not depend on participant,
+run, space, smoothing, or any other data entity.
+
+Several workflows can select the same lineage, and equivalent lineages share
+one derivative namespace. A substantive change to a configuration changes the
+contract of the work items that use it. nro marks the affected results stale
+the next time it assesses them.
+
+The anatomy lineage depends only on the `anat` configuration, so functional
+lineages that select the same anatomy reuse it. Each downstream lineage
+records its local configuration ID and its upstream lineage. Lineages with
+incompatible inputs therefore cannot write into the same namespace.
 
 ### Workflow
 
 A **workflow** selects one configuration ID for each configuration class. It
-defines a coherent path from source data through the available modules. A
-workflow does not contain scientific code and is not a runtime sequence of
+describes one coherent path from source data through the available modules. A
+workflow contains no scientific code, and it is not a runtime sequence of
 steps.
 
 ### Module
 
-A **module** defines one reusable kind of scientific work and its internal DAG.
-The current modules are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `contrasts`. A module lineage owns one
-namespace under `derivatives/nro/MODULE/LINEAGE_ID/`.
+A **module** defines one reusable kind of scientific work and the graph of
+steps inside it. The current modules have the same names as the configuration
+classes. Each module lineage owns one namespace under
+`derivatives/nro/MODULE/LINEAGE_ID/`.
 
-A module's graph is determined entirely by resolved BIDS data and its workflow.
-It is fully constructed before freshness is examined. Existing, missing,
-fresh, stale, or invalid files may affect whether declared steps run, but may
-never change which steps exist or how they depend on one another.
+The resolved BIDS data and the workflow fully determine a module's graph. nro
+builds the whole graph before it checks freshness. Whether files exist, or are
+fresh, stale, or invalid, can decide whether a declared step runs. It never
+changes which steps exist or how they depend on each other.
 
-All scientific module packages live under `nro/modules/`. Their scientific
-construction belongs in `nro/modules/<module>/module.py`; planner-facing
-work-item construction belongs in `nro/modules/<module>/planning.py`.
+All scientific module packages live under `nro/modules/`. Scientific
+construction belongs in `nro/modules/<module>/module.py`, and the code that
+builds work items for the planner belongs in
+`nro/modules/<module>/planning.py`.
 
 ### Work item
 
 A **work item** is one concrete, schedulable application of a module lineage.
-Its identity includes its project, module lineage, selected data, and applicable
-BIDS entities. For example:
+Its identity combines the project, the module lineage, the selected data, and
+the applicable BIDS entities. For example:
 
 > `clean` for participant `t20`, one BOLD run, `fsnative` space, and 2 mm
 > smoothing under a particular `clean` module lineage.
 
-Work items can run concurrently when their dependencies permit it. A general
-worker normally runs all of a work item's steps. A step with a distinct resource
-class may be handed to that resource pool while the parent work item waits; it
-remains part of the same fixed runner graph and artifact contract.
+Work items run concurrently when their dependencies allow. A general worker
+normally runs every step of a work item. A step that needs a different resource
+class, such as a GPU, can be handed to a matching worker pool while the parent
+work item waits. That step still belongs to the same fixed runner graph and
+artifact contract.
 
 ### Step
 
-A **step** is one immutable declaration of a scientific transform. It declares
-exact inputs, exact outputs, and one action. A step may depend on other steps in
-the same module.
+A **step** is one immutable declaration of a scientific transform. It names its
+exact inputs, its exact outputs, and one action. A step may depend on other
+steps in the same module.
 
-A step is always added to the module graph before freshness is evaluated. At
-runtime it receives exactly one decision: execute or skip. Closely related
-child commands may share a step only when they form one atomic artifact
-operation with one freshness and recovery boundary.
+Every step is added to the module graph before freshness is evaluated. At
+runtime the runner makes one decision for it: execute or skip. Several related
+child commands may share one step only when they form one atomic operation on
+an artifact, with one boundary for freshness and recovery.
 
-Inputs create data-dependency edges. A step may also declare scientific
-parameters that affect its transform without naming a file. If an input or
-scientific declaration changes, the runner reruns that step and its descendants
-while leaving independent subgraphs untouched.
+Inputs create the data-dependency edges between steps. A step may also declare
+scientific parameters that affect its result without naming a file. When an
+input or a declared parameter changes, the runner reruns that step and its
+descendants and leaves independent parts of the graph alone.
 
 ### Runner and runner graph
 
-The **runner** is the one shared work-item-internal execution engine,
-`nro.orchestration.runner.Runner`. Every scientific module uses it; modules do
-not define their own runner implementations.
+The **runner** is `nro.orchestration.runner.Runner`, the single engine that
+executes steps inside a work item. Every scientific module uses it, and no
+module defines its own runner.
 
-Each runner creates and owns one **runner graph**, represented by
-`RunnerGraph`. Module code adds steps through the runner. The runner freezes the
-graph before checking freshness, then traverses it in dependency order and
-records every execute-or-skip decision.
+Each runner creates and owns one **runner graph**, a `RunnerGraph`. Module code
+adds steps through the runner. The runner freezes the graph, checks freshness,
+then walks the graph in dependency order and records each execute-or-skip
+decision.
 
-The module defines the scientific DAG. The runner implements its common
-execution semantics. The planner schedules complete work items. The scheduler
-may route a declared resource-specific step to a matching worker without making
-that step a separate work item.
+The division of labor is as follows. The module defines the scientific graph,
+the runner applies common execution rules to it, and the planner schedules
+complete work items. The scheduler may send a step that declares a specific
+resource to a matching worker. That step does not become a separate work item.
 
 ### Artifact and product
 
-An **artifact** is the exact set of public outputs promised by one work item.
-It is the durable output boundary against which completion and freshness are
-assessed. An artifact is not schedulable and has no independent worker.
+An **artifact** is the exact set of public outputs that one work item promises.
+nro assesses completion and freshness against this set. An artifact cannot be
+scheduled and has no worker of its own.
 
-A **product** is one concrete file or atomic directory within an artifact. A
-private intermediary under `WORK` is neither an artifact nor a product. It may
-support resumption and can be regenerated when needed.
+A **product** is one concrete file or atomic directory within an artifact.
+Private intermediates under `WORK` are neither artifacts nor products. They
+help interrupted work resume, and nro can regenerate them when needed.
 
-The namespace `derivatives/nro/MODULE/LINEAGE_ID/` can contain artifacts from
-many work items. Participant and session directories organize their products;
-those directories are not themselves artifacts unless a work-item contract
-declares one as an atomic product. An artifact is therefore neither the entire
-lineage namespace nor necessarily one subject or session directory.
+One lineage namespace, `derivatives/nro/MODULE/LINEAGE_ID/`, can hold artifacts
+from many work items. Participant and session directories organize the
+products. Such a directory is not an artifact unless a work-item contract
+declares it as an atomic product. An artifact is therefore neither the whole
+lineage namespace nor, necessarily, one subject or session directory.
 
-The registry reports an artifact's collective filesystem condition as its
-**artifact state** (`missing`, `stale`, or `fresh`).
+The registry reports the combined filesystem condition of an artifact as its
+**artifact state**: `missing`, `stale`, or `fresh`.
 
 Python interfaces, command-line output, ownership receipts, and registry tables
-use this vocabulary directly.
+all use these terms directly.
 
-## Orchestration hierarchy
+## The orchestration hierarchy
+
+These roles carry a user's request through to executed steps.
 
 ```text
 user request
@@ -168,81 +179,87 @@ runner
   executes or skips the work item's declared steps
 ```
 
+### Request and demand
+
+A **request** records that a user wants one or more terminal work items. The
+planner expands it to include their upstream dependencies.
+
+**Demand** is the active link between a request and a work item. Several
+requests can demand the same work item. Cancelling one request does not cancel
+work that another request still demands.
+
 ### Planner
 
-The **planner** turns selections and workflows into complete work-item graphs,
-registers them, evaluates demand, and supplies the shared worker pool. Its
-scientific knowledge comes from the explicit built-in module catalog and the
-module-local planning functions.
+The **planner** turns selections and workflows into complete graphs of work
+items. It registers those graphs, evaluates demand, and feeds the shared worker
+pool. Its knowledge of the science comes from the built-in module catalog and
+the planning functions in each module.
 
 ### Registry
 
-The registry has two coordinated parts. The shared scheduler registry stores
-requests, attempts, workers, Slurm submissions, and the general and GPU
-concurrency limits. Each development branch has a scientific registry that stores its
+The registry has two coordinated parts.
+
+The shared **scheduler registry** stores requests, attempts, workers, Slurm
+submissions, and the general and GPU concurrency limits.
+
+Each development branch has a **scientific registry**. It stores the branch's
 discovered source tree, compiled workflows, work items, dependencies, and
-artifact observations. This separation lets the scheduler coordinate all
-branches without importing their code.
+artifact observations. Keeping these apart lets the scheduler coordinate every
+branch without importing branch code.
+
+Each registry controls locking and transactions for its own state. Neither one
+is a second planner. The registries are the authority on orchestration
+identity, demand, and history. The filesystem is the authority on whether
+derivative files exist and match their completion records.
 
 Ordinary source discovery does not create derivative work items or demand.
-Registry bootstrap and repair additionally discover existing files in
-nro-controlled derivative locations and register the work items that own them,
-without creating demand. The registries are the locking and transaction
-authorities for their respective state; neither is a second planner
-implementation.
+Registry bootstrap and repair go further: they also find existing files in
+nro-controlled derivative locations and register the work items that own them.
+They still create no demand.
 
-The filesystem remains authoritative for whether derivative files currently
-exist and match their completion records. The registries are authoritative for
-orchestration identity, demand, and history.
+### Ownership receipts
 
-Each owned derivative configuration root contains `.nro/lineage.json` and one
-receipt under the storage-only `.nro/work_items/` directory for every work item
-it owns. These records keep
-the module lineage, work-item identity, dependencies, and artifact
-contract with the derivative. Registry repair reads them before resolving the
-workflows in the current definitions store. Removing or renaming a workflow
-therefore does not make its existing derivatives invisible.
+Each owned derivative configuration root contains `.nro/lineage.json`. It also
+contains one receipt for every work item it owns, stored in the storage-only
+`.nro/work_items/` directory. Together these records keep the module lineage,
+work-item identity, dependencies, and artifact contract alongside the
+derivative.
 
-Ownership does not imply that a work item can be recomputed. A current workflow
-must select its module lineage before the planner can request it. Status reports
-a nonfresh historical work item as `Unavailable` when no current workflow
-selects that lineage. A fresh historical work item remains `Success`
-because its artifact is still usable. Purge can select either case without the
-originating workflow.
+Registry repair reads the receipts before it resolves workflows from the
+current definitions store. Removing or renaming a workflow therefore does not
+hide its existing derivatives.
 
-### Request and demand
-
-A **request** records a user's desire to obtain one or more terminal work items.
-The planner expands it over upstream dependencies.
-
-**Demand** is the active association between a request and a work item. Several
-requests may share demand for the same work item. Cancelling one request does
-not cancel work still demanded by another.
+Owning a work item does not mean nro can recompute it. The planner can request
+a lineage only when a current workflow selects it. If no current workflow
+selects a historical work item's lineage, status reports it as `Unavailable`
+when it is not fresh. A fresh historical work item stays `Success`, because
+its artifact is still usable. Purge can select either case without the
+original workflow.
 
 ### Worker and attempt
 
-A **worker** is a reusable Slurm or local process that claims and supervises one
-ready work item at a time. It is cluster infrastructure, not a scientific
-module.
+A **worker** is a reusable Slurm or local process. It claims one ready work
+item at a time and supervises it. Workers are cluster infrastructure, not
+scientific modules.
 
 An **attempt** is one historical execution of a work item by a worker. A work
-item may have several attempts because it was interrupted, failed, became stale,
-or was explicitly requested again. Attempt failure is history; it does not
-permanently redefine the work item.
+item can have several attempts, for example because it was interrupted, failed,
+became stale, or was requested again. A failed attempt is recorded in history.
+It does not permanently change the work item.
 
-## Terms that are not interchangeable
+## Terms that are easy to confuse
 
 | Terms | Distinction |
 |---|---|
-| Configuration class / module | A configuration class defines the accepted settings; the module defines the work graph. Their names currently correspond one-to-one. |
-| Module configuration / module lineage | A module configuration contains local settings; a module lineage adds the complete upstream configuration closure. |
-| Module / work item | A module is the reusable DAG definition; a work item applies one module lineage to selected data and entities. |
-| Work item / artifact | A work item is schedulable work; its artifact is the exact public output set it promises. |
-| Artifact / product | An artifact is a work item's public output set; a product is one file or atomic directory within it. |
-| Workflow / module | A workflow selects configurations; a module performs scientific computation. |
-| Planner / runner | The planner schedules work items; the runner executes steps inside one work item. |
-| Request / attempt | A request expresses demand; an attempt records one execution. |
+| Configuration class / module | A configuration class defines the accepted settings. The module defines the work graph. Their names currently correspond one to one. |
+| Module configuration / module lineage | A module configuration holds local settings. A module lineage adds every upstream configuration. |
+| Module / work item | A module is the reusable graph definition. A work item applies one module lineage to selected data and entities. |
+| Work item / artifact | A work item is schedulable work. Its artifact is the exact public output set it promises. |
+| Artifact / product | An artifact is a work item's public output set. A product is one file or atomic directory within it. |
+| Workflow / module | A workflow selects configurations. A module performs scientific computation. |
+| Planner / runner | The planner schedules work items. The runner executes steps inside one work item. |
+| Request / attempt | A request expresses demand. An attempt records one execution. |
 | Space / smoothing | Both select work items from `clean` onward. nro filenames use the nonstandard `smoothing` entity because BIDS `scale` describes atlas granularity. |
 
-The planner-facing record hierarchy is defined separately in
-[Work-item planning and execution](work-item-lifecycle.md).
+[Work-item planning and execution](work-item-lifecycle.md) defines the records
+the planner uses for each work item.

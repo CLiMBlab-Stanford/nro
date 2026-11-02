@@ -1,62 +1,77 @@
 # Microparcellation and connectivity
 
-`microparcellation` aggregates a participant's admissible cleaned runs in one
-space and smoothing level. Surface and volume spaces are parcellated
-independently; tiny parcels are not projected between spaces.
+`microparcellation` divides a participant's cortex or brain volume into many
+small, functionally coherent parcels and estimates the parcel-by-parcel
+connectivity matrix. It pools the participant's usable cleaned runs in one
+space and smoothing level. Use it when you want a compact connectome, or as
+the input to OSLOM network estimation.
 
-## Admission and geometry
+Surface and volume spaces are parcellated independently. Parcels are not
+projected from one space to another.
 
-The module reads required quality metadata from clean sidecars and excludes
-undefined or inadmissible runs before streaming signals. Thresholds cover
-retained frames/fraction, residual design degrees of freedom, participation
-effective rank, dominant temporal variance, usable-run count, and aggregate
-retained frames. It records rejected runs and reasons. Missing required metadata
-is a contract problem, not an invitation to recompute it from data.
+## Run admission
 
-On load, inexpensive shape, pairing, and finite-value checks remain. Censored
-frames already exist in the input and are dropped; microparcellation does not
-reconstruct them or redo the clean quality analysis.
+The module reads quality metadata from each `clean` sidecar and excludes
+undefined or inadmissible runs before it streams any signal. The thresholds
+cover retained frames and retained fraction, residual design degrees of
+freedom, participation effective rank, dominant temporal variance, the number
+of usable runs, and the total retained frames. Rejected runs are recorded with
+their reasons. Missing required metadata is a contract error. The module does
+not recompute the metadata from the data.
 
-Surface neighborhoods come from triangle edges and the configured surface
-geometry/mask. Volume neighborhoods use the selected mask and 6-, 18-, or
-26-connectivity. Template surfaces/masks resolve from configured local resources.
-Direct anatomy dependencies supply native geometry and gray-matter support.
+When it loads a run, the module still checks shape, pairing, and finite
+values. Censored frames are dropped. The module does not reconstruct them or
+repeat the `clean` quality analysis.
 
-## Streaming estimation
+## Spatial graph
 
-1. Standardize admitted runs over retained frames. Optional additional global
-   signal regression is applied for connectivity. Default clean already
-   includes global signal; the connectivity switch is separately configurable.
-2. Estimate local neighbor correlations. Runs are centered and standardized
-   independently, then pooled with equal or effective-DOF weights.
-3. Transform local similarities with the configured exponential temperature.
-   Apply Loukas edge-based local-variation coarsening, contracting spatial
-   neighbors through multiple levels while approximating a low-frequency
-   graph-Laplacian eigenspace. Iterative refinement uses the configured number
-   of passes. `target_vertices` is a target coarse graph size; disconnected
-   support and allowable contractions constrain what can be reached.
-4. Stream parcel-mean signals and accumulate their correlation matrix. Accumulate
-   original-versus-parcel variance retention and quality summaries in the same
-   pass. The estimator does not retain a connectome for every run.
-5. Generate five spatial region-growing null partitions by default. Seeds and
-   growth targets approximate the observed parcel-size distribution; topology
-   can prevent exact matching. Record variance-retention and size-match
-   statistics, not the null label arrays as public outputs.
-6. Summarize connectome weights, node strength, spectral concentration, run
-   contributions, and split-half reproducibility. Splits use complete runs;
-   only a single-run input falls back to temporal blocks. Half matrices are
-   working accumulators, not per-run public connectomes. Interpret these
+Surface neighbors come from triangle edges on the configured surface geometry
+and mask. Volume neighbors use the selected mask and 6-, 18-, or
+26-connectivity. Template surfaces and masks come from configured local
+resources. Direct `anat` dependencies supply native geometry and gray-matter
+support.
+
+## Estimation
+
+The estimator streams the data and does not keep a connectome for each run.
+
+1. **Prepare runs.** Each admitted run is standardized over its retained
+   frames. Global signal regression can be applied again for connectivity. The
+   default `clean` configuration already removes global signal, and this
+   connectivity switch is set separately.
+2. **Estimate local similarity.** nro computes correlations between spatial
+   neighbors. Runs are centered and standardized independently, then pooled
+   with equal or effective-DOF weights.
+3. **Coarsen.** Local similarities are transformed with the configured
+   exponential temperature. Loukas edge-based local-variation coarsening then
+   contracts spatial neighbors over several levels while approximating a
+   low-frequency graph-Laplacian eigenspace, followed by the configured number
+   of refinement passes. `target_vertices` is the target size of the coarse
+   graph. Disconnected support and the contractions allowed can keep the result
+   from reaching it.
+4. **Accumulate connectivity.** nro streams parcel-mean signals and
+   accumulates their correlation matrix. In the same pass it accumulates how
+   much original variance the parcels retain, along with quality summaries.
+5. **Build null partitions.** Spatial region growing generates five null
+   partitions by default. Seeds and growth targets approximate the observed
+   parcel-size distribution, though topology can prevent an exact match. nro
+   records variance-retention and size-match statistics but does not publish
+   the null label arrays.
+6. **Summarize.** nro summarizes connectome weights, node strength, spectral
+   concentration, run contributions, and split-half reproducibility. Splits
+   use complete runs. Only a single-run input falls back to temporal blocks.
+   Half matrices are working accumulators and are not published. Treat these
    summaries as diagnostics, not calibrated uncertainty intervals.
 
 See [estimation equations](../methods/estimation.md) for run weighting,
 variance-retention denominators, quantization, and split allocation.
 
-## Public artifacts
+## Outputs
 
-Outputs from every space and smoothing target share
-`derivatives/nro/microparcellation/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`. `PREFIX`
-includes subject, space, and smoothing, which keeps targets distinct within
-that directory. The fixed scientific outputs are:
+Outputs for every space and smoothing level share
+`derivatives/nro/microparcellation/<CONFIG_ID>-<LINEAGE_DIGEST>/sub-ID/`.
+`PREFIX` includes participant, space, and smoothing, which keeps targets
+separate within that directory. The scientific outputs are:
 
 | Suffix after `PREFIX` | Meaning |
 | --- | --- |
@@ -64,36 +79,44 @@ that directory. The fixed scientific outputs are:
 | `_connectivity.pconn.nii` | Parcel-by-parcel correlation matrix and parcel axis. |
 | `_desc-microparcellationQuality_metrics.json` | Variance retention, null statistics, and connectome diagnostics. |
 | `_desc-microparcellation_manifest.yaml` | Method, sources, admission, outputs, and completion. |
-| `_desc-microparcellationIndex_manifest.json` | Paths used by downstream discovery/viewing. |
+| `_desc-microparcellationIndex_manifest.json` | Paths used by downstream discovery and viewing. |
 | `_desc-microparcellation_dseg.nii.gz` | Additional volume labels for volume targets. |
 
 Use `nro scene -m microparcellation` to create a Workbench view. The linked
-form reuses the source geometry and scientific outputs without copying them.
-Use `nro render -m microparcellation --seeds FILE` to create static parcel
-connectivity maps from T1w coordinates; see the
+form reuses the source geometry and outputs without copying them. Use
+`nro render -m microparcellation --seeds FILE` to create static parcel
+connectivity maps from T1w coordinates. See the
 [viewing guide](../commands/viewing.md#nro-render).
 
 ## Configuration
 
 `markup` selects the source-markup document described in
-[definitions stores](../definitions.md#source-markup); `null` ignores markup.
-`input_filter` restricts selected cleaned inputs; `surface`, `mask`,
-`mask_threshold`, and `volume_connectivity` define spatial support. nro fixes
-the output root and filename prefix from the project, module ID, participant,
-space, and smoothing request. `overwrite` requests rebuilding module outputs.
+[definitions stores](../definitions.md#source-markup). `null` ignores markup.
+nro sets the output root and filename prefix from the project, module ID,
+participant, space, and smoothing request. `overwrite` requests rebuilding the
+outputs.
 
-`coarsening.iterations` controls refinement; `exponential_temperature` scales
-similarities; `eigenvectors`, `max_levels`, and `eigensolver_tolerance` govern
-the spectral approximation. The connectivity thresholds are admission rules;
+**Inputs and spatial support.** `input_filter` restricts the cleaned inputs.
+`surface`, `mask`, `mask_threshold`, and `volume_connectivity` define spatial
+support.
+
+**Coarsening.** `coarsening.target_vertices` sets the target graph size and
+`iterations` the refinement passes. `exponential_temperature` scales
+similarities. `eigenvectors`, `max_levels`, and `eigensolver_tolerance` govern
+the spectral approximation.
+
+**Connectivity.** The `connectivity` thresholds are admission rules.
 `temporal_block_size` bounds streaming chunks. `weighting` selects `precision`
 or `equal` run weights. `global_signal_regression` changes the estimator and
-reduces each run's connectivity DOF by one.
-`quality.random_seed` makes null generation repeatable;
-`region_growing_attempts` bounds null construction retries;
-`connectome_power_iterations` controls the spectral diagnostic approximation.
-`quality.split_half_block_frames` sets the single-run split blocks in retained
-frames (default 128, capped at half the run length). This scientific setting
-is independent of the execution-only streaming chunk sizes.
+reduces each run's connectivity degrees of freedom by one.
+
+**Quality.** `quality.null_parcellations` sets the number of null partitions.
+`random_seed` makes null generation repeatable, and `region_growing_attempts`
+bounds retries during null construction. `connectome_power_iterations`
+controls the spectral diagnostic approximation. `split_half_block_frames` sets
+the single-run split block size in retained frames. It defaults to 128 and is
+capped at half the run length. This setting is scientific and independent of
+the execution-only streaming chunk sizes.
 
 ```{literalinclude} ../../nro/definitions/starters/configs/microparcellation/main_microparcellation.yml
 :language: yaml

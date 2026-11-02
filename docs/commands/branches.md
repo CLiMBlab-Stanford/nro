@@ -1,17 +1,18 @@
 # Branch registration
 
-`nro branch` registers Git branches and their checkouts with the shared nro
-installation. Each registered branch has one scientific registry. Every
-attached checkout of that branch resolves to the same database, regardless of
-where the checkout lives.
+Use `nro branch` to register a Git branch and its checkouts with the shared nro
+installation, so that you can run processing from a development checkout.
+Each registered branch has its own scientific registry. Every checkout attached
+to the branch uses that same database, wherever the checkout lives.
 
-After a main scheduler release is installed and activated, `run`, `status`, `log`, and
-`stop` use the same selectors in development checkouts. The branch compiles its
-scientific graph; a separate process using the central installation admits and
-schedules it. Registration alone does not activate a scheduler. See
-[development](../development.md#branch-isolation-work) for deployment requirements.
-For an end-to-end Git and nro workflow, see
-[Develop on a branch](../branching-tutorial.md).
+Once a main scheduler release is installed and activated, `run`, `status`,
+`log`, and `stop` accept the same selectors in a development checkout as on
+`main`. The branch compiles its own scientific graph, and a separate process
+running the central installation admits and schedules the work. Registering a
+branch does not activate a scheduler. See
+[development](../development.md#branch-isolation-work) for deployment
+requirements, and [Develop on a branch](../branching-tutorial.md) for a
+complete Git and nro workflow.
 
 ## Register and attach
 
@@ -28,21 +29,23 @@ From a new feature checkout:
 nro branch register --parent dev
 ```
 
-The branch name comes from Git. The command does not create a Git branch,
-commit code, or switch branches. Feature branches default to parent `dev`.
+nro takes the branch name from Git. It does not create a Git branch, commit
+code, or switch branches, and creating or checking out a Git branch does not
+register it with nro. Feature branches default to the parent `dev`. The names
 `main` and `dev` are reserved on first registration, even if their checkouts do
-not exist yet. Their parent relationship is fixed: `main -> dev`.
+not exist yet, and their relationship is fixed as `main -> dev`.
 
-To use another checkout of an already registered branch:
+`register` rejects a name that is already registered and tells you to use
+`attach`. To use another checkout of a registered branch:
 
 ```bash
 nro branch attach --checkout /path/to/another/checkout
 ```
 
-`register` rejects an existing branch name and directs the user to `attach`.
-Attaching checks the checkout's actual Git branch. Detached checkouts and
-checkout paths already attached to another branch are rejected. Merely creating
-or checking out a Git branch does not register it with nro.
+Attaching checks which Git branch the checkout is actually on. nro rejects
+detached checkouts and checkouts already attached to another branch. When the
+Git repository identity is available, it also rejects a checkout from a
+different repository.
 
 ## Inspect and maintain
 
@@ -53,73 +56,105 @@ nro branch reparent feature/example --parent dev
 nro branch retire feature/example
 ```
 
-`show` without a name checks the current checkout's registration. `--checkout`
-selects another checkout. `--json` provides structured output for every action.
-The global site configuration selects the shared registry and BIDS context.
-`list` does not initialize an absent store.
+`show` without a name reports the current checkout's registration, and
+`--checkout` selects another checkout. Every action accepts `--json` for
+structured output. `list` does not create the store if it is absent. The global
+site configuration selects the shared registry and BIDS context.
 
-Reparenting changes the declared inheritance tree, not Git history or artifact
-locations. Cycles and parents outside the `main -> dev` spine are rejected.
-Retirement preserves the branch name and database but rejects further checkout
-authorization. Run either mutation from an attached checkout of the branch being
-changed. When Git repository identity is available, attaching a checkout from a
-different repository is rejected. These checks prevent routing mistakes among
-trusted contributors; they are not an access-control boundary.
+Run `reparent` and `retire` from an attached checkout of the branch you are
+changing. Reparenting changes the declared inheritance tree. It does not change
+Git history or where artifacts are stored. Cycles, and parents outside the
+`main -> dev` spine, are rejected.
 
-Reparent active children before retiring their parent. Retirement immediately
-cancels the branch's demand and queued or running attempts. It also invalidates
-affected readers and reconciles retained requests against the new topology.
-Neither operation moves or deletes derivatives. With an activated scheduler,
-topology changes run through its serialized maintenance interface.
+Retiring keeps the branch name and database but stops authorizing its
+checkouts. It immediately cancels the branch's demand and its queued or running
+attempts, invalidates affected readers, and reconciles retained requests
+against the new tree. Reparent any active children before retiring their
+parent. Neither operation moves or deletes derivatives. With an activated
+scheduler, both run through the scheduler's serialized maintenance interface.
+
+These checks prevent routing mistakes among trusted contributors. They are not
+an access-control boundary.
 
 ## Development definitions
 
-A branch installation reads the shared definitions store by default. Its
-`create`, `edit`, and `delete` commands cannot change that store. To experiment
-with configurations, workflows, models, or events, clone the definitions
-repository to a separate directory and select it:
+By default a branch reads the shared definitions store, and `nro def edit` and
+`nro def rm` cannot change it from a branch. To experiment with configurations,
+workflows, models, or events, clone the definitions repository to a separate
+directory and select it:
 
 ```bash
 nro branch definitions --definitions /path/to/development-definitions
 ```
 
-The directory must already contain a valid private nro definitions store and
-must not contain `site/site.yml`. It inherits that protected document from the
+The directory must already hold a valid nro definitions store and must not
+contain `site/site.yml`. The branch inherits that protected document from the
 shared repository. Other definitions resolve through the registered branch
-tree: current branch, nearest parent first, then the shared repository. A
-private store therefore needs to contain only its overrides. Alternatively,
-`nro def init
-/path/to/development-definitions` creates a suitable starter store without
-selecting it or copying the lab's definitions. Selection is central:
-every installed checkout of the same branch uses the selected directory. No
-files are copied or Git operations performed by the selection command.
+tree: the current branch first, then each parent from nearest to farthest, then
+the shared repository. A private store therefore needs only its overrides. To
+start one from the packaged starter instead of the lab's definitions, run
+`nro def init /path/to/development-definitions`, then select it.
 
-Create and publish branch-specific definitions through nro's authoring commands.
-Direct edits are rejected by the store manifest. Installing the branch may
-migrate its selected private store in place, but it never modifies the shared
-store or a parent's private overlay.
+The selection is central, so every installed checkout of the branch uses the
+selected directory. The selection command copies no files and runs no Git
+operations. Create and publish branch definitions with nro's
+[authoring commands](authoring.md). The store manifest rejects direct edits.
+Installing the branch may migrate its private store in place, but never
+modifies the shared store or a parent's private store.
 
-The selected store must not overlap shared definitions, private control state,
-or another branch's selected store. nro also rejects symbolic-link redirection
-and any private protected-site document. Definition editing is limited to files
-inside the selected store.
+The selected store must not overlap the shared definitions, private control
+state, or another branch's store. nro also rejects symbolic-link redirection
+and any private copy of the protected site document. Definition edits are
+limited to files inside the selected store.
 
-To return to shared, read-only definitions:
+To return to the shared, read-only definitions:
 
 ```bash
 nro branch definitions --shared
 ```
 
-Selection does not change scientific observations. Subsequent planning compares
-compiled definitions by content, using the existing freshness rules. Changing a
-store path alone does not mark artifacts stale. Source capture records the
-nearest branch definitions path; parent lookup follows the centrally registered
-branch tree. The execution-site snapshot always resolves from the shared
-protected document. Neither mechanism copies a definitions directory.
+`--definitions` and `--shared` cannot be combined.
+
+Changing the selection does not change any scientific observation. Later
+planning compares compiled definitions by content under the usual freshness
+rules, so changing the store path alone does not make artifacts stale. Source
+capture records the nearest branch definitions path, and parent lookup follows
+the central branch tree. The execution-site snapshot always comes from the
+shared protected document. Neither copies a definitions directory.
+
+## Running work on a branch
+
+Status and logs on a branch show that branch's registered selections. `stop`
+cancels only that branch's requests, including with `--force`. Shared producer
+work requested by another branch keeps running. Inherited artifacts are
+read-only.
+
+Development outputs go to a separate tree set by the site setting
+`development`. The lab default is `/juice6/u/nlp/climblab/NRO_DEV`, and the
+proposed default outside the lab is `~/nro/development`. Outputs are written to
+`development/BRANCH_ID/{BIDS,WORK}/PROJECT/derivatives`. Scientific inputs
+always start from the shared site's raw BIDS data.
+
+A request keeps its complete compiled graph, including computations hidden
+behind inherited artifacts. If an inherited input becomes unavailable, workers
+reconsider that graph and compute the missing work for the branch. They do not
+ask an ancestor branch to rebuild, and they do not load the branch's scientific
+modules. If a newer scientific revision has been admitted, a delayed handoff of
+an older revision from another checkout is rejected.
+
+With central execution activated, `run --repair` rebuilds only the current
+branch's scientific database. The shared scheduler, other branches' demand,
+ingestion, and public outputs are left alone. The previous database is kept as
+`registry-before-repair.sqlite3`. Repair restores work items from current
+public ownership records whose artifacts still have their declared files,
+workflow history from on-disk workflow snapshots, and reproducibility bindings
+in both the branch registry and the shared scheduler from current definitions.
+Repair creates no demand.
 
 ## Storage and safeguards
 
-The shared control directory contains the catalog and all branch databases:
+The shared control directory holds the branch catalog and every branch
+database:
 
 ```text
 CONTROL/
@@ -141,65 +176,42 @@ CONTROL/
     feature%2Fexample/registry.sqlite3
 ```
 
-`CONTROL/shared/scheduler/registry.sqlite3` is the production registry and sole
-worker-pool authority. It currently holds production scientific state as well.
-The new branch databases hold scientific contracts and validator observations;
-they have no workers, submissions, execution claims, or concurrency settings.
-Registration alone neither initializes another scheduler nor submits work.
-
-The site setting `development` controls the separate development output tree.
-Its lab default is `/juice6/u/nlp/climblab/NRO_DEV`; outside the lab the proposed
-default is `~/nro/development`. Development outputs use
-`development/BRANCH_ID/{BIDS,WORK}/PROJECT/derivatives`. Scientific inputs always
-start with the shared site's raw BIDS data.
-
-Requests retain their complete compiled graph, including computations hidden
-behind inherited artifacts. If an inherited input becomes unavailable, workers
-reconsider that graph and compute the needed work locally. They do not request
-an ancestor rebuild or load the branch's scientific modules. A newer admitted
-scientific revision rejects an older delayed handoff from another checkout.
-
-Branch status and logs show that branch's registered selections. `stop` cancels
-only that branch's requests, including with `--force`; shared producer work
-requested by another branch remains intact. Inherited artifacts remain read-only.
-
-`ControlPaths` supplies this layout to installation, registry, ingestion,
-branch registration, and execution-cache code. Branch directories also hold
-scientific configuration snapshots when used by processing.
-Shared worker logs remain with the scheduler; ingestion and caches are site-wide.
-With central execution activated, `run --repair` rebuilds only the current
-branch's scientific database. It preserves the shared scheduler, other branches'
-demand, ingestion, and public outputs. The previous database is retained as
-`registry-before-repair.sqlite3`. Current public ownership records restore work
-items whose artifacts still have declared files. On-disk workflow snapshots restore
-workflow history. Current definitions restore reproducibility bindings in both the
-branch registry and shared scheduler. Repair creates no demand.
-
-nro rejects the previous flat layout before creating another scheduler. No
-automatic relocation or alternate-path fallback exists. Archive or remove an
-obsolete private store before initializing the current layout.
+`CONTROL/shared/scheduler/registry.sqlite3` is the production registry and the
+only authority over the worker pool. It currently also holds production
+scientific state. Branch databases hold scientific contracts and validator
+observations. They have no workers, submissions, execution claims, or
+concurrency settings. Shared worker logs stay with the scheduler, and ingestion
+and caches are shared by the whole site. Branch directories also hold
+scientific configuration snapshots when processing uses them. `ControlPaths`
+provides this layout to the installation, registry, ingestion, branch
+registration, and execution-cache code.
 
 Each database is bound to its branch name, registration identity, and shared
-control path. nro rejects a misplaced database or symlink redirection. It does
+control path. nro rejects a misplaced database and symlink redirection. It does
 not search checkouts for local databases, merge conflicting copies, or silently
 recreate a missing registered database. Registration identities and database
-schema versions are not scientific freshness inputs.
+schema versions do not affect scientific freshness.
 
-Catalog edits use a shared filesystem lock and reject changes based on an
-outdated catalog revision. A new branch becomes visible only after its database
-exists. Interrupted publication keeps a pending record; the next registration
-initialization resumes it with the same identity. Scientific record updates
-also check the revision that the caller read, so competing checkouts cannot
-silently replace one another's edits. Verified observations carry that revision
-through central assessment and cannot be attached to a replacement contract.
+Catalog edits take a shared filesystem lock and are rejected if they are based
+on an outdated catalog revision. A new branch becomes visible only after its
+database exists. If registration is interrupted, a pending record remains, and
+the next registration resumes it with the same identity. Updates to scientific
+records also check the revision the caller read, so competing checkouts cannot
+silently overwrite each other's edits. Verified observations carry that
+revision through central assessment and cannot be attached to a replacement
+contract.
 
-Production registry repair preserves the branch catalog and current databases. A
-branch's scientific schema is checked when reading its scientific records, not when
-inspecting its identity or registering another branch. Shared installation migrates
-schemas at or after the supported baseline after it quiesces the worker pool. For an
-older schema, it first restores each development branch's scheduler mappings from that
-branch's public derivative tree, then reconstructs the branch database from recovered
-contracts.
+nro rejects the previous flat layout before creating another scheduler. There
+is no automatic relocation and no fallback to an alternate path. Archive or
+remove an obsolete private store before initializing the current layout.
 
-These checks protect trusted developers against mistakes. They are not an
-access-control boundary against someone who can directly modify shared files.
+Production registry repair keeps the branch catalog and current databases. nro
+checks a branch's scientific schema when it reads the branch's scientific
+records, not when it inspects the branch's identity or registers another
+branch. Shared installation quiesces the worker pool and then migrates schemas
+at or after the supported baseline. For an older schema, it first restores each
+development branch's scheduler mappings from that branch's public derivative
+tree, then rebuilds the branch database from the recovered contracts.
+
+These safeguards protect trusted developers from mistakes. They are not an
+access-control boundary against anyone who can modify shared files directly.

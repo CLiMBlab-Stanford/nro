@@ -1,161 +1,51 @@
 # Workflows and configuration
 
-Configurations are one kind of definition. Everything authored through
-`nro def` is implemented by `nro.definitions`; this includes module
-configurations, workflows, models, markup, hardware descriptions, and
-bidsification policy. A resolved configuration is the validated runtime form
-compiled from those definitions, not a separate class of site metadata.
+This page is for users who want to change how nro processes data. It explains
+how workflows select module configurations, how nro validates and compiles
+them, and which settings affect whether results are reused.
 
-Protected operational settings such as shared paths and installation state
-belong to `nro.site`. They are configured during site setup rather than through
-`nro def`.
+## Workflows and module configurations
 
-Scientific defaults ship with nro as packaged `main` configurations, grouped by
-configuration class. The external definitions store may contain small site-specific
-overrides and named alternatives; see [definitions stores](definitions.md). A
-workflow selects configuration IDs, and `main` is the default workflow. Module
-pages show the packaged configurations and explain which steps consume their
-keys. A site's active values may differ when it defines an override.
-
-Use `nro def edit MODULE ID` or `nro def edit workflow ID` to create or
-edit definitions through a validated draft. See
-[definition authoring](commands/authoring.md) for local drafts and shared-store
-safeguards.
-
-The same definitions store contains a [standard event-file catalog](event-files.md)
-used for task-name suggestions during bidsification. It may also contain
-[source markup](definitions.md#source-markup) for manual anatomical selection
-and known-bad source exclusion. A site can also define
-[gradient-unwarping hardware](definitions.md#gradient-unwarping-hardware).
+A workflow selects one configuration ID for each configuration class. The
+default workflow is `main`. This is the packaged `main` workflow:
 
 ```{literalinclude} ../nro/definitions/starters/workflows/main_workflow.yml
 :language: yaml
 ```
 
-The `main` and `clustering` network configurations use dynconn. The `oslom`
-configuration changes the estimator and explicitly selects microparcellation,
-which OSLOM requires. The named `dynconn-networks` workflow retains an explicit
-spelling of the default source. The selected source becomes a static workflow
-dependency. Named configurations are merged over their class's
-`main` configuration. Unknown override keys are rejected rather than silently
-creating misspelled settings. Config IDs are validated filename identifiers;
-use the definitions store instead of assembling paths in scientific code.
+nro ships a `main` configuration for each configuration class, and these hold
+the scientific defaults. The external [definitions store](definitions.md) may
+hold small site-specific overrides of those defaults and named alternatives.
+A named configuration is merged over its class's `main` configuration. Module
+pages show the packaged configurations and explain which steps use each key.
+A site's active values can differ when it defines an override.
 
-## Validation and compilation
+Some configurations select a different upstream source. The `main` and
+`clustering` network configurations read from dynconn. The `oslom`
+configuration changes the estimator and selects microparcellation, which OSLOM
+requires. The named `dynconn-networks` workflow spells out the default source
+explicitly. Whichever source a configuration selects becomes a fixed
+dependency of the workflow.
 
-Configuration loading and `nro def edit` use the same compiler. It parses
-strict YAML, resolves site references, merges named overrides over `main`, and
-validates the resulting settings. Workflows resolve each selected configuration;
-an omitted class selects `main`. Missing references and unknown classes are
-errors. Private runtime snapshots are also validated, without applying today's
-defaults to previously resolved settings.
+To create or change a definition, run `nro def edit MODULE ID` or
+`nro def edit workflow ID`. The editor works on a draft and validates it before
+publishing. [Definition authoring](commands/authoring.md) covers local drafts
+and the safeguards on the shared store.
 
-The [field schema](autoapi/nro/definitions/schema/index.rst) defines types,
-nullable fields, allowed values, bounds, and execution-only roles. Packaged
-`main` YAML files must supply every required field. An external
-`main_CLASS.yml`, when present, is a partial override: omitted fields continue
-to follow the packaged default. Editing an override does not redefine a field's
-type or make an unknown key valid.
+Configurations are one kind of definition. Everything authored through
+`nro def` is implemented by `nro.definitions`: module configurations,
+workflows, models, markup, hardware descriptions, and bidsification policy. A
+resolved configuration is the validated runtime form compiled from those
+definitions. It is not a separate kind of site metadata.
 
-Duplicate mapping keys are rejected at every depth. Errors identify the source
-file and offending field. Validation catches malformed regular expressions,
-unsupported strategies, out-of-range values, and conflicting settings such as
-`high_pass >= low_pass`. All declared algorithm groups must contain valid
-values, including groups not used by the selected strategy. Requirements tied
-to a selected strategy are checked when that strategy is selected.
+The definitions store holds other material too. Its
+[standard event-file catalog](event-files.md) supplies task-name suggestions
+during bidsification. It may contain [source markup](definitions.md#source-markup)
+for manual anatomical selection and for excluding known-bad sources. A site can
+also define [gradient-unwarping hardware](definitions.md#gradient-unwarping-hardware).
 
-Workflow validation also checks cross-module interfaces. The selected `anat`
-configuration defines the available fsaverage target. `space` and `smoothing`
-remain request selectors; they are not module configuration fields or module
-directory identities. Every selected module configuration must use the same
-`markup` ID so that the workflow has one consistent view of source BIDS.
-
-Equivalent numeric forms normalize to the field's declared type: `50` and
-`50.0` are equivalent for an integer count, while `50.5`, `"50"`, and `true`
-are rejected. Comments, mapping order, and explicit values equal to inherited
-defaults do not affect the compiled result. Ordered lists remain ordered.
-The alternatives within a BIDS `input_filter` are sets: scalar and list forms
-normalize to sorted, unique strings; `null` still requires an absent entity.
-Regexes and paths are not rewritten to guess equivalence. A resolved `site:KEY` reference
-and its literal value compile identically.
-
-Parsing and compilation use bounded, process-local content caches. Callers
-receive independent copies. Changed file contents are recompiled even when
-timestamps are unchanged. Compilation reads no images or event tables and
-does not require future derivative files to exist. Spatial validation,
-sampling-rate constraints, and data-dependent estimability remain runtime
-checks; valid configuration does not establish scientific suitability.
-
-## Scientific settings and execution snapshots
-
-The full resolved snapshot includes execution settings and is retained for
-provenance. Its fingerprint can change when an execution setting changes,
-creating a new workflow revision with the updated runtime configuration.
-Artifact contracts use a separate scientific fingerprint that excludes fields
-explicitly marked as execution-only:
-
-- Anat, func, clean, dynconn, contrasts, microparcellation, and networks
-  `overwrite` settings.
-- Anat, func, and clean `verbose` settings, plus func `io_chunk_vols`.
-- Contrasts `spatial_block_size`.
-- Microparcellation `connectivity.temporal_block_size`.
-- Networks `oslom.timeout_seconds`.
-
-Other settings remain scientific by default. In particular, random seeds,
-solver tolerances, iteration counts, clustering batch size, and software
-resource paths remain part of scientific comparison. Changing an execution
-setting does not by itself make a completed derivative stale. An explicit
-`overwrite` instruction still controls execution when the module is run.
-Already-started attempts retain their selected execution snapshot.
-
-Recorded specifications are normalized for comparison without rewriting the
-derivatives. When a database completion record binds a full configuration snapshot
-to its fingerprint, that snapshot supplies the scientific comparison. Missing
-or invalid evidence is not treated as proof of equivalence. Configuration IDs,
-workflow IDs, directory ownership, and dependency identities remain distinct;
-normalization does not merge differently named configurations.
-
-Scientific comparison normalizes schema evolution through explicit
-[artifact-contract migrations](artifact-contract-migrations.md). A new field declares
-both its default for new work and the value represented by older snapshots. These
-values may differ. If the historical value is unknown, the older artifact becomes
-stale. Keys explicitly retired as scientifically irrelevant are ignored.
-Author-written configurations remain strict: unknown keys are errors. Changing a
-retained value, a field type, a configuration ID, or a dependency still changes the
-scientific identity.
-
-For Python callers, `ResolvedConfiguration.fingerprint` identifies the full
-snapshot and `scientific_fingerprint` identifies the named scientific settings.
-Execution receives `values`, including execution controls. Adding a setting
-requires a schema field and a value in the packaged class `main` YAML. Add tests
-for its valid range, any cross-field rules, and its effect on scientific
-comparison.
-
-## Execution settings and numerical reproducibility
-
-Execution settings must control scheduling, logging, or work partitioning
-without defining scientific groups or changing the estimator. For example,
-`connectivity.temporal_block_size` controls I/O chunks, while
-`quality.split_half_block_frames` defines the single-run microparcellation QC
-split and belongs in the scientific fingerprint. Clustering `batch_size` also
-remains scientific because it changes the stochastic fitting procedure.
-
-Regression tests vary execution block sizes for temporal means, streaming
-correlations and QC, first-level fits, and network sparsification. Temporal
-means and streaming moment and variance reductions accumulate in float64 to
-limit chunk-dependent rounding; saved float32 maps and large connectome
-accumulators retain their existing precision. These tests check numerical
-agreement, not universal bitwise equality across hardware, BLAS libraries,
-or thread counts in third-party software.
-
-An execution change can appear in saved provenance if an artifact is rebuilt.
-It must not alter scientific identity merely because that record differs.
-A scientific command's own timeout must fail the attempt rather than publish
-partial results: OSLOM's directory completion marker is written only after
-successful execution and output validation. Expiration of a reusable worker
-allocation instead interrupts the attempt and returns its work to the ready
-queue. CPU, memory, concurrency, and Slurm routing remain orchestration settings,
-separate from scientific contracts.
+Protected operational settings, such as shared paths and installation state,
+belong to `nro.site`. They are set during site setup, not through `nro def`.
 
 ## Configuration classes
 
@@ -169,29 +59,184 @@ separate from scientific contracts.
 | `networks` | networks | `networks` | [Networks](modules/networks.md) |
 | `contrasts` | contrasts | `contrasts` | [First-level models](modules/contrasts.md) |
 
-[First-level models](task-models.md) are separate from contrasts configurations.
-They define event predictors, contrasts, and HRFs. The contrasts configuration
-supplies denoising, estimation, and run-aggregation choices.
-Analysis/task/model/model-set selectors choose work; model-set membership does not
-contribute to scientific fingerprints.
+[First-level models](task-models.md) are separate from contrasts
+configurations. Models define event predictors, contrasts, and HRFs. The
+contrasts configuration supplies denoising, estimation, and run-aggregation
+choices. Analysis, task, model, and model-set selectors choose which work to
+run. Membership in a model set does not contribute to scientific fingerprints.
 
-Site resources use `site:KEY` references, resolved before configuration
-fingerprinting. The protected `site/site.yml` in the definitions store owns
-filesystem locations, executables, binds, and Slurm routing. The installation's
-TOML file only locates that store. `nro site` edits the protected site document;
-it does not edit module configuration YAML. Changing a resolved resource path
-may affect freshness even when a human believes the content is identical.
+## Site resources
 
-The registry saves resolved runtime configuration for attempts. A work item's
-contract includes the relevant configuration and its upstream dependencies.
-Worker CPU/memory limits and execution command spelling are distinct from that
-scientific contract. Existing historical lineages can remain owned and usable
-without being requestable from the current workflow catalog.
+Configurations refer to site resources with `site:KEY` references. nro
+resolves these before it fingerprints a configuration. The protected
+`site/site.yml` in the definitions store owns filesystem locations,
+executables, binds, and Slurm routing. The installation's TOML file only
+records where that store is.
 
-For development, change a named configuration and add a workflow that selects
-it. Review its effect on artifacts with `status --update` or a deliberately
-scoped `run --no-submit`. Neither is a guarantee that no registry state changes:
-both perform writes. Keep shared workers stopped while changing shared code.
+`nro site` edits the protected site document. It does not edit module
+configuration YAML. Changing a resolved resource path can change freshness,
+even when you believe the content at the new path is identical.
 
-The Python entry points are [ConfigStore](autoapi/nro/definitions/store/index.rst)
-and [runtime configuration](autoapi/nro/definitions/runtime/index.rst).
+## Validation and compilation
+
+Loading a configuration and running `nro def edit` use the same compiler. It
+parses strict YAML, resolves site references, merges named overrides over
+`main`, and validates the result. A workflow resolves each configuration it
+selects, and a class the workflow omits selects `main`. Missing references and
+unknown classes are errors. Private runtime snapshots are validated too, but
+nro does not apply today's defaults to settings that were already resolved.
+
+The [field schema](autoapi/nro/definitions/schema/index.rst) defines types,
+nullable fields, allowed values, bounds, and which fields are execution-only.
+Packaged `main` YAML files must supply every required field. An external
+`main_CLASS.yml` is a partial override, and fields it omits keep the packaged
+default. An override cannot change a field's type or make an unknown key valid.
+
+Validation rejects:
+
+- duplicate mapping keys at any depth;
+- unknown override keys, so a misspelled setting fails instead of being
+  silently added;
+- malformed regular expressions, unsupported strategies, and out-of-range
+  values; and
+- conflicting settings such as `high_pass >= low_pass`.
+
+Errors name the source file and the offending field. Every declared algorithm
+group must contain valid values, including groups the selected strategy does
+not use. Requirements tied to one strategy are checked only when that strategy
+is selected. Config IDs are validated filename identifiers. Scientific code
+should look configurations up through the definitions store instead of
+building paths.
+
+Workflow validation also checks the interfaces between modules. The selected
+`anat` configuration defines which fsaverage target is available. `space` and
+`smoothing` are request selectors. They are not module configuration fields
+and do not appear in module directory names. Every module configuration that a
+workflow selects must use the same `markup` ID, so the workflow has one
+consistent view of source BIDS.
+
+### When two configurations count as equivalent
+
+The compiler normalizes values so that formatting differences do not create
+new results. Numbers convert to the field's declared type: `50` and `50.0` are
+equivalent for an integer count, while `50.5`, `"50"`, and `true` are
+rejected. Comments, mapping order, and explicit values equal to inherited
+defaults do not affect the compiled result. Ordered lists stay ordered.
+
+The alternatives in a BIDS `input_filter` are treated as sets. Scalar and list
+forms become sorted, unique strings, and `null` still requires the entity to be
+absent. The compiler does not rewrite regular expressions or paths to guess
+whether they are equivalent. A resolved `site:KEY` reference compiles the same
+as its literal value.
+
+### Limits of compilation
+
+Parsing and compilation use bounded content caches within each process.
+Callers receive independent copies. When file contents change, nro recompiles
+them even if timestamps did not change.
+
+Compilation reads no images or event tables, and it does not require future
+derivative files to exist. Spatial validation, sampling-rate constraints, and
+whether a model can be estimated from the data remain runtime checks. A valid
+configuration is not evidence that the settings suit the data scientifically.
+
+## Scientific settings and execution snapshots
+
+Most settings are scientific: changing them changes results, so nro treats
+artifacts built with the old value as stale. A few settings only control how
+work runs. Changing one of these does not by itself make a completed
+derivative stale.
+
+The execution-only fields are:
+
+- the `overwrite` setting of anat, func, clean, dynconn, contrasts,
+  microparcellation, and networks;
+- the `verbose` setting of anat, func, and clean, and func `io_chunk_vols`;
+- contrasts `spatial_block_size`;
+- microparcellation `connectivity.temporal_block_size`; and
+- networks `oslom.timeout_seconds`.
+
+Every other setting is scientific. This includes random seeds, solver
+tolerances, iteration counts, clustering batch size, and software resource
+paths. An explicit `overwrite` instruction still controls execution when the
+module runs. Attempts that have already started keep the execution snapshot
+they started with.
+
+nro keeps two fingerprints. The full resolved snapshot, including execution
+settings, is kept for provenance. Its fingerprint changes when an execution
+setting changes, which creates a new workflow revision with the updated runtime
+configuration. Artifact contracts use a separate scientific fingerprint that
+leaves out the execution-only fields.
+
+### Comparing recorded specifications
+
+nro normalizes recorded specifications for comparison without rewriting the
+derivatives. When a database completion record binds a full configuration
+snapshot to its fingerprint, that snapshot supplies the scientific comparison.
+Missing or invalid evidence never counts as proof of equivalence.
+Normalization does not merge differently named configurations: configuration
+IDs, workflow IDs, directory ownership, and dependency identities stay
+distinct.
+
+When the schema changes, explicit
+[artifact-contract migrations](artifact-contract-migrations.md) keep older
+artifacts comparable. A new field declares both its default for new work and
+the value that older snapshots represent, and these values may differ. If the
+historical value is unknown, the older artifact becomes stale. Keys explicitly
+retired as scientifically irrelevant are ignored. Configurations written by
+authors stay strict, so unknown keys are still errors. Changing a retained
+value, a field type, a configuration ID, or a dependency still changes the
+scientific identity.
+
+The registry saves the resolved runtime configuration for each attempt. A work
+item's contract includes the relevant configuration and its upstream
+dependencies. Worker CPU and memory limits and the spelling of execution
+commands are not part of that contract. Historical lineages can remain owned
+and usable even when the current workflow catalog can no longer request them.
+
+### Rules for execution settings
+
+An execution setting may control scheduling, logging, or how work is divided.
+It must not define scientific groups or change the estimator. For example,
+`connectivity.temporal_block_size` only sets I/O chunk size, so it is
+execution-only. `quality.split_half_block_frames` defines the split used for
+single-run microparcellation QC, so it belongs in the scientific fingerprint.
+Clustering `batch_size` is also scientific, because it changes the stochastic
+fitting procedure.
+
+Regression tests vary execution block sizes for temporal means, streaming
+correlations and QC, first-level fits, and network sparsification. Temporal
+means and streaming moment and variance reductions accumulate in float64 to
+limit rounding that depends on chunk size. Saved float32 maps and large
+connectome accumulators keep their existing precision. These tests check
+numerical agreement. They do not promise bitwise equality across hardware,
+BLAS libraries, or thread counts in third-party software.
+
+If an artifact is rebuilt, its saved provenance can show a changed execution
+setting. That difference alone must not change its scientific identity.
+
+Timeouts behave differently depending on their source. When a scientific
+command's own timeout expires, the attempt fails and publishes nothing
+partial. OSLOM, for example, writes its directory completion marker only after
+it runs successfully and its outputs pass validation. When a reusable worker
+allocation expires, nro interrupts the attempt and returns its work to the
+ready queue. CPU, memory, concurrency, and Slurm routing are orchestration
+settings and stay separate from scientific contracts.
+
+## Changing configurations during development
+
+To try a change, edit a named configuration and add a workflow that selects
+it. Review the effect on artifacts with `status --update` or a narrowly scoped
+`run --no-submit`. Both commands write to the registry, so neither guarantees
+that registry state stays unchanged. Keep shared workers stopped while you
+change shared code.
+
+Adding a setting requires a schema field and a value in the packaged class
+`main` YAML. Add tests for its valid range, any cross-field rules, and its
+effect on scientific comparison.
+
+For Python callers, `ResolvedConfiguration.fingerprint` identifies the full
+snapshot, and `scientific_fingerprint` identifies the scientific settings.
+Execution receives `values`, which includes execution controls. The Python
+entry points are [ConfigStore](autoapi/nro/definitions/store/index.rst) and
+[runtime configuration](autoapi/nro/definitions/runtime/index.rst).
