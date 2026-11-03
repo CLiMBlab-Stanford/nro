@@ -48,6 +48,14 @@ class ExecutionContext:
     work_item_key: str
     inputs: tuple[InputBinding, ...]
 
+    def _study_output(self, path: Path, *, entry: bool) -> Path | None:
+        if self.paths.studies is None:
+            return None
+        try:
+            return self.paths.require_study_output(path, entry=entry)
+        except ValueError:
+            return None
+
     def require_output(self, path: Path) -> Path:
         """Validate an already resolved public or private destination without remapping it."""
         for private in (False, True):
@@ -55,6 +63,9 @@ class ExecutionContext:
                 return self.paths.require_output(path, self.project, private=private)
             except ValueError:
                 pass
+        study = self._study_output(path, entry=False)
+        if study is not None:
+            return study
         raise ValueError(f"Output is outside the branch-owned derivative roots: {path}")
 
     def require_output_entry(self, path: Path) -> Path:
@@ -64,6 +75,9 @@ class ExecutionContext:
                 return self.paths.require_output_entry(path, self.project, private=private)
             except ValueError:
                 pass
+        study = self._study_output(path, entry=True)
+        if study is not None:
+            return study
         raise ValueError(f"Output is outside the branch-owned derivative roots: {path}")
 
     def require_removal(self, path: Path) -> Path:
@@ -73,6 +87,9 @@ class ExecutionContext:
                 return self.paths.require_removal(path, self.project, private=private)
             except ValueError:
                 pass
+        study = self._study_output(path, entry=True)
+        if study is not None:
+            return study
         raise ValueError(f"Removal is outside the branch-owned derivative roots: {path}")
 
     def input_path(self, logical_path: Path) -> Path:
@@ -113,6 +130,11 @@ class ExecutionContext:
             self.paths.work / self.project if private else self.paths.source_project(self.project)
         ) / "derivatives"
         path = Path(logical_path).expanduser().absolute()
+        studies = self.paths.studies
+        if not private and studies is not None and path.is_relative_to(studies):
+            return self.paths.require_study_output(
+                self.paths.output_studies / path.relative_to(studies)
+            )
         if not path.is_relative_to(logical):
             return self.paths.require_output(path, self.project, private=private)
         owner = (
@@ -131,6 +153,7 @@ class ExecutionContext:
             "bids": str(self.paths.bids),
             "work": str(self.paths.work),
             "development": str(self.paths.development),
+            **({} if self.paths.studies is None else {"studies": str(self.paths.studies)}),
             "project": self.project,
             "work_item_key": self.work_item_key,
             "inputs": [
@@ -149,7 +172,8 @@ class ExecutionContext:
     @classmethod
     def from_dict(cls, value: Mapping) -> ExecutionContext:
         """Decode an attempt context; authority must be checked before publication."""
-        if not isinstance(value, Mapping) or set(value) != {
+        # Contexts written before study results existed have no "studies" key.
+        if not isinstance(value, Mapping) or set(value) - {"studies"} != {
             "branch",
             "bids",
             "work",
@@ -159,6 +183,8 @@ class ExecutionContext:
             "inputs",
         }:
             raise ValueError("Invalid execution context fields")
+        if "studies" in value and (not isinstance(value["studies"], str) or not value["studies"]):
+            raise ValueError("Invalid execution context study root")
         if any(
             not isinstance(value[key], str) or not value[key]
             for key in ("branch", "bids", "work", "development", "project", "work_item_key")
@@ -195,6 +221,7 @@ class ExecutionContext:
                 Path(value["bids"]),
                 Path(value["work"]),
                 Path(value["development"]),
+                Path(value["studies"]) if "studies" in value else None,
             ),
             str(value["project"]),
             str(value["work_item_key"]),

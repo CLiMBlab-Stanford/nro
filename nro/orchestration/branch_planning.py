@@ -51,6 +51,15 @@ class BranchPlan:
         return tuple(item for item in self.work_items if item.artifact is None)
 
 
+def _is_study_output(paths: BranchPaths, spec: WorkItemSpec) -> bool:
+    """Return whether a study analysis writes this work item below the study root."""
+    return (
+        spec.module == "analyses"
+        and paths.studies is not None
+        and spec.output_root.is_relative_to(paths.studies)
+    )
+
+
 def resolve_branch_plan(
     topology: BranchTopology,
     paths: BranchPaths,
@@ -115,8 +124,13 @@ def resolve_branch_plan(
         spec = by_key[key]
 
         def valid(candidate: ArtifactCandidate) -> bool:
-            owner = BranchPaths(candidate.branch, paths.bids, paths.work, paths.development)
-            owner.require_output(candidate.root, spec.project)
+            owner = BranchPaths(
+                candidate.branch, paths.bids, paths.work, paths.development, paths.studies
+            )
+            if _is_study_output(paths, spec):
+                owner.require_study_output(candidate.root)
+            else:
+                owner.require_output(candidate.root, spec.project)
             if type(candidate.generation) is not int or candidate.generation < 0:
                 raise ValueError("Inherited artifacts require a nonnegative generation")
             return validate(candidate)
@@ -160,8 +174,12 @@ def resolve_branch_plan(
                     )
             context = ExecutionContext(paths, spec.project, key, tuple(bindings))
             logical_root = paths.source_project(spec.project) / "derivatives"
-            if not spec.output_root.is_relative_to(logical_root):
-                raise ValueError("Logical graph outputs must be in shared derivative coordinates")
+            if not spec.output_root.is_relative_to(logical_root) and not _is_study_output(
+                paths, spec
+            ):
+                raise ValueError(
+                    "Logical graph outputs must be in shared derivative or study coordinates"
+                )
             context.output_path(spec.output_root)
             for output in spec.expected_outputs:
                 context.output_path(output)

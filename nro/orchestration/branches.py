@@ -275,22 +275,27 @@ class BranchPaths:
     bids: Path
     work: Path
     development: Path
+    studies: Path | None = None
+    """Shared study results root, or ``None`` when the caller writes no study results."""
 
     def __post_init__(self) -> None:
         branch_id(self.branch)
-        for field_name in ("bids", "work", "development"):
-            object.__setattr__(
-                self,
-                field_name,
-                Path(getattr(self, field_name)).expanduser().resolve(),
-            )
-        roots = (self.bids, self.work, self.development)
+        for field_name in ("bids", "work", "development", "studies"):
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            object.__setattr__(self, field_name, Path(value).expanduser().resolve())
+        roots = tuple(
+            root
+            for root in (self.bids, self.work, self.development, self.studies)
+            if root is not None
+        )
         if any(
             a.is_relative_to(b) or b.is_relative_to(a)
             for index, a in enumerate(roots)
             for b in roots[index + 1 :]
         ):
-            raise ValueError("Raw BIDS, work, and development roots must not overlap")
+            raise ValueError("Raw BIDS, work, development, and study roots must not overlap")
 
     @staticmethod
     def _project(project: str) -> str:
@@ -323,6 +328,36 @@ class BranchPaths:
             else self.development / branch_id(self.branch) / "WORK"
         )
         return root / self._project(project)
+
+    @property
+    def output_studies(self) -> Path:
+        """Return the branch-owned study results root without creating it.
+
+        Main publishes to the shared root. A development branch writes below its
+        development tree, as it does for derivatives.
+        """
+        if self.studies is None:
+            raise ValueError("No study results root was supplied")
+        return (
+            self.studies
+            if self.branch == "main"
+            else self.development / branch_id(self.branch) / "STUDIES" / "RESULTS"
+        )
+
+    def require_study_output(self, path: Path, *, entry: bool = False) -> Path:
+        """Reject study-result writes outside the branch's study results root.
+
+        With ``entry``, the final component is not followed, as for
+        :meth:`require_output_entry`.
+        """
+        root = self.output_studies
+        path = Path(path).expanduser().absolute()
+        if ".." in path.parts or root.resolve() != root:
+            raise ValueError("Output is outside the branch-owned study results root")
+        location = path.parent.resolve(strict=False) / path.name if entry else path.resolve()
+        if not location.is_relative_to(root):
+            raise ValueError("Output is outside the branch-owned study results root")
+        return location
 
     def require_output(self, path: Path, project: str, *, private: bool = False) -> Path:
         """Reject writes outside the branch's derivative root, including symlink escapes.

@@ -189,7 +189,11 @@ def compile_request_entries(
     records = {row.key: row for row in recorded}
     revisions = {key: row.revision for key, row in records.items()}
     paths = BranchPaths(
-        name, Path(values["bids"]), Path(values["work"]), Path(values["development"])
+        name,
+        Path(values["bids"]),
+        Path(values["work"]),
+        Path(values["development"]),
+        Path(values["study_results"]),
     )
     release = None
     if name == "main":
