@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nro"
-version = "0.38.0"
+version = "0.39.0"
 description = "BIDS fMRI derivative processing and orchestration"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,6 +19,7 @@ dependencies = [
     "pillow>=10,<12.3",
     "nibabel>=5.2,<6",
     "PyYAML>=6,<7",
+    "Jinja2>=3.1,<4",
     "scikit-learn>=1.4,<1.8",
     "nilearn>=0.10,<1",
     "nitransforms>=24,<26",
@@ -86,6 +87,7 @@ include = ["nro*"]
 "nro.engine" = ["*.scene.in", "*.b85"]
 "nro.modules.networks" = ["resources/*.nii", "resources/*.nii.gz", "resources/*.md"]
 "nro.qc" = ["*.scene.in"]
+"nro.methods" = ["references.bib", "templates/*/*.md"]
 "nro.viz" = ["static/*"]
 "nro.orchestration.migrations" = ["baselines.json"]
 

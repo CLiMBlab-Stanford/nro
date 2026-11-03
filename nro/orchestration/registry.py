@@ -1452,6 +1452,33 @@ class Registry(WorkflowRegistry):
             dependencies = work_item_dependencies(db)
         return project_work_item_status(rows, dependencies, artifact_states=artifact_states)
 
+    def lineage_artifacts(self, project: str, module: str, directory_label: str) -> list[dict]:
+        """Return recorded artifact states and expected outputs for one module lineage.
+
+        The query reads the registry without reassessing freshness. Each row has
+        ``participant``, ``entities`` (a mapping), ``artifact_state``, and
+        ``expected_outputs`` (absolute paths). Rows are ordered by work-item key.
+        """
+        with self.read_connection() as db:
+            rows = db.execute(
+                """SELECT w.participant, w.entities_json, w.artifact_state,
+                          w.expected_outputs_json
+                   FROM work_items w JOIN module_lineages l ON l.id=w.module_lineage_id
+                   WHERE w.project=? AND w.module=? AND l.configuration_class=?
+                     AND l.directory_label=?
+                   ORDER BY w.work_item_key""",
+                (project, module, module, directory_label),
+            ).fetchall()
+        return [
+            {
+                "participant": str(row[0]),
+                "entities": json.loads(row[1]),
+                "artifact_state": str(row[2]),
+                "expected_outputs": json.loads(row[3]),
+            }
+            for row in rows
+        ]
+
     def register_worker(
         self,
         worker_id: str,

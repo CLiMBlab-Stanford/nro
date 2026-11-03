@@ -6,6 +6,9 @@ method does not mean that nro uses every option from its original publication.
 When reporting an analysis, keep the resolved configurations, manifests,
 container identities, reference maps, and installation receipts.
 
+`nro methods` writes a referenced methods section and a software table for a
+workflow. See [methods reporting](reporting.md).
+
 ## Processing dependencies
 
 | Component | Role | Primary documentation |
