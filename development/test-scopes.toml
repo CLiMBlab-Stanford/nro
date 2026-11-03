@@ -77,8 +77,8 @@ tests = ["tests/test_contrasts.py"]
 boundaries = ["tests/test_scene.py", "tests/test_render.py"]
 
 [scope.analysis]
-paths = ["nro/analysis/**", "nro/modules/analyses/**", "nro/bin/study.py", "tests/test_study_analyses.py"]
-tests = ["tests/test_study_analyses.py"]
+paths = ["nro/analysis/**", "nro/modules/analyses/**", "nro/orchestration/study_planning.py", "nro/bin/study.py", "tests/test_study_analyses.py", "tests/test_study_scheduler.py"]
+tests = ["tests/test_study_analyses.py", "tests/test_study_scheduler.py"]
 boundaries = ["tests/test_cli.py"]
 
 [scope.documentation]

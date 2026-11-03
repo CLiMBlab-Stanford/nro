@@ -322,7 +322,14 @@ def _matches_request(
     workflows: set[str],
     lineages: set[str],
     selectors: dict[str, tuple[str, ...] | None],
+    study: str | None = None,
 ) -> bool:
+    if study is not None:
+        name = str(row.get("config_id") or "")
+        if row["module"] != "analyses" or not (
+            name == study or ("/" not in study and name.startswith(study + "/"))
+        ):
+            return False
     if participants and row["participant"] not in participants:
         return False
     if modules and row["module"] not in modules:
@@ -344,6 +351,11 @@ def build_parser(*, prog: str = "nro.bin.status") -> argparse.ArgumentParser:
         "--update",
         action="store_true",
         help="Thoroughly reassess artifacts, update the registry, and report its new state",
+    )
+    parser.add_argument(
+        "--study",
+        metavar="STUDY[/ANALYSIS]",
+        help="Report only the work items of one study or study analysis",
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
@@ -476,6 +488,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.status") -> None
             workflows=workflows,
             lineages=lineages,
             selectors=selectors,
+            study=args.study,
         ):
             continue
         entities = _display_entities(row)

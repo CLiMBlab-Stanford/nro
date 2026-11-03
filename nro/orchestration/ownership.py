@@ -244,11 +244,35 @@ def lineage_root(project_root: Path, configuration_class: str, directory_label: 
     return module_artifact_root(project_root, configuration_class, directory_label)
 
 
-def lineage_record_path(project_root: Path, configuration_class: str, directory_label: str) -> Path:
-    """Return the ownership record for one module lineage."""
-    return lineage_root(project_root, configuration_class, directory_label) / (
-        f"{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
+def analysis_ownership_root(output_root: Path) -> Path:
+    """Return the per-project results directory that owns a study analysis's receipts.
+
+    Analysis work items write to ``.../analyses/NAME/project-P/sub-S``, outside
+    any project's derivatives, so their records live in ``project-P``.
+    """
+    root = Path(output_root).parent
+    if not root.name.startswith("project-"):
+        raise ValueError(f"Study-analysis output root is not below a project directory: {root}")
+    return root
+
+
+def lineage_record_path(
+    project_root: Path,
+    configuration_class: str,
+    directory_label: str,
+    *,
+    root: Path | None = None,
+) -> Path:
+    """Return the ownership record for one module lineage.
+
+    ``root`` replaces the derivative lineage root for study analyses.
+    """
+    base = (
+        root
+        if root is not None
+        else lineage_root(project_root, configuration_class, directory_label)
     )
+    return base / OWNERSHIP_DIRECTORY / LINEAGE_RECORD_NAME
 
 
 def work_item_record_path(
@@ -257,16 +281,17 @@ def work_item_record_path(
     directory_label: str,
     module: str,
     key: str,
+    *,
+    root: Path | None = None,
 ) -> Path:
     """Return the ownership receipt path for one work item."""
     digest = key.split(":", 1)[-1]
-    return (
-        lineage_root(project_root, configuration_class, directory_label)
-        / OWNERSHIP_DIRECTORY
-        / "work_items"
-        / module
-        / f"{digest}.json"
+    base = (
+        root
+        if root is not None
+        else lineage_root(project_root, configuration_class, directory_label)
     )
+    return base / OWNERSHIP_DIRECTORY / "work_items" / module / f"{digest}.json"
 
 
 def remove_empty_ownership_root(
@@ -389,12 +414,15 @@ def write_work_item_ownership(
                     execution.update(dict(current))
     if execution is not None and not isinstance(execution, dict):
         execution = dict(execution)
+    owner_root = None
     if execution is not None:
         from nro.orchestration.execution_context import ExecutionContext
 
         context = ExecutionContext.from_dict(json.loads(execution["context_json"]))
         project_root = context.paths.output_project(str(work_item["project"]))
         context.require_output(Path(work_item["output_root"]))
+        if work_item["configuration_class"] == "analyses":
+            owner_root = analysis_ownership_root(Path(work_item["output_root"]))
         provenance = json.loads(execution["provenance_json"])
         from nro.orchestration.branch_store import BranchStore
 
@@ -411,8 +439,11 @@ def write_work_item_ownership(
         source_project_root = context.paths.source_project(str(work_item["project"]))
     else:
         source_project_root = registry.paths.bids_root / str(work_item["project"])
+    if work_item["configuration_class"] == "analyses" and owner_root is None:
+        owner_root = analysis_ownership_root(Path(work_item["output_root"]))
     roots = _reference_roots(project_root, source_project_root=source_project_root)
-    ensure_derivative_dataset(project_root, version=application_version())
+    if owner_root is None:
+        ensure_derivative_dataset(project_root, version=application_version())
     now = datetime.now(timezone.utc).isoformat()
     configuration = {
         "id": lineage["config_id"],
@@ -440,6 +471,7 @@ def write_work_item_ownership(
         project_root,
         str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
+        root=owner_root,
     )
     root_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(root_path, root_record, sort_keys=True, mode=0o664, durable=True)
@@ -500,6 +532,7 @@ def write_work_item_ownership(
         str(lineage["directory_label"]),
         str(work_item["module"]),
         logical_key,
+        root=owner_root,
     )
     receipt_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(receipt_path, receipt, sort_keys=True, mode=0o664, durable=True)
@@ -521,7 +554,7 @@ def missing_work_item_ownership(
             rows.extend(
                 dict(row)
                 for row in db.execute(
-                    f"""SELECT i.id,i.work_item_key,i.module,i.project,
+                    f"""SELECT i.id,i.work_item_key,i.module,i.project,i.output_root,
                                c.configuration_class,c.directory_label,e.context_json,e.logical_key
                         FROM work_items i
                         JOIN module_lineages c ON c.id=i.module_lineage_id
@@ -539,8 +572,13 @@ def missing_work_item_ownership(
 
             context = ExecutionContext.from_dict(json.loads(row["context_json"]))
             project_root = context.paths.output_project(row["project"])
+        owner_root = (
+            analysis_ownership_root(Path(row["output_root"]))
+            if row["configuration_class"] == "analyses"
+            else None
+        )
         lineage = lineage_record_path(
-            project_root, row["configuration_class"], row["directory_label"]
+            project_root, row["configuration_class"], row["directory_label"], root=owner_root
         )
         logical_key = str(row["logical_key"] or row["work_item_key"])
         receipt = work_item_record_path(
@@ -549,6 +587,7 @@ def missing_work_item_ownership(
             row["directory_label"],
             row["module"],
             logical_key,
+            root=owner_root,
         )
         lineage_exists = lineages.get(lineage)
         if lineage_exists is None:

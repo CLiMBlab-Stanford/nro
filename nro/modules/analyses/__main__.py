@@ -167,18 +167,25 @@ def run(specification: dict, *, context=None, work_dir: Path) -> None:
     }
     runner_path = work_dir / "runner.json"
     atomic_write_text(runner_path, json.dumps(runner_spec, indent=2, sort_keys=True) + "\n")
-    log = work_dir / "log.txt"
-    with log.open("w", encoding="utf-8") as stream:
-        completed = subprocess.run(
-            _runner_command(specification["container"], runner_path),
-            cwd=work_dir,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    sys.stderr.write(log.read_text(encoding="utf-8", errors="replace"))
-    if completed.returncode != 0:
-        raise RuntimeError(f"Analysis code exited with status {completed.returncode}")
+    if specification["container"] is None:
+        # An attempt is its own process and imports nro from its pinned source
+        # snapshot. A child interpreter could import another nro installation.
+        from nro.analysis.runner import run_specification
+
+        run_specification(runner_path)
+    else:
+        log = work_dir / "log.txt"
+        with log.open("w", encoding="utf-8") as stream:
+            completed = subprocess.run(
+                _runner_command(specification["container"], runner_path),
+                cwd=work_dir,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        sys.stderr.write(log.read_text(encoding="utf-8", errors="replace"))
+        if completed.returncode != 0:
+            raise RuntimeError(f"Analysis code exited with status {completed.returncode}")
     missing = [
         slot
         for slot, path in runner_spec["outputs"].items()

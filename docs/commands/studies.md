@@ -16,8 +16,7 @@ scheduler, together with any upstream work its inputs need, and creates one
 request per member project. `--study-ref` names the study branch, tag, or
 commit to plan from; the default is `main`. `--project` and `--participant`
 narrow the request. `nro study run` instead executes analyses directly from the
-command line, one work item after another. `nro status`, `nro purge`, and
-`nro gc` do not report study results yet. In a development
+command line, one work item after another. In a development
 installation, `query`, `check`, `try`, and `run` read upstream state from the
 scheduler's last published status snapshot of `main`, which can trail the
 registry by one scheduler update.
@@ -258,3 +257,12 @@ A development branch writes study results below
 work item also writes a completion manifest,
 `STEM_analysis-NAME_PARAMETER-LABEL_manifest.json`, which lists its outputs and
 provenance sidecars. Here `STEM` is `sub-PARTICIPANT` or the run's stem.
+
+Scheduled analysis work items appear in `nro status`; `--study STUDY` or
+`--study STUDY/ANALYSIS` limits the report to them. Their ownership receipts are
+in `.nro/` inside each `project-PROJECT` results directory. `nro purge` removes
+an analysis's outputs, sidecars, completion manifest, and receipt. Purging an
+upstream module leaves study results in place and marks the analysis stale.
+`nro gc` also removes files in `STUDY/analyses/NAME/project-PROJECT` that no
+registered analysis work item claims, such as the results of an analysis deleted
+from its study repository. It keeps the receipts in `.nro/`.

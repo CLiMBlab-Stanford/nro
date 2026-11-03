@@ -26,6 +26,8 @@ _COORDINATION_SITE_KEYS = frozenset(
         "work",
         "development",
         "registry",
+        "study_code",
+        "study_results",
         "images",
         "gradient_coefficients",
         "templates",

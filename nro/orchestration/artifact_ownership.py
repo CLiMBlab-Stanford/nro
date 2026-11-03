@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from nro.engine.bids import parse_bids_entities
-from nro.orchestration.ownership import work_item_record_path
+from nro.orchestration.ownership import analysis_ownership_root, work_item_record_path
 from nro.orchestration.purge_paths import _entry_location, _is_entry_within
 
 RUN_IDENTITY_ENTITIES = {
@@ -66,6 +66,43 @@ def prefix_owned_paths(
     return selected
 
 
+def analysis_work_item_paths(work_item: dict, *, include_public: bool = True) -> list[Path]:
+    """Return the files and receipt that one study-analysis work item owns.
+
+    The completion manifest lists every output slot and provenance sidecar.
+    Claims are confined to the analysis's results directory.
+    """
+    if not include_public:
+        return []
+    output_root = Path(str(work_item["output_root"]))
+    owner = analysis_ownership_root(output_root)
+    analysis_root = owner.parent
+    paths: list[Path] = []
+    for value in json.loads(work_item.get("expected_outputs_json") or "[]"):
+        manifest = Path(value)
+        paths.append(manifest)
+        try:
+            listed = json.loads(manifest.read_text(encoding="utf-8")).get("public_outputs", [])
+        except (OSError, ValueError, AttributeError):
+            listed = []
+        paths.extend(manifest.parent / str(name) for name in listed if isinstance(name, str))
+    paths.append(
+        work_item_record_path(
+            owner,
+            "analyses",
+            str(work_item["directory_label"]),
+            "analyses",
+            str(work_item.get("logical_key") or work_item["work_item_key"]),
+            root=owner,
+        )
+    )
+    return [
+        path
+        for path in dict.fromkeys(paths)
+        if _is_entry_within(path, analysis_root) and path.parent.resolve(strict=False) != path
+    ]
+
+
 def work_item_paths(
     work_item: dict,
     *,
@@ -76,6 +113,8 @@ def work_item_paths(
 ) -> tuple[list[Path], list[Path]]:
     """Return public/control paths and private WORK paths claimed by a work item."""
     module = str(work_item["module"])
+    if module == "analyses":
+        return analysis_work_item_paths(work_item, include_public=include_public), []
     participant = str(work_item["participant"]).removeprefix("sub-")
     sub_id = f"sub-{participant}"
     output_root = Path(work_item["output_root"])
