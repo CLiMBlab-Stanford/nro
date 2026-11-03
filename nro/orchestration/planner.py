@@ -40,8 +40,9 @@ class RequestPlan:
     """One project/workflow/terminal-module request ready for registration."""
 
     project: str
-    workflow_id: str
-    registered: RegisteredWorkflow
+    workflow_id: str | None
+    """``None`` for a study-analysis request, which no workflow owns."""
+    registered: RegisteredWorkflow | None
     module: str
     participants: tuple[str, ...]
     work_items: tuple[WorkItemSpec, ...]

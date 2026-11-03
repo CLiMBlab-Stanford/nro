@@ -47,17 +47,27 @@ def decode_spec(value: dict) -> WorkItemSpec:
 
 
 def export_workflow(scientific, registered) -> dict:
-    """Detach the workflow and module-lineage data needed for admission."""
+    """Detach the workflow and module-lineage data needed for admission.
+
+    ``registered`` is ``None`` for a study-analysis request, which exports
+    lineages but no workflow revision or bindings.
+    """
     with scientific.connection() as db:
-        bindings = [
-            dict(row)
-            for row in db.execute(
-                "SELECT * FROM workflow_bindings WHERE workflow_revision_id=?",
-                (registered.revision_id,),
-            )
-        ]
+        bindings = (
+            []
+            if registered is None
+            else [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM workflow_bindings WHERE workflow_revision_id=?",
+                    (registered.revision_id,),
+                )
+            ]
+        )
         return dict(
-            revision=dict(
+            revision=None
+            if registered is None
+            else dict(
                 db.execute(
                     "SELECT * FROM workflow_revisions WHERE id=?", (registered.revision_id,)
                 ).fetchone()

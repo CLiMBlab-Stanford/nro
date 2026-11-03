@@ -362,9 +362,27 @@ def resolve_input(
             )
     except ResolutionError as error:
         return Resolution(spec.name, "error", message=str(error))
-    candidates.sort(key=lambda item: str(item.path))
+    return choose(
+        spec,
+        candidates,
+        where=f"sub-{participant} in project {project}",
+        pending=pending,
+        lineage=lineage,
+    )
+
+
+def choose(
+    spec: InputSpec,
+    candidates: list[Artifact],
+    *,
+    where: str,
+    pending: Sequence[str] = (),
+    lineage: str | None = None,
+) -> Resolution:
+    """Apply an input's cardinality rules to its matching candidates."""
+    pending = list(pending)
+    candidates = sorted(candidates, key=lambda item: str(item.path))
     listed = "".join(f"\n  {item.path}" for item in candidates)
-    where = f"sub-{participant} in project {project}"
     if spec.many:
         if spec.maximum is not None and len(candidates) > spec.maximum:
             return Resolution(

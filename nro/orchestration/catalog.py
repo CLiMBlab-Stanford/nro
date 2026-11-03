@@ -204,6 +204,28 @@ BUILTIN_MODULES = (
     ),
 )
 
+
+def _plan_through_study_analyses(*_arguments) -> tuple:
+    raise ValueError("Study analyses are planned by nro.modules.analyses.planning")
+
+
+ANALYSES_MODULE = ModuleDescriptor(
+    name="analyses",
+    scope="subject",
+    output_format="Study-analysis output slots and a completion manifest",
+    resource_class="small",
+    plan=_plan_through_study_analyses,
+    processing_contract=dict,
+    dynamic_processing_keys=("analysis",),
+)
+"""Study analyses: scheduled like a module, but no workflow selects them.
+
+The descriptor is not in ``BUILTIN_MODULES``, so workflow registration,
+dependency closure, and status loops over workflow modules never see it.
+Its whole scientific contract is ``processing.analysis``, which assessment
+keeps as a dynamic key.
+"""
+
 MODULE_CATALOG = {descriptor.name: descriptor for descriptor in BUILTIN_MODULES}
 if tuple(MODULE_CATALOG) != MODULE_NAMES:
     raise RuntimeError("The orchestration catalog does not match nro.modules.MODULE_NAMES")
@@ -281,6 +303,8 @@ def terminal_modules(workflow=None) -> tuple[str, ...]:
 
 def module_descriptor(name: str) -> ModuleDescriptor:
     """Return one built-in descriptor or reject an unsupported module."""
+    if name == ANALYSES_MODULE.name:
+        return ANALYSES_MODULE
     try:
         return MODULE_CATALOG[name]
     except KeyError as error:
@@ -290,7 +314,9 @@ def module_descriptor(name: str) -> ModuleDescriptor:
 
 
 def normalize_module(value: str) -> str:
-    """Validate and return a built-in module name."""
+    """Validate and return a built-in module name that a workflow selects."""
+    if value == ANALYSES_MODULE.name:
+        raise ValueError("Request study analyses with --study-analysis STUDY/ANALYSIS")
     return module_descriptor(value).name
 
 

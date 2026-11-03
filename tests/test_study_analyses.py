@@ -457,3 +457,105 @@ def test_snapshot_index_matches_workflow_and_config(upstream):
             index=index,
             bids_root=bids,
         )
+
+
+def _upstream_spec(root: Path, prefix: str, *, key: str = "contrasts:" + "a" * 64):
+    from nro.orchestration.contracts import WorkItemSpec
+
+    return WorkItemSpec.create(
+        key=key,
+        module="contrasts",
+        project="p1",
+        participant="01",
+        entities={"model": "main", "task": "lang", "space": "fsLR32k", "smoothing": "0"},
+        scope="subject",
+        module_lineage_id=1,
+        config_fingerprint="c",
+        directory_label="main-abc",
+        runtime_config=root / "runtime.yml",
+        command=("python", "-m", "nro.modules.contrasts"),
+        dependencies=(),
+        input_paths=(),
+        output_root=root,
+        output_prefix=prefix,
+        resource_class="medium",
+        output_format="maps",
+        expected_outputs=(root / "manifest.json",),
+    )
+
+
+class _StubPlanner:
+    def __init__(self, bids, spec):
+        self.bids_root = bids
+        self._source_digest = "d" * 64
+        self.spec = spec
+        self.calls = []
+
+    def plan(self, **kwargs):
+        from nro.orchestration.planner import PlanningResult
+
+        self.calls.append(kwargs)
+        return PlanningResult((), {self.spec.key: self.spec}, {}, frozenset(), (), "d", {})
+
+
+class _StubRegistry:
+    def register_unbound_lineage(self, configuration_class, config_id, resolved):
+        from nro.orchestration.workflow_registry import UnboundLineage
+
+        return UnboundLineage(7, configuration_class, config_id, "f" * 64, "s1.similarity-x", True)
+
+    def register_workflow(self, workflow):
+        return object()
+
+
+class _Store:
+    def resolve(self, workflow_id):
+        return workflow_id
+
+
+def test_scheduled_plan_depends_on_upstream_and_runs_from_bindings(study_roots, upstream):
+    from nro.modules.analyses import __main__ as scheduled
+    from nro.orchestration.study_planning import plan_request
+
+    bids, index = upstream
+    _study(study_roots)
+    analysis = load_analysis(StudySource.at("s1"), "similarity")
+    item = index.items[0]
+    spec = _upstream_spec(Path(item["output_root"]), item["output_prefix"])
+    planner = _StubPlanner(bids, spec)
+    plan = plan_request(planner, _StubRegistry(), analysis, _Store(), participants=("01",))
+
+    (request,) = plan.requests
+    assert request.workflow_id is None and request.registered is None
+    assert planner.calls[0]["modules"] == ("contrasts",)
+    terminals = [plan.work_items[key] for key in request.terminal_keys]
+    assert [item.entities for item in terminals] == [{"contrast": "SN"}, {"contrast": "WN"}]
+    first = terminals[0]
+    assert first.dependencies == (spec.key,) and spec.key in plan.work_items
+    assert first.contract.processing["analysis"]["commit"] == analysis.source.commit
+    assert first.expected_outputs[0].name == (
+        "sub-01_analysis-similarity_contrast-SN_manifest.json"
+    )
+
+    specification = json.loads(Path(first.runtime_config).read_text())
+    scheduled.run(specification, work_dir=study_roots / "attempt")
+    output = Path(specification["outputs"]["similarity"])
+    assert len(output.read_text().splitlines()) == 4
+    completion = json.loads(first.expected_outputs[0].read_text())
+    assert completion["complete"] is True and output.name in completion["public_outputs"]
+
+    broken = {
+        **specification,
+        "inputs": {"maps": {**specification["inputs"]["maps"], "upstream": []}},
+    }
+    with pytest.raises(RuntimeError, match="fewer than min 2"):
+        scheduled.run(broken, work_dir=study_roots / "attempt2")
+
+
+def test_analyses_module_is_not_a_workflow_module():
+    from nro.orchestration.catalog import BUILTIN_MODULES, module_descriptor, normalize_module
+
+    assert module_descriptor("analyses").dynamic_processing_keys == ("analysis",)
+    assert "analyses" not in {item.name for item in BUILTIN_MODULES}
+    with pytest.raises(ValueError, match="--study-analysis"):
+        normalize_module("analyses")

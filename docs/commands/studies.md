@@ -11,9 +11,13 @@ relative path, and never into a project's `derivatives/`.
 | `study_code` | `/juice6/u/nlp/climblab/STUDIES/CODE` |
 | `study_results` | `/juice6/u/nlp/climblab/STUDIES/RESULTS` |
 
-`nro study run` executes analyses directly from the command line, one work item
-after another. The shared scheduler does not run them yet, so `nro status`,
-`nro purge`, and `nro gc` do not report study results. In a development
+`nro run --study-analysis STUDY/ANALYSIS` plans an analysis through the shared
+scheduler, together with any upstream work its inputs need, and creates one
+request per member project. `--study-ref` names the study branch, tag, or
+commit to plan from; the default is `main`. `--project` and `--participant`
+narrow the request. `nro study run` instead executes analyses directly from the
+command line, one work item after another. `nro status`, `nro purge`, and
+`nro gc` do not report study results yet. In a development
 installation, `query`, `check`, `try`, and `run` read upstream state from the
 scheduler's last published status snapshot of `main`, which can trail the
 registry by one scheduler update.
@@ -238,3 +242,19 @@ STUDIES/RESULTS/STUDY/analyses/ANALYSIS/project-PROJECT/sub-PARTICIPANT/FILENAME
 
 with its provenance sidecar. Files written outside the slots stay in the
 staging directory.
+
+## Scheduled runs
+
+A scheduled analysis is one registry lineage, named `STUDY/ANALYSIS`, that no
+workflow selects. Each work item depends on the upstream work items of every
+input's workflow whose recorded entities agree with the selector. Input files
+are chosen when the work item runs, from those work items' outputs, so a
+`many` input with fewer than `min` files fails the attempt instead of being
+reported as not applicable. `config:` inputs cannot be scheduled yet; use
+`workflow:`.
+
+A development branch writes study results below
+`DEVELOPMENT/BRANCH/STUDIES/RESULTS` instead of the shared results root. Each
+work item also writes a completion manifest,
+`STEM_analysis-NAME_PARAMETER-LABEL_manifest.json`, which lists its outputs and
+provenance sidecars. Here `STEM` is `sub-PARTICIPANT` or the run's stem.
