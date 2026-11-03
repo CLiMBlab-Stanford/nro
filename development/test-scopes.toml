@@ -32,6 +32,11 @@ paths = ["nro/bidsify/**", "nro/bin/bidsify.py", "tests/test_bidsify*.py", "test
 tests = ["tests/test_bidsify.py", "tests/test_bidsify_discovery.py", "tests/test_bidsify_scanplans.py", "tests/test_ingestion_index.py"]
 boundaries = ["tests/test_scheduler_service.py"]
 
+[scope.methods]
+paths = ["nro/methods/**", "nro/modules/*/methods.py", "nro/bin/methods.py", "docs/methods/reporting.md", "tests/test_methods.py", "tests/fixtures/methods/**"]
+tests = ["tests/test_methods.py"]
+boundaries = ["tests/test_architecture_boundaries.py", "tests/test_cli.py"]
+
 [scope.anat]
 paths = ["nro/modules/anat/**", "nro/orchestration/hotfixes/*msmall*", "nro/engine/pose.py", "tests/test_anat_*.py", "tests/test_synthstroke_adapter.py", "tests/test_pose.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py"]
 tests = ["tests/test_anat_session_sources.py", "tests/test_anat_lesions.py", "tests/test_anat_fastsurfer.py", "tests/test_anat_msmall.py", "tests/test_anat_reconstruction.py", "tests/test_synthstroke_adapter.py", "tests/test_branch_anatomical_execution.py", "tests/test_gradient_unwarping.py", "tests/test_hotfixes.py", "tests/test_pose.py"]

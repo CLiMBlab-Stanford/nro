@@ -34,6 +34,7 @@ command uses the BIDS root from the global site configuration.
 | [Branch registration](branches.md) | `branch` |
 | [Installed releases](releases.md) | `release` and shared-scheduler repair |
 | [Accepting development artifacts](promotion.md) | `promote` |
+| [Methods reporting](../methods/reporting.md) | `methods` |
 
 ```{toctree}
 :maxdepth: 1

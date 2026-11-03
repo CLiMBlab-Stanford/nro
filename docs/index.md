@@ -54,6 +54,7 @@ methods/denoising
 methods/estimation
 methods/contrasts
 methods/software
+methods/reporting
 ```
 
 ```{toctree}

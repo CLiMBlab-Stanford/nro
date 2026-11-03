@@ -2443,12 +2443,13 @@ wheels = [
 
 [[package]]
 name = "nro"
-version = "0.38.0"
+version = "0.39.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
     { name = "contourpy" },
     { name = "h5py" },
+    { name = "jinja2" },
     { name = "matplotlib" },
     { name = "nibabel" },
     { name = "nilearn" },
@@ -2506,6 +2507,7 @@ requires-dist = [
     { name = "greenlet", marker = "extra == 'marss'", specifier = "==3.2.4" },
     { name = "h5py", specifier = ">=3.10,<3.15" },
     { name = "igraph", marker = "extra == 'oslom'", specifier = ">=0.11,<0.12" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "leidenalg", marker = "extra == 'oslom'", specifier = ">=0.10,<0.11" },
     { name = "marss", marker = "extra == 'marss'", specifier = "==1.0.2" },
     { name = "matplotlib", specifier = ">=3.8,<4" },
