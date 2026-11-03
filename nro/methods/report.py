@@ -12,6 +12,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import yaml
+
 from nro.engine.artifact_metadata import validate_metadata_fields
 from nro.engine.bids import matches_selectors
 from nro.methods.bibliography import (
@@ -32,11 +34,13 @@ from nro.methods.software import (
 from nro.methods.templates import MethodsTemplate, module_templates, render_template
 from nro.methods.writers import EXTENSIONS, WRITERS, tsv
 
-SUPPORTED_MODULES = ("anat", "func", "clean")
+SUPPORTED_MODULES = ("anat", "func", "clean", "dynconn", "networks")
 MANIFEST_SUFFIXES = {
     "anat": "_desc-preprocessAnat_manifest.json",
     "func": "_desc-preprocessFunc_manifest.json",
     "clean": "_desc-clean_manifest.json",
+    "dynconn": "_desc-dynamicConnectivity_manifest.yaml",
+    "networks": "_desc-networks_manifest.yaml",
 }
 RUN_COLUMNS = (*RUN_ENTITY_COLUMNS, "module", "field", "value")
 _ENTITY_NAMES = {
@@ -89,7 +93,8 @@ def workflow_lineages(workflow: Any, modules: Sequence[str] | None = None) -> tu
 
     ``workflow`` is a ``ResolvedWorkflow``. Directory labels are computed the same
     way the registry assigns them, so a report can be previewed before any work
-    item exists. Without ``modules``, every supported module is reported.
+    item exists. Without ``modules``, every supported module whose upstream
+    closure is also supported is reported.
     """
     from nro.definitions.store import CONFIGURATION_CLASSES, fingerprint
     from nro.orchestration.dependencies import direct_dependencies, primary_dependency
@@ -108,18 +113,28 @@ def workflow_lineages(workflow: Any, modules: Sequence[str] | None = None) -> tu
             }
         )
         directories[name] = lineage_directory_label(resolved.config_id, lineage_fingerprints[name])
-    targets = list(modules or SUPPORTED_MODULES)
+
+    def upstream_closure(targets: Sequence[str]) -> set[str]:
+        closure: set[str] = set()
+        pending = list(targets)
+        while pending:
+            name = pending.pop()
+            if name in closure:
+                continue
+            closure.add(name)
+            pending.extend(direct_dependencies(name, workflow.configurations[name].values))
+        return closure
+
+    if modules:
+        targets = list(modules)
+    else:
+        targets = [
+            name for name in SUPPORTED_MODULES if upstream_closure([name]) <= set(SUPPORTED_MODULES)
+        ]
     unknown = sorted(set(targets) - set(CONFIGURATION_CLASSES))
     if unknown:
         raise MethodsReportError("Unknown module(s): " + ", ".join(unknown))
-    closure: set[str] = set()
-    pending = list(targets)
-    while pending:
-        name = pending.pop()
-        if name in closure:
-            continue
-        closure.add(name)
-        pending.extend(direct_dependencies(name, workflow.configurations[name].values))
+    closure = upstream_closure(targets)
     unsupported = sorted(closure - set(SUPPORTED_MODULES))
     if unsupported:
         raise MethodsReportError(
@@ -267,14 +282,23 @@ def registry_manifests(
                 excluded["no_manifest"] += 1
                 continue
             try:
-                data = json.loads(paths[0].read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+                data = _read_manifest(paths[0])
+            except (OSError, ValueError, yaml.YAMLError):
                 excluded["unreadable_manifest"] += 1
                 continue
             records.append(ManifestRecord(entities=_entities(project, row), data=data))
         return LineageManifests(tuple(records), dict(sorted(excluded.items())))
 
     return source
+
+
+def _read_manifest(path: Path) -> Mapping[str, Any]:
+    """Read a JSON or YAML manifest, rejecting a document that is not a mapping."""
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text) if path.suffix == ".yaml" else json.loads(text)
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Manifest is not a mapping: {path}")
+    return data
 
 
 def no_manifests(lineage: Lineage, lineages: Sequence[Lineage]) -> LineageManifests:
@@ -419,12 +443,12 @@ def build_report(
     )
     run_table = Table("Run-level processing", RUN_COLUMNS, tuple(sorted(run_rows)))
     software_table = Table("Software", SOFTWARE_COLUMNS, software)
-    tables = [
-        Table(f"Supplementary Table S{number}. {table.title}", table.columns, table.rows)
-        for number, table in enumerate(
-            [table for table in (run_table, software_table) if table.rows], start=1
-        )
-    ]
+    # The run-level table can be very long, so it is published only as a TSV.
+    tables = (
+        [Table(f"Supplementary Table S1. {software_table.title}", SOFTWARE_COLUMNS, software)]
+        if software
+        else []
+    )
     digest = template_set_digest(used_templates)
     lineage_text = ", ".join(f"{item.module}/{item.directory}" for item in lineages)
     footer = (

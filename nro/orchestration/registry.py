@@ -1479,6 +1479,77 @@ class Registry(WorkflowRegistry):
             for row in rows
         ]
 
+    def module_lineage_directories(
+        self,
+        configuration_class: str,
+        *,
+        workflow_id: str | None = None,
+        config_id: str | None = None,
+    ) -> list[dict]:
+        """Return the lineage directories that a workflow or a configuration ID selects.
+
+        A workflow contributes the binding of its latest registered revision. A
+        configuration ID contributes the latest revision of every workflow that
+        selects it. Each row has ``directory_label``, ``config_id``, and
+        ``workflow_id``. The query reads the registry without registering anything.
+        """
+        if (workflow_id is None) == (config_id is None):
+            raise ValueError("Give exactly one of workflow_id and config_id")
+        condition, value = (
+            ("wr.workflow_id=?", workflow_id)
+            if workflow_id is not None
+            else ("l.config_id=?", config_id)
+        )
+        with self.read_connection() as db:
+            rows = db.execute(
+                f"""SELECT l.directory_label, l.config_id, wr.workflow_id
+                    FROM workflow_revisions wr
+                    JOIN workflow_bindings b ON b.workflow_revision_id=wr.id
+                    JOIN module_lineages l ON l.id=b.module_lineage_id
+                    WHERE b.configuration_class=? AND {condition}
+                      AND wr.revision=(SELECT MAX(revision) FROM workflow_revisions
+                                       WHERE workflow_id=wr.workflow_id)
+                    ORDER BY wr.workflow_id""",
+                (configuration_class, value),
+            ).fetchall()
+        return [
+            {"directory_label": str(row[0]), "config_id": str(row[1]), "workflow_id": str(row[2])}
+            for row in rows
+        ]
+
+    def lineage_work_items(
+        self, project: str, module: str, directory_label: str, participant: str
+    ) -> list[dict]:
+        """Return one participant's recorded work items for one module lineage.
+
+        Rows carry ``entities``, ``artifact_state``, ``artifact_fingerprint``,
+        ``generation``, ``output_root``, ``output_prefix``, and ``expected_outputs``.
+        """
+        with self.read_connection() as db:
+            rows = db.execute(
+                """SELECT w.entities_json, w.artifact_state, w.artifact_fingerprint,
+                          w.current_generation, w.output_root, w.output_prefix,
+                          w.expected_outputs_json, w.work_item_key
+                   FROM work_items w JOIN module_lineages l ON l.id=w.module_lineage_id
+                   WHERE w.project=? AND w.module=? AND l.configuration_class=?
+                     AND l.directory_label=? AND w.participant=?
+                   ORDER BY w.work_item_key""",
+                (project, module, module, directory_label, participant),
+            ).fetchall()
+        return [
+            {
+                "entities": json.loads(row[0]),
+                "artifact_state": str(row[1]),
+                "artifact_fingerprint": str(row[2]),
+                "generation": int(row[3]),
+                "output_root": str(row[4]),
+                "output_prefix": row[5],
+                "expected_outputs": json.loads(row[6]),
+                "key": str(row[7]),
+            }
+            for row in rows
+        ]
+
     def register_worker(
         self,
         worker_id: str,

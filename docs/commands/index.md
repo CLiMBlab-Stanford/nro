@@ -35,6 +35,7 @@ command uses the BIDS root from the global site configuration.
 | [Installed releases](releases.md) | `release` and shared-scheduler repair |
 | [Accepting development artifacts](promotion.md) | `promote` |
 | [Methods reporting](../methods/reporting.md) | `methods` |
+| [Study analyses](studies.md) | `study` |
 
 ```{toctree}
 :maxdepth: 1
@@ -49,6 +50,7 @@ scanplans
 branches
 releases
 promotion
+studies
 ```
 
 `nro def` also manages the site-owned definitions store itself. `nro def init [PATH]` creates

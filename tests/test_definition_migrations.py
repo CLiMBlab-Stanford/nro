@@ -287,6 +287,13 @@ def test_schema_eight_preserves_named_network_sources(tmp_path):
     assert yaml.safe_load(dynconn.read_text())["connectivity_source"] == "dynconn"
 
 
+def test_new_store_clustering_networks_use_dynconn(tmp_path):
+    root = create_store(tmp_path / "definitions")
+    clustering = root / "configs/networks/clustering_networks.yml"
+
+    assert yaml.safe_load(clustering.read_text())["connectivity_source"] == "dynconn"
+
+
 def test_schema_nine_moves_planning_into_scheduler_resources(tmp_path):
     root = create_store(tmp_path / "definitions")
     site = root / "site/site.yml"

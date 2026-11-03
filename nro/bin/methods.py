@@ -12,7 +12,12 @@ from nro.methods.writers import FORMATS
 def build_parser(*, prog: str = "nro.bin.methods") -> argparse.ArgumentParser:
     """Construct the methods parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
-    parser.add_argument("workflow", help="Workflow ID whose lineages are described.")
+    parser.add_argument(
+        "workflow",
+        nargs="?",
+        default="main",
+        help="Workflow ID whose lineages are described (default: main).",
+    )
     parser.add_argument(
         "-P",
         "--project",
@@ -54,7 +59,13 @@ def build_parser(*, prog: str = "nro.bin.methods") -> argparse.ArgumentParser:
         action="store_true",
         help="Describe the configuration only, without reading the registry or manifests.",
     )
-    parser.add_argument("--format", required=True, choices=FORMATS, dest="output_format")
+    parser.add_argument(
+        "--format",
+        default="rtf",
+        choices=FORMATS,
+        dest="output_format",
+        help="Output format (default: rtf).",
+    )
     parser.add_argument(
         "-m",
         "--module",

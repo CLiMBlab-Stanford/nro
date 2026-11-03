@@ -69,6 +69,8 @@ DEFAULTS = {
     "work": str(LAB / "WORK"),
     "development": str(LAB / "NRO_DEV"),
     "registry": str(LAB / ".nro"),
+    "study_code": str(LAB / "STUDIES/CODE"),
+    "study_results": str(LAB / "STUDIES/RESULTS"),
     "images": str(LAB / "apptainer/images"),
     "gradient_coefficients": str(LAB / "shared/gradient-coefficients"),
     "templates": str(LAB / "templateflow"),
@@ -138,6 +140,8 @@ PATH_KEYS = {
     "work",
     "development",
     "registry",
+    "study_code",
+    "study_results",
     "images",
     "gradient_coefficients",
     "templates",
@@ -148,7 +152,7 @@ PATH_KEYS = {
 }
 
 SITE_SECTIONS = {
-    "storage": ("bids", "work", "development", "registry"),
+    "storage": ("bids", "work", "development", "registry", "study_code", "study_results"),
     "resources": (
         "images",
         "gradient_coefficients",
@@ -197,7 +201,7 @@ SLURM_GROUPS = {
     },
 }
 REQUIRED_SITE_KEYS = {
-    "storage": SITE_SECTIONS["storage"],
+    "storage": ("bids", "work", "development", "registry"),
     "resources": ("images", "gradient_coefficients", "templates", "workbench", "oslom", "license"),
     "execution": SITE_SECTIONS["execution"],
 }
@@ -224,6 +228,8 @@ def generic_defaults(parent: Path | None = None) -> dict:
                 "work": "work",
                 "development": "development",
                 "registry": ".nro",
+                "study_code": "studies/code",
+                "study_results": "studies/results",
                 "images": "images",
                 "gradient_coefficients": "gradient-coefficients",
                 "templates": "templateflow",

@@ -76,6 +76,11 @@ paths = ["nro/modules/contrasts/**", "tests/test_contrasts.py"]
 tests = ["tests/test_contrasts.py"]
 boundaries = ["tests/test_scene.py", "tests/test_render.py"]
 
+[scope.analysis]
+paths = ["nro/analysis/**", "nro/bin/study.py", "tests/test_study_analyses.py"]
+tests = ["tests/test_study_analyses.py"]
+boundaries = ["tests/test_cli.py"]
+
 [scope.documentation]
 paths = ["README.md", "CONTRIBUTING.md", "WRITING_POLICY.md", "AI_PROVENANCE.md", "docs/**", "plans/**", "AGENTS.md", "tests/test_documentation.py", "tests/test_terminology.py"]
 tests = ["tests/test_documentation.py", "tests/test_terminology.py"]
