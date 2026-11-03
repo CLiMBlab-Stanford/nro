@@ -1360,7 +1360,7 @@ class Registry(WorkflowRegistry):
                 f"""
                 SELECT r.*, wr.workflow_id, wr.revision AS workflow_revision
                 FROM requests r
-                JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
+                LEFT JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
                 {where}
                 ORDER BY r.created_at
                 """
@@ -2758,7 +2758,7 @@ class Registry(WorkflowRegistry):
                 for row in db.execute(
                     """
                     SELECT r.id, r.user_name, wr.workflow_id FROM requests r
-                    JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
+                    LEFT JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
                     WHERE r.state='active' AND r.project=?
                     """,
                     (self.paths.project,),
@@ -2768,8 +2768,11 @@ class Registry(WorkflowRegistry):
                 and (branch_requests is None or row["id"] in branch_requests)
                 and (
                     not workflow_set
-                    or str(row["workflow_id"]).removeprefix((branch_registry_id or "") + ":")
-                    in workflow_set
+                    or (
+                        row["workflow_id"] is not None
+                        and str(row["workflow_id"]).removeprefix((branch_registry_id or "") + ":")
+                        in workflow_set
+                    )
                 )
             }
             if not eligible_requests:
@@ -3690,7 +3693,7 @@ class Registry(WorkflowRegistry):
             request = db.execute(
                 """
                 SELECT r.*, wr.workflow_id, wr.revision AS workflow_revision
-                FROM requests r JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
+                FROM requests r LEFT JOIN workflow_revisions wr ON wr.id=r.workflow_revision_id
                 WHERE r.id=? AND r.project=?
                 """,
                 (request_id, self.paths.project),

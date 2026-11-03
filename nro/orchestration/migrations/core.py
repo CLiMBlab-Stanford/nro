@@ -234,6 +234,87 @@ class DropColumn:
         )
 
 
+def _column_spans(sql: str) -> list[tuple[int, int]]:
+    """Return the spans of top-level definitions inside a CREATE TABLE body."""
+    start = sql.index("(") + 1
+    depth = 0
+    quote: str | None = None
+    spans = []
+    begin = start
+    for index in range(start, len(sql)):
+        character = sql[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+            continue
+        if character in "'\"`[":
+            quote = "]" if character == "[" else character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                spans.append((begin, index))
+                return spans
+            depth -= 1
+        elif character == "," and depth == 0:
+            spans.append((begin, index))
+            begin = index + 1
+    raise ValueError("Unterminated CREATE TABLE statement")
+
+
+@dataclass(frozen=True)
+class DropNotNull:
+    """Allow NULL in one existing column without rebuilding its table.
+
+    SQLite documents removing a NOT NULL constraint through ``writable_schema``
+    as a change that leaves stored rows valid. The operation edits only the
+    named column's declaration and rejects primary-key columns.
+    """
+
+    table: str
+    column: str
+
+    def apply(self, database: sqlite3.Connection) -> None:
+        """Remove the column's NOT NULL constraint and reload the schema."""
+        _identifier(self.table)
+        _identifier(self.column)
+        row = database.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (self.table,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown table {self.table!r}")
+        sql = str(row[0])
+        matches = []
+        for begin, end in _column_spans(sql):
+            declaration = sql[begin:end]
+            words = declaration.split()
+            if words and words[0].strip('"`[]').lower() == self.column.lower():
+                matches.append((begin, end, declaration))
+        if len(matches) != 1:
+            raise ValueError(f"Table {self.table!r} has no single column {self.column!r}")
+        begin, end, declaration = matches[0]
+        if re.search(r"\bPRIMARY\s+KEY\b", declaration, re.IGNORECASE):
+            raise ValueError("A primary-key column cannot become nullable")
+        constraint = list(re.finditer(r"\s+NOT\s+NULL\b", declaration, re.IGNORECASE))
+        if len(constraint) != 1:
+            raise ValueError(f"Column {self.table}.{self.column} is not declared NOT NULL once")
+        match = constraint[0]
+        edited = declaration[: match.start()] + declaration[match.end() :]
+        version = int(database.execute("PRAGMA schema_version").fetchone()[0])
+        database.execute("PRAGMA writable_schema=ON")
+        try:
+            database.execute(
+                "UPDATE sqlite_schema SET sql=? WHERE type='table' AND name=?",
+                (sql[:begin] + edited + sql[end:], self.table),
+            )
+            database.execute(f"PRAGMA schema_version={version + 1}")
+        finally:
+            database.execute("PRAGMA writable_schema=OFF")
+        result = database.execute("PRAGMA integrity_check").fetchone()[0]
+        if result != "ok":
+            raise ValueError(f"Schema edit failed the integrity check: {result}")
+
+
 @dataclass(frozen=True)
 class MapValues:
     """Exhaustively replace the existing values of one column."""

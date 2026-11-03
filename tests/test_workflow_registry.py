@@ -508,3 +508,39 @@ def test_module_directories_use_independent_configuration_namespaces(tmp_path: P
     assert second.directories["func"] == lineage_directory_label(
         "second", second.lineage_fingerprints["func"]
     )
+
+
+def test_unbound_lineages_are_named_and_refreshed_without_workflow_bindings(tmp_path):
+    from nro.orchestration.registry import Registry
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    first = registry.register_unbound_lineage("analyses", "a001/similarity", {"version": 1})
+    again = registry.register_unbound_lineage("analyses", "a001/similarity", {"version": 2})
+    other = registry.register_unbound_lineage("analyses", "a001/other", {"version": 1})
+    assert first.created and not again.created and other.id != first.id
+    assert (again.id, again.directory_label) == (first.id, first.directory_label)
+    assert first.directory_label.startswith("a001.similarity-")
+    with registry.connection() as db:
+        row = db.execute(
+            "SELECT config_id, resolved_yaml FROM module_lineages WHERE id=?", (first.id,)
+        ).fetchone()
+        assert db.execute("SELECT COUNT(*) FROM workflow_bindings").fetchone()[0] == 0
+    assert row["config_id"] == "a001/similarity" and "version: 2" in row["resolved_yaml"]
+    with pytest.raises(ValueError, match="through workflows"):
+        registry.register_unbound_lineage("contrasts", "main", {})
+    with pytest.raises(ValueError, match="Invalid unbound lineage"):
+        registry.register_unbound_lineage("analyses", "a001/../x", {})
+
+
+def test_requests_without_a_workflow_are_listed(tmp_path):
+    from nro.orchestration.registry import Registry
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registry.initialize()
+    with registry.connection(write=True) as db:
+        db.execute(
+            "INSERT INTO requests VALUES ('r1','u','demo',NULL,'analyses','{}',1,NULL,"
+            "'active','t','t')"
+        )
+    (row,) = registry.request_rows()
+    assert row["id"] == "r1" and row["workflow_id"] is None
