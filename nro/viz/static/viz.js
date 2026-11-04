@@ -514,14 +514,23 @@ function compatible(layer, family) {
 
 function describe(layer) {
   const suffix = layer.kind === "connectivity" ? " (seed correlation)" : layer.maps.length > 1 ? ` (${layer.maps.length} maps)` : "";
-  return `${layer.module}: ${layer.label}${suffix}`;
+  return `${layer.label}${suffix}`;
 }
 
 function populateAvailable() {
   const select = $("available");
   select.replaceChildren();
   const layers = (state.view?.layers || []).filter((layer) => compatible(layer, state.family));
-  for (const layer of layers) select.append(new Option(describe(layer), layer.id));
+  const groups = new Map();
+  for (const layer of layers) {
+    if (!groups.has(layer.module)) {
+      const group = document.createElement("optgroup");
+      group.label = layer.module;
+      groups.set(layer.module, group);
+      select.append(group);
+    }
+    groups.get(layer.module).append(new Option(describe(layer), layer.id));
+  }
   if (!layers.length) select.append(new Option("No layers match these surfaces", ""));
   $("add").disabled = !layers.length;
 }
@@ -620,7 +629,7 @@ function addLayer(meta) {
     opacity: meta.kind === "label" ? 0.85 : 1,
     visible: true,
   };
-  card.querySelector(".name").textContent = describe(meta);
+  card.querySelector(".name").textContent = `${meta.module}: ${describe(meta)}`;
   const mapSelect = card.querySelector(".map");
   meta.maps.forEach((name, index) => mapSelect.append(new Option(name || `map ${index + 1}`, index)));
   card.querySelector(".map-row").hidden = meta.maps.length < 2;

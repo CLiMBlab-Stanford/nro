@@ -111,7 +111,10 @@ def main() -> None:
     os.environ["NRO_EXECUTION_SOURCE_ROOT"] = str(root)
     os.environ["NRO_EXECUTION_SOURCE_DIGEST"] = expected_digest
     sys.dont_write_bytecode = True
-    os.chdir(root)
+    if not manifest_only:
+        # Attempts run from the snapshot. Interactive commands keep the caller's
+        # directory so relative paths such as an output directory resolve there.
+        os.chdir(root)
     if site_path != "-":
         from nro.site.configuration import ENVIRONMENT_KEYS
 

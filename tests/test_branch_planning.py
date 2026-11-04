@@ -206,3 +206,26 @@ def test_checkout_cannot_plan_as_main(tmp_path, monkeypatch):
             checkout, replace(paths, branch="main"), graph, ("child",), (), validate=validated
         )
     assert store.registry("main").work_items() == ()
+
+
+def test_study_results_are_branch_owned_and_contexts_round_trip(tmp_path):
+    from nro.orchestration.branches import BranchPaths
+    from nro.orchestration.execution_context import ExecutionContext
+
+    roots = [tmp_path / name for name in ("bids", "work", "development", "studies")]
+    logical = roots[3] / "a001/analyses/similarity/project-p/sub-01/x.tsv"
+    main = ExecutionContext(BranchPaths("main", *roots), "p", "k", ())
+    feature = ExecutionContext(BranchPaths("feature", *roots), "p", "k", ())
+    assert main.output_path(logical) == logical
+    assert feature.output_path(logical) == (
+        roots[2] / "feature/STUDIES/RESULTS/a001/analyses/similarity/project-p/sub-01/x.tsv"
+    )
+    assert feature.require_output(feature.output_path(logical))
+    with pytest.raises(ValueError):
+        feature.require_output(logical)
+    assert ExecutionContext.from_dict(feature.as_dict()) == feature
+    legacy = ExecutionContext(BranchPaths("main", *roots[:3]), "p", "k", ())
+    assert "studies" not in legacy.as_dict()
+    assert ExecutionContext.from_dict(legacy.as_dict()) == legacy
+    with pytest.raises(ValueError, match="must not overlap"):
+        BranchPaths("main", roots[0], roots[1], roots[2], roots[0] / "studies")

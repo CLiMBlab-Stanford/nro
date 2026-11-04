@@ -219,13 +219,15 @@ def prepare_pool(
             poll_interval=poll_interval,
             report_interval=report_interval,
         )
-    else:
-        # A crashed or cancelled controller cannot finish its durable transport
-        # records. Reconcile them before a one-shot maintenance coordinator can
-        # mistake those records for work that should be resumed.
-        _cancel_orphaned_scheduler_requests(registry)
 
     stored_schema = registry.stored_schema_version()
+    if summary is None and stored_schema == SCHEMA_VERSION:
+        # A crashed or cancelled controller cannot finish its durable transport
+        # records. Reconcile them before a one-shot maintenance coordinator can
+        # mistake those records for work that should be resumed. A registry
+        # with an older schema is reconciled after its migration below, since
+        # this release cannot open it before then.
+        _cancel_orphaned_scheduler_requests(registry)
     if stored_schema != SCHEMA_VERSION:
         if not update_schema:
             raise RuntimeError(
@@ -255,6 +257,7 @@ def prepare_pool(
         if SCHEDULER_SCHEMA.supports(stored_schema):
             backup = registry.migrate_schema()
             if summary is None:
+                _cancel_orphaned_scheduler_requests(registry)
                 registry.finish_repair_stop()
             print(
                 f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",

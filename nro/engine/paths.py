@@ -322,3 +322,30 @@ def clean_session_work_dir(
         clean_subject_work_dir(sub_id, project=project, clean_id=clean_id, work_root=work_root)
         / ses_id
     )
+
+
+def _study_root(setting: str, study: str, analysis: str | None) -> Path:
+    from nro.site.configuration import settings
+
+    root = Path(settings()[0][setting]) / _directory_component(study, label="study name")
+    if analysis is None:
+        return root
+    return root / "analyses" / _directory_component(analysis, label="analysis name")
+
+
+def study_code_root(study: str, analysis: str | None = None) -> Path:
+    """Locate a study repository, or one analysis directory inside it."""
+    return _study_root("study_code", study, analysis)
+
+
+def study_results_root(study: str, analysis: str | None = None) -> Path:
+    """Locate a study's results directory, or one analysis's results inside it."""
+    return _study_root("study_results", study, analysis)
+
+
+def study_work_root(study: str) -> Path:
+    """Locate a study's private work directory below the site work root."""
+    from nro.site.configuration import settings
+
+    work = Path(settings()[0]["work"]).resolve()
+    return work / "studies" / _directory_component(study, label="study name")

@@ -49,11 +49,40 @@ CONFIGURATION_FILE_SUFFIX = {
 }
 
 
+UNBOUND_CONFIGURATION_CLASSES = ("analyses",)
+"""Lineage classes that no workflow binds. Study analyses are the only one."""
+
+
+@dataclass(frozen=True)
+class UnboundLineage:
+    """A registered module lineage that no workflow revision binds."""
+
+    id: int
+    configuration_class: str
+    config_id: str
+    lineage_fingerprint: str
+    directory_label: str
+    created: bool
+
+
+def unbound_lineage_fingerprint(configuration_class: str, config_id: str) -> str:
+    """Return the identity of an unbound lineage.
+
+    As for workflow lineages, the identity excludes the configuration contents,
+    so editing a study analysis rebuilds its results in place.
+    """
+    return fingerprint({"module": configuration_class, "config_id": config_id, "unbound": True})
+
+
 def lineage_directory_label(config_id: str, lineage_fingerprint: str) -> str:
-    """Return the deterministic public directory for one module lineage."""
+    """Return the deterministic public directory for one module lineage.
+
+    Workflow configuration IDs contain no ``/``. An unbound lineage's
+    ``STUDY/ANALYSIS`` becomes ``STUDY.ANALYSIS``.
+    """
     if not config_id or not lineage_fingerprint:
         raise ValueError("Lineage directory identity cannot be empty")
-    return f"{config_id}-{lineage_fingerprint[:12]}"
+    return f"{config_id.replace('/', '.')}-{lineage_fingerprint[:12]}"
 
 
 class WorkflowRegistry:
@@ -125,6 +154,82 @@ class WorkflowRegistry:
             / registered.workflow_id
             / f"{registered.revision}_runtime"
             / f"{directory}_{suffix}.yml"
+        )
+
+    def register_unbound_lineage(
+        self,
+        configuration_class: str,
+        config_id: str,
+        resolved: dict,
+    ) -> UnboundLineage:
+        """Register or refresh a lineage that no workflow binds.
+
+        ``config_id`` names the lineage, such as ``STUDY/ANALYSIS``; a ``/`` becomes
+        ``.`` in the directory label. ``resolved`` is the current definition. It
+        is stored like a workflow lineage's resolved configuration and does not
+        change the lineage identity.
+        """
+        from nro.orchestration.registry import utcnow
+
+        if configuration_class not in UNBOUND_CONFIGURATION_CLASSES:
+            raise ValueError(f"{configuration_class!r} lineages are registered through workflows")
+        if (
+            not config_id
+            or config_id != config_id.strip()
+            or any(part in {"", ".", ".."} for part in config_id.split("/"))
+        ):
+            raise ValueError(f"Invalid unbound lineage name: {config_id!r}")
+        lineage = unbound_lineage_fingerprint(configuration_class, config_id)
+        resolved_yaml = yaml.safe_dump(resolved, sort_keys=True)
+        created = False
+        with self.connection(write=True) as db:
+            row = db.execute(
+                """SELECT id, directory_label FROM module_lineages
+                   WHERE configuration_class=? AND lineage_fingerprint=?""",
+                (configuration_class, lineage),
+            ).fetchone()
+            if row is not None:
+                lineage_id = int(row["id"])
+                directory = str(row["directory_label"])
+                db.execute(
+                    "UPDATE module_lineages SET config_fingerprint=?, resolved_yaml=? WHERE id=?",
+                    (fingerprint(resolved), resolved_yaml, lineage_id),
+                )
+            else:
+                directory = lineage_directory_label(config_id, lineage)
+                collision = db.execute(
+                    """SELECT 1 FROM module_lineages
+                       WHERE configuration_class=? AND directory_label=?""",
+                    (configuration_class, directory),
+                ).fetchone()
+                if collision is not None:
+                    raise RuntimeError(
+                        f"Lineage directory digest collision for {configuration_class}/{directory}"
+                    )
+                cursor = db.execute(
+                    """INSERT INTO module_lineages(
+                           configuration_class, config_id, config_fingerprint,
+                           lineage_fingerprint, resolved_yaml, directory_label, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        configuration_class,
+                        config_id,
+                        fingerprint(resolved),
+                        lineage,
+                        resolved_yaml,
+                        directory,
+                        utcnow(),
+                    ),
+                )
+                lineage_id = int(cursor.lastrowid)
+                created = True
+        return UnboundLineage(
+            id=lineage_id,
+            configuration_class=configuration_class,
+            config_id=config_id,
+            lineage_fingerprint=lineage,
+            directory_label=directory,
+            created=created,
         )
 
     def register_workflow(self, workflow: ResolvedWorkflow) -> RegisteredWorkflow:

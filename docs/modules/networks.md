@@ -22,8 +22,8 @@ input preparation, labeling, and publication stages surround every strategy.
 
 The packaged workflows cover the common combinations. `main` uses dynconn with
 ICA, and `clustering` uses dynconn with repeated clustering. `oslom` uses
-microparcellation with OSLOM. `dynconn-networks` is an explicit name for the
-default dynconn source.
+microparcellation with OSLOM. `dynconn-networks` is an explicit name for
+the default dynconn source.
 
 ## Input preparation
 

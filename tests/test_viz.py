@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from nro.viz import data, service
-from nro.viz.catalog import Catalogs, build_layers
+from nro.viz.catalog import Catalog, Catalogs, build_layers, cifti_summary
 from nro.viz.server import make_server
 
 VERTICES = {"L": 6, "R": 5}
@@ -81,6 +81,61 @@ def test_layers_pair_hemispheres_and_classify_cifti(tmp_path: Path) -> None:
     assert by_label["desc-networks probability"].maps == ("language", "default")
     assert by_label["desc-networks probability"].vertex_counts == VERTICES
     assert by_label["desc-dynamicConnectivity bold"].kind == "connectivity"
+
+
+def test_cifti_summary_reads_counts_and_map_names_from_the_header(tmp_path: Path) -> None:
+    labels = nib.cifti2.LabelAxis(
+        ["parcels"], [{0: ("none", (0, 0, 0, 0)), 1: ("a", (1, 0, 0, 1))}]
+    )
+    files = {
+        "scalars": (nib.cifti2.ScalarAxis(["first", ""]), ("first", "map 2"), 2),
+        "labels": (labels, ("parcels",), 1),
+        "series": (nib.cifti2.SeriesAxis(0, 1, 3), ("",), 3),
+    }
+    for name, (axis, maps, rows) in files.items():
+        path = _cifti(tmp_path / f"sub-01_{name}.dscalar.nii", np.ones((rows, _columns())), axis)
+
+        assert cifti_summary(path) == (VERTICES, maps)
+
+
+def _contrasts_row(tmp_path: Path) -> tuple[dict, str]:
+    from nro.modules.contrasts.paths import completion_path
+
+    root = tmp_path / "contrasts" / "main-abc" / "sub-01"
+    prefix = "sub-01_model-main_task-lang_space-fsnative_smoothing-2mm"
+    manifest = completion_path(root, prefix)
+    manifest.parent.mkdir(parents=True)
+    outputs = []
+    for node, stat in (("run_run-01", "t"), ("subject", "effect"), ("subject", "t")):
+        path = manifest.parent / f"{prefix}_node-{node}_stat-{stat}_statmap.dscalar.nii"
+        _cifti(path, np.ones((2, _columns())), nib.cifti2.ScalarAxis(["SvN", "S"]))
+        outputs.append(str(path))
+    manifest.write_text(json.dumps({"public_outputs": outputs}))
+    row = {
+        "module": "contrasts",
+        "project": "demo",
+        "participant": "01",
+        "status": "Success",
+        "output_root": str(root),
+        "output_prefix": prefix,
+        "entities_json": json.dumps({"task": "lang", "space": "fsnative", "smoothing": "2"}),
+    }
+    return row, prefix
+
+
+def test_catalog_finds_contrast_statmaps_from_registry_snapshot_rows(tmp_path: Path) -> None:
+    row, _prefix = _contrasts_row(tmp_path)
+
+    layers = Catalog([row]).view("demo", "01").layers
+
+    assert [layer.label for layer in layers] == [
+        "model-main task-lang smoothing-2mm node-subject stat-t",
+        "model-main task-lang smoothing-2mm node-subject stat-effect",
+        "model-main task-lang smoothing-2mm node-run run-01 stat-t",
+    ]
+    assert {layer.module for layer in layers} == {"contrasts"}
+    assert layers[0].maps == ("SvN", "S")
+    assert layers[0].vertex_counts == VERTICES
 
 
 def test_cifti_maps_fill_unaddressed_vertices_with_nan(tmp_path: Path) -> None:

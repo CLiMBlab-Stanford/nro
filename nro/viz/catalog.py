@@ -111,9 +111,34 @@ def _display_label(path: Path, participant: str) -> str:
     tokens = [
         token
         for token in name.split("_")
-        if token != f"sub-{participant}" and not token.startswith(("hemi-", "space-"))
+        if token != f"sub-{participant}"
+        and not token.startswith(("hemi-", "space-"))
+        and token != "statmap"
     ]
     return " ".join(tokens) or path.name
+
+
+# Contrast statmaps list subject-level results first and t maps before the
+# effect, variance, and degrees-of-freedom maps of the same node.
+_NODE_ORDER = {"subject": 0, "session": 1, "run": 2}
+_STAT_ORDER = {"t": 0, "z": 1, "p": 2, "effect": 3, "variance": 4, "dof": 5}
+
+
+def _layer_order(layer: Layer) -> tuple:
+    if layer.module != "contrasts":
+        return (layer.module, 0, 0, layer.label)
+    entities = dict(token.split("-", 1) for token in layer.label.split() if "-" in token)
+    stat = entities.pop("stat", "")
+    node = entities.pop("node", "")
+    rest = " ".join(f"{key}-{value}" for key, value in entities.items())
+    return (
+        layer.module,
+        rest.split(" ses-")[0].split(" run-")[0],
+        _NODE_ORDER.get(node, 3),
+        rest,
+        _STAT_ORDER.get(stat, 9),
+        layer.label,
+    )
 
 
 def _gifti_maps(path: Path) -> tuple[str, ...]:
@@ -135,6 +160,77 @@ def _cifti_maps(path: Path) -> tuple[str, ...]:
     if names is None:
         return ("",)
     return tuple(str(name) or f"map {index + 1}" for index, name in enumerate(names))
+
+
+_CIFTI_EXTENSION_CODE = 32
+_CORTEX = {"CIFTI_STRUCTURE_CORTEX_LEFT": "L", "CIFTI_STRUCTURE_CORTEX_RIGHT": "R"}
+
+
+def _cifti_xml(path: Path) -> bytes | None:
+    """Return the CIFTI-2 XML extension of a NIfTI-2 file without reading its data."""
+    import struct
+
+    with open(path, "rb") as handle:
+        header = handle.read(544)
+        if len(header) < 544:
+            return None
+        for order in ("<", ">"):
+            if struct.unpack(f"{order}i", header[:4])[0] == 540:
+                break
+        else:
+            return None
+        offset = struct.unpack(f"{order}q", header[168:176])[0]
+        if header[540] == 0 or offset <= 544:
+            return None
+        position = 544
+        while position + 8 <= offset:
+            handle.seek(position)
+            size, code = struct.unpack(f"{order}ii", handle.read(8))
+            if size < 8:
+                return None
+            if code == _CIFTI_EXTENSION_CODE:
+                return handle.read(size - 8).rstrip(b"\0")
+            position += size
+    return None
+
+
+def cifti_summary(path: Path) -> tuple[dict[str, int], tuple[str, ...]]:
+    """Return cortical vertex counts and map names from a CIFTI file header.
+
+    Only the XML header is read, which is much faster than building nibabel
+    axes for native-mesh files. Map names come from a scalar or label axis;
+    other files report one unnamed map. Files whose header cannot be read this
+    way fall back to nibabel.
+    """
+    import xml.etree.ElementTree as ElementTree
+
+    try:
+        xml = _cifti_xml(path)
+        root = ElementTree.fromstring(xml) if xml else None
+    except (OSError, ValueError, ElementTree.ParseError):
+        root = None
+    if root is None:
+        counts = cortical_vertex_counts(path)
+        return counts, (_cifti_maps(path) if counts else ())
+    counts: dict[str, int] = {}
+    maps: tuple[str, ...] = ("",)
+    for mapping in root.iter("MatrixIndicesMap"):
+        if (
+            mapping.get("IndicesMapToDataType")
+            in {
+                "CIFTI_INDEX_TYPE_SCALARS",
+                "CIFTI_INDEX_TYPE_LABELS",
+            }
+            and mapping.get("AppliesToMatrixDimension", "").split(",")[0].strip() == "0"
+        ):
+            names = [str(item.findtext("MapName") or "") for item in mapping.iter("NamedMap")]
+            maps = tuple(name or f"map {index + 1}" for index, name in enumerate(names)) or ("",)
+        for model in mapping.iter("BrainModel"):
+            hemisphere = _CORTEX.get(str(model.get("BrainStructure")))
+            vertices = model.get("SurfaceNumberOfVertices")
+            if hemisphere and vertices:
+                counts[hemisphere] = int(vertices)
+    return counts, maps
 
 
 def _layer_kind(path: Path) -> str | None:
@@ -180,13 +276,14 @@ def build_layers(
             gifti.setdefault(key, {})[hemisphere] = path
             gifti_space[key] = space
             continue
-        counts = cortical_vertex_counts(path)
-        if not counts:
-            continue
         try:
-            maps = ("",) if kind == "connectivity" else _cifti_maps(path)
+            counts, maps = cifti_summary(path)
         except (OSError, ValueError, TypeError, AttributeError):
             continue
+        if not counts:
+            continue
+        if kind == "connectivity":
+            maps = ("",)
         layers.append(
             Layer(
                 id=_identifier("layer", path),
@@ -224,7 +321,7 @@ def build_layers(
                 size_bytes=sum(path.stat().st_size for path in paths.values()),
             )
         )
-    return tuple(sorted(layers, key=lambda layer: (layer.module, layer.label)))
+    return tuple(sorted(layers, key=_layer_order))
 
 
 def build_surfaces(

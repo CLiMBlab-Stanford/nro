@@ -174,6 +174,13 @@ surfaces. These maps include GIFTI metrics and labels, CIFTI dense scalars and
 labels, and dense time series. Volume images and parcel-connectivity matrices
 are not shown.
 
+The layer list is grouped by module. Contrast results from `contrasts` appear
+as one layer per node and statistic, such as `node-subject stat-t`. Each
+contrast in the model is a map within the layer. Subject-level layers come
+first, then session and run layers, and a node's t map precedes its effect,
+variance, and degrees-of-freedom maps. A signed map, such as a t map, opens
+with the signed color scheme and a range symmetric about zero.
+
 **Open** adds a file that is not a registered derivative, such as a diagnostic
 or ad hoc map. Enter its path relative to the selected project's BIDS
 directory, for example `derivatives/diagnostics/sub-01/NAME.func.gii`. The

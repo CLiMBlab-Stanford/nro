@@ -67,6 +67,18 @@ def test_manifest_only_launcher_avoids_reading_unrelated_package_data(tmp_path):
     assert result.stdout.strip() == "original"
 
 
+def test_manifest_only_launcher_keeps_caller_directory_and_captured_code(tmp_path):
+    root = source(tmp_path)
+    snapshot = SourceStore(tmp_path / "snapshots").capture(root)
+    (root / "nro/probe.py").write_text('raise RuntimeError("live code")\n')
+    command = snapshot.command((sys.executable, "-m", "nro.probe"), manifest_only=True)
+    (snapshot.root / "nro/probe.py").chmod(0o644)
+    (snapshot.root / "nro/probe.py").write_text("import os\nprint(os.getcwd())\n")
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(root)
+
+
 def test_expected_capture_reuses_published_snapshot_without_copying(tmp_path, monkeypatch):
     root = source(tmp_path)
     store = SourceStore(tmp_path / "snapshots")

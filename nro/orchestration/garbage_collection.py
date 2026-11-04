@@ -59,7 +59,9 @@ def _path_in_selected_scope(
     selected_labels: dict[str, set[str]],
 ) -> bool:
     relative = path.relative_to(derivatives_root)
-    if not relative.parts or ".nro" in relative.parts:
+    # Files beside the module directories, such as dataset_description.json,
+    # describe the derivative dataset and belong to no work item.
+    if len(relative.parts) < 2 or ".nro" in relative.parts:
         return False
     module = relative.parts[0]
     modules = set(selection.get("modules", ()))
@@ -143,6 +145,37 @@ def garbage_paths(
     return public, private
 
 
+def study_garbage_paths(
+    studies_root: Path, rows: list[dict], *, projects: list[str] | None = None
+) -> tuple[Path, ...]:
+    """Return study-result files that no registered analysis work item claims.
+
+    Only per-project result directories (``STUDY/analyses/NAME/project-P``) are
+    scanned. Ownership records under ``.nro`` are always kept, so results of a
+    deleted analysis are collected while its receipts remain for audit.
+    """
+    from nro.orchestration.artifact_ownership import analysis_work_item_paths
+
+    if not studies_root.is_dir():
+        return ()
+    claimed = {
+        path.absolute()
+        for row in rows
+        if row["module"] == "analyses"
+        for path in analysis_work_item_paths(row)
+    }
+    garbage = []
+    for project_root in sorted(studies_root.glob("*/analyses/*/project-*")):
+        if projects and project_root.name.removeprefix("project-") not in projects:
+            continue
+        for path in sorted(project_root.rglob("*")):
+            if ".nro" in path.relative_to(project_root).parts:
+                continue
+            if (path.is_file() or path.is_symlink()) and path.absolute() not in claimed:
+                garbage.append(path.absolute())
+    return tuple(garbage)
+
+
 def collect(
     registry,
     *,
@@ -173,7 +206,9 @@ def collect(
     topology = BranchStore(registry.paths.control).read().topology
     branch = topology.require_checkout(checkout)
     paths = BranchPaths(
-        branch, *(Path(site_values[key]) for key in ("bids", "work", "development"))
+        branch,
+        *(Path(site_values[key]) for key in ("bids", "work", "development")),
+        Path(site_values["study_results"]) if site_values.get("study_results") else None,
     )
     projects = list(selection.get("projects", ())) or sorted(
         discover_bids_inventory(Path(site_values["bids"]))
@@ -197,6 +232,13 @@ def collect(
         private_candidates.update(private)
         if progress is not None:
             progress("Scanning derivative namespaces", position, len(projects))
+    modules = set(selection.get("modules", ()))
+    if paths.studies is not None and (not modules or "analyses" in modules):
+        public_candidates.update(
+            study_garbage_paths(
+                paths.output_studies, rows, projects=list(selection.get("projects", ()))
+            )
+        )
     ordered_public = tuple(sorted(public_candidates))
     ordered_private = tuple(sorted(private_candidates))
     ordered = ordered_public + ordered_private
@@ -215,6 +257,8 @@ def collect(
                     paths.private_project(project) / "derivatives" / "nro",
                 )
             ]
+            if paths.studies is not None:
+                boundaries.append(paths.output_studies)
             boundary = next(root for root in boundaries if path.is_relative_to(root))
             removed += int(
                 _remove_path(

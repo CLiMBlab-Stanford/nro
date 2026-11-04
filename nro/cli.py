@@ -41,6 +41,7 @@ COMMAND_HELP = {
     "set": "Update site settings (compatibility alias for `nro site set`).",
     "site": "Inspect and update durable site-wide configuration.",
     "status": "Report derivative status.",
+    "study": "Create, check, and run study analyses.",
     "stop": "Cancel derivative demand or stop workers.",
     "scene": "Create combined Workbench scenes from completed derivatives.",
     "render": "Render selected Workbench maps as image files.",

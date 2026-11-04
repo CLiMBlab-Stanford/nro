@@ -6,25 +6,32 @@ with a BibTeX file and supplementary tables. It is assembled from editable
 templates and the recorded configuration and derivative manifests. The same
 inputs always produce the same files.
 
-Templates currently exist for `anat`, `func`, and `clean`. Requesting another
-module, or a module whose upstream lineage includes one without templates, fails
-with an error.
+Templates currently exist for `anat`, `func`, `clean`, `dynconn`, and
+`networks`. The `networks` templates cover the `ica` and `clustering`
+strategies with a `dynconn` source, as in the `main` and `clustering`
+workflows. Requesting another module, or a module whose upstream lineage
+includes one without templates, fails with an error. The `oslom` workflow uses
+a `microparcellation` source, so its networks lineage cannot be reported yet.
 
 ## Running the command
 
 ```bash
-nro methods main -P PROJECT --format rtf -o methods/
-nro methods main -P hcp moth --task rest --format rtf -o methods/
+nro methods -P PROJECT -o methods/
+nro methods -P hcp moth --task rest -o methods/
 nro methods main --preview --format latex -m func
 ```
 
-`WORKFLOW` names the workflow to describe. `--format` is required:
+The optional first argument names the workflow to describe and defaults to
+`main`. Give it before any option, because `-P` accepts several values and
+would otherwise read the workflow ID as a project name.
+
+`--format` selects the output and defaults to `rtf`:
 
 * `rtf` writes a document that opens in Word and imports into Google Docs. It
-  contains author-year in-text citations, a reference list, and the
-  supplementary tables.
+  contains author-year in-text citations, a reference list, and the software
+  table.
 * `latex` writes a fragment for `\input`. It cites with natbib `\citep` and
-  `\citet` and prints the tables with `longtable`. Your preamble loads both
+  `\citet` and prints the software table with `longtable`. Your preamble loads both
   packages and supplies `\bibliographystyle` and `\bibliography{references}`.
 
 Give exactly one of `-P PROJECT` or `--preview`:
@@ -55,7 +62,8 @@ reported. If no reported module records the selected entities, as with
 The selection is recorded under `scope` in `methods.json`.
 
 `-m MODULE` limits the report to that module and its upstream lineages. You can
-repeat it. Without `-m`, every module with templates is described. `-o DIR`
+repeat it. Without `-m`, every module with templates is described, except modules
+whose upstream lineage includes a module without templates. `-o DIR`
 sets the output directory, which defaults to the current directory. Files of the
 same names are replaced.
 
@@ -66,9 +74,9 @@ runs took about 30 seconds on a cold cache.
 
 | File | Contents |
 | --- | --- |
-| `methods.rtf` or `methods.tex` | Methods prose, citations, references (RTF only), and supplementary tables. |
+| `methods.rtf` or `methods.tex` | Methods prose, citations, references (RTF only), and the software table. |
 | `references.bib` | Exactly the entries the rendered text cites. |
-| `supplementary_runs.tsv` | One row per run-level fact, with the project and BIDS entities, such as the realized distortion-correction method or a fallback reason. |
+| `supplementary_runs.tsv` | The run-level table, written only as a TSV because it can be long. One row per run-level fact, with the project and BIDS entities, such as the realized distortion-correction method or a fallback reason. |
 | `supplementary_software.tsv` | One row per tool and version. |
 | `methods.json` | The lineages, template files, context values, and citations behind each section. |
 

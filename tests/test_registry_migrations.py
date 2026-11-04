@@ -13,6 +13,7 @@ from nro.orchestration.migrations import (
     AddColumn,
     Column,
     CreateTable,
+    DropNotNull,
     ForeignKey,
     MapValues,
     Migration,
@@ -276,3 +277,60 @@ def test_migration_package_rejects_unversioned_python_helpers(
 
     with pytest.raises(ValueError, match="must be named vNNNN.py"):
         load_chain("example_migrations", baseline_version=1)
+
+
+def test_unowned_request_migration_preserves_version_25_requests(tmp_path: Path) -> None:
+    from nro.orchestration.registry_schema import SCHEMA
+
+    path = tmp_path / "registry.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(f"PRAGMA application_id={SCHEMA.application_id}")
+        database.executescript(SCHEMA.sql(version=25))
+        database.execute("PRAGMA user_version=25")
+        database.execute("INSERT INTO metadata VALUES ('schema_version','25')")
+        database.execute(
+            "INSERT INTO workflow_revisions VALUES (1,'main',1,'f','main.yml','{}','t')"
+        )
+        database.execute(
+            "INSERT INTO requests VALUES ('r1','u','demo',1,'anat','{}',1,NULL,'active','t','t')"
+        )
+
+    migrate_database(path, SCHEMA)
+
+    with sqlite3.connect(path) as database:
+        database.execute("PRAGMA foreign_keys=ON")
+        assert database.execute("SELECT workflow_revision_id FROM requests").fetchall() == [(1,)]
+        database.execute(
+            "INSERT INTO requests VALUES ('r2','u','demo',NULL,'analyses','{}',1,NULL,"
+            "'active','t','t')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            database.execute(
+                "INSERT INTO requests VALUES ('r3','u','demo',9,'anat','{}',1,NULL,"
+                "'active','t','t')"
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            database.execute(
+                "INSERT INTO requests VALUES ('r4',NULL,'demo',1,'anat','{}',1,NULL,"
+                "'active','t','t')"
+            )
+        assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
+def test_drop_not_null_edits_only_the_named_column() -> None:
+    database = sqlite3.connect(":memory:")
+    database.execute(
+        'CREATE TABLE items (id INTEGER PRIMARY KEY, "state" TEXT NOT NULL, '
+        "note TEXT NOT NULL DEFAULT 'a,b', CHECK (length(state) > 0))"
+    )
+    DropNotNull("items", "state").apply(database)
+    database.execute("INSERT INTO items(id, state) VALUES (1, NULL)")
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute("INSERT INTO items(id, state, note) VALUES (2, 'x', NULL)")
+    for column, message in (
+        ("state", "not declared NOT NULL"),
+        ("id", "primary-key"),
+        ("missing", "no single column"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            DropNotNull("items", column).apply(database)

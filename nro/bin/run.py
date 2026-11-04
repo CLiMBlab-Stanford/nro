@@ -321,8 +321,44 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
             "omitted selectors match all resumable work instead of using new-request defaults"
         ),
     )
+    parser.add_argument(
+        "--study-analysis",
+        metavar="STUDY/ANALYSIS",
+        help="Run a study analysis and the upstream work its inputs need",
+    )
+    parser.add_argument(
+        "--study-ref",
+        default="main",
+        metavar="REF",
+        help="Study branch, tag, or commit to plan the analysis from (default: main)",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
+
+
+def _plan_study_analysis(args, selection, planner, registry, store):
+    """Plan ``--study-analysis`` from a committed study ref."""
+    from nro.analysis.layout import StudyError, StudySource, load_analysis, split_analysis_name
+    from nro.analysis.manifest import ManifestError
+    from nro.orchestration.study_planning import plan_request
+
+    if args.resume or args.module is not None:
+        raise SystemExit("--study-analysis cannot be combined with --resume or -m")
+    try:
+        study, name = split_analysis_name(args.study_analysis)
+        analysis = load_analysis(StudySource.at(study, args.study_ref), name)
+        return plan_request(
+            planner,
+            registry,
+            analysis,
+            store,
+            projects=selection.projects,
+            participants=selection.participants,
+            memory_gb=args.memory,
+            max_memory_gb=args.max_memory,
+        )
+    except (StudyError, ManifestError, ValueError) as error:
+        raise SystemExit(str(error)) from error
 
 
 def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
@@ -659,7 +695,9 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     planner = Planner(registry, bids_root=bids_root)
     scientific_revisions = registry.work_item_revisions() if branch_execution else {}
-    if args.resume:
+    if args.study_analysis:
+        plan = _plan_study_analysis(args, selection, planner, registry, store)
+    elif args.resume:
         plan = planner.plan_registered_targets(
             _resume_targets(
                 resumed_rows,

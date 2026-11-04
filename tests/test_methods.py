@@ -198,13 +198,26 @@ def test_latex_uses_natbib_and_escapes_text() -> None:
 # Coverage and contexts
 
 
+# Starter workflows whose lineages are all supported by methods reporting.
+REPORTED_WORKFLOWS = ("main", "clustering")
+
+
+def _reported_variants(module: str) -> list[dict]:
+    """Return each reported starter workflow's values for one module."""
+    return [
+        dict(ConfigStore().resolve(workflow).configuration(module).values)
+        for workflow in REPORTED_WORKFLOWS
+    ]
+
+
 @pytest.mark.parametrize("module", SUPPORTED_MODULES)
 def test_every_substantive_parameter_is_reported_or_excused(module) -> None:
-    values = ConfigStore().resolve("main").configuration(module).values
     methods = provider(module)
-    substantive = set(flatten_keys(scientific_values(module, dict(values))))
+    substantive: set[str] = set()
+    for values in _reported_variants(module):
+        assert configuration_coverage(module, values) == [], values
+        substantive |= set(flatten_keys(scientific_values(module, dict(values))))
 
-    assert configuration_coverage(module, values) == []
     assert set(methods.CONFIGURATION_FIELDS).isdisjoint(methods.METHODS_SILENT)
     assert set(methods.CONFIGURATION_FIELDS) | set(methods.METHODS_SILENT) <= substantive
     assert set(methods.CONFIGURATION_FIELDS.values()) <= set(methods.CONTEXT_FIELDS)
@@ -219,8 +232,17 @@ def test_lineages_follow_dependencies_and_reject_unsupported_modules() -> None:
     workflow = ConfigStore().resolve("main")
 
     assert [lineage.module for lineage in workflow_lineages(workflow, ["func"])] == ["anat", "func"]
+    assert [lineage.module for lineage in workflow_lineages(workflow, ["networks"])] == [
+        "anat",
+        "func",
+        "clean",
+        "dynconn",
+        "networks",
+    ]
+    oslom = ConfigStore().resolve("oslom")
     with pytest.raises(MethodsReportError, match="not yet available"):
-        workflow_lineages(workflow, ["networks"])
+        workflow_lineages(oslom, ["networks"])
+    assert "networks" not in {lineage.module for lineage in workflow_lineages(oslom)}
 
 
 def _func_manifest(sdc: str, *, fallback: str | None = None, marss: bool = False) -> dict:
@@ -284,6 +306,9 @@ def test_report_counts_fresh_manifests_and_fills_supplementary_tables(tmp_path) 
     assert report.trace["lineages"][1]["excluded_work_items"] == {"stale": 1}
     assert "MARSS\t1.0.2\tmanifest" in report.files["supplementary_software.tsv"]
     assert "SynBOLD-DisCo" not in report.files["supplementary_software.tsv"]
+    assert "Run-level processing" not in text
+    assert "no readout metadata" not in text
+    assert "Supplementary Table S1. Software" in text
 
 
 def test_registry_source_pools_projects_and_applies_selectors(tmp_path) -> None:
@@ -379,6 +404,15 @@ def test_report_is_deterministic() -> None:
 # Command
 
 
+def test_methods_workflow_defaults_to_main() -> None:
+    from nro.bin.methods import build_parser
+
+    args = build_parser().parse_args(["--preview"])
+    assert args.workflow == "main"
+    assert args.output_format == "rtf"
+    assert build_parser().parse_args(["other", "--preview", "--format", "rtf"]).workflow == "other"
+
+
 def test_methods_command_writes_preview_files(tmp_path, capsys) -> None:
     from nro.bin.methods import main
 
@@ -406,3 +440,43 @@ def test_methods_command_requires_project_or_preview(tmp_path) -> None:
 
     with pytest.raises(SystemExit):
         main(["main", "--format", "rtf", "-o", str(tmp_path)])
+
+
+def test_connectivity_contexts_count_runs_and_report_strategy() -> None:
+    from nro.methods.context import ManifestRecord
+    from nro.modules.dynconn import methods as dynconn_methods
+    from nro.modules.networks import methods as networks_methods
+
+    workflow = ConfigStore().resolve("main")
+    values = {name: config.values for name, config in workflow.configurations.items()}
+
+    def run(name: str) -> dict:
+        return {"files": [f"/clean/{name}.dtseries.nii"]}
+
+    records = [
+        ManifestRecord(
+            {"project": "p", "participant": "01", "space": space},
+            {
+                "space": space,
+                "smoothing_fwhm_mm": 2,
+                "functional_runs": {"included": [run("a")], "skipped": [run("b")]},
+                "low_rank": {"dimensions": dimensions},
+            },
+        )
+        for space, dimensions in (("fsnative", 900), ("T1w", 950))
+    ]
+    context = dynconn_methods.methods(values["dynconn"], records, workflow=values).context
+    assert (context["participants"], context["included_runs"], context["excluded_runs"]) == (
+        1,
+        1,
+        1,
+    )
+    assert context["fitted_dimensions"] == ["900", "950"]
+
+    networks = networks_methods.methods(values["networks"], records, workflow=values).context
+    assert networks["strategy"] == "ica" and networks["low_rank_source"]
+    assert networks["spaces"] == ["T1w", "fsnative"] and networks["smoothing_mm"] == ["2"]
+    with pytest.raises(MethodsReportError, match="strategy 'oslom'"):
+        networks_methods.methods(
+            {**values["networks"], "parcellation_strategy": "oslom"}, records, workflow=values
+        )

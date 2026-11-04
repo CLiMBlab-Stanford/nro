@@ -33,7 +33,7 @@ def _receipt_rows(
     placeholders = ",".join("?" for _ in work_item_ids)
     with registry.connection() as db:
         rows = db.execute(
-            f"""SELECT i.id,i.project,i.module,i.work_item_key,
+            f"""SELECT i.id,i.project,i.module,i.work_item_key,i.output_root,
                        lineage.configuration_class,lineage.directory_label,
                        COALESCE(branch.logical_key,execution.logical_key) AS logical_key
                 FROM work_items i
@@ -63,17 +63,23 @@ def _receipt_location(
     context: ExecutionContext,
 ) -> tuple[Path, tuple[Path, str, str]]:
     """Resolve one receipt and the lineage root that owns it."""
-    from nro.orchestration.ownership import work_item_record_path
+    from nro.orchestration.ownership import analysis_ownership_root, work_item_record_path
 
     project_root = context.paths.output_project(str(row["project"]))
     configuration_class = str(row["configuration_class"])
     directory_label = str(row["directory_label"])
+    owner = (
+        analysis_ownership_root(Path(str(row["output_root"])))
+        if configuration_class == "analyses"
+        else None
+    )
     path = work_item_record_path(
         project_root,
         configuration_class,
         directory_label,
         str(row["module"]),
         str(row["logical_key"] or row["work_item_key"]),
+        root=owner,
     )
     return path, (project_root, configuration_class, directory_label)
 
@@ -166,7 +172,7 @@ def snapshot(
                        item.project,item.participant,item.entities_json,item.artifact_state,
                        item.current_generation,item.revision_fingerprint,
                        item.artifact_fingerprint,item.input_paths_json,item.output_root,
-                       item.output_prefix,
+                       item.output_prefix,item.expected_outputs_json,
                        lineage.config_id, lineage.directory_label,
                        lineage.lineage_fingerprint, lineage.configuration_class,
                        attempt.state AS attempt_state, requests.workflow_ids
@@ -372,6 +378,11 @@ def purge(
                         (
                             context.paths.output_project(project) / "derivatives",
                             registry.paths.control,
+                            *(
+                                (context.paths.output_studies,)
+                                if context.paths.studies is not None
+                                else ()
+                            ),
                         )
                         if kind == "public"
                         else (context.paths.private_project(project) / "derivatives",)
@@ -443,17 +454,19 @@ def purge(
             if location is None or location[0] not in planned_receipts:
                 continue
             path, root = location
+            analysis = root[1] == "analyses"
             counts["derivative_paths"] += int(
                 _remove_path(
                     path,
                     dry_run=False,
-                    prune_root=lineage_root(*root),
+                    # An analysis receipt lives in .nro below its project results.
+                    prune_root=path.parents[3] if analysis else lineage_root(*root),
                 )
             )
             completed_paths += 1
         for work_item_id in deleted:
             location = receipt_locations.get(work_item_id)
-            if location is not None:
+            if location is not None and location[1][1] != "analyses":
                 remove_empty_ownership_root(*location[1])
         if planned_receipts:
             report("Removing artifact paths", completed_paths, total_paths)

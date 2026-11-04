@@ -188,12 +188,26 @@ def _import_lineages(
 
 def _workflow(
     db, payload: dict, owner: str, *, required_lineages: set[int] | None = None
-) -> tuple[int, dict[int, int]]:
-    """Import a workflow and any auxiliary lineages used by its work-item graph."""
+) -> tuple[int | None, dict[int, int]]:
+    """Import a workflow and any auxiliary lineages used by its work-item graph.
+
+    A study-analysis request has no workflow revision. It imports only the
+    lineages its graph uses and returns ``None`` as the revision.
+    """
     revision = payload["revision"]
     lineages, bindings, dependencies = (
         payload[key] for key in ("lineages", "bindings", "dependencies")
     )
+    if revision is None:
+        if bindings:
+            raise ValueError("A request without a workflow revision cannot bind lineages")
+        return None, _import_lineages(
+            db,
+            lineages=lineages,
+            dependencies=dependencies,
+            owner=owner,
+            required_lineages=set(required_lineages or ()),
+        )
     mapping = _import_lineages(
         db,
         lineages=lineages,

@@ -71,6 +71,14 @@ def _manifest_candidates(row: dict) -> tuple[Path, ...]:
         if path.is_file() and "manifest" in path.name and path.suffix in {".json", ".yaml", ".yml"}
     ]
     root = Path(str(row["output_root"]))
+    if not candidates and row.get("module") == "contrasts" and row.get("output_prefix"):
+        # Registry snapshots omit expected outputs, and the contrasts manifest
+        # sits in a task directory below the output root.
+        from nro.modules.contrasts.paths import completion_path
+
+        manifest = completion_path(root, str(row["output_prefix"]))
+        if manifest.is_file():
+            candidates.append(manifest)
     if not candidates and root.is_dir():
         candidates.extend(
             path

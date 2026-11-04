@@ -39,8 +39,11 @@ baseline SQL, its manifest, or any migration that has already reached the target
 branch.
 
 The available operations are checked column additions and renames, table
-renames, index creation and removal, exhaustive value mappings, and explicit
-removal of reconstructible columns. If a transformation cannot be expressed with
+renames, index creation and removal, exhaustive value mappings, explicit
+removal of reconstructible columns, and removal of one column's `NOT NULL`
+constraint. `DropNotNull` edits the stored table definition through
+`writable_schema`, which SQLite documents as safe for that change, and rejects
+primary-key columns. If a transformation cannot be expressed with
 these, extend the migration language. Do not fall back to arbitrary SQL or
 Python that bypasses review. When a transformation cannot assign an unambiguous
 valid value, it must reject the old state or leave it for reconstruction.

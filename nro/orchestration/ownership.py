@@ -27,7 +27,10 @@ from nro.engine.references import (
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
-from nro.orchestration.workflow_registry import lineage_directory_label
+from nro.orchestration.workflow_registry import (
+    lineage_directory_label,
+    unbound_lineage_fingerprint,
+)
 from nro.site.configuration import with_site_read_cache
 from nro.versioning import application_version
 
@@ -39,6 +42,7 @@ OWNERSHIP_VERSION = 5
 LEGACY_OWNERSHIP_VERSION = 4
 OWNERSHIP_DIRECTORY = ".nro"
 LINEAGE_RECORD_NAME = "lineage.json"
+ANALYSES_CLASS = "analyses"
 _SITE_SETTING = "$nro_site_setting"
 _CONTAINER_RESOURCE = "$nro_container"
 
@@ -244,11 +248,35 @@ def lineage_root(project_root: Path, configuration_class: str, directory_label: 
     return module_artifact_root(project_root, configuration_class, directory_label)
 
 
-def lineage_record_path(project_root: Path, configuration_class: str, directory_label: str) -> Path:
-    """Return the ownership record for one module lineage."""
-    return lineage_root(project_root, configuration_class, directory_label) / (
-        f"{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
+def analysis_ownership_root(output_root: Path) -> Path:
+    """Return the per-project results directory that owns a study analysis's receipts.
+
+    Analysis work items write to ``.../analyses/NAME/project-P/sub-S``, outside
+    any project's derivatives, so their records live in ``project-P``.
+    """
+    root = Path(output_root).parent
+    if not root.name.startswith("project-"):
+        raise ValueError(f"Study-analysis output root is not below a project directory: {root}")
+    return root
+
+
+def lineage_record_path(
+    project_root: Path,
+    configuration_class: str,
+    directory_label: str,
+    *,
+    root: Path | None = None,
+) -> Path:
+    """Return the ownership record for one module lineage.
+
+    ``root`` replaces the derivative lineage root for study analyses.
+    """
+    base = (
+        root
+        if root is not None
+        else lineage_root(project_root, configuration_class, directory_label)
     )
+    return base / OWNERSHIP_DIRECTORY / LINEAGE_RECORD_NAME
 
 
 def work_item_record_path(
@@ -257,16 +285,17 @@ def work_item_record_path(
     directory_label: str,
     module: str,
     key: str,
+    *,
+    root: Path | None = None,
 ) -> Path:
     """Return the ownership receipt path for one work item."""
     digest = key.split(":", 1)[-1]
-    return (
-        lineage_root(project_root, configuration_class, directory_label)
-        / OWNERSHIP_DIRECTORY
-        / "work_items"
-        / module
-        / f"{digest}.json"
+    base = (
+        root
+        if root is not None
+        else lineage_root(project_root, configuration_class, directory_label)
     )
+    return base / OWNERSHIP_DIRECTORY / "work_items" / module / f"{digest}.json"
 
 
 def remove_empty_ownership_root(
@@ -389,12 +418,15 @@ def write_work_item_ownership(
                     execution.update(dict(current))
     if execution is not None and not isinstance(execution, dict):
         execution = dict(execution)
+    owner_root = None
     if execution is not None:
         from nro.orchestration.execution_context import ExecutionContext
 
         context = ExecutionContext.from_dict(json.loads(execution["context_json"]))
         project_root = context.paths.output_project(str(work_item["project"]))
         context.require_output(Path(work_item["output_root"]))
+        if work_item["configuration_class"] == "analyses":
+            owner_root = analysis_ownership_root(Path(work_item["output_root"]))
         provenance = json.loads(execution["provenance_json"])
         from nro.orchestration.branch_store import BranchStore
 
@@ -411,8 +443,11 @@ def write_work_item_ownership(
         source_project_root = context.paths.source_project(str(work_item["project"]))
     else:
         source_project_root = registry.paths.bids_root / str(work_item["project"])
+    if work_item["configuration_class"] == "analyses" and owner_root is None:
+        owner_root = analysis_ownership_root(Path(work_item["output_root"]))
     roots = _reference_roots(project_root, source_project_root=source_project_root)
-    ensure_derivative_dataset(project_root, version=application_version())
+    if owner_root is None:
+        ensure_derivative_dataset(project_root, version=application_version())
     now = datetime.now(timezone.utc).isoformat()
     configuration = {
         "id": lineage["config_id"],
@@ -440,6 +475,7 @@ def write_work_item_ownership(
         project_root,
         str(lineage["configuration_class"]),
         str(lineage["directory_label"]),
+        root=owner_root,
     )
     root_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(root_path, root_record, sort_keys=True, mode=0o664, durable=True)
@@ -479,7 +515,12 @@ def write_work_item_ownership(
             omit_private_path_values(scientific_contract, roots), roots, public=True
         ),
         "execution": {
-            "module_argv": _module_argv(json.loads(work_item["command_json"])),
+            # An analysis's specification path is private; recovery rewrites it.
+            "module_argv": (
+                ["nro.modules.analyses"]
+                if work_item["module"] == ANALYSES_CLASS
+                else _module_argv(json.loads(work_item["command_json"]))
+            ),
             "runtime_configuration": _portable_configuration_values(runtime_configuration, roots),
         },
         "resources": {
@@ -500,6 +541,7 @@ def write_work_item_ownership(
         str(lineage["directory_label"]),
         str(work_item["module"]),
         logical_key,
+        root=owner_root,
     )
     receipt_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
     atomic_write_json(receipt_path, receipt, sort_keys=True, mode=0o664, durable=True)
@@ -521,7 +563,7 @@ def missing_work_item_ownership(
             rows.extend(
                 dict(row)
                 for row in db.execute(
-                    f"""SELECT i.id,i.work_item_key,i.module,i.project,
+                    f"""SELECT i.id,i.work_item_key,i.module,i.project,i.output_root,
                                c.configuration_class,c.directory_label,e.context_json,e.logical_key
                         FROM work_items i
                         JOIN module_lineages c ON c.id=i.module_lineage_id
@@ -539,8 +581,13 @@ def missing_work_item_ownership(
 
             context = ExecutionContext.from_dict(json.loads(row["context_json"]))
             project_root = context.paths.output_project(row["project"])
+        owner_root = (
+            analysis_ownership_root(Path(row["output_root"]))
+            if row["configuration_class"] == "analyses"
+            else None
+        )
         lineage = lineage_record_path(
-            project_root, row["configuration_class"], row["directory_label"]
+            project_root, row["configuration_class"], row["directory_label"], root=owner_root
         )
         logical_key = str(row["logical_key"] or row["work_item_key"])
         receipt = work_item_record_path(
@@ -549,6 +596,7 @@ def missing_work_item_ownership(
             row["directory_label"],
             row["module"],
             logical_key,
+            root=owner_root,
         )
         lineage_exists = lineages.get(lineage)
         if lineage_exists is None:
@@ -565,15 +613,59 @@ def read_ownership_records(
     projects: Iterable[str],
     *,
     source_bids_root: Path | None = None,
+    studies_root: Path | None = None,
 ) -> tuple[list[dict], list[tuple[dict, Path]], list[str]]:
     """Read and resolve ownership records from the selected derivative trees.
 
-    Site settings are read once for the whole scan, not once per record.
+    ``studies_root`` also reads study-analysis records below
+    ``STUDY/analyses/NAME/project-P``. Site settings are read once for the
+    whole scan, not once per record.
     """
     lineages: dict[tuple[str, str], dict] = {}
     ambiguous: set[tuple[str, str]] = set()
     work_items: list[tuple[dict, Path]] = []
     errors: list[str] = []
+
+    def read_lineage(marker_path: Path, configuration_class: str, project: str, roots) -> None:
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker = _validate_lineage_record(marker, marker_path, configuration_class, roots=roots)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+            errors.append(f"{marker_path}: {error}")
+            return
+        identity = (configuration_class, str(marker["lineage_fingerprint"]))
+        previous = lineages.get(identity)
+        if previous is not None and str(previous["directory_label"]) != str(
+            marker["directory_label"]
+        ):
+            errors.append(
+                "Stored lineage "
+                f"{marker['lineage_fingerprint']} has conflicting derivative roots: "
+                f"{previous['directory_label']} and {marker['directory_label']}"
+            )
+            ambiguous.add(identity)
+            lineages.pop(identity, None)
+        elif identity not in ambiguous and (
+            previous is None or str(marker["updated_at"]) > str(previous["updated_at"])
+        ):
+            lineages[identity] = marker
+        work_item_root = marker_path.parent / "work_items"
+        for receipt_path in sorted(work_item_root.glob("*/*.json")):
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt = _validate_work_item_record(
+                    receipt,
+                    receipt_path,
+                    project=project,
+                    configuration_class=configuration_class,
+                    marker=marker,
+                    roots=roots,
+                )
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+                errors.append(f"{receipt_path}: {error}")
+                continue
+            work_items.append((receipt, receipt_path))
+
     for project in projects:
         project_root = Path(bids_root) / project
         source_project_root = Path(source_bids_root or bids_root) / project
@@ -583,47 +675,44 @@ def read_ownership_records(
             for marker_path in sorted(
                 class_root.glob(f"*/{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}")
             ):
-                try:
-                    marker = json.loads(marker_path.read_text(encoding="utf-8"))
-                    marker = _validate_lineage_record(
-                        marker, marker_path, configuration_class, roots=roots
-                    )
-                except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-                    errors.append(f"{marker_path}: {error}")
-                    continue
-                identity = (configuration_class, str(marker["lineage_fingerprint"]))
-                previous = lineages.get(identity)
-                if previous is not None and str(previous["directory_label"]) != str(
-                    marker["directory_label"]
-                ):
-                    errors.append(
-                        "Stored lineage "
-                        f"{marker['lineage_fingerprint']} has conflicting derivative roots: "
-                        f"{previous['directory_label']} and {marker['directory_label']}"
-                    )
-                    ambiguous.add(identity)
-                    lineages.pop(identity, None)
-                elif identity not in ambiguous and (
-                    previous is None or str(marker["updated_at"]) > str(previous["updated_at"])
-                ):
-                    lineages[identity] = marker
-                work_item_root = marker_path.parent / "work_items"
-                for receipt_path in sorted(work_item_root.glob("*/*.json")):
-                    try:
-                        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-                        receipt = _validate_work_item_record(
-                            receipt,
-                            receipt_path,
-                            project=project,
-                            configuration_class=configuration_class,
-                            marker=marker,
-                            roots=roots,
-                        )
-                    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-                        errors.append(f"{receipt_path}: {error}")
-                        continue
-                    work_items.append((receipt, receipt_path))
+                read_lineage(marker_path, configuration_class, project, roots)
+        if studies_root is not None:
+            for marker_path in sorted(
+                Path(studies_root).glob(
+                    f"*/analyses/*/project-{project}/{OWNERSHIP_DIRECTORY}/{LINEAGE_RECORD_NAME}"
+                )
+            ):
+                read_lineage(marker_path, ANALYSES_CLASS, project, roots)
+    work_items, chained = _without_chained_analyses(work_items)
+    errors.extend(chained)
     return list(lineages.values()), work_items, errors
+
+
+def _without_chained_analyses(
+    work_items: list[tuple[dict, Path]],
+) -> tuple[list[tuple[dict, Path]], list[str]]:
+    """Drop analysis receipts that depend on another analysis.
+
+    Study analyses read only module outputs and source BIDS. Sequential steps
+    belong inside one analysis, so a recovered analysis never depends on one.
+    """
+    analyses = {
+        str(record["work_item_key"])
+        for record, _path in work_items
+        if record["module"] == ANALYSES_CLASS
+    }
+    kept, errors = [], []
+    for record, path in work_items:
+        chained = sorted(
+            str(value)
+            for value in record["artifact_contract"].get("dependencies", ())
+            if str(value) in analyses
+        )
+        if record["module"] == ANALYSES_CLASS and chained:
+            errors.append(f"{path}: study analyses cannot depend on other analyses: {chained}")
+        else:
+            kept.append((record, path))
+    return kept, errors
 
 
 def complete_ownership_records(
@@ -703,10 +792,13 @@ def _validate_lineage_record(
             raise ValueError("portable configuration fingerprint does not match its snapshot")
         decoded = _resolve_configuration_values(resolve_path_values(deepcopy(dict(record)), roots))
     else:
+        portable_record = None
         decoded = deepcopy(dict(record))
     record = decoded
     if record.get("configuration_class") != configuration_class:
         raise ValueError("configuration class does not match its directory")
+    if configuration_class == ANALYSES_CLASS:
+        return _validate_analysis_lineage(record, path, decoded, portable_record)
     if record.get("directory_label") != path.parent.parent.name:
         raise ValueError("directory label does not match its directory")
     configuration = record.get("configuration")
@@ -758,6 +850,40 @@ def _validate_lineage_record(
     if record.get("directory_label") != expected_directory:
         raise ValueError(f"lineage directory is nondeterministic; expected {expected_directory}")
     if version == OWNERSHIP_VERSION and portable_record.get(
+        "record_fingerprint"
+    ) != ownership_record_fingerprint(portable_record):
+        raise ValueError("ownership record fingerprint does not match its content")
+    return decoded
+
+
+def _validate_analysis_lineage(
+    record: dict,
+    path: Path,
+    decoded: dict,
+    portable_record: Mapping[str, object] | None,
+) -> dict:
+    """Validate a study analysis's unbound lineage record.
+
+    The record lives in ``STUDY/analyses/NAME/project-P/.nro``, and its
+    configuration ID must be ``STUDY/NAME``.
+    """
+    configuration = record.get("configuration")
+    if not isinstance(configuration, Mapping) or not isinstance(
+        configuration.get("resolved"), Mapping
+    ):
+        raise ValueError("configuration snapshot is missing")
+    config_id = f"{path.parents[4].name}/{path.parents[2].name}"
+    if configuration.get("id") != config_id or path.parents[3].name != "analyses":
+        raise ValueError(f"analysis lineage does not match its directory; expected {config_id}")
+    if record.get("upstream") != []:
+        raise ValueError("analysis lineages have no upstream lineage")
+    expected = unbound_lineage_fingerprint(ANALYSES_CLASS, config_id)
+    if record.get("lineage_fingerprint") != expected:
+        raise ValueError("lineage fingerprint does not match its semantic identity")
+    expected_directory = lineage_directory_label(config_id, expected)
+    if record.get("directory_label") != expected_directory:
+        raise ValueError(f"lineage directory is nondeterministic; expected {expected_directory}")
+    if portable_record is not None and portable_record.get(
         "record_fingerprint"
     ) != ownership_record_fingerprint(portable_record):
         raise ValueError("ownership record fingerprint does not match its content")
@@ -876,12 +1002,26 @@ def materialize_work_item_specs(
                 / f"{contract['configuration']}.yml"
             )
             runtime_path.parent.mkdir(parents=True, exist_ok=True, mode=0o2775)
-            atomic_write_text(
-                runtime_path,
-                yaml.safe_dump(execution["runtime_configuration"], sort_keys=False),
-                mode=0o664,
-                durable=True,
-            )
+            module_argv = [str(value) for value in execution.get("module_argv", ())]
+            if record["module"] == ANALYSES_CLASS:
+                # The analysis step reads its specification as JSON and takes
+                # the path on its command line.
+                runtime_path = runtime_path.with_suffix(".json")
+                atomic_write_text(
+                    runtime_path,
+                    json.dumps(execution["runtime_configuration"], indent=2, sort_keys=True)
+                    + "\n",
+                    mode=0o664,
+                    durable=True,
+                )
+                module_argv = ["nro.modules.analyses", "--specification", str(runtime_path)]
+            else:
+                atomic_write_text(
+                    runtime_path,
+                    yaml.safe_dump(execution["runtime_configuration"], sort_keys=False),
+                    mode=0o664,
+                    durable=True,
+                )
             specs.append(
                 WorkItemSpec.create(
                     key=str(record["work_item_key"]),
@@ -897,11 +1037,7 @@ def materialize_work_item_specs(
                     command=(
                         tuple(str(value) for value in execution["command"])
                         if "command" in execution
-                        else (
-                            sys.executable,
-                            "-m",
-                            *(str(value) for value in execution["module_argv"]),
-                        )
+                        else (sys.executable, "-m", *module_argv)
                     ),
                     dependencies=tuple(str(value) for value in contract.get("dependencies", ())),
                     input_paths=tuple(Path(value) for value in contract.get("inputs", ())),
