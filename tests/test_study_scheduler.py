@@ -106,6 +106,8 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
     (root / "pyproject.toml").write_text('[project]\nname="nro"\nversion="0.0.1"\n')
     (root / ".gitignore").write_text(".nro-installation.json\n__pycache__/\n")
     git(root, "init", "-b", "main")
+    git(root, "config", "user.name", "Test Maintainer")
+    git(root, "config", "user.email", "test@example.invalid")
     git(root, "add", ".")
     git(root, "commit", "-m", "Test release")
     registry = Registry.for_project("demo", bids_root=tmp_path / "BIDS")
