@@ -1154,8 +1154,11 @@ class Registry(WorkflowRegistry):
         """
         ordered = sorted(
             records,
+            # Unbound lineages, such as study analyses, have no upstream lineage.
             key=lambda item: (
-                CONFIGURATION_CLASSES.index(str(item["configuration_class"])),
+                CONFIGURATION_CLASSES.index(str(item["configuration_class"]))
+                if str(item["configuration_class"]) in CONFIGURATION_CLASSES
+                else -1,
                 str(item["lineage_fingerprint"]),
             ),
         )

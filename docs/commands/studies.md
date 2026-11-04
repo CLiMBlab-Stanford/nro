@@ -143,6 +143,9 @@ items are not fresh yet, the work item is reported as waiting.
 All inputs are resolved and passed together in one call. Only `scope` and
 expanded parameters create more work items.
 
+An analysis cannot read another analysis's outputs. Do sequential steps inside
+one analysis and write each result you want to keep to its own output slot.
+
 ## Analysis code
 
 ```python
@@ -266,3 +269,9 @@ upstream module leaves study results in place and marks the analysis stale.
 `nro gc` also removes files in `STUDY/analyses/NAME/project-PROJECT` that no
 registered analysis work item claims, such as the results of an analysis deleted
 from its study repository. It keeps the receipts in `.nro/`.
+
+`nro run --repair` restores scheduled analysis work items from these receipts,
+together with the upstream work items they depend on, for each work item whose
+completion manifest remains. If the extracted study code under
+`WORK/studies/STUDY/code/` has been removed, a rerun extracts the recorded
+commit again.

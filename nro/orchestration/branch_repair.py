@@ -209,6 +209,7 @@ def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
         if registry.paths.bids_root == configured_bids
         else registry.paths.bids_root.parent / "WORK",
         development,
+        Path(values["study_results"]) if values.get("study_results") else None,
     )
     output_bids = paths.output_bids
     if not output_bids.is_dir():
@@ -218,6 +219,7 @@ def _public_ownership_records(registry, *, branch: str) -> PublicOwnership:
         output_bids,
         projects,
         source_bids_root=registry.paths.bids_root,
+        studies_root=paths.output_studies if paths.studies is not None else None,
     )
     lineages, records, incomplete = complete_ownership_records(lineages, records)
     errors.extend(incomplete)

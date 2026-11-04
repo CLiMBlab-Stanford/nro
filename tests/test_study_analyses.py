@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -181,6 +182,7 @@ def test_expansion_labels_and_literal_lists():
         (("workflow: main", "workflow: main\n    config: main"), "both workflow and config"),
         (("from: contrasts", "from: lineage"), "unknown module"),
         (("scope: subject", "scope: study"), "not supported yet"),
+        (("from: contrasts", "from: analysis:s1/other"), "inside one analysis"),
         (("[S-N, W-N]", "[[S, N]]"), "non-scalar"),
     ],
 )
@@ -538,6 +540,8 @@ def test_scheduled_plan_depends_on_upstream_and_runs_from_bindings(study_roots, 
     )
 
     specification = json.loads(Path(first.runtime_config).read_text())
+    # A recovered work item can outlive its extracted code; the commit is extracted again.
+    shutil.rmtree(specification["code_root"])
     scheduled.run(specification, work_dir=study_roots / "attempt")
     output = Path(specification["outputs"]["similarity"])
     assert len(output.read_text().splitlines()) == 4
@@ -559,3 +563,53 @@ def test_analyses_module_is_not_a_workflow_module():
     assert "analyses" not in {item.name for item in BUILTIN_MODULES}
     with pytest.raises(ValueError, match="--study-analysis"):
         normalize_module("analyses")
+
+
+def _analysis_lineage(config_id: str) -> dict:
+    from nro.orchestration.workflow_registry import (
+        lineage_directory_label,
+        unbound_lineage_fingerprint,
+    )
+
+    lineage = unbound_lineage_fingerprint("analyses", config_id)
+    return {
+        "configuration_class": "analyses",
+        "configuration": {"id": config_id, "fingerprint": "x", "resolved": {}},
+        "lineage_fingerprint": lineage,
+        "directory_label": lineage_directory_label(config_id, lineage),
+        "upstream": [],
+    }
+
+
+def test_analysis_lineage_record_must_match_its_directory(tmp_path):
+    from nro.orchestration.ownership import _validate_analysis_lineage
+
+    marker = tmp_path / "s1/analyses/runs/project-p1/.nro/lineage.json"
+    record = _analysis_lineage("s1/runs")
+    assert record["directory_label"].startswith("s1.runs-")
+    assert _validate_analysis_lineage(record, marker, record, None) is record
+    moved = tmp_path / "s1/analyses/other/project-p1/.nro/lineage.json"
+    with pytest.raises(ValueError, match="expected s1/other"):
+        _validate_analysis_lineage(record, moved, record, None)
+    chained = {**record, "upstream": [{"lineage_fingerprint": "parent"}]}
+    with pytest.raises(ValueError, match="no upstream lineage"):
+        _validate_analysis_lineage(chained, marker, chained, None)
+
+
+def test_recovery_drops_analyses_that_depend_on_analyses():
+    from nro.orchestration.ownership import _without_chained_analyses
+
+    def receipt(key, module, dependencies=()):
+        record = {
+            "work_item_key": key,
+            "module": module,
+            "artifact_contract": {"dependencies": list(dependencies)},
+        }
+        return record, Path(f"{key}.json")
+
+    upstream = receipt("p1:u", "contrasts")
+    first = receipt("p1:a", "analyses", ["p1:u"])
+    second = receipt("p1:b", "analyses", ["p1:a", "p1:u"])
+    kept, errors = _without_chained_analyses([upstream, first, second])
+    assert kept == [upstream, first]
+    assert len(errors) == 1 and "p1:b.json" in errors[0]

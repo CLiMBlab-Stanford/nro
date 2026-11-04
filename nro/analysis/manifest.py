@@ -169,7 +169,10 @@ def _input(name: str, value: object, *, parameters: Mapping[str, Any]) -> InputS
     if not isinstance(source, str) or not source:
         raise ManifestError(f"{where}.from is required")
     if source.startswith("analysis:"):
-        raise ManifestError(f"{where}: inputs from other analyses are not supported yet")
+        raise ManifestError(
+            f"{where}: analyses read only module outputs and raw files; "
+            "do sequential steps inside one analysis and write each result to an output slot"
+        )
     if source != "raw":
         from nro.modules import MODULE_NAMES
 

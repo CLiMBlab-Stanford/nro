@@ -150,8 +150,11 @@ def register_existing_artifacts(
 ) -> ArtifactDiscovery:
     """Scan controlled roots and register only artifacts represented on disk."""
     store = store or ConfigStore()
+    from nro.site.configuration import settings
+
+    studies = settings()[0].get("study_results")
     lineage_records, work_item_records, ownership_errors = read_ownership_records(
-        bids_root, inventory
+        bids_root, inventory, studies_root=Path(studies) if studies else None
     )
     lineage_records, work_item_records, incomplete_errors = complete_ownership_records(
         lineage_records, work_item_records

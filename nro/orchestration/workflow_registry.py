@@ -75,10 +75,14 @@ def unbound_lineage_fingerprint(configuration_class: str, config_id: str) -> str
 
 
 def lineage_directory_label(config_id: str, lineage_fingerprint: str) -> str:
-    """Return the deterministic public directory for one module lineage."""
+    """Return the deterministic public directory for one module lineage.
+
+    Workflow configuration IDs contain no ``/``. An unbound lineage's
+    ``STUDY/ANALYSIS`` becomes ``STUDY.ANALYSIS``.
+    """
     if not config_id or not lineage_fingerprint:
         raise ValueError("Lineage directory identity cannot be empty")
-    return f"{config_id}-{lineage_fingerprint[:12]}"
+    return f"{config_id.replace('/', '.')}-{lineage_fingerprint[:12]}"
 
 
 class WorkflowRegistry:
@@ -192,7 +196,7 @@ class WorkflowRegistry:
                     (fingerprint(resolved), resolved_yaml, lineage_id),
                 )
             else:
-                directory = lineage_directory_label(config_id.replace("/", "."), lineage)
+                directory = lineage_directory_label(config_id, lineage)
                 collision = db.execute(
                     """SELECT 1 FROM module_lineages
                        WHERE configuration_class=? AND directory_label=?""",

@@ -118,6 +118,20 @@ def _runner_command(container: str | None, path: Path) -> list[str]:
     return command
 
 
+def _code_root(specification: dict) -> Path:
+    """Return the extracted study code, extracting the commit again if it was removed.
+
+    A work item recovered by repair can outlive its private code snapshot.
+    """
+    root = Path(specification["code_root"])
+    if (root / ".nro-complete").is_file():
+        return root
+    from nro.analysis.layout import StudySource, split_analysis_name
+
+    study, _name = split_analysis_name(specification["analysis"])
+    return StudySource.at(study, specification["commit"]).snapshot()
+
+
 def _publish(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staged = destination.with_name(f".{destination.name}.publishing")
@@ -155,7 +169,7 @@ def run(specification: dict, *, context=None, work_dir: Path) -> None:
     runner_spec = {
         "analysis": specification["analysis"],
         "commit": specification["commit"],
-        "code_root": specification["code_root"],
+        "code_root": str(_code_root(specification)),
         "entry": specification["entry"],
         "inputs": inputs,
         "outputs": {

@@ -35,7 +35,7 @@ version: 1
 scope: subject
 inputs:
   runs:
-    from: contrasts
+    from: anat
     workflow: main
     select: {stat: t, suffix: statmap, extension: .tsv}
     many: true
@@ -59,16 +59,16 @@ from pathlib import Path
 def main(argv, *, execution_context):
     logical = (
         execution_context.paths.source_project("demo")
-        / "derivatives/nro/contrasts" / argv[0] / "sub-01"
+        / "derivatives/nro/anat" / argv[0] / "sub-01"
     )
     root = execution_context.output_path(logical)
     root.mkdir(parents=True, exist_ok=True)
     for run in ("1", "2"):
-        (root / f"sub-01_model-main_run-{run}_stat-t_statmap.tsv").write_text("value\\n1\\n")
-    (root / "sub-01_model-main_desc-probe_manifest.json").write_text(
+        (root / f"sub-01_run-{run}_stat-t_statmap.tsv").write_text("value\\n1\\n")
+    (root / "sub-01_desc-probe_manifest.json").write_text(
         '{"complete": true, "public_outputs": ['
-        '"sub-01_model-main_run-1_stat-t_statmap.tsv", '
-        '"sub-01_model-main_run-2_stat-t_statmap.tsv"]}'
+        '"sub-01_run-1_stat-t_statmap.tsv", '
+        '"sub-01_run-2_stat-t_statmap.tsv"]}'
     )
 """
 
@@ -159,31 +159,31 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
         Path(values["development"]),
         Path(values["study_results"]),
     )
-    label = registered.directory_for("contrasts")
-    upstream_root = paths.source_project("demo") / "derivatives/nro/contrasts" / label / "sub-01"
+    label = registered.directory_for("anat")
+    upstream_root = paths.source_project("demo") / "derivatives/nro/anat" / label / "sub-01"
     upstream = WorkItemSpec.create(
         key=work_item_key(
             "demo",
-            "contrasts",
-            registered.lineage_fingerprints["contrasts"],
+            "anat",
+            registered.lineage_fingerprints["anat"],
             "01",
-            {"model": "main"},
+            {},
         ),
-        module="contrasts",
+        module="anat",
         project="demo",
         participant="01",
-        entities={"model": "main"},
+        entities={},
         scope="subject",
-        module_lineage_id=registered.lineages["contrasts"],
+        module_lineage_id=registered.lineages["anat"],
         config_fingerprint="probe",
         directory_label=label,
-        runtime_config=science.runtime_config_path(registered, "contrasts"),
+        runtime_config=science.runtime_config_path(registered, "anat"),
         command=(sys.executable, "-m", "nro.probe_upstream", label),
         dependencies=(),
         input_paths=(),
         output_root=upstream_root,
-        output_prefix="sub-01_model-main",
-        expected_outputs=(upstream_root / "sub-01_model-main_desc-probe_manifest.json",),
+        output_prefix="sub-01",
+        expected_outputs=(upstream_root / "sub-01_desc-probe_manifest.json",),
         resource_class="small",
         output_format="probe-v1",
         processing={},
@@ -193,7 +193,7 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
     (terminal,), unavailable = plan_work_items(
         analysis,
         lineage=lineage,
-        upstream=(UpstreamRequest("contrasts", "main", {upstream.key: upstream}),),
+        upstream=(UpstreamRequest("anat", "main", {upstream.key: upstream}),),
         bids_root=paths.bids,
     )
     assert unavailable == () and terminal.dependencies == (upstream.key,)
@@ -249,7 +249,7 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
         registry.paths.control, paths.bids, checkout=feature, mode="verify"
     )
     statuses = {row["module"]: row["status"] for row in report["rows"]}
-    assert statuses == {"contrasts": "Success", "analyses": "Success"}, report["rows"]
+    assert statuses == {"anat": "Success", "analyses": "Success"}, report["rows"]
     logical = terminal.output_root / "sub-01_contrast-SN_desc-runs_summary.tsv"
     published = paths.output_studies / logical.relative_to(paths.studies)
     assert not logical.exists()
@@ -314,8 +314,45 @@ def test_feature_branch_runs_study_analysis_after_its_upstream(tmp_path, monkeyp
     assert set(json.loads(gc.stdout)["public_paths"]) == {str(stray), str(orphan)}
     assert not stray.exists() and not orphan.exists()
     assert published.is_file() and receipts[0].is_file()
+    with registry.connection(write=True) as db:
+        db.execute(
+            "DELETE FROM branch_work_items WHERE registry_id=?", (science.record.registry_id,)
+        )
+    repair = subprocess.run(
+        [sys.executable, "-m", "nro.bin.run", "--repair", "--json"],
+        cwd=feature,
+        env=environment,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert repair.returncode == 0, repair.stderr
+    assert json.loads(repair.stdout)["unavailable"] == [], repair.stdout
+    with registry.connection() as db:
+        restored = {
+            row[0]
+            for row in db.execute(
+                """SELECT i.module FROM branch_work_items b
+                   JOIN work_items i ON i.id=b.work_item_id WHERE b.registry_id=?""",
+                (science.record.registry_id,),
+            )
+        }
+    assert restored == {"anat", "analyses"}
+    repaired = subprocess.run(
+        [sys.executable, "-m", "nro.bin.status", "--json"],
+        cwd=feature,
+        env=environment,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    rows = json.loads(repaired.stdout)["work_items"]
+    assert {row["module"]: row["status"] for row in rows} == {
+        "anat": "Success",
+        "analyses": "Success",
+    }, rows
     purge = subprocess.run(
-        [sys.executable, "-m", "nro.bin.purge", "--force", "--json", "--module", "contrasts"],
+        [sys.executable, "-m", "nro.bin.purge", "--force", "--json", "--module", "anat"],
         cwd=feature,
         env=environment,
         check=False,
