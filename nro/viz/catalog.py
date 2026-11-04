@@ -68,10 +68,12 @@ class Layer:
     maps: tuple[str, ...]
     vertex_counts: dict[str, int]
     size_bytes: int = 0
+    contrast: dict[str, str] | None = None
 
     def public(self) -> dict[str, object]:
         """Describe the layer for the browser without exposing file paths."""
         return {
+            "contrast": self.contrast,
             "id": self.id,
             "kind": self.kind,
             "label": self.label,
@@ -139,6 +141,34 @@ def _layer_order(layer: Layer) -> tuple:
         _STAT_ORDER.get(stat, 9),
         layer.label,
     )
+
+
+def contrast_facets(path: Path, label: str) -> dict[str, str] | None:
+    """Split a contrast statmap into the parts the viewer selects separately.
+
+    ``analysis`` holds the label entities before the node entity, ``grain`` is
+    the node name when it is ``subject``, ``session``, or ``run`` and otherwise
+    the level from the enclosing ``node-<level>`` directory, ``instance``
+    holds the session and run entities that follow the node entity, and
+    ``stat`` is the statistic. Labels without node or stat entities return
+    ``None``.
+    """
+    tokens = label.split()
+    node = next((index for index, token in enumerate(tokens) if token.startswith("node-")), None)
+    stat = next((token for token in tokens if token.startswith("stat-")), None)
+    if node is None or stat is None:
+        return None
+    grain = tokens[node].removeprefix("node-")
+    directory = path.parent.name
+    if grain not in _NODE_ORDER and directory.startswith("node-"):
+        grain = directory.removeprefix("node-")
+    instance = [token for token in tokens[node + 1 :] if not token.startswith("stat-")]
+    return {
+        "analysis": " ".join(tokens[:node]),
+        "grain": grain,
+        "instance": " ".join(instance),
+        "stat": stat.removeprefix("stat-"),
+    }
 
 
 def _gifti_maps(path: Path) -> tuple[str, ...]:
@@ -284,17 +314,19 @@ def build_layers(
             continue
         if kind == "connectivity":
             maps = ("",)
+        label = _display_label(path, participant)
         layers.append(
             Layer(
                 id=_identifier("layer", path),
                 kind=kind,
-                label=_display_label(path, participant),
+                label=label,
                 module=module,
                 space=space,
                 paths={"LR": path},
                 maps=maps,
                 vertex_counts=counts,
                 size_bytes=path.stat().st_size,
+                contrast=contrast_facets(path, label) if module == "contrasts" else None,
             )
         )
     for key, paths in gifti.items():
@@ -308,17 +340,19 @@ def build_layers(
             }
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             continue
+        label = _display_label(first, participant)
         layers.append(
             Layer(
                 id=_identifier("layer", *sorted(map(str, paths.values()))),
                 kind=_layer_kind(first) or "metric",
-                label=_display_label(first, participant),
+                label=label,
                 module=module,
                 space=gifti_space[key],
                 paths=dict(sorted(paths.items())),
                 maps=maps,
                 vertex_counts=counts,
                 size_bytes=sum(path.stat().st_size for path in paths.values()),
+                contrast=contrast_facets(first, label) if module == "contrasts" else None,
             )
         )
     return tuple(sorted(layers, key=_layer_order))

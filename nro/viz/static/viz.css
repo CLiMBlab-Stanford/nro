@@ -85,7 +85,9 @@ button:hover { border-color: var(--accent); }
 .views button { padding: 3px 2px; font-size: 11px; }
 
 .server { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.add { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.add { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
+
+.contrasts { display: grid; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 
 .layer {
   background: var(--surface);

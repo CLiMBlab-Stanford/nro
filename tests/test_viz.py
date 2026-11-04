@@ -500,3 +500,30 @@ def test_file_endpoint_reports_status_codes(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_catalog_splits_contrast_statmaps_into_selectable_facets(tmp_path: Path) -> None:
+    row, _prefix = _contrasts_row(tmp_path)
+
+    layers = Catalog([row]).view("demo", "01").layers
+
+    assert [layer.public()["contrast"] for layer in layers] == [
+        {
+            "analysis": "model-main task-lang smoothing-2mm",
+            "grain": "subject",
+            "instance": "",
+            "stat": "t",
+        },
+        {
+            "analysis": "model-main task-lang smoothing-2mm",
+            "grain": "subject",
+            "instance": "",
+            "stat": "effect",
+        },
+        {
+            "analysis": "model-main task-lang smoothing-2mm",
+            "grain": "run",
+            "instance": "run-01",
+            "stat": "t",
+        },
+    ]

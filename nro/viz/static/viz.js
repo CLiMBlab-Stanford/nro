@@ -517,10 +517,59 @@ function describe(layer) {
   return `${layer.label}${suffix}`;
 }
 
+// Contrast statmaps are chosen through separate analysis, grain, instance, and
+// statistic menus instead of one entry per file in the general layer list.
+const GRAIN_ORDER = ["subject", "session", "run"];
+
+function contrastLayers() {
+  return (state.view?.layers || []).filter((layer) => layer.contrast && compatible(layer, state.family));
+}
+
+function refillSelect(select, values, label = (value) => value) {
+  const previous = select.value;
+  select.replaceChildren(...values.map((value) => new Option(label(value), value)));
+  if (values.includes(previous)) select.value = previous;
+}
+
+function uniqueValues(layers, key, order) {
+  const values = [...new Set(layers.map((layer) => layer.contrast[key]))];
+  if (!order) return values;
+  const rank = (value) => (order.includes(value) ? order.indexOf(value) : order.length);
+  return values.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function updateContrastMenus() {
+  const all = contrastLayers();
+  $("contrasts").hidden = !all.length;
+  if (!all.length) return;
+  refillSelect($("contrast-analysis"), uniqueValues(all, "analysis"));
+  const inAnalysis = all.filter((layer) => layer.contrast.analysis === $("contrast-analysis").value);
+  refillSelect($("contrast-grain"), uniqueValues(inAnalysis, "grain", GRAIN_ORDER));
+  const grain = $("contrast-grain").value;
+  const inGrain = inAnalysis.filter((layer) => layer.contrast.grain === grain);
+  const instances = uniqueValues(inGrain, "instance", []);
+  refillSelect($("contrast-instance"), instances, (value) => value || "(all)");
+  $("contrast-instance-row").hidden = !instances.some(Boolean);
+  $("contrast-instance-row").firstChild.textContent = `${grain === "run" ? "Run" : grain === "session" ? "Session" : "Instance"} `;
+  const inInstance = inGrain.filter((layer) => layer.contrast.instance === $("contrast-instance").value);
+  refillSelect($("contrast-stat"), uniqueValues(inInstance, "stat", ["t", "z", "p", "effect", "variance", "dof"]));
+}
+
+function selectedContrast() {
+  const choice = {
+    analysis: $("contrast-analysis").value,
+    grain: $("contrast-grain").value,
+    instance: $("contrast-instance").value,
+    stat: $("contrast-stat").value,
+  };
+  return contrastLayers().find((layer) => Object.entries(choice).every(([key, value]) => layer.contrast[key] === value));
+}
+
 function populateAvailable() {
+  updateContrastMenus();
   const select = $("available");
   select.replaceChildren();
-  const layers = (state.view?.layers || []).filter((layer) => compatible(layer, state.family));
+  const layers = (state.view?.layers || []).filter((layer) => !layer.contrast && compatible(layer, state.family));
   const groups = new Map();
   for (const layer of layers) {
     if (!groups.has(layer.module)) {
@@ -531,7 +580,10 @@ function populateAvailable() {
     }
     groups.get(layer.module).append(new Option(describe(layer), layer.id));
   }
-  if (!layers.length) select.append(new Option("No layers match these surfaces", ""));
+  if (!layers.length) {
+    const text = contrastLayers().length ? "No other layers match these surfaces" : "No layers match these surfaces";
+    select.append(new Option(text, ""));
+  }
   $("add").disabled = !layers.length;
 }
 
@@ -845,6 +897,13 @@ function bindControls() {
   $("open-file").addEventListener("click", openFile);
   $("file-path").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openFile();
+  });
+  for (const id of ["contrast-analysis", "contrast-grain", "contrast-instance"]) {
+    $(id).addEventListener("change", updateContrastMenus);
+  }
+  $("add-contrast").addEventListener("click", () => {
+    const meta = selectedContrast();
+    if (meta) addLayer(meta);
   });
   $("add").addEventListener("click", () => {
     const meta = state.view.layers.find((layer) => layer.id === $("available").value);
