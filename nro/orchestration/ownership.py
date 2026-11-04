@@ -1009,8 +1009,7 @@ def materialize_work_item_specs(
                 runtime_path = runtime_path.with_suffix(".json")
                 atomic_write_text(
                     runtime_path,
-                    json.dumps(execution["runtime_configuration"], indent=2, sort_keys=True)
-                    + "\n",
+                    json.dumps(execution["runtime_configuration"], indent=2, sort_keys=True) + "\n",
                     mode=0o664,
                     durable=True,
                 )
