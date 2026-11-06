@@ -11,7 +11,7 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.execution_cache import cache_lock, service_lease
 from nro.orchestration.execution_pins import capture_execution
-from nro.orchestration.source_snapshots import SourceSnapshot
+from nro.orchestration.source_snapshots import SourceSnapshot, execution_source_root
 from nro.site.configuration import (
     CHECKOUT,
     installation_record,
@@ -84,7 +84,7 @@ def validate_execution(pin: dict, *, current_source: bool = True) -> BranchPaths
     """Check source, registration, and exact pinned site before using a namespace."""
     source = SourceSnapshot(Path(pin["source_root"]), pin["source_digest"])
     source.verify()
-    if current_source and source.root != CHECKOUT:
+    if current_source and source.root != execution_source_root():
         raise ValueError("Ingestion must run from its captured implementation")
     values = settings(path=Path(pin["site"]))[0]
     expected_site = protected_site_fingerprint(Path(values["definitions"]))
