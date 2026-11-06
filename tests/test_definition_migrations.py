@@ -449,3 +449,32 @@ def test_branch_definition_setup_passes_complete_branch_identity(tmp_path, monke
             "registry_id": "branch-id",
         },
     }
+
+
+def test_group_maintenance_leaves_compliant_and_secret_paths_unchanged(tmp_path, monkeypatch):
+    from nro.definitions.migrations import ensure_group_maintainable
+
+    root = tmp_path / "store"
+    (root / "configs").mkdir(parents=True)
+    (root / "configs/compliant.toml").write_text("")
+    (root / "configs/narrow.toml").write_text("")
+    (root / ".definition-secrets/user-1").mkdir(parents=True)
+    (root / ".definition-secrets/user-1/key").write_text("")
+    (root / ".definition-secrets").chmod(0o770)
+    (root / "configs/compliant.toml").chmod(0o664)
+    (root / "configs/narrow.toml").chmod(0o644)
+    (root / ".definition-secrets/user-1/key").chmod(0o600)
+    changed = []
+    original = Path.chmod
+
+    def chmod(self, mode, **kwargs):
+        # Another member's path rejects chmod even when its mode is already correct.
+        if self.name == "compliant.toml" or ".definition-secrets" in self.parts:
+            raise PermissionError(1, "Operation not permitted", str(self))
+        changed.append(self.name)
+        return original(self, mode, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", chmod)
+    ensure_group_maintainable(root)
+    assert "narrow.toml" in changed
+    assert stat.S_IMODE((root / ".definition-secrets/user-1/key").stat().st_mode) == 0o600

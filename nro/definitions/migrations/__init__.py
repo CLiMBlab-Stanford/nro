@@ -81,7 +81,9 @@ def ensure_group_maintainable(root: Path) -> None:
     paths = [root]
     for parent, directories, names in os.walk(root, followlinks=False):
         directories[:] = [
-            name for name in directories if name not in {".git", ".definition-drafts"}
+            name
+            for name in directories
+            if name not in {".git", ".definition-drafts", ".definition-secrets"}
         ]
         paths.extend(Path(parent) / name for name in directories)
         paths.extend(Path(parent) / name for name in names)
@@ -89,7 +91,10 @@ def ensure_group_maintainable(root: Path) -> None:
         if path.is_symlink():
             continue
         mode = stat.S_IMODE(path.stat().st_mode)
-        path.chmod(mode | (0o2030 if path.is_dir() else 0o020))
+        required = mode | (0o2030 if path.is_dir() else 0o020)
+        # Only the owner may chmod, so leave other members' compliant paths alone.
+        if mode != required:
+            path.chmod(required)
 
 
 def _reject_symlinks(root: Path) -> None:
