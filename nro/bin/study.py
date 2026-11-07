@@ -37,8 +37,14 @@ def _add_selection(parser: argparse.ArgumentParser) -> None:
         metavar="KEY=VALUE",
         help="Restrict work items by an expanded parameter (value or label) or a run entity.",
     )
-    parser.add_argument("--project", action="append", help="Member project; repeatable.")
-    parser.add_argument("--participant", action="append", help="Participant; repeatable.")
+    parser.add_argument(
+        "--project", action="append", help="Member project; repeatable; accepts globs and re:REGEX."
+    )
+    parser.add_argument(
+        "--participant",
+        action="append",
+        help="Participant; repeatable; accepts globs and re:REGEX.",
+    )
 
 
 def build_parser(*, prog: str = "nro study") -> argparse.ArgumentParser:
@@ -104,14 +110,21 @@ def _filter(items, selectors: dict[str, str]):
 def _plan(analysis: LoadedAnalysis, args: argparse.Namespace):
     from nro.analysis.planning import plan_analysis
     from nro.analysis.resolve import default_index
+    from nro.engine.cli import resolve_identifier_patterns
     from nro.site.configuration import bids_root
 
+    root = bids_root()
+    projects, participants = resolve_identifier_patterns(
+        tuple(dict.fromkeys(args.project or ())),
+        tuple(dict.fromkeys(value.removeprefix("sub-") for value in args.participant or ())),
+        bids_root=root,
+    )
     items = plan_analysis(
         analysis,
         index=default_index(),
-        bids_root=bids_root(),
-        projects=args.project,
-        participants=args.participant,
+        bids_root=root,
+        projects=projects or None,
+        participants=participants or None,
     )
     return _filter(items, _selection(args.selectors))
 

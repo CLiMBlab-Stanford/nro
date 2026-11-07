@@ -64,8 +64,11 @@ selectors that produce exactly one scene.
 
 Opening a GUI requires an SSH connection with X forwarding and a Slurm
 installation that supports it. The first `--open` starts a private
-`srun --x11` viewer broker on the site's `viewing_partition`. The broker has 2
-CPUs and 32 GB of memory and stays available for its full 12-hour allocation.
+`srun --x11` viewer broker on the site's `slurm.viewer_partition`. The broker
+uses the site's `slurm.viewer.` resources, by default 2 CPUs and 32 GB of
+memory, and stays available for its full 12-hour allocation. `--account`,
+`--viewer-partition`, and the `--viewer-*` resource options override these for
+a broker that this call starts. See [Slurm options](index.md#slurm-options).
 Later calls reuse it and can open several independent Workbench processes
 without waiting for another allocation. This works the same from login hosts
 and from inside existing Slurm allocations.
@@ -115,8 +118,9 @@ all three in the page.
 ### Starting and reaching the server
 
 Each user has one server per nro checkout. The first call submits it as a
-Slurm batch job on the site's `viewing_partition`, with the same CPU, memory,
-and wall-time settings as the Workbench viewer broker. The command waits until
+Slurm batch job on the site's `slurm.viewer_partition`, with the same CPU,
+memory, and wall-time settings as the Workbench viewer broker. `nro viz` accepts
+the same viewer options as `nro scene --open`. The command waits until
 the server is running, prints an SSH tunnel command and a URL, and exits:
 
 ```text
@@ -199,14 +203,18 @@ or shown in anatomical position. The splayed layout turns each hemisphere 90
 degrees about the vertical axis, so both lateral surfaces face you side by side
 with the base of the brain down. **Reset view** returns to that view, or to the
 left lateral view in the other layouts. Lateral and medial views show only the
-facing hemisphere.
+named hemisphere, from that hemisphere's lateral or medial side in every
+layout. In anatomical position, surfaces that are each centered on their own
+hemisphere, such as FreeSurfer inflated surfaces, are moved apart until they
+meet at the midline.
 
 The view uses an orthographic projection, as Workbench does, so distant parts
 of a surface are not drawn smaller. After a change of layout, surface, or view,
 the camera keeps its direction and rescales so the surfaces fill the canvas
 width with a small margin, or its height when that is the tighter limit.
 Dragging rotates like a turntable and keeps the superior axis vertical. Select
-**Free rotation (trackball)** to rotate about any axis.
+**Free rotation (trackball)** to rotate about any axis. **Download PNG** saves
+the canvas as currently drawn, at the browser's display resolution.
 
 ### Layers and seed correlation
 
@@ -220,7 +228,8 @@ negative values down to the minimum.
 
 A dense time series, such as the `dynconn` output, becomes a seed-correlation
 layer. Click the cortex to place a seed, and the server correlates that vertex
-with every other vertex. The first seed request reads the complete series into
+with every other vertex. The seed marker is shown only while a visible layer is
+a seed-correlation layer. The first seed request reads the complete series into
 memory. A 1.2 GB `dynconn` series takes about 20 seconds to load, and later
 seeds take under a second. The server keeps loaded series for later seeds in
 up to 60 percent of its memory allocation, and drops the least recently used

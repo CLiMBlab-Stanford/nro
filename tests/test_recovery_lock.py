@@ -240,3 +240,21 @@ def test_exchange_keeps_waiting_while_allocation_is_pending(monkeypatch, tmp_pat
             endpoint, {"operation": "status"}, timeout=None, require_service=True
         )
     assert len(checks) == 3
+
+
+def test_ensure_coordinator_starts_scheduler_with_command_options(monkeypatch, tmp_path):
+    endpoint = scheduler_client.SchedulerEndpoint(tmp_path, tmp_path, object(), tmp_path, tmp_path)
+    launches = []
+    monkeypatch.setattr(scheduler_bus, "read_active", lambda _control: None)
+    monkeypatch.setattr(scheduler_bus, "clear_shutdown", lambda _control: None)
+    monkeypatch.setattr(
+        scheduler_client,
+        "_start_service",
+        lambda _endpoint, *, options=None: launches.append(options),
+    )
+    options = {"partition": "gpu", "account": None, "time": 2, "memory": 4, "cpus": 1}
+
+    assert scheduler_client._ensure_coordinator(
+        endpoint, require_service=True, start_epoch=True, scheduler_options=options
+    )
+    assert launches == [options]

@@ -104,6 +104,9 @@ def _selection(args: argparse.Namespace):
         lineage=None,
     )
     selection = core_selection(shared, apply_planner_defaults=False)
+    if args.project:
+        # Glob and regex project selectors resolve to the projects they match.
+        args.project = list(selection.projects)
     return ManifestSelection(participants=selection.participants, runs=selection.runs)
 
 

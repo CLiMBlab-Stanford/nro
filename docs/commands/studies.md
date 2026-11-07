@@ -217,7 +217,8 @@ tmaps = query(project="a001", participant="004", module="contrasts",
 | `nro study run STUDY/ANALYSIS [KEY=VALUE ...]` | Run every ready work item and publish its outputs. `--dry-run` only reports; `--force` reruns fresh items. |
 
 `check`, `try`, and `run` accept `--project` and `--participant`, which can be
-repeated. `KEY=VALUE` selects an expanded parameter by value or label, or a run
+repeated and accept the glob and `re:` patterns described under
+[shared selectors](index.md#shared-selectors). `KEY=VALUE` selects an expanded parameter by value or label, or a run
 entity such as `task=lang`.
 
 Work-item states are `ready`, `fresh`, `waiting`, `not_applicable`, and

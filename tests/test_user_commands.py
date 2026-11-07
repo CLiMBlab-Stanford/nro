@@ -28,6 +28,8 @@ from nro.definitions.store import ConfigStore
 from nro.engine.cli import CoreSelection, core_selection, page_text
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.registry import SCHEMA_VERSION, Registry
+from nro.site.configuration import settings as site_settings
+from nro.site.slurm_arguments import apply_slurm_arguments
 
 
 def _write(path: Path, text: str = "x") -> None:
@@ -45,12 +47,75 @@ def test_run_defaults() -> None:
     assert selection.spaces == ("fsnative",)
     assert selection.smoothing == (2,)
     assert args.concurrency == 50
-    assert args.cpus == 2
+    apply_slurm_arguments(args, site_settings()[0])
+    assert args.worker_cpus == 2
     assert args.partition == "sphinx"
 
 
 def test_run_cpu_override() -> None:
-    assert build_parser().parse_args(["--cpus", "8"]).cpus == 8
+    args = build_parser().parse_args(["--worker-cpus", "8"])
+    apply_slurm_arguments(args, site_settings()[0])
+    assert args.worker_cpus == 8
+
+
+def test_every_slurm_site_key_has_a_matching_option() -> None:
+    from nro.bin.bidsify import build_parser as bidsify_parser
+    from nro.bin.scene import build_parser as scene_parser
+    from nro.bin.start import build_parser as start_parser
+    from nro.bin.viz import build_parser as viz_parser
+    from nro.site.policy import SITE_SETTINGS
+    from nro.site.slurm_arguments import SLURM_SETTINGS, slurm_flag
+
+    parsers = {
+        "start": start_parser(),
+        "run": build_parser(),
+        "bidsify": bidsify_parser(),
+        "viz": viz_parser(),
+        "scene": scene_parser(),
+    }
+    options = {
+        command: {flag for action in parser._actions for flag in action.option_strings}
+        for command, parser in parsers.items()
+    }
+    assert set(SLURM_SETTINGS) == {key for key in SITE_SETTINGS if key.startswith("slurm.")}
+    for key in SLURM_SETTINGS:
+        flag = slurm_flag(key)
+        assert flag == "--" + key.removeprefix("slurm.").replace(".", "-").replace("_", "-")
+        assert any(flag in flags for flags in options.values()), key
+    scheduler_flags = {
+        "--partition",
+        "--account",
+        "--scheduler-time-hours",
+        "--scheduler-memory-gb",
+        "--scheduler-cpus",
+    }
+    for command in ("start", "run", "bidsify"):
+        assert scheduler_flags <= options[command], command
+    for removed in ("--time", "--memory", "--max-memory", "--cpus", "--long-time", "--long-cpus"):
+        assert removed not in options["run"] | options["start"]
+
+
+def test_slurm_options_override_site_values_and_check_minimums() -> None:
+    from nro.bin.start import build_parser as start_parser
+    from nro.site.slurm_arguments import scheduler_options
+
+    values = site_settings()[0]
+    args = start_parser().parse_args(["--partition", "gpu", "--scheduler-memory-gb", "16"])
+    effective = apply_slurm_arguments(args, values)
+    assert scheduler_options(effective) == {
+        "partition": "gpu",
+        "account": values["account"] or None,
+        "time": values["scheduler_time"],
+        "memory": 16,
+        "cpus": values["scheduler_cpus"],
+    }
+    with pytest.raises(ValueError, match="--scheduler-cpus must be at least 1"):
+        apply_slurm_arguments(start_parser().parse_args(["--scheduler-cpus", "0"]), values)
+    with pytest.raises(ValueError, match="--worker-max-memory-gb"):
+        apply_slurm_arguments(
+            build_parser().parse_args(["--worker-memory-gb", "64", "--worker-max-memory-gb", "8"]),
+            values,
+        )
 
 
 @pytest.mark.parametrize("mode", ["personal", "shared", "branch"])
@@ -116,6 +181,13 @@ def test_run_delegates_planning_before_bids_discovery(tmp_path, monkeypatch, cap
     ]
     progress = calls[1][3].pop("progress")
     assert isinstance(progress, scheduler_client._ProgressNotice)
+    assert set(calls[1][3].pop("scheduler_options")) == {
+        "partition",
+        "account",
+        "time",
+        "memory",
+        "cpus",
+    }
     assert calls[1][3] == {"timeout": None, "require_service": True, "start_epoch": True}
 
 
@@ -1631,6 +1703,119 @@ def test_participant_selection_spans_every_matching_project(
     assert len(result["requests"]) == 2
     assert {row["project"] for row in registry.request_rows()} == {"alpha", "beta"}
     assert {row["project"] for row in registry.work_item_rows()} == {"alpha", "beta"}
+
+
+@pytest.mark.parametrize(
+    ("project", "participant"),
+    (("alp*", "0[12]"), ("re:al.+", "re:0[0-2]")),
+)
+def test_run_expands_glob_and_regex_selectors(
+    tmp_path: Path, capsys, project: str, participant: str
+) -> None:
+    bids = tmp_path / "bids"
+    for project_name in ("alpha", "beta"):
+        for subject_id in ("01", "02", "10"):
+            subject = bids / project_name / f"sub-{subject_id}"
+            _write(subject / "anat" / f"sub-{subject_id}_T1w.nii.gz")
+            _write(subject / "func" / f"sub-{subject_id}_task-rest_run-1_bold.nii.gz")
+            _write(subject / "func" / f"sub-{subject_id}_task-rest_run-1_bold.json", "{}")
+
+    run_main(["-P", project, "-p", participant, "-m", "func", "--no-submit", "--json"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["projects"] == ["alpha"]
+    assert result["participants"] == {"alpha": ["01", "02"]}
+
+
+def test_run_rejects_unmatched_or_invalid_patterns(tmp_path: Path) -> None:
+    subject = tmp_path / "bids" / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+
+    with pytest.raises(SystemExit, match="match: 9\\*"):
+        run_main(["-p", "9*", "-m", "anat", "--no-submit"])
+    with pytest.raises(SystemExit, match="Invalid regular expression"):
+        run_main(["-p", "re:(", "-m", "anat", "--no-submit"])
+
+
+def test_status_and_stop_resolve_participant_patterns(tmp_path: Path, capsys) -> None:
+    for subject_id in ("01", "10"):
+        subject = tmp_path / "bids" / "demo" / f"sub-{subject_id}"
+        _write(subject / "anat" / f"sub-{subject_id}_T1w.nii.gz")
+        _write(subject / "func" / f"sub-{subject_id}_task-rest_run-1_bold.nii.gz")
+        _write(subject / "func" / f"sub-{subject_id}_task-rest_run-1_bold.json", "{}")
+    run_main(["-p", "01", "10", "-m", "func", "--no-submit", "--json"])
+    capsys.readouterr()
+
+    status_main(["-p", "0*", "--json"])
+    rows = json.loads(capsys.readouterr().out)["work_items"]
+    assert rows and {row["participant"] for row in rows} == {"01"}
+
+    stop_main(["-p", "re:0.", "-P", "d*"])
+    assert "Stopped" in capsys.readouterr().out
+    status_main(["--json"])
+    statuses = {
+        (row["participant"], row["status"])
+        for row in json.loads(capsys.readouterr().out)["work_items"]
+    }
+    assert {status for participant, status in statuses if participant == "01"} == {"Stopped"}
+    assert "Stopped" not in {status for participant, status in statuses if participant == "10"}
+
+
+@pytest.mark.parametrize(
+    "selectors",
+    (["-r", "task=re:rest|motor", "run=[12]"], ["--task", "re:(rest|motor)", "-r", "run=?"]),
+)
+def test_run_and_status_accept_entity_patterns(tmp_path: Path, capsys, selectors) -> None:
+    subject = tmp_path / "bids" / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    for task, run in (("rest", "1"), ("motor", "2"), ("langloc", "1"), ("rest", "10")):
+        stem = f"sub-01_task-{task}_run-{run}_bold"
+        _write(subject / "func" / f"{stem}.nii.gz")
+        _write(subject / "func" / f"{stem}.json", "{}")
+
+    run_main(["-m", "func", "--no-submit", "--json", *selectors])
+    capsys.readouterr()
+    status_main(["-m", "func", "--json", *selectors])
+    rows = json.loads(capsys.readouterr().out)["work_items"]
+
+    assert sorted((row["entities"]["task"], row["entities"]["run"]) for row in rows) == [
+        ("motor", "2"),
+        ("rest", "1"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ["-s", "fs*"],
+        ["--model", "re:.*"],
+        ["-w", "ma?n"],
+        ["--task", "re:rest", "-r", "task=rest"],
+        ["-r", "task=re:("],
+    ),
+)
+def test_core_selection_rejects_unsupported_patterns(arguments) -> None:
+    with pytest.raises(SystemExit):
+        run_main(["-m", "func", "--no-submit", *arguments])
+
+
+def test_core_selection_resolves_patterns_against_bids(tmp_path: Path) -> None:
+    from nro.engine.cli import resolve_identifier_patterns
+
+    for project, subject_id in (("alpha", "01"), ("alpha", "02"), ("beta", "03")):
+        (tmp_path / project / f"sub-{subject_id}").mkdir(parents=True)
+
+    assert resolve_identifier_patterns(("a*",), ("re:0.",), bids_root=tmp_path) == (
+        ("alpha",),
+        ("01", "02"),
+    )
+    assert resolve_identifier_patterns((), ("0[13]", "07"), bids_root=tmp_path) == (
+        (),
+        ("01", "03", "07"),
+    )
+    assert resolve_identifier_patterns(("x", "y"), (), bids_root=tmp_path) == (("x", "y"), ())
+    with pytest.raises(ValueError, match="match: 0\\[3\\]"):
+        resolve_identifier_patterns(("alpha",), ("0[3]",), bids_root=tmp_path)
 
 
 def test_run_status_stop_roundtrip_without_submission(tmp_path: Path, capsys) -> None:

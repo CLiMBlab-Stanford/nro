@@ -64,7 +64,8 @@ By default, nro finds source BOLD runs whose task matches the analysis label
 and resolves their inherited event tables. Use `--task TASK ...` when the
 analysis uses a differently named source task or several tasks. Omitted
 project (`-P`) and participant (`-p`) selectors match everything under the
-configured BIDS root. To use specific local tables instead of discovery, pass
+configured BIDS root. Both accept the glob and `re:` patterns described under
+[shared selectors](index.md#shared-selectors). To use specific local tables instead of discovery, pass
 `--events FILE ...`.
 
 The initializer reads conditions from the `trial_type` column. Pass

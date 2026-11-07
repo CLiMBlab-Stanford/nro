@@ -22,9 +22,16 @@ from nro.bidsify.scanplans import (
     scanplan_files,
 )
 from nro.bidsify.store import IngestionStore, ReviewBusyError
+from nro.engine.patterns import is_pattern, matches_any, validate_patterns
 from nro.orchestration.registry import Registry
 from nro.site.configuration import bids_root as configured_bids_root
 from nro.site.configuration import settings
+from nro.site.slurm_arguments import (
+    SCHEDULER_GROUPS,
+    add_slurm_arguments,
+    apply_slurm_arguments,
+    scheduler_options,
+)
 
 
 def build_parser(*, prog="nro bidsify"):
@@ -43,9 +50,16 @@ def build_parser(*, prog="nro bidsify"):
         help="Configured Flywheel server profile",
     )
     parser.add_argument("--server", dest="flywheel_server", help=argparse.SUPPRESS)
+    add_slurm_arguments(parser, (*SCHEDULER_GROUPS, "worker"))
     parser.add_argument("-P", "--project", help="Destination BIDS project")
     parser.add_argument("-F", "--flywheel-project", help="Source GROUP/PROJECT for new sessions")
-    parser.add_argument("-p", "--participant", nargs="+", default=[])
+    parser.add_argument(
+        "-p",
+        "--participant",
+        nargs="+",
+        default=[],
+        help="Filter saved sessions by participant label; accepts globs and re:REGEX",
+    )
     parser.add_argument("--session", nargs="+", default=[], help="Remote session IDs to include")
     request = parser.add_mutually_exclusive_group()
     request.add_argument("--request", help="Resume one request without listing Flywheel sessions")
@@ -339,11 +353,18 @@ def main(argv=None, *, prog="nro bidsify"):
     parser = build_parser(prog=prog)
     args = parser.parse_args(argv)
     try:
+        validate_patterns(args.participant)
         from nro.bidsify.execution import launch_review, validate_execution
         from nro.orchestration.scheduler_implementation import implementation_path
         from nro.site.configuration import installation_record
 
-        site_values, _ = settings()
+        # Worker options override the ingestion profile only when given.
+        worker_overrides = {
+            key: getattr(args, key)
+            for key in ("worker_time", "worker_memory", "worker_max_memory", "worker_cpus")
+            if getattr(args, key) is not None
+        }
+        site_values = apply_slurm_arguments(args, settings()[0])
         definitions = Path(site_values["definitions"]).expanduser().resolve()
         flywheel_server = args.flywheel_server or site_values.get("flywheel_server") or None
         flywheel_project = args.flywheel_project or site_values.get("flywheel_project") or None
@@ -412,7 +433,10 @@ def main(argv=None, *, prog="nro bidsify"):
                 for r in all_records
                 if r["server"] == server
                 and r["project"] == project
-                and (not args.participant or r["participant"] in args.participant)
+                and (
+                    not args.participant
+                    or matches_any(str(r["participant"] or ""), args.participant)
+                )
                 and (not args.session or r["remote_session"] in args.session)
             ]
             unfinished = [r for r in saved if r["state"] not in {"published", "cancelled"}]
@@ -491,7 +515,11 @@ def main(argv=None, *, prog="nro bidsify"):
                         if existing
                         else (prior["participant"] or "")
                         if prior
-                        else (args.participant[0] if len(args.participant) == 1 else ""),
+                        else (
+                            args.participant[0]
+                            if len(args.participant) == 1 and not is_pattern(args.participant[0])
+                            else ""
+                        ),
                     )
                     participant = bids_label(answer) if answer else None
                     session = existing.session if existing else prior["session"] if prior else None
@@ -543,7 +571,12 @@ def main(argv=None, *, prog="nro bidsify"):
             advance(store, store.get(record["id"]))
         queued = [store.get(r["id"]) for r in records if store.get(r["id"])["state"] == "queued"]
         if queued and not args.no_submit:
-            memory = max(r["config"]["memory_gb"] for r in queued)
+            memory = worker_overrides.get(
+                "worker_memory", max(r["config"]["memory_gb"] for r in queued)
+            )
+            max_memory = max(memory, worker_overrides.get("worker_max_memory", memory))
+            hours = worker_overrides.get("worker_time", max(r["config"]["hours"] for r in queued))
+            cpus = worker_overrides.get("worker_cpus", max(r["config"]["cpus"] for r in queued))
             if central:
                 from nro.orchestration.scheduler_client import supply
                 from nro.site.configuration import CHECKOUT
@@ -557,14 +590,15 @@ def main(argv=None, *, prog="nro bidsify"):
                         "local": False,
                         "no_submit": False,
                         "memory": memory,
-                        "max_memory": memory,
-                        "partition": site_values["partition"],
-                        "account": site_values["account"],
-                        "time": max(r["config"]["hours"] for r in queued),
-                        "cpus": max(r["config"]["cpus"] for r in queued),
+                        "max_memory": max_memory,
+                        "partition": args.partition,
+                        "account": args.account,
+                        "time": hours,
+                        "cpus": cpus,
                         "worker_idle_timeout": 30.0,
                         "drain_minutes": 15.0,
                     },
+                    scheduler_options=scheduler_options(site_values),
                 )
                 jobs = result["submitted_workers"]
             else:
@@ -573,11 +607,11 @@ def main(argv=None, *, prog="nro bidsify"):
                 script = _write_worker_script(
                     registry,
                     bids_root=bids_root,
-                    partition=site_values["partition"],
-                    account=site_values["account"],
-                    hours=max(r["config"]["hours"] for r in queued),
+                    partition=args.partition,
+                    account=args.account,
+                    hours=hours,
                     memory_gb=memory,
-                    cpus=max(r["config"]["cpus"] for r in queued),
+                    cpus=cpus,
                 )
                 jobs = _submit_workers(registry, None, script, memory)
             print("Submitted workers: " + (", ".join(jobs) or "existing pool has capacity"))

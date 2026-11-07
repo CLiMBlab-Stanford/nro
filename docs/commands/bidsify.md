@@ -269,13 +269,14 @@ A stale heartbeat alone does not prove that the work stopped.
 | `-f`, `--flywheel-server NAME` | Configured server, such as `cni` or `lucas`. |
 | `-P`, `--project NAME` | One destination BIDS project. |
 | `-F`, `--flywheel-project GROUP/PROJECT` | One configured source Flywheel project for new sessions. |
-| `-p`, `--participant LABEL ...` | Filter saved requests. A single label also becomes the default participant for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
+| `-p`, `--participant LABEL ...` | Filter saved requests by participant label. Accepts globs and `re:REGEX`, matched against saved labels because new participants are not yet in BIDS. A single exact label also becomes the default participant for a new mapping. Remote participant labels are not assumed to be BIDS labels. |
 | `--session ID ...` | Filter by remote session IDs, not BIDS session labels. |
 | `--request ID` | Resume one saved request without listing remote sessions. |
 | `--cancel ID` | Cancel one saved request. An executing stage stops once its worker acknowledges the cancellation. |
 | `--config PATH` | Use another complete conversion profile for new requests. |
 | `--rebidsify` | Include sessions already in BIDS and allow a replacement proposal. Approval is still required. |
 | `--no-submit` | Do not submit new workers. Existing workers may still claim queued stages. |
+| Slurm options | `--partition`, `--account`, the `--scheduler-*` options, and the `--worker-*` options. Worker options override the ingestion profile. See [Slurm options](index.md#slurm-options). |
 
 `--request` and `--cancel` cannot be combined. The BIDS root always comes from
 the global site configuration, so one invocation cannot publish to a different

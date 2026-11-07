@@ -89,8 +89,43 @@ options, documented on its page.
 
 In `-r`, different keys combine with AND and the values for one key combine
 with OR. Run selectors describe acquisitions, so `run=01` alone may match
-several runs that differ by task or direction. Space and smoothing values
-expand as a cross-product.
+several runs that differ by task or direction. An empty value such as `task=`
+requires the entity to be absent. Space and smoothing values expand as a
+cross-product.
+
+### Patterns
+
+The data selectors `--project`, `--participant`, `--task`, and each `-r` value
+accept patterns. A value containing `*`, `?`, or `[` is a case-sensitive glob.
+A value starting with `re:` is a regular expression that must match the whole
+value. Any other value matches exactly. Quote patterns so the shell does not
+expand them:
+
+```bash
+nro run -P 'nptl*' -p 't2?' -m networks
+nro status -p 're:t(20|21|3[0-9])' -r 'task=lang*' 'run=0[1-3]'
+```
+
+Commas separate `-r` alternatives, as in `task=rest,lang*`, but commas inside
+`(...)`, `[...]`, or `{...}` belong to the pattern, so `run=re:0{1,2}` stays
+whole. `--task` and `-r task=` intersect when both list exact tasks. Give only
+one of them when either uses a pattern.
+
+Project and participant patterns match directory names beneath the BIDS root,
+and participant patterns match IDs without `sub-`. A participant pattern
+searches the selected projects, or every project when none is selected. Each
+pattern is replaced by the IDs it matches before the command runs, so a request
+records exact IDs. A project or participant pattern that matches nothing is an
+error, as is an invalid regular expression. Registry records for a participant
+whose BIDS directory was removed can still be selected by exact ID only.
+
+Task and `-r` patterns are matched against each run's entities, both when
+`nro run` plans work and when other commands filter registered work.
+
+The other selectors, `--module`, `--workflow`, `--lineage`, `--space`,
+`--analysis`, `--model`, and `--model-set`, accept exact values only. `nro run`
+uses several of them to decide which work to create, so a pattern there is
+rejected.
 
 Inspection and cleanup commands treat an omitted selector as unrestricted. A
 new `nro run` request is the exception, because it applies planning defaults:
@@ -114,21 +149,59 @@ Some commands have their own parsers: `publish`, `site`, the installation
 commands, `viz`, and `qc registration`. Their pages document their options. Do
 not assume the shared short flags mean the same thing there.
 
+## Slurm options
+
+Every `slurm.` site setting has a command-line option of the same name. The
+option is the part of the key after `slurm.`, with periods and underscores
+replaced by hyphens. An option you omit keeps the site value. The options
+affect only allocations that the command itself creates.
+
+| Site key | Option | Accepted by |
+| --- | --- | --- |
+| `slurm.partition` | `--partition NAME` | `start`, `run`, `bidsify` |
+| `slurm.account` | `--account NAME` | `start`, `run`, `bidsify`, `viz`, `scene` |
+| `slurm.scheduler.time_hours` | `--scheduler-time-hours N` | `start`, `run`, `bidsify` |
+| `slurm.scheduler.memory_gb` | `--scheduler-memory-gb N` | `start`, `run`, `bidsify` |
+| `slurm.scheduler.cpus` | `--scheduler-cpus N` | `start`, `run`, `bidsify` |
+| `slurm.worker.time_hours` | `--worker-time-hours N` | `run`, `bidsify` |
+| `slurm.worker.memory_gb` | `--worker-memory-gb N` | `run`, `bidsify` |
+| `slurm.worker.max_memory_gb` | `--worker-max-memory-gb N` | `run`, `bidsify` |
+| `slurm.worker.cpus` | `--worker-cpus N` | `run`, `bidsify` |
+| `slurm.long_worker.time_hours` | `--long-worker-time-hours N` | `run` |
+| `slurm.long_worker.cpus` | `--long-worker-cpus N` | `run` |
+| `slurm.viewer_partition` | `--viewer-partition NAME` | `viz`, `scene` |
+| `slurm.viewer.time_hours` | `--viewer-time-hours N` | `viz`, `scene` |
+| `slurm.viewer.memory_gb` | `--viewer-memory-gb N` | `viz`, `scene` |
+| `slurm.viewer.cpus` | `--viewer-cpus N` | `viz`, `scene` |
+
+`start`, `run`, and `bidsify` can each start the shared scheduler, so they
+share the scheduler options. These apply only when no scheduler is running or
+pending. A running scheduler keeps its allocation until it exits. For example:
+
+```bash
+nro start --partition sphinx --scheduler-memory-gb 16
+nro run -P nptl -m networks --partition sphinx --worker-cpus 8
+```
+
+`--partition` and `--account` apply to both the scheduler and the workers that
+a command starts. `bidsify` takes worker resources from each request's
+ingestion profile, and the worker options override the profile when given. The
+viewer options apply to `nro viz` and to `nro scene --open`. To change a
+default for everyone, set the site key with `nro set`.
+
 ## Finding source images
 
 `nro find` prints absolute paths to source BIDS images. It does not inspect
 derivatives or registry records. It accepts the project, participant, run, and
-task selectors. Project names must match exactly. Participant, task, and `-r`
-entity values are full regular expressions:
+task selectors, with the [pattern rules](#patterns) above:
 
 ```bash
-nro find -P nptl -p 't(12|20)' -r 'task=Rest.*' 'run=0[1-3]'
-nro find -P nptl -r datatype=anat suffix='T1w|T2w'
+nro find -P nptl -p 're:t(12|20)' -r 'task=Rest*' 'run=0[1-3]'
+nro find -P nptl -r datatype=anat suffix=T1w,T2w
 ```
 
-Different entity keys combine with AND. Comma-separated expressions for one key
-combine with OR, as in `task=Rest,langloc`. Commas inside parenthesized groups,
-character classes, and repetition bounds do not split the expression. An empty
-expression such as `task=` requires the entity to be absent. `--json` prints
+Unlike the derivative commands, `-r` here also accepts image-level entities
+such as `datatype` and `suffix`, and a pattern that matches nothing prints
+nothing. `--json` prints
 the selected paths as a JSON array. The command rejects derivative-only
 selectors: module, workflow, lineage, model, space, and smoothing.

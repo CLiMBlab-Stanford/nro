@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from nro.bin.find import _parse_entity_patterns, build_parser, find_images, main
+from nro.bin.find import build_parser, find_images, main
+from nro.engine.bids import matches_selectors, parse_selectors
 
 
 def _image(path: Path) -> Path:
@@ -31,8 +32,8 @@ def test_find_matches_source_images_with_regex_entity_selectors(tmp_path) -> Non
     matches = find_images(
         bids,
         projects=("demo",),
-        participants=("t(12|20)",),
-        runs=("task=Rest.*", "run=0[13]"),
+        participants=("re:t(12|20)",),
+        runs=("task=re:Rest.*", "run=0[13]"),
     )
 
     assert [match.path.name for match in matches] == [
@@ -53,17 +54,22 @@ def test_find_supports_suffix_datatype_and_absent_entity_selectors(tmp_path) -> 
     assert [match.path.name for match in matches] == ["sub-t12_ses-01_T1w.nii.gz"]
 
 
-def test_regex_alternatives_preserve_group_and_quantifier_commas() -> None:
-    selectors = _parse_entity_patterns(("task=(Rest|langloc),motor", "run=0{1,2}"))
+def test_pattern_alternatives_preserve_group_and_quantifier_commas() -> None:
+    selectors = parse_selectors(("task=re:(Rest|langloc),motor", "run=re:0{1,2}", "dir=[A,P]P"))
 
-    assert any(pattern.fullmatch("langloc") for pattern in selectors["task"] or ())
-    assert any(pattern.fullmatch("motor") for pattern in selectors["task"] or ())
-    assert any(pattern.fullmatch("00") for pattern in selectors["run"] or ())
+    assert selectors == {
+        "task": ("re:(Rest|langloc)", "motor"),
+        "run": ("re:0{1,2}",),
+        "dir": ("[A,P]P",),
+    }
+    assert matches_selectors({"task": "langloc", "run": "00", "dir": "AP"}, selectors)
+    assert matches_selectors({"task": "motor", "run": "0", "dir": "PP"}, selectors)
+    assert not matches_selectors({"task": "Resting", "run": "00", "dir": "AP"}, selectors)
 
 
 def test_find_rejects_invalid_regular_expressions(tmp_path) -> None:
-    with pytest.raises(ValueError, match="Invalid regular expression for task"):
-        find_images(tmp_path, runs=("task=[",))
+    with pytest.raises(ValueError, match="Invalid regular expression"):
+        find_images(tmp_path, runs=("task=re:[",))
 
 
 @pytest.mark.parametrize("selector", ["space=fsnative", "model=main", "workflow=main"])
@@ -102,3 +108,11 @@ def test_find_cli_prints_paths_or_json(tmp_path, monkeypatch, capsys) -> None:
 
     main(["-P", "other", "-r", "task=Rest", "--json"])
     assert json.loads(capsys.readouterr().out) == [plain]
+
+
+def test_find_accepts_glob_project_and_participant_selectors(tmp_path) -> None:
+    bids = _dataset(tmp_path)
+
+    matches = find_images(bids, projects=("de*",), participants=("t2?",), tasks=("Rest*",))
+
+    assert [match.path.name for match in matches] == ["sub-t20_task-Resting_run-03_bold.nii.gz"]

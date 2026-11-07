@@ -4,110 +4,40 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Pattern
 
-from nro.engine.bids import NON_RUN_ENTITIES, BidsImage, discover_bids_images
+from nro.engine.bids import (
+    NON_RUN_ENTITIES,
+    BidsImage,
+    discover_bids_images,
+    matches_selectors,
+    parse_entity_selectors,
+)
+from nro.engine.patterns import is_pattern, matches_any, validate_patterns
 
 _DERIVATIVE_SELECTOR_KEYS = frozenset(
     (NON_RUN_ENTITIES - {"sub"}) | {"model", "model-set", "workflow", "module", "lineage"}
 )
 
 
-def _split_alternatives(value: str) -> tuple[str, ...]:
-    """Split top-level commas while preserving regular-expression groups."""
-    alternatives: list[str] = []
-    current: list[str] = []
-    closing: list[str] = []
-    escaped = False
-    pairs = {"(": ")", "[": "]", "{": "}"}
-    for character in value:
-        if escaped:
-            current.extend(("\\", character))
-            escaped = False
-            continue
-        if character == "\\":
-            escaped = True
-            continue
-        if character in pairs:
-            closing.append(pairs[character])
-        elif closing and character == closing[-1]:
-            closing.pop()
-        if character == "," and not closing:
-            alternatives.append("".join(current).strip())
-            current = []
-        else:
-            current.append(character)
-    if escaped:
-        current.append("\\")
-    alternatives.append("".join(current).strip())
-    return tuple(alternatives)
-
-
-def _compile_patterns(values: Iterable[str], *, label: str) -> tuple[Pattern[str], ...]:
-    patterns = []
-    for value in values:
-        try:
-            patterns.append(re.compile(value))
-        except re.error as error:
-            raise ValueError(
-                f"Invalid regular expression for {label}: {value!r}: {error}"
-            ) from error
-    return tuple(patterns)
-
-
-def _parse_entity_patterns(
-    values: Sequence[str] | None,
-) -> dict[str, tuple[Pattern[str], ...] | None]:
-    grouped: dict[str, list[str] | None] = {}
-    for raw in values or ():
-        if "=" not in raw:
-            raise ValueError(f"Run selector must use entity=value syntax, got {raw!r}")
-        key, value = raw.split("=", 1)
-        key = key.strip().removeprefix("--")
-        if not key or "_" in key:
-            raise ValueError(f"Invalid BIDS entity selector: {raw!r}")
+def _entity_selectors(values: Sequence[str] | None) -> dict[str, tuple[str, ...] | None]:
+    selectors = parse_entity_selectors(values)
+    for key in selectors:
         if key in _DERIVATIVE_SELECTOR_KEYS:
             raise ValueError(f"{key!r} is not a selectable source BIDS image entity")
-        alternatives = tuple(item for item in _split_alternatives(value) if item)
-        if not alternatives:
-            if key in grouped:
-                raise ValueError(
-                    f"Cannot combine an absent-value selector with other values for {key!r}"
-                )
-            grouped[key] = None
-            continue
-        if grouped.get(key) is None and key in grouped:
-            raise ValueError(
-                f"Cannot combine an absent-value selector with other values for {key!r}"
-            )
-        grouped.setdefault(key, [])
-        assert grouped[key] is not None
-        grouped[key].extend(alternatives)
-    return {
-        key: None if patterns is None else _compile_patterns(patterns, label=key)
-        for key, patterns in grouped.items()
-    }
-
-
-def _matches_patterns(
-    entities: Mapping[str, str], selectors: Mapping[str, tuple[Pattern[str], ...] | None]
-) -> bool:
-    for key, patterns in selectors.items():
-        value = entities.get(key)
-        if patterns is None:
-            if value is not None:
-                return False
-        elif value is None or not any(pattern.fullmatch(value) for pattern in patterns):
-            return False
-    return True
+    return selectors
 
 
 def _projects(bids_root: Path, requested: Sequence[str]) -> tuple[Path, ...]:
-    if requested:
+    if requested and not any(is_pattern(value) for value in requested):
         return tuple(bids_root / project for project in dict.fromkeys(requested))
+    if requested:
+        return tuple(
+            path
+            for path in sorted(bids_root.iterdir())
+            if path.is_dir() and matches_any(path.name, requested)
+        )
     return tuple(
         path
         for path in sorted(bids_root.iterdir())
@@ -123,31 +53,29 @@ def find_images(
     runs: Sequence[str] = (),
     tasks: Sequence[str] = (),
 ) -> tuple[BidsImage, ...]:
-    """Return source images matching full regular expressions for selected entities."""
-    participant_patterns = _compile_patterns(
-        (value.removeprefix("sub-") for value in participants), label="participant"
-    )
-    selectors = _parse_entity_patterns(runs)
-    task_patterns = _compile_patterns(tasks, label="task")
+    """Return source images matching the selected projects, participants, and entities.
+
+    Every selector value follows the shared rules in ``nro.engine.patterns``.
+    """
+    participant_patterns = tuple(value.removeprefix("sub-") for value in participants)
+    validate_patterns((*projects, *participant_patterns))
+    selectors = _entity_selectors(runs)
+    task_patterns = tuple(tasks)
+    validate_patterns(task_patterns)
     matches: list[BidsImage] = []
     for project in _projects(bids_root, projects):
         if not project.is_dir():
             continue
         for subject in sorted(path for path in project.glob("sub-*") if path.is_dir()):
             participant = subject.name.removeprefix("sub-")
-            if participant_patterns and not any(
-                pattern.fullmatch(participant) for pattern in participant_patterns
-            ):
+            if participant_patterns and not matches_any(participant, participant_patterns):
                 continue
             for image in discover_bids_images(subject):
-                if not _matches_patterns(image.entities, selectors):
+                if not matches_selectors(image.entities, selectors):
                     continue
-                if task_patterns:
-                    task = image.entities.get("task")
-                    if task is None or not any(
-                        pattern.fullmatch(task) for pattern in task_patterns
-                    ):
-                        continue
+                task = image.entities.get("task")
+                if task_patterns and (task is None or not matches_any(task, task_patterns)):
+                    continue
                 matches.append(image)
     return tuple(sorted(matches, key=lambda item: str(item.path)))
 
@@ -161,8 +89,8 @@ def build_parser(*, prog: str = "nro.bin.find") -> argparse.ArgumentParser:
         nargs="+",
         action="extend",
         default=None,
-        metavar="REGEX",
-        help="Match participant IDs by full regular expression",
+        metavar="ID",
+        help="Select BIDS participant IDs; accepts globs and re:REGEX",
     )
     parser.add_argument(
         "-P",
@@ -171,7 +99,7 @@ def build_parser(*, prog: str = "nro.bin.find") -> argparse.ArgumentParser:
         action="extend",
         default=None,
         metavar="PROJECT",
-        help="Select exact BIDS project names",
+        help="Select projects; accepts globs and re:REGEX",
     )
     parser.add_argument(
         "-r",
@@ -179,16 +107,16 @@ def build_parser(*, prog: str = "nro.bin.find") -> argparse.ArgumentParser:
         nargs="+",
         action="extend",
         default=None,
-        metavar="ENTITY=REGEX[,REGEX...]",
-        help="Match source-image BIDS entities by full regular expression",
+        metavar="ENTITY=VALUE[,VALUE...]",
+        help="Match source-image BIDS entities; values accept globs and re:REGEX",
     )
     parser.add_argument(
         "--task",
         nargs="+",
         action="extend",
         default=None,
-        metavar="REGEX",
-        help="Match task entities by full regular expression",
+        metavar="TASK",
+        help="Match task entities; accepts globs and re:REGEX",
     )
     parser.add_argument("--json", action="store_true", help="Print a JSON array of paths")
     return parser
