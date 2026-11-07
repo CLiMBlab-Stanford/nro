@@ -31,6 +31,12 @@ from nro.orchestration.resources import (
 from nro.orchestration.selection import discover_bids_inventory
 from nro.orchestration.submission import _submit_workers, _write_worker_script
 from nro.orchestration.worker_control import stop_worker_pool_for_repair
+from nro.site.slurm_arguments import (
+    WORKER_GROUPS,
+    add_slurm_arguments,
+    apply_slurm_arguments,
+    scheduler_options,
+)
 
 _RESUMABLE_STATUSES = frozenset({"Queued", "Waiting", "Stopped", "Timeout", "Error"})
 _DEMAND_GATED_RESUME_STATUSES = frozenset({"Missing", "Stale", "Corrupt", "Blocked"})
@@ -249,6 +255,25 @@ def _resume_targets(
     )
 
 
+def _worker_options(args: argparse.Namespace) -> dict:
+    """Return the worker supply options sent to the scheduler."""
+    return {
+        "local": args.local,
+        "no_submit": args.no_submit,
+        "memory": args.worker_memory,
+        "max_memory": args.worker_max_memory,
+        "partition": args.partition,
+        "account": args.account or None,
+        "time": args.worker_time,
+        "cpus": args.worker_cpus,
+        "long_time": args.long_worker_time,
+        "long_cpus": args.long_worker_cpus,
+        "worker_idle_timeout": args.worker_idle_timeout,
+        "drain_minutes": args.drain_minutes,
+        "gpu_concurrency": args.gpu_concurrency,
+    }
+
+
 def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     """Construct the run parser without executing the command."""
     parser = argparse.ArgumentParser(prog=prog, description=__doc__)
@@ -261,8 +286,7 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
     from nro.site.configuration import settings
 
     site, _ = settings()
-    parser.add_argument("--partition", default=site["partition"] or None)
-    parser.add_argument("--account", default=site["account"] or None)
+    add_slurm_arguments(parser, WORKER_GROUPS)
     parser.add_argument(
         "--concurrency",
         type=int,
@@ -270,12 +294,6 @@ def build_parser(*, prog: str = "nro.bin.run") -> argparse.ArgumentParser:
         help=f"Maximum shared worker concurrency (site default: {site['concurrency']})",
     )
     parser.set_defaults(gpu_concurrency=site["gpu_concurrency"])
-    parser.add_argument("--time", type=int, default=site["worker_time"], metavar="HOURS")
-    parser.add_argument("--memory", type=int, default=site["worker_memory"], metavar="GB")
-    parser.add_argument("--max-memory", type=int, default=site["worker_max_memory"], metavar="GB")
-    parser.add_argument("--cpus", type=int, default=site["worker_cpus"])
-    parser.add_argument("--long-time", type=int, default=site["long_worker_time"], metavar="HOURS")
-    parser.add_argument("--long-cpus", type=int, default=site["long_worker_cpus"])
     parser.add_argument(
         "--worker-idle-timeout",
         type=int,
@@ -354,8 +372,8 @@ def _plan_study_analysis(args, selection, planner, registry, store):
             store,
             projects=selection.projects,
             participants=selection.participants,
-            memory_gb=args.memory,
-            max_memory_gb=args.max_memory,
+            memory_gb=args.worker_memory,
+            max_memory_gb=args.worker_max_memory,
         )
     except (StudyError, ManifestError, ValueError) as error:
         raise SystemExit(str(error)) from error
@@ -370,6 +388,11 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = build_parser(prog=prog).parse_args(raw_argv)
     from nro.site import configuration as site
+
+    try:
+        slurm_values = apply_slurm_arguments(args, site.settings()[0])
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
     record = site.installation_record()
     if record.get("mode") in {"shared", "branch"} and not record.get("ready") and not args.repair:
@@ -490,8 +513,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             registry,
             bids_root=bids_root,
             inventory=inventory,
-            memory_gb=args.memory,
-            max_memory_gb=args.max_memory,
+            memory_gb=args.worker_memory,
+            max_memory_gb=args.worker_max_memory,
         )
         result = {
             "repaired": True,
@@ -541,12 +564,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         raise SystemExit("--run does not apply to the anatomical module")
     if args.concurrency < 1 or args.gpu_concurrency < 1:
         raise SystemExit("--concurrency and --gpu-concurrency must be at least 1")
-    if args.memory < 1 or args.max_memory < args.memory:
-        raise SystemExit("--memory must be positive and --max-memory must be at least --memory")
-    if args.time < 1 or args.cpus < 1 or args.long_time < 1 or args.long_cpus < 1:
-        raise SystemExit("worker time and CPU settings must be positive")
-    if args.drain_minutes < 0 or args.drain_minutes * 60 >= args.time * 60 * 60:
-        raise SystemExit("--drain-minutes must be nonnegative and shorter than --time")
+    if args.drain_minutes < 0 or args.drain_minutes * 60 >= args.worker_time * 60 * 60:
+        raise SystemExit("--drain-minutes must be nonnegative and shorter than --worker-time-hours")
     if args.worker_idle_timeout < 1:
         raise SystemExit("--worker-idle-timeout must be at least 1 second")
     from nro.orchestration.scheduler_implementation import implementation_path
@@ -591,6 +610,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 require_service=True,
                 start_epoch=True,
                 progress=progress,
+                scheduler_options=scheduler_options(slurm_values),
             )
         finally:
             progress.clear()
@@ -653,8 +673,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             registry,
             bids_root=bids_root,
             inventory=inventory,
-            memory_gb=args.memory,
-            max_memory_gb=args.max_memory,
+            memory_gb=args.worker_memory,
+            max_memory_gb=args.worker_max_memory,
         )
     resumed_rows: list[dict] = []
     requested_resume_workflows: set[str] = set()
@@ -705,8 +725,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             ),
             workflows=workflows,
             registered_workflows=registered_workflows,
-            memory_gb=args.memory,
-            max_memory_gb=args.max_memory,
+            memory_gb=args.worker_memory,
+            max_memory_gb=args.worker_max_memory,
         )
     else:
         plan = planner.plan(
@@ -718,8 +738,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             selectors=selection.runs,
             spaces=selection.spaces,
             smoothing_levels=selection.smoothing,
-            memory_gb=args.memory,
-            max_memory_gb=args.max_memory,
+            memory_gb=args.worker_memory,
+            max_memory_gb=args.worker_max_memory,
             models=selection.models,
             model_sets=selection.model_sets,
             analyses=selection.analyses,
@@ -783,24 +803,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 {
                     "protocol": 1,
                     "entries": entries,
-                    "options": {
-                        key: getattr(args, key)
-                        for key in (
-                            "local",
-                            "no_submit",
-                            "memory",
-                            "max_memory",
-                            "partition",
-                            "account",
-                            "time",
-                            "cpus",
-                            "long_time",
-                            "long_cpus",
-                            "worker_idle_timeout",
-                            "drain_minutes",
-                            "gpu_concurrency",
-                        )
-                    },
+                    "options": _worker_options(args),
                     "projects": list(planned_projects),
                     "participants": matched_participants,
                     "work_items": len(all_work_items),
@@ -841,6 +844,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 expected_revisions=scientific_revisions,
                 inherit=not args.no_inherit,
                 start_scheduler=not args.no_submit,
+                scheduler_options=scheduler_options(slurm_values),
             )
         except RequestAdmissionInterrupted as interrupted:
             _cancel_interrupted_requests(
@@ -857,24 +861,8 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
                 bids_root,
                 checkout=site.CHECKOUT,
                 request_ids=request_ids,
-                options={
-                    key: getattr(args, key)
-                    for key in (
-                        "local",
-                        "no_submit",
-                        "memory",
-                        "max_memory",
-                        "partition",
-                        "account",
-                        "time",
-                        "cpus",
-                        "long_time",
-                        "long_cpus",
-                        "worker_idle_timeout",
-                        "drain_minutes",
-                        "gpu_concurrency",
-                    )
-                },
+                options=_worker_options(args),
+                scheduler_options=scheduler_options(slurm_values),
             )
         except KeyboardInterrupt:
             _cancel_interrupted_requests(
@@ -935,7 +923,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         from nro.orchestration.scheduler_implementation import run_local_worker
 
         lower_memory = 0
-        for tier in memory_tiers(args.memory, args.max_memory):
+        for tier in memory_tiers(args.worker_memory, args.worker_max_memory):
             if registry.worker_capacity_needed(
                 request_id=request_ids[0] if request_ids else None,
                 resource_class=GPU_RESOURCE_CLASS,
@@ -946,23 +934,23 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
             lower_memory = tier
         run_local_worker(
             registry,
-            memory_gb=args.memory,
+            memory_gb=args.worker_memory,
             drain_seconds=args.drain_minutes * 60,
-            cpus=args.cpus,
+            cpus=args.worker_cpus,
         )
     elif not args.no_submit:
         scripts: dict[tuple[str, int], Path] = {}
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
-            for tier in memory_tiers(args.memory, args.max_memory):
+            for tier in memory_tiers(args.worker_memory, args.worker_max_memory):
                 long_cpu = resource_class == LONG_CPU_RESOURCE_CLASS
                 scripts[(resource_class, tier)] = _write_worker_script(
                     registry,
                     bids_root=bids_root,
                     partition=args.partition,
                     account=args.account,
-                    hours=args.long_time if long_cpu else args.time,
+                    hours=args.long_worker_time if long_cpu else args.worker_time,
                     memory_gb=tier,
-                    cpus=args.long_cpus if long_cpu else args.cpus,
+                    cpus=args.long_worker_cpus if long_cpu else args.worker_cpus,
                     resource_class=resource_class,
                     idle_timeout=args.worker_idle_timeout,
                     drain_seconds=args.drain_minutes * 60,
@@ -970,7 +958,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
         for resource_class in SCHEDULABLE_RESOURCE_CLASSES:
             class_submitted: list[str] = []
             lower_memory = 0
-            for tier in memory_tiers(args.memory, args.max_memory):
+            for tier in memory_tiers(args.worker_memory, args.worker_max_memory):
                 class_submitted = _submit_workers(
                     registry,
                     request_ids[0],

@@ -12,6 +12,14 @@ from typing import Sequence
 import yaml
 
 from nro.engine.bids import matches_selectors, parse_selectors
+from nro.engine.patterns import (
+    expand_patterns,
+    is_pattern,
+    matches_any,
+    reject_patterns,
+    unmatched_patterns,
+    validate_patterns,
+)
 from nro.engine.targets import DEFAULT_SMOOTHING_MM, DEFAULT_SPACE
 
 
@@ -86,7 +94,7 @@ def matches_work_item_selectors(entities: dict, selectors: dict) -> bool:
                 # qualified model.  The historical task entity is the best
                 # available fallback for source-task selection.
                 pass
-        if not set(source_tasks).intersection(filter(None, available)):
+        if not any(matches_any(task, source_tasks) for task in filter(None, available)):
             return False
     models = selectors.pop("model", ())
     if models and entities.get("model") not in models and identifier not in models:
@@ -116,7 +124,7 @@ def add_core_selection_arguments(
         action="extend",
         default=None,
         metavar="ID",
-        help="Select one or more BIDS participant IDs",
+        help="Select BIDS participant IDs; accepts globs and re:REGEX",
     )
     parser.add_argument(
         "-P",
@@ -125,7 +133,7 @@ def add_core_selection_arguments(
         action="extend",
         default=None,
         metavar="PROJECT",
-        help="Select one or more projects",
+        help="Select projects; accepts globs and re:REGEX",
     )
     parser.add_argument(
         "-m",
@@ -166,7 +174,10 @@ def add_core_selection_arguments(
         action="extend",
         default=None,
         metavar="ENTITY=VALUE[,VALUE...]",
-        help="Match BIDS runs; values are comma-delimited alternatives per entity",
+        help=(
+            "Match BIDS runs; values are comma-delimited alternatives per entity "
+            "and accept globs and re:REGEX"
+        ),
     )
     parser.add_argument(
         "-s",
@@ -187,7 +198,12 @@ def add_core_selection_arguments(
         metavar="MM",
         help="Select one or more smoothing FWHM values in mm",
     )
-    parser.add_argument("--task", nargs="+", action="extend", help="Select source BIDS tasks")
+    parser.add_argument(
+        "--task",
+        nargs="+",
+        action="extend",
+        help="Select source BIDS tasks; accepts globs and re:REGEX",
+    )
     parser.add_argument(
         "--analysis",
         nargs="+",
@@ -214,6 +230,55 @@ def add_core_selection_arguments(
         )
 
 
+def resolve_identifier_patterns(
+    projects: tuple[str, ...],
+    participants: tuple[str, ...],
+    *,
+    bids_root: Path | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Replace project and participant patterns with the BIDS IDs they match.
+
+    Patterns follow ``nro.engine.patterns``. Exact values pass through
+    unchanged, and the BIDS root is read only when a pattern is present.
+    Participant patterns match participants in the selected projects, or in
+    every project when none is selected. Raises ValueError for an invalid
+    pattern or one that matches nothing.
+    """
+    validate_patterns((*projects, *participants))
+    project_patterns = any(is_pattern(value) for value in projects)
+    participant_patterns = any(is_pattern(value) for value in participants)
+    if not (project_patterns or participant_patterns):
+        return projects, participants
+    if bids_root is None:
+        from nro.site.configuration import bids_root as site_bids_root
+
+        bids_root = site_bids_root()
+    from nro.orchestration.selection import discover_bids_participants
+
+    available_projects = (
+        sorted(path.name for path in bids_root.iterdir() if path.is_dir())
+        if bids_root.is_dir()
+        else []
+    )
+    unmatched = list(unmatched_patterns(projects, available_projects))
+    if project_patterns:
+        projects = expand_patterns(projects, available_projects)
+    if participant_patterns:
+        searched = projects or available_projects
+        available_participants = {
+            participant
+            for project in searched
+            for participant in discover_bids_participants(bids_root / project)
+        }
+        unmatched.extend(unmatched_patterns(participants, available_participants))
+        participants = expand_patterns(participants, available_participants)
+    if unmatched:
+        raise ValueError(
+            f"No BIDS projects or participants under {bids_root} match: " + ", ".join(unmatched)
+        )
+    return projects, participants
+
+
 def core_selection(
     args: argparse.Namespace, *, apply_planner_defaults: bool | None = None
 ) -> CoreSelection:
@@ -232,17 +297,28 @@ def core_selection(
         raise ValueError("--smoothing values must be nonnegative integers")
     runs = parse_selectors(args.run)
     tasks = tuple(dict.fromkeys(getattr(args, "task", None) or ()))
+    validate_patterns(tasks)
     if tasks:
+        if "task" in runs and any(is_pattern(value) for value in (*tasks, *(runs["task"] or ()))):
+            raise ValueError("Use either --task or --run task= when selecting tasks by pattern")
         if "task" in runs:
             tasks = tuple(value for value in tasks if value in (runs["task"] or ()))
             if not tasks:
                 raise ValueError("--task and --run task= select disjoint tasks")
         runs["task"] = tasks
+    reject_patterns(args.space or (), "--space")
+    reject_patterns(getattr(args, "analysis", None) or (), "--analysis")
+    reject_patterns(getattr(args, "model", None) or (), "--model")
+    reject_patterns(getattr(args, "model_set", None) or (), "--model-set")
+    reject_patterns(args.workflow or (), "--workflow")
+    reject_patterns(args.lineage or (), "--lineage")
+    projects, participants = resolve_identifier_patterns(
+        tuple(dict.fromkeys(args.project or ())),
+        tuple(dict.fromkeys(value.removeprefix("sub-") for value in (args.participant or ()))),
+    )
     return CoreSelection(
-        participants=tuple(
-            dict.fromkeys(value.removeprefix("sub-") for value in (args.participant or ()))
-        ),
-        projects=tuple(dict.fromkeys(args.project or ())),
+        participants=participants,
+        projects=projects,
         modules=tuple(
             dict.fromkeys(args.module or (args._default_modules if planner_defaults else ()))
         ),

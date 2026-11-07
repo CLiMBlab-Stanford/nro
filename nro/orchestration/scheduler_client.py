@@ -371,8 +371,13 @@ def _ensure_coordinator(
     *,
     require_service: bool,
     start_epoch: bool = False,
+    scheduler_options: dict | None = None,
 ) -> bool:
-    """Provide a live service or a fenced one-shot coordinator as requested."""
+    """Provide a live service or a fenced one-shot coordinator as requested.
+
+    ``scheduler_options`` configure the scheduler allocation when this call
+    starts one. They have no effect on a scheduler that is already running.
+    """
     from nro.orchestration.scheduler_bus import clear_shutdown, read_active, shutdown_pending
 
     if start_epoch:
@@ -381,7 +386,7 @@ def _ensure_coordinator(
         return False
     if read_active(endpoint.control) is None:
         if require_service:
-            _start_service(endpoint)
+            _start_service(endpoint, options=scheduler_options)
         else:
             return False
     return True
@@ -425,6 +430,7 @@ def _exchange(
     require_service: bool = False,
     start_epoch: bool = False,
     durable: bool = True,
+    scheduler_options: dict | None = None,
 ) -> dict:
     """Send one request directly, with a recovery record when required."""
     if descriptors:
@@ -447,6 +453,7 @@ def _exchange(
             endpoint,
             require_service=require_service,
             start_epoch=start_epoch,
+            scheduler_options=scheduler_options,
         )
     except Exception as error:
         raise SchedulerError(f"Could not start scheduler coordination: {error}") from error
@@ -571,6 +578,7 @@ def _exchange(
                 endpoint,
                 require_service=require_service,
                 start_epoch=False,
+                scheduler_options=scheduler_options,
             )
             if not service_available and not require_service:
                 response = _run_once(endpoint, record, durable=durable)
@@ -606,6 +614,7 @@ def exchange(
     start_epoch: bool = False,
     durable: bool = True,
     progress: _ProgressNotice | None = None,
+    scheduler_options: dict | None = None,
 ) -> dict:
     """Send one request while maintaining a single transient progress line."""
     notice = progress or _ProgressNotice()
@@ -619,6 +628,7 @@ def exchange(
             require_service=require_service,
             start_epoch=start_epoch,
             durable=durable,
+            scheduler_options=scheduler_options,
         )
     finally:
         notice.clear()
@@ -648,9 +658,18 @@ def _endpoint(
 
 
 def supply(
-    control: Path, bids_root: Path, *, checkout: Path, request_ids: list[str], options: dict
+    control: Path,
+    bids_root: Path,
+    *,
+    checkout: Path,
+    request_ids: list[str],
+    options: dict,
+    scheduler_options: dict | None = None,
 ) -> dict:
-    """Start central workers after admission has published execution pins."""
+    """Start central workers after admission has published execution pins.
+
+    ``scheduler_options`` configure the scheduler allocation if one must start.
+    """
     endpoint = _endpoint(control, bids_root)
     if options.get("no_submit", False):
         return exchange(
@@ -679,6 +698,7 @@ def supply(
         timeout=None if options["local"] else DEFAULT_RPC_TIMEOUT_SECONDS,
         require_service=True,
         start_epoch=True,
+        scheduler_options=scheduler_options,
     )
     if options["local"]:
         _wait_for_local_workers(Path(control), result["submitted_workers"])

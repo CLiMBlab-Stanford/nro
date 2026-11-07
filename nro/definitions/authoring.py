@@ -116,11 +116,21 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
         return yaml.safe_dump({name: "main" for name in CONFIGURATION_CLASSES}, sort_keys=False)
     if target.kind == "markup":
         return "{}\n"
+    from nro.engine.cli import resolve_identifier_patterns
     from nro.modules.contrasts.authoring import discover_event_files, model_draft
     from nro.site.configuration import bids_root
 
     analysis = target.identifier.split("/")[0]
     tasks = tuple(dict.fromkeys(args.task or (analysis,)))
+    projects, participants = (
+        ((), ())
+        if args.events
+        else resolve_identifier_patterns(
+            tuple(dict.fromkeys(args.project or ())),
+            tuple(dict.fromkeys(value.removeprefix("sub-") for value in args.participant or ())),
+            bids_root=bids_root(),
+        )
+    )
     paths = args.events or tuple(
         dict.fromkeys(
             path
@@ -128,8 +138,8 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
             for path in discover_event_files(
                 task,
                 bids_root(),
-                projects=args.project or (),
-                participants=args.participant or (),
+                projects=projects,
+                participants=participants,
             )
         )
     )

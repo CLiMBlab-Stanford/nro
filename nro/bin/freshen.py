@@ -23,7 +23,10 @@ def build_parser(*, prog: str = "nro freshen") -> argparse.ArgumentParser:
 
 
 def _selection(args) -> dict:
-    selected = core_selection(args)
+    try:
+        selected = core_selection(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     return {
         "participants": list(selected.participants),
         "projects": list(selected.projects),

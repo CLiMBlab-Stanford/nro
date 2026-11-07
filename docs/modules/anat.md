@@ -182,7 +182,7 @@ FreeSurfer, and FastSurfer use their own pinned official images. SynthSR runs
 on a CPU from the pinned FreeSurfer image, whichever reconstruction engine is
 selected. `Runner` translates host and container paths, and the configured
 FreeSurfer license is bound into processing. Scientific tools use the worker's
-CPU allocation, which `nro run --cpus` sets.
+CPU allocation, which `nro run --worker-cpus` sets.
 
 ## Outputs
 

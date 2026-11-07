@@ -35,6 +35,7 @@ from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.branches import BranchPaths
 from nro.orchestration.catalog import MODULES
 from nro.site.paths import WB_COMMAND_PATH
+from nro.site.slurm_arguments import VIEWER_GROUPS, add_slurm_arguments, apply_slurm_arguments
 
 
 def _mapping(value: object) -> dict[str, str]:
@@ -297,6 +298,7 @@ def build_parser(*, prog: str = "nro.bin.scene") -> argparse.ArgumentParser:
         action="store_true",
         help="Include pconns and microparcellation dlabels in generated scenes",
     )
+    add_slurm_arguments(parser, VIEWER_GROUPS)
     return parser
 
 
@@ -547,6 +549,10 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.scene") -> None:
     for scene in scenes:
         print(scene)
     if args.open:
+        try:
+            values = apply_slurm_arguments(args, values)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
         viewer = Path(wb_command).with_name("wb_view")
         if not viewer.is_file():
             raise SystemExit(f"Connectome Workbench viewer is not available: {viewer}")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .io import read_json
+from .patterns import matches_any, split_alternatives, validate_patterns
 
 # BIDS entity order is also the deterministic tie-breaker when multiple equally
 # small selector sets can identify every run.
@@ -314,7 +315,8 @@ def _parse_selector_values(
             raise ValueError(f"Run selector must use entity=value syntax, got {raw!r}")
         key, value = raw.split("=", 1)
         key = key.strip().removeprefix("--")
-        requested = tuple(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+        requested = tuple(dict.fromkeys(split_alternatives(value)))
+        validate_patterns(requested)
         if not key or "_" in key:
             raise ValueError(f"Invalid BIDS entity selector: {raw!r}")
         if reject_non_run and key in NON_RUN_ENTITIES:
@@ -334,8 +336,23 @@ def _parse_selector_values(
 def parse_selectors(
     values: Sequence[str] | None,
 ) -> dict[str, tuple[str, ...] | None]:
-    """Parse run selectors with comma-delimited alternatives per entity."""
+    """Parse run selectors with comma-delimited alternatives per entity.
+
+    Each alternative may be a glob or ``re:`` pattern (see ``nro.engine.patterns``).
+    An empty value such as ``task=`` requires the entity to be absent.
+    """
     return _parse_selector_values(values, reject_non_run=True)
+
+
+def parse_entity_selectors(
+    values: Sequence[str] | None,
+) -> dict[str, tuple[str, ...] | None]:
+    """Parse ``-r`` selectors that may also name image-level entities.
+
+    This accepts the same syntax as ``parse_selectors`` but allows entities
+    such as ``datatype`` and ``suffix``.
+    """
+    return _parse_selector_values(values, reject_non_run=False)
 
 
 def _session_from_path(path: Path) -> str | None:
@@ -473,22 +490,26 @@ def _matches(
     entities: Mapping[str, str],
     selectors: Mapping[str, Sequence[str] | str | None],
 ) -> bool:
-    return all(
-        (
-            key not in entities
-            if value is None
-            else entities.get(key)
-            in ({value} if isinstance(value, str) else {str(item) for item in value})
-        )
-        for key, value in selectors.items()
-    )
+    for key, value in selectors.items():
+        actual = entities.get(key)
+        if value is None:
+            if key in entities:
+                return False
+        elif actual is None or not matches_any(
+            str(actual), (value,) if isinstance(value, str) else value
+        ):
+            return False
+    return True
 
 
 def matches_selectors(
     entities: Mapping[str, str],
     selectors: Mapping[str, Sequence[str] | str | None],
 ) -> bool:
-    """Return whether a run/entity mapping satisfies exact CLI selectors."""
+    """Return whether a run/entity mapping satisfies CLI selectors.
+
+    Selector values may be exact values, globs, or ``re:`` patterns.
+    """
     return _matches(entities, selectors)
 
 

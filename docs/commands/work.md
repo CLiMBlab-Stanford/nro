@@ -12,13 +12,15 @@ execution settings at the end of the page do not.
 If a scheduler is already running, or its Slurm allocation is pending, the
 command reports that state and exits without changing the allocation.
 
-When the command creates a scheduler, `--partition`, `--account`, `--time`,
-`--memory`, and `--cpus` set the scheduler's own Slurm allocation. The defaults
-come from site settings: 24 hours, 8 GB, and 4 CPUs. These options do not
-affect derivative workers. Set worker resources with `nro run`.
+When the command creates a scheduler, `--partition`, `--account`,
+`--scheduler-time-hours`, `--scheduler-memory-gb`, and `--scheduler-cpus` set
+its Slurm allocation. Omitted options keep the site settings, which default to
+24 hours, 8 GB, and 4 CPUs. `nro run` and `nro bidsify` accept the same options
+for the scheduler they start. See [Slurm options](index.md#slurm-options).
 
 ```bash
-nro start --partition sphinx --account nlp --time 24 --memory 4 --cpus 4
+nro start --partition sphinx --account nlp --scheduler-time-hours 24 \
+  --scheduler-memory-gb 4 --scheduler-cpus 4
 ```
 
 ## `nro run`
@@ -65,17 +67,21 @@ for `--workflow`, which defaults to `main` so that a bare request does not
 expand across every defined workflow. The space and smoothing defaults also
 apply only to new requests. `--resume`, described below, uses neither default.
 
+`--project` and `--participant` accept glob and regular-expression patterns.
+See [shared selectors](index.md#shared-selectors).
+
 ### Options
 
 | Option | Behavior and default |
 | --- | --- |
 | `--concurrency N` | Shared worker limit. Defaults to the site setting `execution.concurrency`. |
-| `--cpus N` | CPUs per worker, which also sets the thread count of scientific processes. Default 2. |
-| `--time HOURS` | Worker allocation length. Default 24 hours. |
-| `--memory GB` | Initial worker memory. Default 32 GB. |
-| `--max-memory GB` | Highest memory tier used for retries. Default 256 GB. |
-| `--long-time HOURS`, `--long-cpus N` | Allocation for long CPU workers, which run work such as MSMAll anatomy. Defaults 48 hours and 8 CPUs. |
-| `--partition`, `--account` | Slurm routing. Defaults come from site settings. |
+| `--worker-cpus N` | CPUs per worker, which also sets the thread count of scientific processes. Default 2. |
+| `--worker-time-hours N` | Worker allocation length. Default 24 hours. |
+| `--worker-memory-gb N` | Initial worker memory. Default 32 GB. |
+| `--worker-max-memory-gb N` | Highest memory tier used for retries. Default 256 GB. |
+| `--long-worker-time-hours N`, `--long-worker-cpus N` | Allocation for long CPU workers, which run work such as MSMAll anatomy. Defaults 48 hours and 8 CPUs. |
+| `--partition`, `--account` | Slurm routing for workers and for a scheduler this command starts. Defaults come from site settings. |
+| `--scheduler-time-hours N`, `--scheduler-memory-gb N`, `--scheduler-cpus N` | Allocation for the scheduler, used only when this command starts one. |
 | `--worker-idle-timeout SECONDS` | How long an idle worker waits before exiting. Default 30 seconds. |
 | `--drain-minutes N` | How long before allocation expiry a worker stops claiming work. Default 15. |
 | `--local` | Run one worker locally instead of submitting a Slurm allocation. |
@@ -85,8 +91,9 @@ apply only to new requests. `--resume`, described below, uses neither default.
 | `--repair` | Rebuild registry records without creating demand. See below. |
 | `--json` | Print the planning result as JSON. |
 
-The worker resource defaults come from the site's `execution` settings, so a
-site can change them.
+The Slurm defaults come from the site's `slurm.` settings, and the execution
+defaults from its `execution.` settings, so a site can change them. Each Slurm
+option matches its site key, as described in [Slurm options](index.md#slurm-options).
 
 ### How a request is executed
 

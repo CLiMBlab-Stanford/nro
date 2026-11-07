@@ -45,6 +45,9 @@ def build_parser(*, prog: str = "nro viz") -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", type=int, help="Server port for --serverless")
     parser.add_argument("--tunnel-host", help=argparse.SUPPRESS)
+    from nro.site.slurm_arguments import VIEWER_GROUPS, add_slurm_arguments
+
+    add_slurm_arguments(parser, VIEWER_GROUPS)
     return parser
 
 
@@ -119,7 +122,12 @@ def main(argv: list[str] | None = None, *, prog: str = "nro viz") -> None:
         return
 
     from nro.site.configuration import settings
+    from nro.site.slurm_arguments import apply_slurm_arguments
 
+    try:
+        values = apply_slurm_arguments(args, settings()[0])
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     with service.launch_lock(root):
         active = service.active_server(root, token)
         if active is not None:
@@ -127,7 +135,7 @@ def main(argv: list[str] | None = None, *, prog: str = "nro viz") -> None:
             return
         job_id = service.queued_job(root)
         if job_id is None:
-            job_id = service.submit(root, settings()[0])
+            job_id = service.submit(root, values)
             print(f"Submitted viewer server job {job_id}.", file=sys.stderr, flush=True)
         else:
             print(f"Viewer server job {job_id} is already queued.", file=sys.stderr, flush=True)

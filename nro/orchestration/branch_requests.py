@@ -107,6 +107,7 @@ def register_requests(
     demand: bool = True,
     inherit: bool = True,
     start_scheduler: bool = True,
+    scheduler_options: dict | None = None,
 ) -> list[str]:
     """Publish compiled graphs without loading the scheduler schema in this branch.
 
@@ -149,6 +150,7 @@ def register_requests(
                 ),
                 require_service=start_scheduler,
                 start_epoch=start_scheduler,
+                scheduler_options=scheduler_options,
             )
         request_ids = result["request_ids"]
         if was_interrupted():
