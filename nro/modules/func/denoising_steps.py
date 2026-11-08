@@ -77,7 +77,12 @@ def _create_confounds_step(
         name="Confounds",
         outputs=(out_tsv, out_json),
         inputs=(epi_4d, epi_mean_3d, par, brain_mask_in_epi),
-        parameters={"repetition_time": float(repetition_time)},
+        # Declaring the mean-signal set makes a change to it invalidate this
+        # step and its dependents in runs recorded before the change.
+        parameters={
+            "repetition_time": float(repetition_time),
+            "mean_signals": ["white_matter", "csf", "global_signal", "global_gm_signal"],
+        },
         force=force,
         action=calculate,
     )

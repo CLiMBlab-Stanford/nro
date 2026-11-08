@@ -144,6 +144,7 @@ def test_confounds_loads_epi_once(
     mean_image = nib.Nifti1Image(epi_data.mean(axis=3), np.eye(4))
     aseg_data = np.full(epi_data.shape[:3], 2, dtype=np.int16)
     aseg_data[:4, :, :] = 4
+    aseg_data[6:, :, :] = 3
     aseg_image = nib.Nifti1Image(aseg_data, np.eye(4))
     mask_image = nib.Nifti1Image(np.ones(epi_data.shape[:3], dtype=np.uint8), np.eye(4))
     epi_path = tmp_path / "bold.nii.gz"
@@ -189,6 +190,8 @@ def test_confounds_loads_epi_once(
     )
 
     confounds = pd.read_csv(out_tsv, sep="\t")
+    expected_gm = epi_data[6:].mean(axis=(0, 1, 2))
+    assert np.allclose(confounds["global_gm_signal"], expected_gm, rtol=1e-5)
     from nro.definitions.store import ConfigStore
 
     clean_config_path = ConfigStore().configuration_path("clean", "main")

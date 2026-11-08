@@ -39,6 +39,28 @@ CSF_LABELS = frozenset(
         24,  # CSF
     }
 )
+GM_LABELS = frozenset(
+    {
+        3,  # Left-Cerebral-Cortex
+        42,  # Right-Cerebral-Cortex
+        8,  # Left-Cerebellum-Cortex
+        47,  # Right-Cerebellum-Cortex
+        10,  # Left-Thalamus
+        49,  # Right-Thalamus
+        11,  # Left-Caudate
+        50,  # Right-Caudate
+        12,  # Left-Putamen
+        51,  # Right-Putamen
+        13,  # Left-Pallidum
+        52,  # Right-Pallidum
+        17,  # Left-Hippocampus
+        53,  # Right-Hippocampus
+        18,  # Left-Amygdala
+        54,  # Right-Amygdala
+        26,  # Left-Accumbens-area
+        58,  # Right-Accumbens-area
+    }
+)
 
 
 def _load_niimg(path: Path):
@@ -482,9 +504,11 @@ def get_confounds(
     epi_4d = np.asanyarray(epi_img.dataobj, dtype=np.float32)
     wm_mask = np.isin(aseg_resampled, sorted(WM_LABELS)) & epi_fov
     csf_mask = np.isin(aseg_resampled, sorted(CSF_LABELS)) & epi_fov
+    gm_mask = np.isin(aseg_resampled, sorted(GM_LABELS)) & epi_fov
     gs = _mean_signal_dense(epi_4d, brain_mask, name="Brain")
     wm = _mean_signal_dense(epi_4d, wm_mask, name="White-matter")
     csf = _mean_signal_dense(epi_4d, csf_mask, name="CSF")
+    gm = _mean_signal_dense(epi_4d, gm_mask, name="Gray-matter")
     acomps = _acompcor_dense(
         epi_4d=epi_4d,
         epi_fov=epi_fov,
@@ -507,6 +531,7 @@ def get_confounds(
     cols.update(_expanded_signal_columns("white_matter", wm))
     cols.update(_expanded_signal_columns("csf", csf))
     cols.update(_expanded_signal_columns("global_signal", gs))
+    cols.update(_expanded_signal_columns("global_gm_signal", gm))
 
     for i in range(acomps.shape[1]):
         cols[f"a_comp_cor_{i:02d}"] = acomps[:, i]
@@ -560,7 +585,7 @@ def get_confounds(
         ordered.append(base + "_derivative1")
         ordered.append(base + "_power2")
         ordered.append(base + "_derivative1_power2")
-    for base in ("white_matter", "csf", "global_signal"):
+    for base in ("white_matter", "csf", "global_signal", "global_gm_signal"):
         ordered.append(base)
         ordered.append(base + "_derivative1")
         ordered.append(base + "_power2")
@@ -619,7 +644,8 @@ def get_confounds(
             "A significant DVARS difference marks both frames in the adjacent pair.",
             "global_signal is computed within brain_mask_in_epi when provided; otherwise it falls back to an aseg-derived brain mask (aseg!=0) resampled to the EPI grid.",
             "white_matter and csf are mean signals from FreeSurfer aseg tissue labels resampled to the EPI grid.",
-            "The six motion and three mean-signal regressors include derivative1, power2, and derivative1_power2 expansions for the Satterthwaite 36-parameter model.",
+            "global_gm_signal is the mean signal over FreeSurfer aseg cerebral cortex, cerebellar cortex, and subcortical gray-matter labels resampled to the EPI grid.",
+            "The six motion and four mean-signal regressors include derivative1, power2, and derivative1_power2 expansions. The Satterthwaite 36-parameter model uses the motion, white_matter, csf, and global_signal sets.",
             "aCompCor is computed from WM+CSF voxels using FreeSurfer aseg labels and nearest-neighbor resampling to EPI grid, using randomized SVD for the top components.",
             "cosine* columns are nonconstant DCT-II drift regressors using the fMRIPrep/Nilearn convention.",
             "get_confounds loads the full 4D EPI exactly once to avoid repeated .nii.gz decompression.",
