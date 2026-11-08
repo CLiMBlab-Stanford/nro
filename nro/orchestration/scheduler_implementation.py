@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from contextvars import ContextVar
+import threading
 from pathlib import Path
 
 from nro.engine.io import atomic_write_json, atomic_write_text
@@ -60,14 +60,15 @@ _COORDINATION_SITE_KEYS = frozenset(
     }
 )
 
-_CENTRAL_SOURCE_VERIFIED: ContextVar[bool] = ContextVar(
-    "nro_central_source_verified", default=False
-)
+# Source verification describes the whole process. The scheduler service
+# handles requests on executor threads, which do not inherit context variables,
+# so a per-context flag would be lost before planning reads the registry.
+_CENTRAL_SOURCE_VERIFIED = threading.Event()
 
 
 def central_source_verified() -> bool:
     """Return whether this process verified the active central implementation."""
-    return _CENTRAL_SOURCE_VERIFIED.get()
+    return _CENTRAL_SOURCE_VERIFIED.is_set()
 
 
 def _coordination_site(values: dict) -> dict:
@@ -345,7 +346,7 @@ def require_worker_source(control: Path) -> None:
         and launched_root == str(package_root)
         and launched_digest == source_fingerprint(package_root)
     ):
-        _CENTRAL_SOURCE_VERIFIED.set(True)
+        _CENTRAL_SOURCE_VERIFIED.set()
         return
     if launched_root is not None or launched_digest is not None:
         expected_root = ControlPaths(control).implementations / record["source_digest"]
@@ -355,7 +356,7 @@ def require_worker_source(control: Path) -> None:
             and package_root == expected_root
             and str(Path(sys.executable)) == record["python"]
         ):
-            _CENTRAL_SOURCE_VERIFIED.set(True)
+            _CENTRAL_SOURCE_VERIFIED.set()
             return
         raise ValueError("Worker did not start from the active central implementation")
     if (
@@ -364,7 +365,7 @@ def require_worker_source(control: Path) -> None:
         or source_fingerprint(package_root) != record["source_digest"]
     ):
         raise ValueError("Start workers through nro run using the active central implementation")
-    _CENTRAL_SOURCE_VERIFIED.set(True)
+    _CENTRAL_SOURCE_VERIFIED.set()
 
 
 def run_local_worker(

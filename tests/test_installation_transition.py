@@ -184,6 +184,20 @@ def test_verified_central_coordinator_can_serve_a_branch_invocation(monkeypatch)
     site.require_execution_support()
 
 
+def test_central_verification_reaches_scheduler_executor_threads(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from nro.orchestration import scheduler_implementation
+
+    monkeypatch.setattr(site, "installation_record", lambda: {"mode": "branch", "ready": True})
+    monkeypatch.setattr(scheduler_implementation, "_CENTRAL_SOURCE_VERIFIED", threading.Event())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(lambda: None).result()
+        scheduler_implementation._CENTRAL_SOURCE_VERIFIED.set()
+        executor.submit(site.require_execution_support).result()
+
+
 def test_unverified_branch_process_cannot_access_registry(monkeypatch):
     from nro.orchestration import scheduler_implementation
 
