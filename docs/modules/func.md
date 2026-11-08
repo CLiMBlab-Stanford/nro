@@ -91,9 +91,13 @@ so check it instead of assuming a run used the default path.
    classifier, labels, regression policy, and warnings.
 8. **Compute confounds.** nro builds the published confounds from motion,
    anatomical segmentations, and the final BOLD series. They include motion
-   parameters with their derivatives and squares, global, CSF, and white-matter
-   signals with expansions, framewise displacement, aCompCor, DVARS, and
-   numbered outlier families. See [denoising](../methods/denoising.md).
+   parameters with their derivatives and squares, global, gray-matter, CSF,
+   and white-matter signals with expansions, framewise displacement, aCompCor,
+   DVARS, and numbered outlier families. `global_signal` averages the whole
+   brain mask. `global_gm_signal` averages the FreeSurfer aseg cerebral
+   cortex, cerebellar cortex, and subcortical gray-matter labels, so it can
+   replace `global_signal` in a cleaning or contrasts `confounds_regex`. See
+   [denoising](../methods/denoising.md).
 9. **Publish.** nro produces T1w and MNI volumes and left and right fsnative
    and template GIFTI time courses. Native surfaces and registration spheres
    come from anatomy, and the selected `anat` configuration defines the

@@ -457,3 +457,22 @@ def test_functional_graph_does_not_replace_a_missing_selected_input(functional_c
     with pytest.raises(SystemExit, match="Missing anatomical manifest"):
         func.build_module(inputs, options, execution_context=context)
     assert not context.paths.output_project("demo").exists()
+
+
+@pytest.mark.parametrize("aroma", [True, False])
+def test_confounds_changes_invalidate_only_functional_publication(functional_case, aroma):
+    inputs, options, context, _manifest, _image = functional_case
+    job = func.build_module(
+        inputs,
+        replace(options, ica_classifier="ica_aroma" if aroma else "none"),
+        execution_context=context,
+    )
+    graph = job._graph.freeze()
+    confounds = next(step for step in graph.steps if step.name == "Confounds")
+    by_id = {step.id: step for step in graph.steps}
+
+    previous = type(confounds)._scientific_signature({"repetition_time": 2.0})
+    assert confounds.scientific_signature != previous
+    assert {by_id[step_id].name for step_id in graph.descendants(confounds)} == {
+        "Publish Functional Derivatives"
+    }
