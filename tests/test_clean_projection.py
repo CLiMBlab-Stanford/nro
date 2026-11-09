@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from nro.modules.clean.cleaning import _build_cleaning_projection, _cleaned_timecourse_quality
 
@@ -187,4 +188,4 @@ def test_full_variance_target_keeps_every_nuisance_component() -> None:
 
     assert projection.cleaning_defined
     assert projection.nuisance_pca_components == 21
-    assert projection.nuisance_variance_explained <= 1.0
+    assert projection.nuisance_variance_explained == pytest.approx(1.0)
