@@ -7,11 +7,13 @@ import sqlite3
 
 import yaml
 
+from nro.orchestration.sql_values import JSON_VALUES, json_values
+
 _QUERY_CHUNK_SIZE = 500
 
 
 def _chunks(values: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
-    """Split identifiers below SQLite's conservative parameter ceiling."""
+    """Split identifiers into bounded query batches."""
     return tuple(
         values[offset : offset + _QUERY_CHUNK_SIZE]
         for offset in range(0, len(values), _QUERY_CHUNK_SIZE)
@@ -28,7 +30,8 @@ def completion_records(
 
     rows: dict[int, dict] = {}
     for chunk in _chunks(identifiers):
-        placeholders = ",".join("?" for _ in chunk)
+        placeholders = JSON_VALUES
+        chunk_values = (json_values(chunk),)
         for row in database.execute(
             f"""
             SELECT item.work_item_key,item.module,item.project,item.participant,
@@ -44,7 +47,7 @@ def completion_records(
             JOIN work_items item ON item.id=completion.work_item_id
             WHERE completion.work_item_id IN ({placeholders})
             """,
-            chunk,
+            chunk_values,
         ):
             rows[int(row["work_item_id"])] = dict(row)
     if not rows:
@@ -56,7 +59,8 @@ def completion_records(
     upstream: dict[int, list[dict]] = {work_item_id: [] for work_item_id in rows}
     row_ids = tuple(rows)
     for chunk in _chunks(row_ids):
-        placeholders = ",".join("?" for _ in chunk)
+        placeholders = JSON_VALUES
+        chunk_values = (json_values(chunk),)
         for artifact in database.execute(
             f"""SELECT artifact.work_item_id,artifact.direction,artifact.path,
                        artifact.size,artifact.mtime_ns,artifact.digest_algorithm,
@@ -67,7 +71,7 @@ def completion_records(
                  AND artifact.attempt_id IS completion.attempt_id
                 WHERE artifact.work_item_id IN ({placeholders})
                 ORDER BY artifact.work_item_id,artifact.direction,artifact.path""",
-            chunk,
+            chunk_values,
         ):
             item = {
                 "path": artifact["path"],
@@ -85,7 +89,7 @@ def completion_records(
                 WHERE work_item_id IN ({placeholders})
                   AND required_generation IS NOT NULL
                 ORDER BY work_item_id,upstream_work_item_id,role""",
-            chunk,
+            chunk_values,
         ):
             upstream[int(parent["work_item_id"])].append(
                 {

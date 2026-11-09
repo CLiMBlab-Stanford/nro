@@ -6,6 +6,7 @@ from errno import EEXIST, ENOTEMPTY
 from pathlib import Path
 
 from nro.orchestration.registry import Registry
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -114,12 +115,11 @@ def _purge_attempt_logs(
             deleted_attempt_ids.append(int(attempt["id"]))
     if deleted_attempt_ids and not dry_run:
         with registry.connection(write=True) as db:
-            placeholders = ",".join("?" for _ in deleted_attempt_ids)
             db.execute(
                 f"""UPDATE attempts SET log_path=NULL
-                    WHERE id IN ({placeholders})
+                    WHERE id IN ({JSON_VALUES})
                       AND state NOT IN ('queued', 'running', 'cancel_requested')""",
-                deleted_attempt_ids,
+                (json_values(deleted_attempt_ids),),
             )
     return attempt_count
 

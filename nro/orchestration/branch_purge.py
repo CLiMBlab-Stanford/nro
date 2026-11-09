@@ -19,6 +19,7 @@ from nro.orchestration.purge_paths import (
     _remove_path,
 )
 from nro.orchestration.registry import Registry, utcnow
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 
 def _receipt_rows(
@@ -30,7 +31,6 @@ def _receipt_rows(
     """Return the location metadata needed to remove ownership receipts."""
     if not work_item_ids:
         return {}
-    placeholders = ",".join("?" for _ in work_item_ids)
     with registry.connection() as db:
         rows = db.execute(
             f"""SELECT i.id,i.project,i.module,i.work_item_key,i.output_root,
@@ -41,8 +41,8 @@ def _receipt_rows(
                 LEFT JOIN branch_work_items branch
                   ON branch.work_item_id=i.id AND branch.registry_id=?
                 LEFT JOIN work_item_execution execution ON execution.work_item_id=i.id
-                WHERE i.id IN ({placeholders})""",
-            (registry_id, *tuple(sorted(work_item_ids))),
+                WHERE i.id IN ({JSON_VALUES})""",
+            (registry_id, json_values(sorted(work_item_ids))),
         ).fetchall()
     return {int(row["id"]): dict(row) for row in rows}
 
@@ -51,10 +51,9 @@ def _selected_rows(db, table: str, key: str, work_item_ids: set[int]):
     """Read selected work-item rows without scanning a complete registry table."""
     if not work_item_ids:
         return []
-    placeholders = ",".join("?" for _ in work_item_ids)
     return db.execute(
-        f"SELECT * FROM {table} WHERE {key} IN ({placeholders})",
-        tuple(sorted(work_item_ids)),
+        f"SELECT * FROM {table} WHERE {key} IN ({JSON_VALUES})",
+        (json_values(sorted(work_item_ids)),),
     ).fetchall()
 
 
@@ -139,13 +138,12 @@ def snapshot(
     with registry.connection() as db:
         selected_ids = None if work_item_ids is None else {int(value) for value in work_item_ids}
         where = ""
-        parameters: tuple[int, ...] = ()
+        parameters: tuple[str, ...] = ()
         if selected_ids is not None:
             if not selected_ids:
                 return {"rows": [], "dependencies": [], "branch": name}
-            placeholders = ",".join("?" for _ in selected_ids)
-            where = f"WHERE item.id IN ({placeholders})"
-            parameters = tuple(sorted(selected_ids))
+            where = f"WHERE item.id IN ({JSON_VALUES})"
+            parameters = (json_values(sorted(selected_ids)),)
         report = [
             dict(row)
             for row in db.execute(
@@ -208,24 +206,22 @@ def snapshot(
         }
         scientific = {}
         if include_scientific_inputs and report_ids:
-            placeholders = ",".join("?" for _ in report_ids)
             scientific = {
                 int(row["id"]): dict(row)
                 for row in db.execute(
                     f"""SELECT item.id,item.input_paths_json,lineage.resolved_yaml
                         FROM work_items item
                         JOIN module_lineages lineage ON lineage.id=item.module_lineage_id
-                        WHERE item.id IN ({placeholders})""",
-                    tuple(sorted(report_ids)),
+                        WHERE item.id IN ({JSON_VALUES})""",
+                    (json_values(sorted(report_ids)),),
                 )
             }
         dependency_query = "SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies"
-        dependency_parameters: tuple[int, ...] = ()
+        dependency_parameters: tuple[str, ...] = ()
         if selected_ids is not None:
-            placeholders = ",".join("?" for _ in selected_ids)
             dependency_query += (
-                f" WHERE work_item_id IN ({placeholders})"
-                f" AND upstream_work_item_id IN ({placeholders})"
+                f" WHERE work_item_id IN ({JSON_VALUES})"
+                f" AND upstream_work_item_id IN ({JSON_VALUES})"
             )
             dependency_parameters = parameters + parameters
         dependencies = [

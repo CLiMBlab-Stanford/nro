@@ -3,6 +3,8 @@
 import sqlite3
 from collections.abc import Iterable
 
+from nro.orchestration.sql_values import JSON_VALUES, json_values
+
 ACTIVE = "('queued','running','cancel_requested')"
 WRITE_READY = f"""NOT EXISTS (
     SELECT 1 FROM attempt_dependencies pinned JOIN attempts reader ON reader.id=pinned.attempt_id
@@ -57,36 +59,35 @@ def invalidate(
     roots = tuple(sorted(set(roots)))
     if not roots:
         return []
-    placeholders = ",".join("?" for _ in roots)
     descendants = tuple(
         row[0]
         for row in db.execute(
             f"""WITH RECURSIVE
         edges(work_item_id, upstream_work_item_id) AS ({EDGES}),
         affected(id) AS (
-            SELECT work_item_id FROM edges WHERE upstream_work_item_id IN ({placeholders})
+            SELECT work_item_id FROM edges WHERE upstream_work_item_id IN ({JSON_VALUES})
             UNION SELECT edge.work_item_id FROM edges edge JOIN affected parent ON edge.upstream_work_item_id=parent.id
         ) SELECT id FROM affected""",
-            roots,
+            (json_values(roots),),
         )
     )
     if include_roots:
         descendants = tuple(sorted(set(descendants).union(roots)))
     if not descendants:
         return []
-    placeholders = ",".join("?" for _ in descendants)
+    descendant_values = json_values(descendants)
     db.execute(
         f"""UPDATE work_items SET artifact_state='stale', artifact_reason=?, updated_at=?
-                   WHERE id IN ({placeholders}) AND artifact_state='fresh' """,
-        (reason, now, *descendants),
+                   WHERE id IN ({JSON_VALUES}) AND artifact_state='fresh' """,
+        (reason, now, descendant_values),
     )
     rows = [
         dict(row)
         for row in db.execute(
             f"""SELECT a.id AS attempt_id, a.work_item_id, a.worker_id,
         i.work_item_key, i.module FROM attempts a JOIN work_items i ON i.id=a.work_item_id
-        WHERE a.work_item_id IN ({placeholders}) AND a.state IN ('queued','running')""",
-            descendants,
+        WHERE a.work_item_id IN ({JSON_VALUES}) AND a.state IN ('queued','running')""",
+            (descendant_values,),
         )
     ]
     db.executemany(

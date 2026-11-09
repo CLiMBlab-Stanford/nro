@@ -53,6 +53,7 @@ from nro.orchestration.ownership import (
     read_ownership_records,
 )
 from nro.orchestration.project_scope import is_source_datatype_directory, source_bids_walk
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 _IMAGING_SIDECAR_SUFFIXES = frozenset(
     {
@@ -506,11 +507,10 @@ def _migrate_registry_contracts_locked(registry, database, projects: tuple[str, 
     selected = set(projects)
     if not selected:
         return
-    placeholders = ",".join("?" for _ in selected)
     rows = database.execute(
         f"""SELECT id,project,artifact_contract_json FROM work_items
-            WHERE project IN ({placeholders})""",
-        tuple(sorted(selected)),
+            WHERE project IN ({JSON_VALUES})""",
+        (json_values(sorted(selected)),),
     ).fetchall()
     selected_ids = {int(row["id"]) for row in rows}
     branch_contracts: dict[int, list] = {}

@@ -15,6 +15,7 @@ from nro.orchestration.branch_purge import snapshot as branch_snapshot
 from nro.orchestration.control_paths import ControlPaths
 from nro.orchestration.manifests import evaluate_assessment
 from nro.orchestration.registry import ensure_shared_directory, utcnow
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 _RECOVERABLE_STALE_REASONS = frozenset(
     {
@@ -110,12 +111,11 @@ def _recover_journals(registry) -> None:
             artifacts = item["artifacts"]
             artifact_ids = tuple(int(artifact["id"]) for artifact in artifacts)
             with registry.connection() as db:
-                placeholders = ",".join("?" for _ in artifact_ids)
                 recorded = {
                     int(row["id"]): int(row["mtime_ns"])
                     for row in db.execute(
-                        f"SELECT id,mtime_ns FROM artifacts WHERE id IN ({placeholders})",
-                        artifact_ids,
+                        f"SELECT id,mtime_ns FROM artifacts WHERE id IN ({JSON_VALUES})",
+                        (json_values(artifact_ids),),
                     )
                 }
                 state = db.execute(
@@ -401,18 +401,18 @@ def execute(
     journal_path, journal = _prepare_journal(registry, chosen)
     token = journal["token"]
     identifiers = tuple(int(item["id"]) for item in journal["items"])
-    placeholders = ",".join("?" for _ in identifiers)
+    identifier_values = json_values(identifiers)
     try:
         with registry.connection(write=True) as db:
             if db.execute(
-                f"SELECT 1 FROM attempts WHERE work_item_id IN ({placeholders}) "
+                f"SELECT 1 FROM attempts WHERE work_item_id IN ({JSON_VALUES}) "
                 f"AND state IN {dependency_state.ACTIVE} LIMIT 1",
-                identifiers,
+                (identifier_values,),
             ).fetchone():
                 raise RuntimeError("A selected work item became active after the preview")
             if db.execute(
-                f"SELECT 1 FROM artifact_mutations WHERE work_item_id IN ({placeholders}) LIMIT 1",
-                identifiers,
+                f"SELECT 1 FROM artifact_mutations WHERE work_item_id IN ({JSON_VALUES}) LIMIT 1",
+                (identifier_values,),
             ).fetchone():
                 raise RuntimeError("A selected artifact became reserved after the preview")
             for item in journal["items"]:

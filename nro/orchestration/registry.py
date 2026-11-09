@@ -48,6 +48,7 @@ from nro.orchestration.registry_schema import (
 )
 from nro.orchestration.registry_work_items import work_item_relative_directory
 from nro.orchestration.resources import WORK_ITEM_RESOURCE_CLASSES, compatible_work_item_classes
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.orchestration.workflow_registry import RegisteredWorkflow, WorkflowRegistry
 from nro.site.paths import BIDS_PATH, REGISTRY_PATH
 
@@ -1288,13 +1289,12 @@ class Registry(WorkflowRegistry):
         if not work_item_keys:
             return {}
         unique = tuple(dict.fromkeys(work_item_keys))
-        placeholders = ",".join("?" for _ in unique)
         with self.connection() as db:
             return {
                 str(row["work_item_key"]): int(row["id"])
                 for row in db.execute(
-                    f"SELECT id, work_item_key FROM work_items WHERE work_item_key IN ({placeholders})",
-                    unique,
+                    f"SELECT id, work_item_key FROM work_items WHERE work_item_key IN ({JSON_VALUES})",
+                    (json_values(unique),),
                 )
             }
 
@@ -1704,23 +1704,23 @@ class Registry(WorkflowRegistry):
             ]
             worker_ids = [str(row["id"]) for row in workers]
             if worker_ids:
-                placeholders = ",".join("?" for _ in worker_ids)
+                worker_values = json_values(worker_ids)
                 db.execute(
                     f"""UPDATE workers SET state='shutdown_requested', updated_at=?
-                        WHERE id IN ({placeholders})""",
-                    (now, *worker_ids),
+                        WHERE id IN ({JSON_VALUES})""",
+                    (now, worker_values),
                 )
                 attempt_count = db.execute(
                     f"""UPDATE attempts SET state='cancel_requested',
                                error_type='WorkerTerminated',
                                error_message=?
-                        WHERE worker_id IN ({placeholders})
+                        WHERE worker_id IN ({JSON_VALUES})
                           AND state IN ('queued', 'running')""",
                     (
                         "Registry repair requested worker shutdown"
                         if for_repair
                         else "Owning user requested worker shutdown",
-                        *worker_ids,
+                        worker_values,
                     ),
                 ).rowcount
             else:
@@ -1749,13 +1749,12 @@ class Registry(WorkflowRegistry):
             submissions = [dict(row) for row in db.execute(submission_query, submission_parameters)]
             submission_ids = [int(row["id"]) for row in submissions]
             if submission_ids:
-                placeholders = ",".join("?" for _ in submission_ids)
                 db.execute(
                     f"""UPDATE scheduler_submissions
                         SET state=CASE WHEN slurm_job_id IS NULL THEN 'cancelled'
                                        ELSE 'cancel_requested' END
-                        WHERE id IN ({placeholders})""",
-                    tuple(submission_ids),
+                        WHERE id IN ({JSON_VALUES})""",
+                    (json_values(submission_ids),),
                 )
 
         jobs = {
@@ -1791,11 +1790,11 @@ class Registry(WorkflowRegistry):
         selected = tuple(sorted(set(map(str, worker_ids))))
         if not selected:
             return {"workers": 0, "attempts": 0, "ingestion": 0}
-        placeholders = ",".join("?" for _ in selected)
+        selected_values = json_values(selected)
         now = utcnow()
         with self.connection(write=True) as db:
             rows = db.execute(
-                f"SELECT id,state FROM workers WHERE id IN ({placeholders})", selected
+                f"SELECT id,state FROM workers WHERE id IN ({JSON_VALUES})", (selected_values,)
             ).fetchall()
             active = [
                 row["id"]
@@ -1812,21 +1811,21 @@ class Registry(WorkflowRegistry):
             IngestionIndex(self).clear_publication_barriers_locked(db)
             attempts = db.execute(
                 f"""UPDATE attempts SET state='cancelled', completed_at=?
-                    WHERE worker_id IN ({placeholders})
+                    WHERE worker_id IN ({JSON_VALUES})
                       AND state IN ('queued','running','cancel_requested')""",
-                (now, *selected),
+                (now, selected_values),
             ).rowcount
             db.execute(
                 f"""UPDATE resource_step_tasks SET state='cancelled',completed_at=?,updated_at=?,
                            error_type='WorkerTerminated',
                            error_message='Worker terminated during resource-specific runner step'
-                    WHERE worker_id IN ({placeholders}) AND state='running'""",
-                (now, now, *selected),
+                    WHERE worker_id IN ({JSON_VALUES}) AND state='running'""",
+                (now, now, selected_values),
             )
             workers = db.execute(
                 f"""UPDATE workers SET state='terminated', lease_expires_at=NULL, updated_at=?
-                    WHERE id IN ({placeholders}) AND state='shutdown_requested'""",
-                (now, *selected),
+                    WHERE id IN ({JSON_VALUES}) AND state='shutdown_requested'""",
+                (now, selected_values),
             ).rowcount
             dependency_state.synchronize(db, now=now)
         return {"workers": workers, "attempts": attempts, "ingestion": ingestion}
@@ -2529,7 +2528,7 @@ class Registry(WorkflowRegistry):
             return
         self._prepare_directories()
         scheduler = ControlPaths(self.paths.control).scheduler
-        placeholders = ",".join("?" for _ in ids)
+        id_values = json_values(ids)
         token = uuid.uuid4().hex
         with RegistryLock(
             scheduler / "artifact-mutation.lock",
@@ -2538,8 +2537,8 @@ class Registry(WorkflowRegistry):
         ):
             with self.connection(write=True) as db:
                 if db.execute(
-                    f"SELECT 1 FROM attempts WHERE work_item_id IN ({placeholders}) AND state IN {dependency_state.ACTIVE}",
-                    ids,
+                    f"SELECT 1 FROM attempts WHERE work_item_id IN ({JSON_VALUES}) AND state IN {dependency_state.ACTIVE}",
+                    (id_values,),
                 ).fetchone():
                     raise RuntimeError(
                         "Stop target attempts before replacing or purging their outputs"
@@ -2549,8 +2548,8 @@ class Registry(WorkflowRegistry):
                     "INSERT INTO artifact_mutations VALUES (?,?)", [(item, token) for item in ids]
                 )
                 db.execute(
-                    f"UPDATE work_items SET artifact_state='stale', artifact_reason='Outputs reserved for mutation', updated_at=? WHERE id IN ({placeholders})",
-                    (utcnow(), *ids),
+                    f"UPDATE work_items SET artifact_state='stale', artifact_reason='Outputs reserved for mutation', updated_at=? WHERE id IN ({JSON_VALUES})",
+                    (utcnow(), id_values),
                 )
                 dependency_state.invalidate(
                     db,
@@ -2565,9 +2564,9 @@ class Registry(WorkflowRegistry):
                         active = db.execute(
                             f"""SELECT 1 FROM attempt_dependencies pinned
                             JOIN attempts reader ON reader.id=pinned.attempt_id
-                            WHERE pinned.upstream_work_item_id IN ({placeholders})
+                            WHERE pinned.upstream_work_item_id IN ({JSON_VALUES})
                               AND reader.state IN {dependency_state.ACTIVE} LIMIT 1""",
-                            ids,
+                            (id_values,),
                         ).fetchone()
                     if not active:
                         break
@@ -2808,15 +2807,13 @@ class Registry(WorkflowRegistry):
                     changed = len(selected) != before
             if not selected:
                 return {"work_items": 0, "requests": 0, "attempts": 0}
-            work_item_placeholders = ",".join("?" for _ in selected)
-            request_placeholders = ",".join("?" for _ in eligible_requests)
-            values = (*tuple(selected), *tuple(eligible_requests))
+            values = (json_values(selected), json_values(eligible_requests))
             affected_requests = {
                 str(row["request_id"])
                 for row in db.execute(
                     f"""SELECT DISTINCT request_id FROM request_work_items
-                        WHERE work_item_id IN ({work_item_placeholders})
-                          AND request_id IN ({request_placeholders})
+                        WHERE work_item_id IN ({JSON_VALUES})
+                          AND request_id IN ({JSON_VALUES})
                           AND demand_state='active'""",
                     values,
                 )
@@ -2825,8 +2822,8 @@ class Registry(WorkflowRegistry):
                 return {"work_items": 0, "requests": 0, "attempts": 0}
             cursor = db.execute(
                 f"""UPDATE request_work_items SET demand_state=?
-                    WHERE work_item_id IN ({work_item_placeholders})
-                      AND request_id IN ({request_placeholders})
+                    WHERE work_item_id IN ({JSON_VALUES})
+                      AND request_id IN ({JSON_VALUES})
                       AND demand_state='active'""",
                 (demand_state, *values),
             )
@@ -2876,12 +2873,11 @@ class Registry(WorkflowRegistry):
                 }
                 orphaned = active_work_items - required
                 if orphaned:
-                    orphan_placeholders = ",".join("?" for _ in orphaned)
                     demand_count += db.execute(
                         f"""UPDATE request_work_items SET demand_state=?
-                            WHERE request_id=? AND work_item_id IN ({orphan_placeholders})
+                            WHERE request_id=? AND work_item_id IN ({JSON_VALUES})
                               AND demand_state='active'""",
-                        (demand_state, request_id, *tuple(orphaned)),
+                        (demand_state, request_id, json_values(orphaned)),
                     ).rowcount
             cursor = db.execute(
                 """

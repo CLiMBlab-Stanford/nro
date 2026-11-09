@@ -41,6 +41,7 @@ from nro.orchestration.resources import WORKER_COMPATIBILITY
 from nro.orchestration.scheduler_client import SchedulerError
 from nro.orchestration.scheduler_implementation import validate_worker_script
 from nro.orchestration.service_relief import await_service_relief
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.site.paths import BIDS_PATH
 
 COMPATIBLE = WORKER_COMPATIBILITY
@@ -254,14 +255,14 @@ def _runner_graph_signature(registry: Registry, work_item_id: int) -> str:
         ]
         closure_ids = {int(row["id"]) for row in closure}
         keys_by_id = {int(row["id"]): str(row["work_item_key"]) for row in closure}
-        placeholders = ",".join("?" for _ in closure_ids)
+        closure_values = json_values(sorted(closure_ids))
         edges = sorted(
             (keys_by_id[int(row["work_item_id"])], keys_by_id[int(row["upstream_work_item_id"])])
             for row in db.execute(
                 f"""SELECT work_item_id, upstream_work_item_id FROM work_item_dependencies
-                    WHERE work_item_id IN ({placeholders})
-                      AND upstream_work_item_id IN ({placeholders})""",
-                (*sorted(closure_ids), *sorted(closure_ids)),
+                    WHERE work_item_id IN ({JSON_VALUES})
+                      AND upstream_work_item_id IN ({JSON_VALUES})""",
+                (closure_values, closure_values),
             )
         )
     root = next(row for row in closure if int(row["id"]) == work_item_id)

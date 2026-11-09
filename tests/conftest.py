@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,23 @@ def definitions_fixture(tmp_path_factory):
     store_key(root, "cni", "test-cni-key", host="cni.example.org")
     store_key(root, "lucas", "test-lucas-key", host="lucas.example.org")
     return root
+
+
+@pytest.fixture(autouse=True)
+def historical_sqlite_variable_limit(monkeypatch):
+    """Apply the 999-parameter limit of older SQLite builds to every connection.
+
+    Current builds allow 32766 bound parameters, so a query that binds one
+    parameter per work item passes small tests and fails only on large sites.
+    """
+    original = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
 
 
 @pytest.fixture(autouse=True)

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 from nro.orchestration.registry import utcnow
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 _QUERY_CHUNK_SIZE = 500
 _STAT_WORKERS = 32
@@ -45,11 +46,12 @@ def assess_cached_artifacts(registry, work_item_ids: Iterable[int]) -> set[int]:
     completed: set[int] = set()
     with registry.connection() as database:
         for chunk in _chunks(selected):
-            placeholders = ",".join("?" for _ in chunk)
+            placeholders = JSON_VALUES
+            chunk_values = (json_values(chunk),)
             for row in database.execute(
                 f"""SELECT id,artifact_state,artifact_reason,current_generation
                     FROM work_items WHERE id IN ({placeholders})""",
-                chunk,
+                chunk_values,
             ):
                 rows[int(row["id"])] = dict(row)
             for row in database.execute(
@@ -60,14 +62,14 @@ def assess_cached_artifacts(registry, work_item_ids: Iterable[int]) -> set[int]:
                     JOIN work_items parent ON parent.id=d.upstream_work_item_id
                     WHERE d.work_item_id IN ({placeholders})
                     ORDER BY d.work_item_id,d.upstream_work_item_id,d.role""",
-                chunk,
+                chunk_values,
             ):
                 dependencies.setdefault(int(row["work_item_id"]), []).append(dict(row))
             completed.update(
                 int(row[0])
                 for row in database.execute(
                     f"SELECT work_item_id FROM completions WHERE work_item_id IN ({placeholders})",
-                    chunk,
+                    chunk_values,
                 )
             )
             for row in database.execute(
@@ -78,7 +80,7 @@ def assess_cached_artifacts(registry, work_item_ids: Iterable[int]) -> set[int]:
                     WHERE a.work_item_id IN ({placeholders})
                       AND a.direction IN ('input','output')
                     ORDER BY a.work_item_id,a.direction,a.path""",
-                chunk,
+                chunk_values,
             ):
                 artifacts.setdefault(int(row["work_item_id"]), []).append(dict(row))
 

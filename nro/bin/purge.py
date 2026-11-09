@@ -32,6 +32,7 @@ from nro.orchestration.purge_paths import (
 )
 from nro.orchestration.registry import Registry, utcnow
 from nro.orchestration.selection import selected_projects
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.site.paths import WORK_PATH
 
 
@@ -176,13 +177,12 @@ def _local_excluded_selection(
     lineage_ids = {int(row["module_lineage_id"]) for row in rows}
     resolved = {}
     if lineage_ids:
-        placeholders = ",".join("?" for _ in lineage_ids)
         with registry.connection() as db:
             resolved = {
                 int(row["id"]): str(row["resolved_yaml"])
                 for row in db.execute(
-                    f"SELECT id,resolved_yaml FROM module_lineages WHERE id IN ({placeholders})",
-                    tuple(sorted(lineage_ids)),
+                    f"SELECT id,resolved_yaml FROM module_lineages WHERE id IN ({JSON_VALUES})",
+                    (json_values(sorted(lineage_ids)),),
                 )
             }
     enriched = [
@@ -200,15 +200,14 @@ def _local_excluded_selection(
 def _active_work_items(registry: Registry, work_item_ids: set[int]) -> list[dict]:
     if not work_item_ids:
         return []
-    placeholders = ",".join("?" for _ in work_item_ids)
     with registry.connection() as db:
         rows = db.execute(
             f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
                 FROM attempts a JOIN work_items i ON i.id=a.work_item_id
-                WHERE a.work_item_id IN ({placeholders})
+                WHERE a.work_item_id IN ({JSON_VALUES})
                   AND a.state IN ('queued', 'running', 'cancel_requested')
                 ORDER BY i.project, i.module, i.participant, i.id""",
-            tuple(sorted(work_item_ids)),
+            (json_values(sorted(work_item_ids)),),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -261,14 +260,13 @@ def _purge_reserved_work_items(
     # called. Keep database transactions short while filesystem removal runs.
     if not dry_run:
         with central_registry.connection() as db:
-            placeholders = ",".join("?" for _ in work_item_ids)
             active = db.execute(
                 f"""SELECT DISTINCT i.project, i.module, i.participant, i.id
                     FROM attempts a JOIN work_items i ON i.id=a.work_item_id
-                    WHERE a.work_item_id IN ({placeholders})
+                    WHERE a.work_item_id IN ({JSON_VALUES})
                       AND a.state IN ('queued', 'running', 'cancel_requested')
                     ORDER BY i.project, i.module, i.participant, i.id""",
-                tuple(sorted(work_item_ids)),
+                (json_values(sorted(work_item_ids)),),
             ).fetchall()
         if active:
             raise SystemExit(_active_error([dict(row) for row in active]))
@@ -292,12 +290,11 @@ def _purge_reserved_work_items(
             work_count += int(_remove_path(path, dry_run=dry_run, prune_root=work_root_boundary))
 
     if not dry_run:
-        placeholders = ",".join("?" for _ in work_item_ids)
         with central_registry.connection(write=True) as db:
             db.execute(
                 f"""UPDATE work_items SET artifact_state='missing', artifact_reason='Purged by user',
-                    updated_at=? WHERE id IN ({placeholders})""",
-                (utcnow(), *tuple(sorted(work_item_ids))),
+                    updated_at=? WHERE id IN ({JSON_VALUES})""",
+                (utcnow(), json_values(sorted(work_item_ids))),
             )
 
     if not dry_run:

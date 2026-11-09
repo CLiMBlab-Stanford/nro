@@ -5,6 +5,7 @@ from pathlib import Path
 from nro.orchestration import dependency_state
 from nro.orchestration.branch_store import BranchStore
 from nro.orchestration.registry import utcnow
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 
 def update(
@@ -43,16 +44,16 @@ def update(
                     )
                 )
                 if requests:
-                    placeholders = ",".join("?" for _ in requests)
+                    request_values = json_values(requests)
                     db.execute(
                         f"UPDATE requests SET state='cancelled',updated_at=? "
-                        f"WHERE id IN ({placeholders}) AND state='active'",
-                        (now, *requests),
+                        f"WHERE id IN ({JSON_VALUES}) AND state='active'",
+                        (now, request_values),
                     )
                     db.execute(
                         f"UPDATE request_work_items SET demand_state='cancelled' "
-                        f"WHERE request_id IN ({placeholders})",
-                        requests,
+                        f"WHERE request_id IN ({JSON_VALUES})",
+                        (request_values,),
                     )
                 work_items = tuple(
                     row[0]
@@ -61,12 +62,11 @@ def update(
                     )
                 )
                 if work_items:
-                    placeholders = ",".join("?" for _ in work_items)
                     result = db.execute(
                         f"UPDATE attempts SET state='cancel_requested',error_type='BranchRetired',"
                         f"error_message='Owning branch retired',completed_at=NULL "
-                        f"WHERE work_item_id IN ({placeholders}) AND state IN ('queued','running')",
-                        work_items,
+                        f"WHERE work_item_id IN ({JSON_VALUES}) AND state IN ('queued','running')",
+                        (json_values(work_items),),
                     )
                     own_cancelled = result.rowcount
                     dependency_state.invalidate(
