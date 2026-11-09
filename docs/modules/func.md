@@ -94,9 +94,10 @@ so check it instead of assuming a run used the default path.
    parameters with their derivatives and squares, global, gray-matter, CSF,
    and white-matter signals with expansions, framewise displacement, aCompCor,
    DVARS, and numbered outlier families. `global_signal` averages the whole
-   brain mask. `global_gm_signal` averages the FreeSurfer aseg cerebral
-   cortex, cerebellar cortex, and subcortical gray-matter labels, so it can
-   replace `global_signal` in a cleaning or contrasts `confounds_regex`. See
+   brain mask. `global_gm_signal` averages FreeSurfer aseg cerebral-cortex
+   voxels after scaling each voxel's time course to unit standard deviation,
+   so every cortical voxel contributes equally. It can replace `global_signal`
+   in a cleaning or contrasts `confounds_regex`. See
    [denoising](../methods/denoising.md).
 9. **Publish.** nro produces T1w and MNI volumes and left and right fsnative
    and template GIFTI time courses. Native surfaces and registration spheres
