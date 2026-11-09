@@ -15,6 +15,7 @@ from nro.orchestration.ownership import (
     read_ownership_records,
 )
 from nro.orchestration.registry import utcnow
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 
 @dataclass(frozen=True)
@@ -257,20 +258,20 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         candidates.update(unowned_main)
     if not candidates:
         return []
-    placeholders = ",".join("?" for _ in candidates)
+    candidate_values = json_values(sorted(candidates))
     rows = {
         int(row["id"]): dict(row)
         for row in db.execute(
-            f"SELECT id,expected_outputs_json FROM work_items WHERE id IN ({placeholders})",
-            tuple(sorted(candidates)),
+            f"SELECT id,expected_outputs_json FROM work_items WHERE id IN ({JSON_VALUES})",
+            (candidate_values,),
         )
     }
     retained = {work_item_id for work_item_id, row in rows.items() if _has_public_evidence(row)}
     dependencies: dict[int, set[int]] = {}
     for row in db.execute(
         f"""SELECT work_item_id,upstream_work_item_id FROM work_item_dependencies
-            WHERE work_item_id IN ({placeholders})""",
-        tuple(sorted(candidates)),
+            WHERE work_item_id IN ({JSON_VALUES})""",
+        (candidate_values,),
     ):
         dependencies.setdefault(int(row["work_item_id"]), set()).add(
             int(row["upstream_work_item_id"])
@@ -308,8 +309,8 @@ def _repair_records_locked(db, *, branch: str, registry_id: str) -> list[dict]:
         projects = [
             row[0]
             for row in db.execute(
-                f"SELECT DISTINCT project FROM work_items WHERE id IN ({placeholders})",
-                tuple(sorted(candidates)),
+                f"SELECT DISTINCT project FROM work_items WHERE id IN ({JSON_VALUES})",
+                (candidate_values,),
             )
         ]
         for project in projects:

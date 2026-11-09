@@ -16,6 +16,7 @@ from nro.orchestration.artifact_resolution import (
     output_contracts_overlap,
     validate_output_ownership,
 )
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 if TYPE_CHECKING:
     from nro.orchestration.contracts import WorkItemSpec
@@ -28,11 +29,12 @@ def _rows_for_values(
     *,
     chunk_size: int = 500,
 ):
-    """Yield rows from a one-placeholder-list query without exceeding SQLite limits."""
+    """Yield rows from a query whose ``{placeholders}`` list binds ``values``."""
     for offset in range(0, len(values), chunk_size):
         chunk = values[offset : offset + chunk_size]
-        placeholders = ",".join("?" for _value in chunk)
-        yield from database.execute(statement.format(placeholders=placeholders), chunk)
+        yield from database.execute(
+            statement.format(placeholders=JSON_VALUES), (json_values(chunk),)
+        )
 
 
 def work_item_relative_directory(work_item: Mapping[str, object]) -> Path:
@@ -368,12 +370,11 @@ def normalize_active_request_graph(database: sqlite3.Connection) -> None:
             if demand_state == "active" and work_item_id not in required
         }
         if orphaned:
-            placeholders = ",".join("?" for _ in orphaned)
             database.execute(
                 f"""UPDATE request_work_items SET demand_state='cancelled'
-                    WHERE request_id=? AND work_item_id IN ({placeholders})
+                    WHERE request_id=? AND work_item_id IN ({JSON_VALUES})
                       AND demand_state='active'""",
-                (request_id, *tuple(orphaned)),
+                (request_id, json_values(orphaned)),
             )
 
 
@@ -407,11 +408,10 @@ def cancel_purged_demand(
                 affected.add(dependent)
                 pending.append(dependent)
 
-    placeholders = ",".join("?" for _ in affected)
     cursor = database.execute(
         f"""UPDATE request_work_items SET demand_state='cancelled'
-            WHERE work_item_id IN ({placeholders}) AND demand_state='active'""",
-        tuple(sorted(affected)),
+            WHERE work_item_id IN ({JSON_VALUES}) AND demand_state='active'""",
+        (json_values(sorted(affected)),),
     )
     cancelled = int(cursor.rowcount)
     normalize_active_request_graph(database)
@@ -453,23 +453,22 @@ def purge_record_partition(
     existing = {
         int(row["id"])
         for row in database.execute(
-            f"SELECT id FROM work_items WHERE id IN ({','.join('?' for _ in selected)})",
-            tuple(sorted(selected)),
+            f"SELECT id FROM work_items WHERE id IN ({JSON_VALUES})",
+            (json_values(sorted(selected)),),
         )
     }
     candidates = set(existing)
     frontier = set(existing)
     while frontier:
-        placeholders = ",".join("?" for _ in frontier)
         ancestors = {
             int(row["id"])
             for row in database.execute(
                 f"""SELECT DISTINCT upstream.id
                     FROM work_item_dependencies dependency
                     JOIN work_items upstream ON upstream.id=dependency.upstream_work_item_id
-                    WHERE dependency.work_item_id IN ({placeholders})
+                    WHERE dependency.work_item_id IN ({JSON_VALUES})
                       AND upstream.artifact_state='missing'""",
-                tuple(sorted(frontier)),
+                (json_values(sorted(frontier)),),
             )
             if int(row["id"]) not in candidates
         }
@@ -479,13 +478,12 @@ def purge_record_partition(
     affected = set(existing)
     frontier = set(existing)
     while frontier:
-        placeholders = ",".join("?" for _ in frontier)
         descendants = {
             int(row["work_item_id"])
             for row in database.execute(
                 f"""SELECT DISTINCT work_item_id FROM work_item_dependencies
-                    WHERE upstream_work_item_id IN ({placeholders})""",
-                tuple(sorted(frontier)),
+                    WHERE upstream_work_item_id IN ({JSON_VALUES})""",
+                (json_values(sorted(frontier)),),
             )
             if int(row["work_item_id"]) not in affected
         }
@@ -494,29 +492,28 @@ def purge_record_partition(
 
     deletable = set(candidates)
     if candidates:
-        placeholders = ",".join("?" for _ in candidates)
         independently_demanded = {
             int(row["work_item_id"])
             for row in database.execute(
                 f"""SELECT DISTINCT links.work_item_id
                     FROM request_work_items links
                     JOIN requests request ON request.id=links.request_id
-                    WHERE links.work_item_id IN ({placeholders})
+                    WHERE links.work_item_id IN ({JSON_VALUES})
                       AND links.demand_state='active' AND request.state='active'""",
-                tuple(sorted(candidates)),
+                (json_values(sorted(candidates)),),
             )
             if int(row["work_item_id"]) not in affected
         }
         deletable.difference_update(independently_demanded)
     while deletable:
-        placeholders = ",".join("?" for _ in deletable)
+        deletable_values = json_values(sorted(deletable))
         protected = {
             int(row["upstream_work_item_id"])
             for row in database.execute(
                 f"""SELECT upstream_work_item_id FROM work_item_dependencies
-                    WHERE upstream_work_item_id IN ({placeholders})
-                      AND work_item_id NOT IN ({placeholders})""",
-                (*tuple(sorted(deletable)), *tuple(sorted(deletable))),
+                    WHERE upstream_work_item_id IN ({JSON_VALUES})
+                      AND work_item_id NOT IN ({JSON_VALUES})""",
+                (deletable_values, deletable_values),
             )
         }
         if not protected:
@@ -534,59 +531,60 @@ def forget_purged_work_items_detailed(
     if not deletable:
         return (), retained
 
-    placeholders = ",".join("?" for _ in deletable)
     values = tuple(deletable)
+    placeholders = JSON_VALUES
+    parameters = (json_values(values),)
     attempt_ids = tuple(
         int(row["id"])
         for row in database.execute(
-            f"SELECT id FROM attempts WHERE work_item_id IN ({placeholders})", values
+            f"SELECT id FROM attempts WHERE work_item_id IN ({placeholders})", parameters
         )
     )
     if attempt_ids:
-        attempt_placeholders = ",".join("?" for _ in attempt_ids)
+        attempt_parameters = (json_values(attempt_ids),)
         database.execute(
-            f"DELETE FROM attempt_dependencies WHERE attempt_id IN ({attempt_placeholders})",
-            attempt_ids,
+            f"DELETE FROM attempt_dependencies WHERE attempt_id IN ({JSON_VALUES})",
+            attempt_parameters,
         )
         database.execute(
-            f"DELETE FROM attempt_execution WHERE attempt_id IN ({attempt_placeholders})",
-            attempt_ids,
+            f"DELETE FROM attempt_execution WHERE attempt_id IN ({JSON_VALUES})",
+            attempt_parameters,
         )
     database.execute(
         f"DELETE FROM attempt_dependencies WHERE upstream_work_item_id IN ({placeholders})",
-        values,
+        parameters,
     )
-    database.execute(f"DELETE FROM artifacts WHERE work_item_id IN ({placeholders})", values)
-    database.execute(f"DELETE FROM completions WHERE work_item_id IN ({placeholders})", values)
-    database.execute(f"DELETE FROM attempts WHERE work_item_id IN ({placeholders})", values)
+    database.execute(f"DELETE FROM artifacts WHERE work_item_id IN ({placeholders})", parameters)
+    database.execute(f"DELETE FROM completions WHERE work_item_id IN ({placeholders})", parameters)
+    database.execute(f"DELETE FROM attempts WHERE work_item_id IN ({placeholders})", parameters)
     database.execute(
-        f"DELETE FROM request_work_items WHERE work_item_id IN ({placeholders})", values
-    )
-    database.execute(
-        f"DELETE FROM request_artifacts WHERE work_item_id IN ({placeholders})", values
+        f"DELETE FROM request_work_items WHERE work_item_id IN ({placeholders})", parameters
     )
     database.execute(
-        f"DELETE FROM work_item_dependencies WHERE work_item_id IN ({placeholders})", values
+        f"DELETE FROM request_artifacts WHERE work_item_id IN ({placeholders})", parameters
     )
     database.execute(
-        f"DELETE FROM artifact_mutations WHERE work_item_id IN ({placeholders})", values
+        f"DELETE FROM work_item_dependencies WHERE work_item_id IN ({placeholders})", parameters
+    )
+    database.execute(
+        f"DELETE FROM artifact_mutations WHERE work_item_id IN ({placeholders})", parameters
     )
     mappings = database.execute(
         f"""SELECT registry_id,logical_key FROM branch_work_items
             WHERE work_item_id IN ({placeholders})""",
-        values,
+        parameters,
     ).fetchall()
     database.executemany(
         "DELETE FROM compiled_revisions WHERE registry_id=? AND logical_key=?",
         [(row["registry_id"], row["logical_key"]) for row in mappings],
     )
     database.execute(
-        f"DELETE FROM branch_work_items WHERE work_item_id IN ({placeholders})", values
+        f"DELETE FROM branch_work_items WHERE work_item_id IN ({placeholders})", parameters
     )
     database.execute(
-        f"DELETE FROM work_item_execution WHERE work_item_id IN ({placeholders})", values
+        f"DELETE FROM work_item_execution WHERE work_item_id IN ({placeholders})", parameters
     )
-    database.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", values)
+    database.execute(f"DELETE FROM work_items WHERE id IN ({placeholders})", parameters)
     return values, retained
 
 
@@ -607,14 +605,14 @@ def retained_dependency_modules(
     retained = {int(value) for value in retained_work_item_ids}
     if not retained:
         return {}
-    placeholders = ",".join("?" for _ in retained)
+    retained_values = json_values(sorted(retained))
     rows = database.execute(
         f"""SELECT DISTINCT child.id, child.module
             FROM work_item_dependencies edges
             JOIN work_items child ON child.id=edges.work_item_id
-            WHERE edges.upstream_work_item_id IN ({placeholders})
-              AND edges.work_item_id NOT IN ({placeholders})""",
-        (*tuple(sorted(retained)), *tuple(sorted(retained))),
+            WHERE edges.upstream_work_item_id IN ({JSON_VALUES})
+              AND edges.work_item_id NOT IN ({JSON_VALUES})""",
+        (retained_values, retained_values),
     )
     counts: dict[str, int] = {}
     for row in rows:

@@ -27,6 +27,7 @@ from nro.engine.references import (
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.dependencies import primary_dependency
 from nro.orchestration.planning_context import work_item_key
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.orchestration.workflow_registry import (
     lineage_directory_label,
     unbound_lineage_fingerprint,
@@ -559,7 +560,6 @@ def missing_work_item_ownership(
     with registry.connection() as db:
         for offset in range(0, len(selected), 500):
             batch = selected[offset : offset + 500]
-            placeholders = ",".join("?" for _ in batch)
             rows.extend(
                 dict(row)
                 for row in db.execute(
@@ -568,8 +568,8 @@ def missing_work_item_ownership(
                         FROM work_items i
                         JOIN module_lineages c ON c.id=i.module_lineage_id
                         LEFT JOIN work_item_execution e ON e.work_item_id=i.id
-                        WHERE i.id IN ({placeholders})""",
-                    batch,
+                        WHERE i.id IN ({JSON_VALUES})""",
+                    (json_values(batch),),
                 )
             )
     missing = []

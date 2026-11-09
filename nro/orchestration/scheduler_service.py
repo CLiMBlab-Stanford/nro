@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -53,6 +54,7 @@ from nro.orchestration.scheduler_operations import (
     supply_needed,
 )
 from nro.orchestration.source_snapshots import SourceSnapshot
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.site.configuration import protected_site_fingerprint
 
 _STOP = False
@@ -235,7 +237,6 @@ def admit_many(
                 ordered = tuple(sorted(reusable_ids))
                 for offset in range(0, len(ordered), 500):
                     chunk = ordered[offset : offset + 500]
-                    placeholders = ",".join("?" for _ in chunk)
                     current.update(
                         {
                             int(row["id"]): (
@@ -244,8 +245,8 @@ def admit_many(
                             )
                             for row in db.execute(
                                 f"""SELECT id,artifact_state,current_generation FROM work_items
-                                    WHERE id IN ({placeholders})""",
-                                chunk,
+                                    WHERE id IN ({JSON_VALUES})""",
+                                (json_values(chunk),),
                             )
                         }
                     )
@@ -1490,6 +1491,13 @@ def _message_response(registry, record: dict, *, values: dict) -> dict:
     except RetryableSchedulerRequest:
         raise
     except (ValueError, RuntimeError, OSError, KeyError, TypeError, sqlite3.Error) as error:
+        # The client sees only the message. Keep the traceback in the controller log.
+        operation = record["payload"].get("operation", "unknown")
+        print(
+            f"Scheduler request {record['id']} ({operation}) failed:\n{traceback.format_exc()}",
+            end="",
+            flush=True,
+        )
         response = {"error": str(error), "error_type": type(error).__name__}
     return response
 

@@ -290,3 +290,25 @@ def test_main_status_does_not_adopt_another_branch_recovery_record(monkeypatch, 
 
     assert report["visible_ids"] == [ids[legacy.key]]
     assert [row["id"] for row in report["rows"]] == [ids[legacy.key]]
+
+
+def test_failed_request_logs_traceback_and_keeps_reply(monkeypatch, capsys, tmp_path):
+    import sqlite3
+
+    def failing_dispatch(*_args, **_kwargs):
+        raise sqlite3.OperationalError("too many SQL variables")
+
+    monkeypatch.setattr(scheduler_service, "dispatch", failing_dispatch)
+    record = {"id": "message-1", "payload": {"project": "demo", "operation": "run"}}
+
+    response = scheduler_service._message_response(
+        None,
+        record,
+        values={"bids": tmp_path / "bids", "registry": tmp_path / "registry"},
+    )
+
+    assert response == {"error": "too many SQL variables", "error_type": "OperationalError"}
+    output = capsys.readouterr().out
+    assert "Scheduler request message-1 (run) failed:" in output
+    assert "Traceback (most recent call last)" in output
+    assert "failing_dispatch" in output

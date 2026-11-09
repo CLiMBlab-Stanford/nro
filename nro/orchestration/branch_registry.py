@@ -25,6 +25,7 @@ from nro.orchestration.migrations import RegistrySchema, migrate_database
 from nro.orchestration.migrations.baseline import WORKFLOW_SQL
 from nro.orchestration.migrations.scientific import MIGRATIONS
 from nro.orchestration.registry import RegistryLock, ensure_shared_directory
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 from nro.orchestration.workflow_registry import (
     WorkflowRegistry,
     lineage_directory_label,
@@ -263,11 +264,10 @@ class BranchRegistry(WorkflowRegistry):
                 batch = selected[offset : offset + 500]
                 if not batch:
                     continue
-                placeholders = ",".join("?" for _ in batch)
                 rows = db.execute(
                     f"SELECT work_item_key,revision FROM work_items "
-                    f"WHERE work_item_key IN ({placeholders})",
-                    batch,
+                    f"WHERE work_item_key IN ({JSON_VALUES})",
+                    (json_values(batch),),
                 )
                 revisions.update((str(row[0]), int(row[1])) for row in rows)
         return revisions
@@ -334,11 +334,10 @@ class BranchRegistry(WorkflowRegistry):
         with self._connection() as db:
             for offset in range(0, len(selected), 500):
                 batch = selected[offset : offset + 500]
-                placeholders = ",".join("?" for _ in batch)
                 for row in db.execute(
                     f"SELECT path,size,mtime_ns,ctime_ns,kind,digest FROM planning_files "
-                    f"WHERE path IN ({placeholders})",
-                    batch,
+                    f"WHERE path IN ({JSON_VALUES})",
+                    (json_values(batch),),
                 ):
                     records[str(row["path"])] = (
                         int(row["size"]),

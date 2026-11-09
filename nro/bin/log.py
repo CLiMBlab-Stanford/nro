@@ -14,6 +14,7 @@ from nro.engine.cli import matches_work_item_selectors as matches_selectors
 from nro.orchestration.catalog import MODULES
 from nro.orchestration.registry import Registry
 from nro.orchestration.selection import selected_projects
+from nro.orchestration.sql_values import JSON_VALUES, json_values
 
 LOG_MODULES = (*MODULES, "bidsify")
 
@@ -91,7 +92,6 @@ def collect_log_paths(
     if not work_item_filtered:
         return _existing(registry.paths.workers.glob("slurm-*.log"))
 
-    placeholders = ",".join("?" for _ in work_item_ids)
     job_ids: set[str] = set()
     with registry.read_connection() as db:
         job_ids.update(
@@ -99,8 +99,8 @@ def collect_log_paths(
             for row in db.execute(
                 f"""SELECT DISTINCT w.slurm_job_id
                     FROM attempts a JOIN workers w ON w.id=a.worker_id
-                    WHERE a.work_item_id IN ({placeholders}) AND w.slurm_job_id IS NOT NULL""",
-                tuple(sorted(work_item_ids)),
+                    WHERE a.work_item_id IN ({JSON_VALUES}) AND w.slurm_job_id IS NOT NULL""",
+                (json_values(sorted(work_item_ids)),),
             )
         )
     return _existing(registry.paths.workers / f"slurm-{job_id}.log" for job_id in job_ids)
