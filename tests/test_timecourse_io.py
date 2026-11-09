@@ -190,7 +190,11 @@ def test_confounds_loads_epi_once(
     )
 
     confounds = pd.read_csv(out_tsv, sep="\t")
-    expected_gm = epi_data[6:].mean(axis=(0, 1, 2))
+    cortex = epi_data[6:].reshape(-1, epi_data.shape[-1]).astype(np.float64)
+    cortex -= cortex.mean(axis=1, keepdims=True)
+    scale = cortex.std(axis=1, keepdims=True)
+    scale[scale == 0.0] = 1.0
+    expected_gm = (cortex / scale).mean(axis=0)
     assert np.allclose(confounds["global_gm_signal"], expected_gm, rtol=1e-5)
     from nro.definitions.store import ConfigStore
 

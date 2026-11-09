@@ -471,8 +471,15 @@ def test_confounds_changes_invalidate_only_functional_publication(functional_cas
     confounds = next(step for step in graph.steps if step.name == "Confounds")
     by_id = {step.id: step for step in graph.steps}
 
-    previous = type(confounds)._scientific_signature({"repetition_time": 2.0})
-    assert confounds.scientific_signature != previous
+    for previous_parameters in (
+        {"repetition_time": 2.0},
+        {
+            "repetition_time": 2.0,
+            "mean_signals": ["white_matter", "csf", "global_signal", "global_gm_signal"],
+        },
+    ):
+        previous = type(confounds)._scientific_signature(previous_parameters)
+        assert confounds.scientific_signature != previous
     assert {by_id[step_id].name for step_id in graph.descendants(confounds)} == {
         "Publish Functional Derivatives"
     }

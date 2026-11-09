@@ -3544,3 +3544,41 @@ def test_fatal_work_item_failure_cancels_active_transitive_descendants(tmp_path:
     cancelled = registry.cancel_attempts_downstream_of_failure(int(rows[specs[0].key]["id"]))
     assert [row["work_item_key"] for row in cancelled] == [specs[-1].key]
     assert registry.attempt_cancel_requested(claimed.attempt_id)
+
+
+def test_idle_undersized_worker_does_not_block_larger_worker_supply(tmp_path: Path) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    item = _spec(
+        key="anat:" + "6" * 64,
+        module="anat",
+        lineage=registered.lineages["anat"],
+        config_fingerprint=workflow.configuration("anat").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "anat"),
+        output=tmp_path / "large.txt",
+    ).evolve(memory_gb=64, max_memory_gb=256)
+    request = registry.create_request(
+        registered=registered,
+        target_module="anat",
+        selectors={},
+        work_items=(item,),
+        terminal_work_item_keys=(item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("small", resource_class="large", memory_gb=32)
+    assert registry.claim_ready_work_item("small", ("large",)) is None
+
+    assert registry.worker_capacity_needed(
+        request_id=request,
+        resource_class="large",
+        memory_gb=64,
+        minimum_memory_gb=32,
+    )
+    assert not registry.worker_capacity_needed(
+        request_id=request,
+        resource_class="large",
+        memory_gb=32,
+    )

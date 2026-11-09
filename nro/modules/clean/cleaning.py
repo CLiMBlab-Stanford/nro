@@ -500,7 +500,12 @@ def _build_cleaning_projection(
         vh_x = vh_x[positive, :]
         if variance.size:
             cumulative = np.cumsum(variance) / variance.sum()
-            target_count = int(np.searchsorted(cumulative, target, side="left") + 1)
+            # Rounding can leave the final cumulative fraction just below 1.0,
+            # so a target of 1.0 would otherwise ask for one component too many.
+            target_count = min(
+                int(np.searchsorted(cumulative, target, side="left") + 1),
+                int(variance.size),
+            )
             component_count = min(target_count, maximum_nuisance_components)
             limited_by_rank = component_count < target_count
             if component_count:

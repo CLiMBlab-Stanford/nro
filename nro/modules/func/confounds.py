@@ -39,26 +39,10 @@ CSF_LABELS = frozenset(
         24,  # CSF
     }
 )
-GM_LABELS = frozenset(
+CORTEX_LABELS = frozenset(
     {
         3,  # Left-Cerebral-Cortex
         42,  # Right-Cerebral-Cortex
-        8,  # Left-Cerebellum-Cortex
-        47,  # Right-Cerebellum-Cortex
-        10,  # Left-Thalamus
-        49,  # Right-Thalamus
-        11,  # Left-Caudate
-        50,  # Right-Caudate
-        12,  # Left-Putamen
-        51,  # Right-Putamen
-        13,  # Left-Pallidum
-        52,  # Right-Pallidum
-        17,  # Left-Hippocampus
-        53,  # Right-Hippocampus
-        18,  # Left-Amygdala
-        54,  # Right-Amygdala
-        26,  # Left-Accumbens-area
-        58,  # Right-Accumbens-area
     }
 )
 
@@ -144,6 +128,30 @@ def _mean_signal_dense(
     # (X,Y,Z) · (X,Y,Z,T) -> (T,)
     signal = np.tensordot(m, epi_4d, axes=([0, 1, 2], [0, 1, 2])) / denom
     return np.asarray(signal, dtype=np.float64)
+
+
+def _standardized_mean_signal_dense(
+    epi_4d: np.ndarray,
+    mask3d: np.ndarray,
+    *,
+    name: str,
+) -> np.ndarray:
+    """
+    Mean of voxel time courses that were each centered and scaled to unit
+    temporal standard deviation. Every voxel contributes equally, so
+    high-intensity or high-variance voxels do not dominate the average.
+    Constant voxels contribute zero.
+    """
+    if mask3d.shape != epi_4d.shape[:3]:
+        raise ValueError(f"mask shape {mask3d.shape} does not match epi spatial {epi_4d.shape[:3]}")
+    if not np.any(mask3d):
+        raise SystemExit(f"{name} mask is empty; cannot compute its mean signal")
+    voxels = np.asarray(epi_4d[mask3d], dtype=np.float64)
+    voxels -= voxels.mean(axis=1, keepdims=True)
+    scale = voxels.std(axis=1, keepdims=True)
+    scale[scale == 0.0] = 1.0
+    voxels /= scale
+    return voxels.mean(axis=0)
 
 
 def _expanded_signal_columns(base: str, signal: np.ndarray) -> dict[str, np.ndarray]:
@@ -504,11 +512,11 @@ def get_confounds(
     epi_4d = np.asanyarray(epi_img.dataobj, dtype=np.float32)
     wm_mask = np.isin(aseg_resampled, sorted(WM_LABELS)) & epi_fov
     csf_mask = np.isin(aseg_resampled, sorted(CSF_LABELS)) & epi_fov
-    gm_mask = np.isin(aseg_resampled, sorted(GM_LABELS)) & epi_fov
+    cortex_mask = np.isin(aseg_resampled, sorted(CORTEX_LABELS)) & epi_fov
     gs = _mean_signal_dense(epi_4d, brain_mask, name="Brain")
     wm = _mean_signal_dense(epi_4d, wm_mask, name="White-matter")
     csf = _mean_signal_dense(epi_4d, csf_mask, name="CSF")
-    gm = _mean_signal_dense(epi_4d, gm_mask, name="Gray-matter")
+    gm = _standardized_mean_signal_dense(epi_4d, cortex_mask, name="Cerebral-cortex")
     acomps = _acompcor_dense(
         epi_4d=epi_4d,
         epi_fov=epi_fov,
@@ -644,7 +652,7 @@ def get_confounds(
             "A significant DVARS difference marks both frames in the adjacent pair.",
             "global_signal is computed within brain_mask_in_epi when provided; otherwise it falls back to an aseg-derived brain mask (aseg!=0) resampled to the EPI grid.",
             "white_matter and csf are mean signals from FreeSurfer aseg tissue labels resampled to the EPI grid.",
-            "global_gm_signal is the mean signal over FreeSurfer aseg cerebral cortex, cerebellar cortex, and subcortical gray-matter labels resampled to the EPI grid.",
+            "global_gm_signal is the mean over FreeSurfer aseg cerebral-cortex voxels resampled to the EPI grid, after each voxel time course is centered and scaled to unit standard deviation.",
             "The six motion and four mean-signal regressors include derivative1, power2, and derivative1_power2 expansions. The Satterthwaite 36-parameter model uses the motion, white_matter, csf, and global_signal sets.",
             "aCompCor is computed from WM+CSF voxels using FreeSurfer aseg labels and nearest-neighbor resampling to EPI grid, using randomized SVD for the top components.",
             "cosine* columns are nonconstant DCT-II drift regressors using the fMRIPrep/Nilearn convention.",

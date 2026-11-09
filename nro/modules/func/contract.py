@@ -11,7 +11,7 @@ FINAL_RESAMPLING_INTERPOLATION = "wsinc5"
 FINAL_WARP_INTERPOLATION = "linear"
 MARSS_DIAGNOSTIC_METHOD = "equal_target_slice_fisher_z_v1"
 CONFOUNDS_SCHEMA = {
-    "version": 3,
+    "version": 4,
     "continuous_families": [
         "satterthwaite_36_parameter",
         "gray_matter_signal",

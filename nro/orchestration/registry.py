@@ -3181,7 +3181,15 @@ class Registry(WorkflowRegistry):
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
 
-            def allocated_workers(minimum_memory: int = 0, *, whole_cpu_pool: bool = False) -> int:
+            def allocated_workers(
+                minimum_memory: int = 0,
+                *,
+                whole_cpu_pool: bool = False,
+                idle_memory_floor: int = 0,
+            ) -> int:
+                # Idle workers smaller than idle_memory_floor cannot claim the
+                # work this tier needs, so they do not count against its
+                # concurrency budget. They exit after their idle timeout.
                 allocation_classes = (
                     ("large", "long")
                     if whole_cpu_pool and resource_class in {"large", "long"}
@@ -3202,11 +3210,19 @@ class Registry(WorkflowRegistry):
                                       AND ss.predecessor_worker_id IS NULL
                                   )
                               )
+                              AND NOT (
+                                  ss.memory_gb<? AND EXISTS (
+                                      SELECT 1 FROM workers idle
+                                      WHERE idle.slurm_job_id=ss.slurm_job_id
+                                        AND idle.state='idle' AND idle.lease_expires_at>?
+                                  )
+                              )
                             UNION ALL
                             SELECT 'worker:' || w.id AS allocation
                             FROM workers w
                             WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
                               AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
+                              AND NOT (w.state='idle' AND w.memory_gb<?)
                               AND NOT EXISTS (
                                   SELECT 1 FROM scheduler_submissions ss
                                   WHERE ss.slurm_job_id=w.slurm_job_id
@@ -3223,15 +3239,18 @@ class Registry(WorkflowRegistry):
                         (
                             *allocation_classes,
                             minimum_memory,
+                            idle_memory_floor,
+                            time.time(),
                             time.time(),
                             *allocation_classes,
                             minimum_memory,
+                            idle_memory_floor,
                         ),
                     ).fetchone()[0]
                 )
 
             capable_allocations = allocated_workers(memory_gb)
-            pool_allocations = allocated_workers(whole_cpu_pool=True)
+            pool_allocations = allocated_workers(whole_cpu_pool=True, idle_memory_floor=memory_gb)
             available = max(0, global_limit - pool_allocations)
             count = min(max(0, desired - capable_allocations), available)
             if ingestion_ready:
