@@ -169,7 +169,9 @@ def test_unidentifiable_passband_produces_explicit_zero_sentinel() -> None:
 def test_full_variance_target_keeps_every_nuisance_component() -> None:
     rng = np.random.default_rng(7)
     n_scans = 200
-    confounds = pd.DataFrame(rng.standard_normal((n_scans, 21)), columns=[f"c{i}" for i in range(21)])
+    confounds = pd.DataFrame(
+        rng.standard_normal((n_scans, 21)), columns=[f"c{i}" for i in range(21)]
+    )
     projection = _build_cleaning_projection(
         confounds=confounds,
         outliers=pd.DataFrame(index=np.arange(n_scans)),
