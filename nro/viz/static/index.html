@@ -66,6 +66,7 @@
         <button type="button" data-view="posterior">Posterior</button>
       </div>
       <button id="reset-view" type="button">Reset view</button>
+      <button id="download" type="button" title="Save the current render as a PNG image">Download PNG</button>
     </section>
 
     <section>
@@ -74,6 +75,7 @@
         <label>Contrast analysis <select id="contrast-analysis"></select></label>
         <label>Grain <select id="contrast-grain"></select></label>
         <label id="contrast-instance-row">Session or run <select id="contrast-instance"></select></label>
+        <label id="contrast-lineage-row" hidden>Lineage <select id="contrast-lineage"></select></label>
         <div class="add">
           <label>Statistic <select id="contrast-stat"></select></label>
           <button id="add-contrast" type="button">Add</button>
@@ -83,6 +85,7 @@
         <select id="available"></select>
         <button id="add" type="button">Add</button>
       </div>
+      <label id="available-lineage-row" hidden>Lineage <select id="available-lineage"></select></label>
       <div class="add">
         <input id="file-path" type="text" placeholder="Path in the project, e.g. derivatives/..." spellcheck="false">
         <button id="open-file" type="button" title="Open a GIFTI or CIFTI file from this project's BIDS directory">Open</button>

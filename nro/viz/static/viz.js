@@ -7,6 +7,9 @@ const $ = (id) => document.getElementById(id);
 const HEMISPHERES = ["L", "R"];
 const KINDS = ["inflated", "midthickness", "pial", "white"];
 const SPLIT_GAP_MM = 6;
+// Native white and pial surfaces can overlap slightly at the medial wall.
+// Larger overlaps mean the hemispheres share a center and must be moved apart.
+const MAX_MIDLINE_OVERLAP_MM = 15;
 const FIT_MARGIN = 0.06; // Fraction of the canvas left empty on each side.
 const SEED_COLOR = 0x19d36b;
 
@@ -207,6 +210,17 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+// Render one frame and save the canvas immediately, before the browser clears
+// the drawing buffer.
+function downloadPNG() {
+  renderer.render(scene, camera);
+  const link = document.createElement("a");
+  const name = [$("project").value, $("participant").value].filter(Boolean).join("_") || "render";
+  link.download = `nro-viz_${name}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
 function visibleMeshes() {
   return HEMISPHERES.map((hemisphere) => state.meshes[hemisphere]).filter((mesh) => mesh && mesh.visible);
 }
@@ -239,8 +253,13 @@ function setView(name) {
     if (state.meshes[hemisphere]) state.meshes[hemisphere].visible = !state.only || state.only === hemisphere;
   }
   const { center } = frame();
-  camera.position.copy(center).addScaledVector(new THREE.Vector3(...view.direction).normalize(), 100);
-  if (controls === trackball) camera.up.set(...view.up);
+  // View directions are anatomical. A single-hemisphere view follows that
+  // hemisphere's layout rotation, so splayed lateral and medial views still
+  // face the requested surface.
+  const rotation = view.only && state.meshes[view.only] ? state.meshes[view.only].quaternion : new THREE.Quaternion();
+  const direction = new THREE.Vector3(...view.direction).normalize().applyQuaternion(rotation);
+  camera.position.copy(center).addScaledVector(direction, 100);
+  if (controls === trackball) camera.up.set(...view.up).applyQuaternion(rotation);
   else camera.up.set(0, 0, 1);
   camera.lookAt(center);
   fitView();
@@ -297,6 +316,14 @@ function resetView() {
 // the left and the right hemisphere on the right, with the base still down.
 function layoutHemispheres() {
   const layout = $("layout").value;
+  const boxes = {};
+  for (const hemisphere of HEMISPHERES) {
+    const geometry = state.meshes[hemisphere]?.geometry;
+    if (!geometry) continue;
+    geometry.computeBoundingBox();
+    boxes[hemisphere] = geometry.boundingBox;
+  }
+  const overlap = boxes.L && boxes.R ? boxes.L.max.x - boxes.R.min.x : 0;
   for (const hemisphere of HEMISPHERES) {
     const mesh = state.meshes[hemisphere];
     if (!mesh) continue;
@@ -314,7 +341,11 @@ function layoutHemispheres() {
     }
     mesh.quaternion.identity();
     let offset = 0;
-    if (layout === "separated") {
+    if (layout === "together" && overlap > MAX_MIDLINE_OVERLAP_MM) {
+      // Surfaces centered on their own hemisphere, such as FreeSurfer inflated
+      // surfaces, would coincide; place them so they meet at the midline.
+      offset = sign < 0 ? -Math.max(box.max.x, 0) : -Math.min(box.min.x, 0);
+    } else if (layout === "separated") {
       offset = sign < 0 ? -SPLIT_GAP_MM / 2 - Math.max(box.max.x, 0) : SPLIT_GAP_MM / 2 - Math.min(box.min.x, 0);
     }
     mesh.position.set(offset, 0, 0);
@@ -422,6 +453,8 @@ function sulcGray(value, shading) {
 }
 
 function recolor() {
+  // The seed marker is shown only while a visible layer is a seed correlation.
+  seedMarker.visible = state.layers.some((layer) => layer.visible && layer.meta.kind === "connectivity");
   const additive = $("additive").checked;
   const drawn = state.layers.filter((layer) => layer.visible && layer.values).slice().reverse();
   for (const hemisphere of HEMISPHERES) {
@@ -512,6 +545,24 @@ function compatible(layer, family) {
   return Object.entries(layer.vertex_counts).every(([hemisphere, count]) => family.vertex_counts[hemisphere] === count);
 }
 
+// Layers that differ only by lineage share one menu entry; a separate lineage
+// menu picks among them.
+function entryKey(layer) {
+  return [layer.module, layer.kind, layer.label, layer.maps.length].join("\u0000");
+}
+
+function lineagesOf(layer) {
+  const key = entryKey(layer);
+  const layers = (state.view?.layers || []).filter((other) => entryKey(other) === key && compatible(other, state.family));
+  return [...new Set(layers.map((other) => other.lineage || ""))];
+}
+
+function fillLineages(select, row, layers) {
+  const lineages = [...new Set(layers.map((layer) => layer.lineage || ""))];
+  refillSelect(select, lineages, (value) => value || "(unnamed)");
+  row.hidden = lineages.length < 2;
+}
+
 function describe(layer) {
   const suffix = layer.kind === "connectivity" ? " (seed correlation)" : layer.maps.length > 1 ? ` (${layer.maps.length} maps)` : "";
   return `${layer.label}${suffix}`;
@@ -553,6 +604,8 @@ function updateContrastMenus() {
   $("contrast-instance-row").firstChild.textContent = `${grain === "run" ? "Run" : grain === "session" ? "Session" : "Instance"} `;
   const inInstance = inGrain.filter((layer) => layer.contrast.instance === $("contrast-instance").value);
   refillSelect($("contrast-stat"), uniqueValues(inInstance, "stat", ["t", "z", "p", "effect", "variance", "dof"]));
+  const inStat = inInstance.filter((layer) => layer.contrast.stat === $("contrast-stat").value);
+  fillLineages($("contrast-lineage"), $("contrast-lineage-row"), inStat);
 }
 
 function selectedContrast() {
@@ -562,7 +615,11 @@ function selectedContrast() {
     instance: $("contrast-instance").value,
     stat: $("contrast-stat").value,
   };
-  return contrastLayers().find((layer) => Object.entries(choice).every(([key, value]) => layer.contrast[key] === value));
+  const lineage = $("contrast-lineage").value;
+  return contrastLayers().find(
+    (layer) =>
+      Object.entries(choice).every(([key, value]) => layer.contrast[key] === value) && (layer.lineage || "") === lineage,
+  );
 }
 
 function populateAvailable() {
@@ -571,50 +628,85 @@ function populateAvailable() {
   select.replaceChildren();
   const layers = (state.view?.layers || []).filter((layer) => !layer.contrast && compatible(layer, state.family));
   const groups = new Map();
+  const seen = new Set();
   for (const layer of layers) {
+    const key = entryKey(layer);
+    if (seen.has(key)) continue;
+    seen.add(key);
     if (!groups.has(layer.module)) {
       const group = document.createElement("optgroup");
       group.label = layer.module;
       groups.set(layer.module, group);
       select.append(group);
     }
-    groups.get(layer.module).append(new Option(describe(layer), layer.id));
+    groups.get(layer.module).append(new Option(describe(layer), key));
   }
   if (!layers.length) {
     const text = contrastLayers().length ? "No other layers match these surfaces" : "No layers match these surfaces";
     select.append(new Option(text, ""));
   }
   $("add").disabled = !layers.length;
+  updateAvailableLineages();
+}
+
+function availableChoices() {
+  const key = $("available").value;
+  return (state.view?.layers || []).filter(
+    (layer) => !layer.contrast && compatible(layer, state.family) && entryKey(layer) === key,
+  );
+}
+
+function updateAvailableLineages() {
+  fillLineages($("available-lineage"), $("available-lineage-row"), availableChoices());
+}
+
+function selectedAvailable() {
+  const lineage = $("available-lineage").value;
+  return availableChoices().find((layer) => (layer.lineage || "") === lineage);
+}
+
+// Each range field shows the user's value, or is blank with the current map's
+// default as its placeholder. User values persist across map changes until
+// the user edits or clears them.
+const RANGE_FIELDS = ["min", "max", "threshold"];
+
+function applyScale(layer) {
+  const { user, auto } = layer;
+  layer.cmap = user.cmap ?? auto.cmap ?? CMAP_CHOICES[layer.meta.kind][0];
+  const signed = layer.cmap === "signed";
+  // A signed scale with only one bound set by the user mirrors that bound.
+  layer.min = user.min ?? (signed && user.max !== null ? -Math.abs(user.max) : auto.min ?? null);
+  layer.max = user.max ?? (signed && user.min !== null ? Math.abs(user.min) : auto.max ?? null);
+  layer.threshold = user.threshold ?? auto.threshold ?? null;
 }
 
 function syncInputs(layer) {
   const card = layer.card;
-  card.querySelector(".min").value = layer.min ?? "";
-  card.querySelector(".max").value = layer.max ?? "";
-  card.querySelector(".threshold").value = layer.threshold ?? "";
-  card.querySelector(".min").disabled = layer.cmap === "labels";
-  card.querySelector(".max").disabled = layer.cmap === "labels";
-  card.querySelector(".threshold").disabled = layer.cmap === "labels";
+  card.querySelector(".cmap").value = layer.cmap;
+  for (const field of RANGE_FIELDS) {
+    const input = card.querySelector(`.${field}`);
+    input.value = layer.user[field] ?? "";
+    input.placeholder = layer[field] ?? "";
+    input.disabled = layer.cmap === "labels";
+  }
 }
 
+// Return the default colors and range for the layer's current values.
 function defaultScale(layer) {
-  if (layer.meta.kind === "label") return;
-  if (layer.meta.kind === "connectivity") {
-    Object.assign(layer, { cmap: "signed", max: 0.6, threshold: null, min: -0.6 });
-    return;
-  }
+  if (layer.meta.kind === "label") return {};
+  if (layer.meta.kind === "connectivity") return { cmap: "signed", max: 0.6, threshold: null, min: -0.6 };
+  if (!layer.values) return {};
   const { quantile, zeroFraction } = summarize(layer.values);
   const low = quantile(0.02);
   const high = quantile(0.98);
   const round = (value) => Number(value.toPrecision(3));
   if (low < 0 && high > 0) {
     const magnitude = Math.max(Math.abs(low), Math.abs(high));
-    Object.assign(layer, { cmap: "signed", min: -round(magnitude), max: round(magnitude), threshold: null });
-  } else {
-    // Hide a block of exact zeros, such as a medial wall, below the lowest real value.
-    const threshold = zeroFraction > 0.01 && low > 0 ? round(quantile(0)) : null;
-    Object.assign(layer, { min: round(low), max: round(high), threshold });
+    return { cmap: "signed", min: -round(magnitude), max: round(magnitude), threshold: null };
   }
+  // Hide a block of exact zeros, such as a medial wall, below the lowest real value.
+  const threshold = zeroFraction > 0.01 && low > 0 ? round(quantile(0)) : null;
+  return { min: round(low), max: round(high), threshold };
 }
 
 async function loadLayer(layer, { rescale }) {
@@ -640,8 +732,8 @@ async function loadLayer(layer, { rescale }) {
       if (layer.meta.kind === "label") layer.labels = await getJSON("/api/labels", params);
     }
     if (rescale) {
-      defaultScale(layer);
-      layer.card.querySelector(".cmap").value = layer.cmap;
+      layer.auto = defaultScale(layer);
+      applyScale(layer);
       syncInputs(layer);
     }
   } finally {
@@ -678,10 +770,14 @@ function addLayer(meta) {
     min: null,
     max: null,
     threshold: null,
+    // Values the user typed or chose; null means use the map's default.
+    user: { cmap: null, min: null, max: null, threshold: null },
+    auto: {},
     opacity: meta.kind === "label" ? 0.85 : 1,
     visible: true,
   };
-  card.querySelector(".name").textContent = `${meta.module}: ${describe(meta)}`;
+  const lineage = lineagesOf(meta).length > 1 && meta.lineage ? ` [${meta.lineage}]` : "";
+  card.querySelector(".name").textContent = `${meta.module}${lineage}: ${describe(meta)}`;
   const mapSelect = card.querySelector(".map");
   meta.maps.forEach((name, index) => mapSelect.append(new Option(name || `map ${index + 1}`, index)));
   card.querySelector(".map-row").hidden = meta.maps.length < 2;
@@ -694,13 +790,16 @@ function addLayer(meta) {
     loadLayer(layer, { rescale: true }).catch(() => {});
   });
   cmapSelect.addEventListener("change", () => {
-    layer.cmap = cmapSelect.value;
+    layer.user.cmap = cmapSelect.value;
+    applyScale(layer);
     syncInputs(layer);
     recolor();
   });
-  for (const field of ["min", "max", "threshold"]) {
+  for (const field of RANGE_FIELDS) {
     card.querySelector(`.${field}`).addEventListener("change", (event) => {
-      layer[field] = finite(event.target.value);
+      layer.user[field] = finite(event.target.value);
+      applyScale(layer);
+      syncInputs(layer);
       recolor();
     });
   }
@@ -718,10 +817,8 @@ function addLayer(meta) {
     recolor();
   });
 
-  if (meta.kind === "connectivity") {
-    defaultScale(layer);
-    cmapSelect.value = layer.cmap;
-  }
+  layer.auto = defaultScale(layer);
+  applyScale(layer);
   state.layers.unshift(layer);
   $("layers").prepend(card);
   syncInputs(layer);
@@ -898,15 +995,17 @@ function bindControls() {
   $("file-path").addEventListener("keydown", (event) => {
     if (event.key === "Enter") openFile();
   });
-  for (const id of ["contrast-analysis", "contrast-grain", "contrast-instance"]) {
+  for (const id of ["contrast-analysis", "contrast-grain", "contrast-instance", "contrast-stat"]) {
     $(id).addEventListener("change", updateContrastMenus);
   }
   $("add-contrast").addEventListener("click", () => {
     const meta = selectedContrast();
     if (meta) addLayer(meta);
   });
+  $("download").addEventListener("click", downloadPNG);
+  $("available").addEventListener("change", updateAvailableLineages);
   $("add").addEventListener("click", () => {
-    const meta = state.view.layers.find((layer) => layer.id === $("available").value);
+    const meta = selectedAvailable();
     if (meta) addLayer(meta);
   });
   for (const button of document.querySelectorAll("[data-view]")) {

@@ -54,7 +54,9 @@ class Layer:
     """One displayable cortical file.
 
     ``kind`` is ``metric`` for continuous maps, ``label`` for parcellations, and
-    ``connectivity`` for dense time series that support seed correlation. GIFTI
+    ``connectivity`` for dense time series that support seed correlation.
+    ``lineage`` is the module output directory label, such as ``main-1a2b3c``;
+    layers from different lineages can share a label. GIFTI
     layers address each hemisphere through its own file; CIFTI layers use one
     file for both hemispheres.
     """
@@ -69,6 +71,7 @@ class Layer:
     vertex_counts: dict[str, int]
     size_bytes: int = 0
     contrast: dict[str, str] | None = None
+    lineage: str | None = None
 
     def public(self) -> dict[str, object]:
         """Describe the layer for the browser without exposing file paths."""
@@ -77,6 +80,7 @@ class Layer:
             "id": self.id,
             "kind": self.kind,
             "label": self.label,
+            "lineage": self.lineage,
             "module": self.module,
             "space": self.space,
             "maps": list(self.maps),
@@ -128,7 +132,7 @@ _STAT_ORDER = {"t": 0, "z": 1, "p": 2, "effect": 3, "variance": 4, "dof": 5}
 
 def _layer_order(layer: Layer) -> tuple:
     if layer.module != "contrasts":
-        return (layer.module, 0, 0, layer.label)
+        return (layer.module, 0, 0, layer.label, layer.lineage or "")
     entities = dict(token.split("-", 1) for token in layer.label.split() if "-" in token)
     stat = entities.pop("stat", "")
     node = entities.pop("node", "")
@@ -140,6 +144,7 @@ def _layer_order(layer: Layer) -> tuple:
         rest,
         _STAT_ORDER.get(stat, 9),
         layer.label,
+        layer.lineage or "",
     )
 
 
@@ -283,18 +288,21 @@ def _hemisphere(path: Path) -> str | None:
 
 
 def build_layers(
-    sources: Iterable[tuple[str, Path, str | None]], participant: str
+    sources: Iterable[tuple[str, Path, str | None] | tuple[str, Path, str | None, str | None]],
+    participant: str,
 ) -> tuple[Layer, ...]:
     """Group derivative files into displayable layers.
 
-    Each source is ``(module, path, space)``. Left and right GIFTI files with the
+    Each source is ``(module, path, space)`` or ``(module, path, space, lineage)``. Left and right GIFTI files with the
     same name apart from their hemisphere entity form one layer. CIFTI files
     without cortical vertices and files of other types are omitted.
     """
     gifti: dict[tuple[str, Path, str], dict[str, Path]] = {}
     gifti_space: dict[tuple[str, Path, str], str | None] = {}
+    gifti_lineage: dict[tuple[str, Path, str], str | None] = {}
     layers: list[Layer] = []
-    for module, path, space in sources:
+    for module, path, space, *rest in sources:
+        lineage = rest[0] if rest else None
         kind = _layer_kind(path)
         if kind is None:
             continue
@@ -305,6 +313,7 @@ def build_layers(
             key = (module, path.parent, path.name.replace(f"_hemi-{hemisphere}_", "_hemi-X_"))
             gifti.setdefault(key, {})[hemisphere] = path
             gifti_space[key] = space
+            gifti_lineage[key] = lineage
             continue
         try:
             counts, maps = cifti_summary(path)
@@ -327,6 +336,7 @@ def build_layers(
                 vertex_counts=counts,
                 size_bytes=path.stat().st_size,
                 contrast=contrast_facets(path, label) if module == "contrasts" else None,
+                lineage=lineage,
             )
         )
     for key, paths in gifti.items():
@@ -353,6 +363,7 @@ def build_layers(
                 vertex_counts=counts,
                 size_bytes=sum(path.stat().st_size for path in paths.values()),
                 contrast=contrast_facets(first, label) if module == "contrasts" else None,
+                lineage=gifti_lineage[key],
             )
         )
     return tuple(sorted(layers, key=_layer_order))
@@ -434,7 +445,12 @@ class Catalog:
         data, surface_sources, _lesion = _collect(rows, include_heavy=True)
         layers = build_layers(
             (
-                (source.module, source.path, entities.get("space") or source.space)
+                (
+                    source.module,
+                    source.path,
+                    entities.get("space") or source.space,
+                    source.directory_label,
+                )
                 for source, entities in data
                 if not source.path.name.endswith(".pconn.nii")
             ),

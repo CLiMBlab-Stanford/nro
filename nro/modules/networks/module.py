@@ -45,7 +45,7 @@ from .features import (
     load_reduced_features,
     reduce_features,
 )
-from .ica import ica_membership
+from .ica import ICA_READOUTS, ICA_STRATEGIES, ica_membership
 from .labeling import (
     network_map_names,
     project_references_to_cifti,
@@ -426,7 +426,7 @@ def build_module(
             features = load_reduced_features(feature_path)
             requested_networks = (
                 cfg.ica.n_networks
-                if cfg.parcellation_strategy == "ica"
+                if cfg.parcellation_strategy in ICA_STRATEGIES
                 else cfg.clustering.n_networks
             )
             if min(features.shape) <= requested_networks:
@@ -454,13 +454,17 @@ def build_module(
             action=validate_network_inputs,
         )
     )
-    if cfg.parcellation_strategy == "ica":
+    if cfg.parcellation_strategy in ICA_STRATEGIES:
 
         def compute_ica() -> None:
             with np.load(input_state_path, allow_pickle=False) as state:
                 labels = np.asarray(state["labels"], dtype=np.int64)
                 mask = np.asarray(state["mask"], dtype=bool)
-            membership = ica_membership(load_reduced_features(feature_path), cfg.ica)
+            membership = ica_membership(
+                load_reduced_features(feature_path),
+                cfg.ica,
+                readout=ICA_READOUTS[cfg.parcellation_strategy],
+            )
             vertex_membership = np.zeros((len(labels), membership.shape[1]), dtype=np.float32)
             vertex_membership[mask] = membership[labels[mask]]
             atomic_save_npz(
@@ -479,7 +483,16 @@ def build_module(
                 inputs=(feature_path, input_state_path, network_validation_path),
                 force=bool(cfg.output.overwrite),
                 action=compute_ica,
-                parameters=config_payload["ica"],
+                # Loading maps keep their original parameters so existing ICA
+                # outputs stay fresh.
+                parameters={
+                    **config_payload["ica"],
+                    **(
+                        {"readout": "correlation"}
+                        if cfg.parcellation_strategy == "ica_correlation"
+                        else {}
+                    ),
+                },
             )
         )
     elif cfg.parcellation_strategy == "clustering":
@@ -843,7 +856,7 @@ def build_module(
         n_vertices = len(labels)
         network_arrays = (
             [vertex_stability[:, index] for index in range(vertex_stability.shape[1])]
-            if cfg.parcellation_strategy in {"ica", "clustering"}
+            if cfg.parcellation_strategy in {*ICA_STRATEGIES, "clustering"}
             else [
                 (vertex_stability[:, index] > cfg.consensus.assignment_threshold).astype(np.float32)
                 for index in range(vertex_stability.shape[1])
@@ -997,6 +1010,10 @@ def build_module(
                 "ICA maps are sign-oriented positive loadings normalized to [0, 1]. "
                 "These pseudo-probability display weights are not posterior probabilities."
                 if cfg.parcellation_strategy == "ica"
+                else "ICA correlation maps are unscaled Pearson correlations, in [-1, 1], "
+                "between each location and a sign-oriented ICA component time course. "
+                "Negative values mark anticorrelation."
+                if cfg.parcellation_strategy == "ica_correlation"
                 else (
                     "Clustering maps are min-max-normalized frequencies of assignment "
                     "across aligned mini-batch k-means fits."

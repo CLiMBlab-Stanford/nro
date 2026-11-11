@@ -16,12 +16,13 @@ The source is a static workflow dependency, so requesting `networks` plans only
 the selected source. Anatomy is always a direct dependency because it is
 needed to project the reference atlases.
 
-`parcellation_strategy` selects the estimator: `ica`, the default, `clustering`,
-or `oslom`. OSLOM is valid only with a `microparcellation` source. The same
+`parcellation_strategy` selects the estimator: `ica`, the default,
+`ica_correlation`, `clustering`, or `oslom`. OSLOM is valid only with a `microparcellation` source. The same
 input preparation, labeling, and publication stages surround every strategy.
 
 The packaged workflows cover the common combinations. `main` uses dynconn with
-ICA, and `clustering` uses dynconn with repeated clustering. `oslom` uses
+ICA, `ica-correlation` uses dynconn with ICA correlation maps, and `clustering`
+uses dynconn with repeated clustering. `oslom` uses
 microparcellation with OSLOM. `dynconn-networks` is an explicit name for
 the default dynconn source.
 
@@ -65,6 +66,31 @@ tail fails validation. Reaching the iteration limit logs a convergence warning.
 `n_networks` defaults to 100 and must be smaller than both the number of
 locations and the number of fitted features. `random_seed`, `max_iterations`,
 and `tolerance` control FastICA.
+
+### ICA correlation maps
+
+`ica_correlation` fits the same ICA with the same `ica` settings and changes
+only how each component becomes a map. Each location's value is its
+correlation with the component's time course: the cosine between the
+location's feature row and the component's mixing direction. For dynconn
+features this equals the correlation between the location's series and the
+component's series. For microparcellation it is the cosine similarity of
+connectivity profiles.
+
+Each correlation map takes the sign that agrees with its loading map, after the
+loading sign convention above. The maps are published as plain correlations
+between -1 and 1. They are not clipped or scaled, so `upper_quantile` does not
+apply, and negative values mark locations anticorrelated with the network.
+Correlation values are typically much smaller than loading-map values: in the
+CLiMB data a map's 99th percentile was usually 0.2 to 0.45. Thresholds written
+for the [0, 1] loading maps do not transfer.
+
+Loading maps come from whitened components, so locations with more signal in
+low-variance components get larger loadings on many networks. Correlation maps
+do not rescale components. In split-half comparisons on the CLiMB data they
+reproduced better than loading maps, at the cost of more overlap between
+networks, because correlation maps keep the shared signal that ICA's
+independence constraint removes from loadings.
 
 ## Repeated clustering
 

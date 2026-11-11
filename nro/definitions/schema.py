@@ -341,7 +341,7 @@ SCHEMAS = {
         "markup": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
         "connectivity_source": enum("microparcellation", "dynconn"),
-        "parcellation_strategy": enum("ica", "clustering", "oslom"),
+        "parcellation_strategy": enum("ica", "ica_correlation", "clustering", "oslom"),
         "feature_reduction": {
             "maximum_dimensions": COUNT,
             "oversampling": NONNEGATIVE_INT,
