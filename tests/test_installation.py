@@ -795,7 +795,7 @@ def test_first_install_creates_complete_definitions_store(isolated_site, tmp_pat
 
     assert destination == definitions / "site/site.yml"
     assert site.read_overrides(isolated_site) == {"definitions": str(definitions)}
-    assert validate_store(definitions, require_site=True)["workflows"] == 4
+    assert validate_store(definitions, require_site=True)["workflows"] == 5
 
 
 def test_first_install_defers_semantic_definition_validation(isolated_site, tmp_path, monkeypatch):
