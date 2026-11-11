@@ -273,6 +273,16 @@ def _require_no_pending_conversion(record: dict) -> None:
         )
 
 
+def default_personal_site() -> Path:
+    """Return the resolved default locator path for a personal installation.
+
+    Resolving removes symlinks, such as a home directory that links into another
+    file system. The source launcher rejects site paths that pass through one.
+    """
+    config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return (config.expanduser() / "nro/site.toml").resolve()
+
+
 def site_file() -> Path:
     """Resolve the site TOML path, enforcing it for installed production modes."""
     record = installation_record()
@@ -296,7 +306,7 @@ def site_file() -> Path:
         return path
     if record:
         return Path(record["site"])
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nro/site.toml"
+    return default_personal_site()
 
 
 def read_overrides(path: Path) -> dict:

@@ -23,7 +23,7 @@ from nro.site.bootstrap_dependencies import (
     bootstrap_target,
     prepare_target,
 )
-from nro.site.configuration import settings
+from nro.site.configuration import default_personal_site, settings
 
 ROOT = Path(__file__).resolve().parents[2]
 RECORD = ".nro-installation.json"
@@ -618,7 +618,7 @@ def _main(argv=None) -> None:
             if mode == "branch" and default_record
             else ROOT / ".nro-site.toml"
             if mode == "shared"
-            else Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "nro/site.toml"
+            else default_personal_site()
         )
     )
     default_parent_dir = (
