@@ -2488,3 +2488,20 @@ def test_only_outer_setup_reports_cancellation(monkeypatch, capsys, entry, child
         module.main([])
     assert error.value.code == 130
     assert capsys.readouterr().err.count("Installation cancelled") == (0 if child else 1)
+
+
+@pytest.mark.parametrize("variable", ["HOME", "XDG_CONFIG_HOME"])
+def test_default_personal_site_resolves_symlinked_home(tmp_path, monkeypatch, variable):
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    if variable == "HOME":
+        monkeypatch.setenv("HOME", str(linked))
+        expected = real.resolve() / ".config/nro/site.toml"
+    else:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(linked))
+        expected = real.resolve() / "nro/site.toml"
+
+    assert site.default_personal_site() == expected

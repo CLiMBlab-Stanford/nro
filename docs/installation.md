@@ -155,7 +155,9 @@ event tables, or configured Flywheel servers.
 
 Each installation also has a generated TOML locator that contains only the
 definitions repository path. Personal installations default to
-`$XDG_CONFIG_HOME/nro/site.toml`, or `~/.config/nro/site.toml`. Shared
+`$XDG_CONFIG_HOME/nro/site.toml`, or `~/.config/nro/site.toml`. Setup
+records the resolved path, so a symlinked home directory does not appear in
+it. Shared
 installations default to `.nro-site.toml` beside the checkout. Choose another
 locator with `./install --site /absolute/site.toml` during first setup.
 `NRO_SITE_CONFIG` selects one before an installation is registered. Personal,
