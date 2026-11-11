@@ -20,10 +20,10 @@ A named configuration is merged over its class's `main` configuration. Module
 pages show the packaged configurations and explain which steps use each key.
 A site's active values can differ when it defines an override.
 
-Some configurations select a different upstream source. The `main` and
-`clustering` network configurations read from dynconn. The `oslom`
-configuration changes the estimator and selects microparcellation, which OSLOM
-requires. The named `dynconn-networks` workflow spells out the default source
+Some configurations select a different upstream source. The `main`,
+`ica-correlation`, and `clustering` network configurations read from dynconn.
+The `oslom` configuration changes the estimator and selects microparcellation,
+which OSLOM requires. The named `dynconn-networks` workflow spells out the default source
 explicitly. Whichever source a configuration selects becomes a fixed
 dependency of the workflow.
 

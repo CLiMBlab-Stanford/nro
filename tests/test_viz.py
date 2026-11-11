@@ -160,6 +160,35 @@ def test_cifti_maps_fill_unaddressed_vertices_with_nan(tmp_path: Path) -> None:
         data.layer_map(layer, 2)
 
 
+def test_layers_from_different_lineages_share_a_label(tmp_path: Path) -> None:
+    paths = []
+    for lineage in ("main-aaaa", "gmsignal-bbbb"):
+        directory = tmp_path / lineage
+        directory.mkdir()
+        paths.append(
+            _cifti(
+                directory / "sub-01_space-fsnative_desc-networks_stat.dscalar.nii",
+                np.ones((1, _columns())),
+                nib.cifti2.ScalarAxis(["first"]),
+            )
+        )
+
+    layers = build_layers(
+        [
+            ("networks", paths[0], "fsnative", "main-aaaa"),
+            ("networks", paths[1], "fsnative", "gmsignal-bbbb"),
+        ],
+        "01",
+    )
+
+    assert [layer.lineage for layer in layers] == ["gmsignal-bbbb", "main-aaaa"]
+    assert len({layer.label for layer in layers}) == 1
+    assert len({layer.id for layer in layers}) == 2
+    assert layers[0].public()["lineage"] == "gmsignal-bbbb"
+    (unnamed,) = build_layers([("networks", paths[0], "fsnative")], "01")
+    assert unnamed.lineage is None
+
+
 def test_seed_correlation_matches_pearson_correlation(tmp_path: Path) -> None:
     rng = np.random.default_rng(3)
     series = rng.normal(size=(40, _columns()))

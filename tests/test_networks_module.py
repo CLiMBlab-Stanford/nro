@@ -69,6 +69,46 @@ def test_ica_membership_is_reproducible_and_normalized() -> None:
     np.testing.assert_allclose(first.max(axis=0), 1.0)
 
 
+def test_ica_correlation_readout_reads_the_same_fit_as_correlations() -> None:
+    random = np.random.default_rng(5)
+    sources = random.laplace(size=(200, 4))
+    features = sources @ random.normal(size=(4, 12)) + 0.1 * random.normal(size=(200, 12))
+    features /= np.linalg.norm(features, axis=1, keepdims=True)
+    config = IcaConfig(n_networks=4, random_seed=7)
+
+    loading = ica_membership(features, config)
+    correlation = ica_membership(features, config, readout="correlation")
+
+    assert correlation.shape == loading.shape
+    assert np.all((-1 <= correlation) & (correlation <= 1))
+    assert np.all(correlation.min(axis=0) < 0)
+    assert np.all(correlation.max(axis=0) < 1)
+    assert np.all(loading >= 0)
+    # The maps are unscaled correlations of each row with each oriented mixing
+    # direction, and each one tracks its own loading map.
+    agreement = [np.corrcoef(loading[:, k], correlation[:, k])[0, 1] for k in range(4)]
+    assert min(agreement) > 0.5
+    with pytest.raises(ValueError, match="readout"):
+        ica_membership(features, config, readout="weights")
+
+
+def test_ica_correlation_matches_cosine_with_oriented_mixing_direction() -> None:
+    from nro.modules.networks.ica import _component_correlations
+
+    random = np.random.default_rng(6)
+    features = random.normal(size=(50, 6)).astype(np.float32)
+    mixing = random.normal(size=(6, 3))
+    loadings = random.normal(size=(50, 3)).astype(np.float32)
+
+    correlations = _component_correlations(features, mixing, loadings)
+
+    rows = features / np.linalg.norm(features, axis=1, keepdims=True)
+    expected = rows @ (mixing / np.linalg.norm(mixing, axis=0))
+    signs = np.sign(np.sum(expected * loadings, axis=0))
+    np.testing.assert_allclose(correlations, expected * signs, rtol=1e-5, atol=1e-6)
+    assert np.all(np.sum(correlations * loadings, axis=0) >= 0)
+
+
 def test_clustering_membership_is_reproducible_and_minmax_normalized() -> None:
     adjacency = np.zeros((40, 40), dtype=np.float32)
     adjacency[:20, :20] = 1.0
@@ -416,6 +456,16 @@ def test_oslom_workflow_selects_oslom_network_configuration() -> None:
     assert workflow.configuration("networks").values["connectivity_source"] == "microparcellation"
 
 
+def test_ica_correlation_workflow_selects_correlation_readout() -> None:
+    workflow = ConfigStore().resolve("ica-correlation")
+
+    assert workflow.selections["networks"] == "ica-correlation"
+    config = workflow.configuration("networks").values
+    assert config["parcellation_strategy"] == "ica_correlation"
+    assert config["connectivity_source"] == "dynconn"
+    assert config["ica"]["n_networks"] == 100
+
+
 def test_clustering_workflow_selects_clustering_network_configuration() -> None:
     workflow = ConfigStore().resolve("clustering")
 
@@ -662,8 +712,15 @@ def test_volumetric_network_module_writes_dense_network_maps(tmp_path: Path, mon
     assert not cfg.output.work_directory.exists()
 
 
+@pytest.mark.parametrize(
+    ("strategy", "readout", "interpretation"),
+    [
+        ("ica", "loading", "pseudo-probability"),
+        ("ica_correlation", "correlation", "unscaled Pearson correlations"),
+    ],
+)
 def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, strategy: str, readout: str, interpretation: str
 ) -> None:
     mask = np.ones((2, 2, 2), dtype=bool)
     labels = np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int64)
@@ -688,9 +745,10 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
         yaml.safe_dump({"outputs": {"microparcels_volume": str(label_volume)}})
     )
     probabilities = np.array([[0.0, 1.0], [0.5, 0.25], [1.0, 0.0]], dtype=np.float32)
+    readouts: list[str] = []
     monkeypatch.setattr(
         "nro.modules.networks.module.ica_membership",
-        lambda _adjacency, _config: probabilities,
+        lambda _adjacency, _config, *, readout: readouts.append(readout) or probabilities,
     )
     monkeypatch.setattr(
         "nro.modules.networks.module.resolve_oslom_executable",
@@ -709,7 +767,7 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
         ),
         connectivity_source="microparcellation",
         connectivity=ConnectivityConfig(percentile_cutoff=None),
-        parcellation_strategy="ica",
+        parcellation_strategy=strategy,
         ica=IcaConfig(n_networks=2),
         oslom=OslomConfig(initialization="none", repetitions=1),
         labeling=LabelingConfig(enabled=False),
@@ -720,10 +778,10 @@ def test_volumetric_network_module_publishes_ica_pseudo_probabilities(
     membership = np.asarray(nib.load(outputs["membership"]).dataobj)
     np.testing.assert_array_equal(membership, probabilities[labels].T)
     manifest = yaml.safe_load(outputs["manifest"].read_text())
-    assert manifest["parcellation_strategy"] == "ica"
+    assert readouts == [readout]
+    assert manifest["parcellation_strategy"] == strategy
     assert manifest["reference_run"] is None
-    assert "pseudo-probability" in manifest["interpretation"]
-    assert "not posterior probabilities" in manifest["interpretation"]
+    assert interpretation in manifest["interpretation"]
     assert "stability" not in outputs
 
     from dataclasses import replace

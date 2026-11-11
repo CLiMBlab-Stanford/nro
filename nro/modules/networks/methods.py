@@ -65,7 +65,7 @@ METHODS_SILENT = {
     "clustering.random_seed": _SEED,
 }
 
-SUPPORTED_STRATEGIES = ("ica", "clustering")
+SUPPORTED_STRATEGIES = ("ica", "ica_correlation", "clustering")
 
 
 def methods(
@@ -106,7 +106,7 @@ def methods(
         "smoothing_mm": smoothing,
         "low_rank_source": bool(source.get("low_rank", False)),
         "strategy": strategy,
-        "n_networks": int((ica if strategy == "ica" else clustering)["n_networks"]),
+        "n_networks": int((clustering if strategy == "clustering" else ica)["n_networks"]),
         "maximum_dimensions": int(reduction["maximum_dimensions"]),
         "reduction_oversampling": int(reduction["oversampling"]),
         "reduction_power_iterations": int(reduction["power_iterations"]),

@@ -178,7 +178,11 @@ surfaces. These maps include GIFTI metrics and labels, CIFTI dense scalars and
 labels, and dense time series. Volume images and parcel-connectivity matrices
 are not shown.
 
-The layer list is grouped by module. Contrast results from `contrasts` have
+The layer list is grouped by module. When several lineages of a module, such
+as `main-1a2b3c` and `gmsignal-4d5e6f`, publish a layer with the same name, the
+list shows it once and a **Lineage** menu below it chooses the lineage. The
+contrast menus have the same **Lineage** menu. An added layer's title names its
+lineage when the name alone would be ambiguous. Contrast results from `contrasts` have
 their own menus above it. Choose the analysis, which names the model, task, and
 smoothing, then the grain: subject, session, or run. Session and run grains
 add a menu for the specific session or run. Last, choose the statistic. The t
@@ -225,6 +229,15 @@ threshold, and opacity. The red, green, blue, yellow, cyan, and magenta schemes
 keep one color and map the value to opacity between the layer's minimum and
 maximum. The signed scheme colors positive values up to the maximum and
 negative values down to the minimum.
+
+A blank minimum, maximum, or threshold uses a default for the displayed map,
+shown greyed in the field. Defaults come from the map's 2nd and 98th
+percentiles and change when you pick another map in the layer. A value you
+type stays in effect when you change maps, until you edit or clear it. With
+the signed scheme, setting only the maximum or only the minimum mirrors it on
+the other side. A chosen color scheme also persists across maps. A blank
+threshold always means the default, so to turn off a default threshold, enter a
+value below the map's range.
 
 A dense time series, such as the `dynconn` output, becomes a seed-correlation
 layer. Click the cortex to place a seed, and the server correlates that vertex

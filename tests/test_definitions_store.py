@@ -26,8 +26,8 @@ def test_create_has_only_generic_starters(tmp_path):
     counts = validate_store(root)
     assert counts == dict(
         site=1,
-        configs=3,
-        workflows=4,
+        configs=4,
+        workflows=5,
         models=0,
         event_ids=0,
         event_tsvs=0,
@@ -173,7 +173,7 @@ def test_shared_filesystem_publication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: SimpleNamespace(renameat2=unsupported))
     root = create_store(tmp_path / "store")
-    assert validate_store(root)["configs"] == 3
+    assert validate_store(root)["configs"] == 4
     assert not (root / ".nro-incomplete").exists()
     with pytest.raises(FileExistsError):
         _publish(tmp_path / "anything", root)
@@ -184,7 +184,7 @@ def test_publication_without_renameat2_symbol(tmp_path, monkeypatch):
 
     root = create_store(tmp_path / "store")
 
-    assert validate_store(root)["configs"] == 3
+    assert validate_store(root)["configs"] == 4
     assert not (root / ".nro-incomplete").exists()
     with pytest.raises(FileExistsError):
         _publish(tmp_path / "anything", root)

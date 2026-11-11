@@ -17,15 +17,22 @@ leading {{ maximum_dimensions }} randomized singular vectors
 {{ reduction_power_iterations }} power
 {{ reduction_power_iterations | plural("iteration") }}.
 
-{% if strategy == "ica" %}
+{% if strategy in ("ica", "ica_correlation") %}
 Spatial independent component analysis with FastICA [@hyvarinen1999fastica],
 as implemented in scikit-learn [@pedregosa2011sklearn], decomposed this matrix
 into {{ n_networks }} components, treating locations as observations, with
 unit-variance whitening, at most {{ ica_max_iterations }} iterations, and a
 tolerance of {{ ica_tolerance | num(6) }}. Each component was oriented so that
-its median loading was nonpositive. Its loadings were then clipped between
+its median loading was nonpositive.
+{% if strategy == "ica_correlation" %}
+Each network map was the correlation between every location and the oriented
+component's time course, signed to agree with the component's loadings. The
+correlations were not rescaled or thresholded.
+{% else %}
+Its loadings were then clipped between
 zero and their {{ ica_upper_quantile | num }} quantile across locations and
 divided by that quantile, giving a membership map bounded by zero and one.
+{% endif %}
 These maps are not calibrated probabilities and are not normalized across
 networks.
 {% else %}
