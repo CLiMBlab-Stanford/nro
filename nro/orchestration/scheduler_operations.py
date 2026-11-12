@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from nro.orchestration.branch_store import BranchStore
@@ -516,6 +517,31 @@ def installation_prepare(registry, *, checkout: Path, action: str) -> dict:
     return installation_progress(registry, checkout=checkout)
 
 
+# Matches the scheduler's reconciliation cadence. Each pass can query Slurm
+# once per recorded allocation, so polling callers must not repeat it every
+# few seconds.
+INSTALLATION_RECONCILIATION_SECONDS = 30.0
+_last_installation_reconciliation: dict[str, float] = {}
+
+
+def _reconcile_for_installation(registry) -> None:
+    """Release allocations and attempts that Slurm or the host reports as ended.
+
+    Maintenance may run without a live scheduler, for example after Slurm
+    cancelled the scheduler together with its workers. Nothing else would then
+    retire those records, and a drain would wait for attempts that cannot finish.
+    """
+    from nro.orchestration.scheduler_maintenance import reconcile_execution_allocations
+
+    key = str(registry.paths.control)
+    now = time.monotonic()
+    last = _last_installation_reconciliation.get(key)
+    if last is not None and now - last < INSTALLATION_RECONCILIATION_SECONDS:
+        return
+    _last_installation_reconciliation[key] = now
+    reconcile_execution_allocations(registry)
+
+
 def installation_progress(registry, *, checkout: Path) -> dict:
     """Advance installation quiescence and report whether direct maintenance is safe."""
     checkout = checkout.resolve()
@@ -532,6 +558,7 @@ def installation_progress(registry, *, checkout: Path) -> dict:
     ):
         raise ValueError("This checkout does not own installation maintenance")
     action = rows.get("installation_action", "drain")
+    _reconcile_for_installation(registry)
     activity = installation_activity(registry, checkout=checkout)
     stopped = 0
     failures: list[str] = []
