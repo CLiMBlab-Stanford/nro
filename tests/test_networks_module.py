@@ -336,7 +336,7 @@ def test_network_config_uses_shared_subject_output_directory(tmp_path: Path, mon
     )
     assert cfg.output.prefix == "sub-01_space-fsnative_smoothing-2mm"
     assert cfg.inputs.domain == "surface"
-    assert cfg.parcellation_strategy == "ica"
+    assert cfg.parcellation_strategy == "ica_correlation"
     assert cfg.ica.n_networks == 100
 
 
@@ -456,14 +456,16 @@ def test_oslom_workflow_selects_oslom_network_configuration() -> None:
     assert workflow.configuration("networks").values["connectivity_source"] == "microparcellation"
 
 
-def test_ica_correlation_workflow_selects_correlation_readout() -> None:
-    workflow = ConfigStore().resolve("ica-correlation")
+def test_main_workflow_uses_ica_correlation_and_ica_loading_keeps_loadings() -> None:
+    main = ConfigStore().resolve("main").configuration("networks").values
+    assert main["parcellation_strategy"] == "ica_correlation"
+    assert main["ica"]["n_networks"] == 100
 
-    assert workflow.selections["networks"] == "ica-correlation"
+    workflow = ConfigStore().resolve("ica-loading")
+    assert workflow.selections["networks"] == "ica-loading"
     config = workflow.configuration("networks").values
-    assert config["parcellation_strategy"] == "ica_correlation"
+    assert config["parcellation_strategy"] == "ica"
     assert config["connectivity_source"] == "dynconn"
-    assert config["ica"]["n_networks"] == 100
 
 
 def test_clustering_workflow_selects_clustering_network_configuration() -> None:

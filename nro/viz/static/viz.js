@@ -695,6 +695,10 @@ function syncInputs(layer) {
 function defaultScale(layer) {
   if (layer.meta.kind === "label") return {};
   if (layer.meta.kind === "connectivity") return { cmap: "signed", max: 0.6, threshold: null, min: -0.6 };
+  // Network maps are correlations with a network's time course. Show the
+  // network's own side from r = 0.3, fully opaque by r = 0.6.
+  if (layer.meta.module === "networks" && layer.meta.kind === "metric")
+    return { cmap: "blue", min: 0.3, max: 0.6, threshold: 0.3 };
   if (!layer.values) return {};
   const { quantile, zeroFraction } = summarize(layer.values);
   const low = quantile(0.02);
