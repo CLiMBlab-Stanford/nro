@@ -2904,6 +2904,81 @@ def test_orphan_recovery_requeues_work_from_expired_allocation(tmp_path: Path, m
     assert registry.claim_ready_work_item("successor", ("large",)) is not None
 
 
+@pytest.mark.parametrize("allocation_ended", [True, False])
+def test_installation_drain_releases_externally_killed_pool(
+    tmp_path: Path, monkeypatch, allocation_ended
+) -> None:
+    from nro.orchestration import scheduler_operations, worker_control
+
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "9" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("killed", resource_class="large", slurm_job_id="123")
+    assert registry.claim_ready_work_item("killed", ("large",)) is not None
+    checkout = tmp_path / "main"
+    checkout.mkdir()
+    with registry.connection(write=True) as db:
+        # A worker on another node is judged only by its Slurm allocation.
+        db.execute(
+            "UPDATE workers SET hostname='compute-node',pid=999999999,lease_expires_at=0 "
+            "WHERE id='killed'"
+        )
+        db.execute("UPDATE attempts SET state='running' WHERE worker_id='killed'")
+        db.execute(
+            "INSERT INTO scheduler_submissions(intent_token,resource_class,state,created_at,"
+            "slurm_job_id) VALUES ('token','large','running','now','123')"
+        )
+        db.executemany(
+            "INSERT INTO metadata(key,value) VALUES (?,?)",
+            (
+                ("maintenance_mode", "installation"),
+                ("installation_checkout", str(checkout.resolve())),
+                ("installation_action", "drain"),
+            ),
+        )
+    topology = SimpleNamespace(registered_checkout=lambda _checkout: "main")
+    monkeypatch.setattr(
+        scheduler_operations,
+        "BranchStore",
+        lambda _control: SimpleNamespace(read=lambda: SimpleNamespace(topology=topology)),
+    )
+    monkeypatch.setattr(scheduler_operations, "_last_installation_reconciliation", {})
+    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: allocation_ended)
+    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda _job_id: False)
+    monkeypatch.setattr(worker_control, "_slurm_job_terminal", lambda _job_id: allocation_ended)
+
+    progress = scheduler_operations.installation_progress(registry, checkout=checkout)
+
+    if not allocation_ended:
+        assert progress["done"] is False
+        assert (progress["workers"], progress["attempts"]) == (1, 1)
+        return
+    assert progress["done"] is True
+    assert progress["failures"] == []
+    row = registry.work_item_status_snapshot()[0]
+    assert row["status"] == "Queued"
+    assert row["error_type"] == "WorkerLost"
+
+
 def test_forced_cancellation_removes_every_users_shared_demand(tmp_path: Path) -> None:
     bids = tmp_path / "bids"
     registry = Registry.for_project("demo", bids_root=bids)

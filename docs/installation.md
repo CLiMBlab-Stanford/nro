@@ -463,7 +463,11 @@ When shared work is active, the installer reports it and offers three choices:
 - Cancelling makes no registry change.
 
 For either stop, the installer waits for Slurm to confirm that every allocation
-has ended before changing the environment. Installation continues once the
+has ended before changing the environment. A drain does not wait for work whose
+allocation has already ended. About every 30 seconds, it retires allocations
+that Slurm reports as finished and returns their interrupted attempts to the
+queue. This covers a scheduler and workers that were cancelled outside nro.
+Installation continues once the
 pool is quiet. Pressing Ctrl-C after choosing an action leaves the maintenance
 barrier and the chosen action in place. Repeat `./install --maintain` to
 resume. Noninteractive maintenance refuses an active pool unless `--drain`
