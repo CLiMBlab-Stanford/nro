@@ -171,6 +171,13 @@ recovers orphaned attempts, and reassesses demanded artifacts. A claim does only
 the smaller dependency update needed to expose newly ready work, so starting a
 batch of workers does not repeat a full registry refresh for each one.
 
+An attempt is orphaned when its worker's lease has expired and its run has
+ended. Slurm keeps a job's ID when it requeues a preempted job, so a live job ID
+is not enough to show that the worker is still running. The run has ended if the
+job is pending again, is running on other nodes, or started after the worker
+registered. The orphaned attempt returns to the ready queue with its demand
+kept.
+
 ### ExecutionLauncher
 
 `ExecutionLauncher` separates worker scheduling from process execution. The

@@ -19,6 +19,7 @@ from nro.definitions.store import ConfigStore
 from nro.engine.io import write_public_json
 from nro.modules.contrasts.task_models import model_contract
 from nro.orchestration import completion, dependency_state
+from nro.orchestration import registry as registry_module
 from nro.orchestration.artifact_records import file_record
 from nro.orchestration.catalog import module_descriptor
 from nro.orchestration.contracts import WorkItemSpec
@@ -2902,6 +2903,95 @@ def test_orphan_recovery_requeues_work_from_expired_allocation(tmp_path: Path, m
     assert row["error_type"] == "WorkerAllocationExpired"
     registry.register_worker("successor", resource_class="large")
     assert registry.claim_ready_work_item("successor", ("large",)) is not None
+
+
+@pytest.mark.parametrize("requeued", [True, False])
+def test_orphan_recovery_detects_a_requeued_allocation(
+    tmp_path: Path, monkeypatch, requeued
+) -> None:
+    bids = tmp_path / "bids"
+    registry = Registry.for_project("demo", bids_root=bids)
+    workflow = ConfigStore().resolve("main")
+    registered = registry.register_workflow(workflow)
+    work_item = _spec(
+        key="networks:" + "7" * 64,
+        module="networks",
+        lineage=registered.lineages["networks"],
+        config_fingerprint=workflow.configuration("networks").fingerprint,
+        runtime_config=registry.runtime_config_path(registered, "networks"),
+        output=tmp_path / "outputs" / "network.txt",
+    )
+    registry.create_request(
+        registered=registered,
+        target_module="networks",
+        selectors={},
+        work_items=(work_item,),
+        terminal_work_item_keys=(work_item.key,),
+        concurrency=1,
+        partition=None,
+    )
+    registry.register_worker("preempted", resource_class="large", slurm_job_id="123")
+    assert registry.claim_ready_work_item("preempted", ("large",)) is not None
+    with registry.connection(write=True) as db:
+        db.execute(
+            "UPDATE workers SET hostname='node1330',pid=999999999,lease_expires_at=0 "
+            "WHERE id='preempted'"
+        )
+        db.execute("UPDATE attempts SET state='running' WHERE worker_id='preempted'")
+    # Slurm requeued the preempted job under the same ID, so it is still alive.
+    monkeypatch.setattr(RegistryLock, "_slurm_terminal", lambda _job_id: False)
+    monkeypatch.setattr(
+        RegistryLock,
+        "_slurm_run_replaced",
+        lambda job_id, *, hostname, registered_at: requeued,
+    )
+    monkeypatch.setattr(RegistryLock, "_slurm_out_of_memory", lambda _job_id: False)
+    monkeypatch.setattr(RegistryLock, "_slurm_timed_out", lambda _job_id: False)
+
+    recovered = registry.recover_orphaned_attempts()
+
+    row = registry.work_item_status_snapshot()[0]
+    if not requeued:
+        assert recovered == 0
+        assert row["attempt_state"] == "running"
+        return
+    assert recovered == 1
+    assert row["status"] == "Queued"
+    assert row["error_type"] == "WorkerLost"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("PENDING|N/A|", True),
+        ("RUNNING|2026-11-12T01:52:40|node1302", True),
+        ("RUNNING|2026-11-12T01:52:40|node1330", True),
+        ("RUNNING|2026-11-11T23:00:00|node1330", False),
+        ("COMPLETING|2026-11-12T01:52:40|node1302", None),
+        ("", None),
+    ],
+)
+def test_requeued_slurm_run_is_recognized(monkeypatch, line, expected) -> None:
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    monkeypatch.setattr(registry_module.shutil, "which", lambda _name: "/usr/bin/squeue")
+    monkeypatch.setattr(
+        registry_module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=line + "\n", stderr=""),
+    )
+    try:
+        assert (
+            RegistryLock._slurm_run_replaced(
+                "123",
+                hostname="node1330.inband",
+                registered_at="2026-11-12T00:00:00+00:00",
+            )
+            is expected
+        )
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 @pytest.mark.parametrize("allocation_ended", [True, False])
