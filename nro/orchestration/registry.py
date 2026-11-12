@@ -391,6 +391,61 @@ class RegistryLock:
         states = [line.split("|", 1)[0].strip().upper() for line in result.stdout.splitlines()]
         return any(state.startswith("TIMEOUT") for state in states)
 
+    @staticmethod
+    def _slurm_run_replaced(job_id: str, *, hostname: str, registered_at: str) -> bool | None:
+        """Return whether a requeue replaced the Slurm run that a worker belonged to.
+
+        Slurm keeps the job ID when it requeues a preempted job, so a live job ID
+        does not show that the worker's run is still alive. The worker's run has
+        ended when the job is pending again, runs on other nodes, or started after
+        the worker registered. Query failures and other states remain unknown.
+        """
+        if not shutil.which("squeue"):
+            return None
+        try:
+            result = subprocess.run(
+                ["squeue", "--noheader", "--jobs", str(job_id), "--format", "%T|%S|%N"],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=5,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        lines = result.stdout.strip().splitlines()
+        if result.returncode or len(lines) != 1 or lines[0].count("|") != 2:
+            return None
+        state, start, nodes = (field.strip() for field in lines[0].split("|"))
+        if state.upper() == "PENDING":
+            return True
+        if state.upper() != "RUNNING" or not nodes:
+            return None
+        hosts = nodes.split(",")
+        if "[" in nodes:
+            try:
+                expanded = subprocess.run(
+                    ["scontrol", "show", "hostnames", nodes],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return None
+            hosts = expanded.stdout.split()
+        if hostname.split(".", 1)[0] not in {host.split(".", 1)[0] for host in hosts}:
+            return True
+        try:
+            # squeue reports local time without an offset.
+            run_started = datetime.fromisoformat(start).astimezone(timezone.utc)
+            worker_started = datetime.fromisoformat(registered_at)
+        except (TypeError, ValueError):
+            return None
+        if worker_started.tzinfo is None:
+            worker_started = worker_started.replace(tzinfo=timezone.utc)
+        return run_started > worker_started
+
     def _owner_definitively_dead(self, owner: dict | None) -> bool:
         if owner is None:
             return False
@@ -3531,8 +3586,21 @@ class Registry(WorkflowRegistry):
                     is_dead = True
                 except (PermissionError, OSError, ValueError):
                     pass
+            replaced = False
             if not is_dead and worker.get("slurm_job_id"):
-                is_dead = RegistryLock._slurm_terminal(str(worker["slurm_job_id"])) is True
+                job_id = str(worker["slurm_job_id"])
+                is_dead = RegistryLock._slurm_terminal(job_id) is True
+                if not is_dead:
+                    # A preempted job keeps its ID when Slurm requeues it.
+                    replaced = (
+                        RegistryLock._slurm_run_replaced(
+                            job_id,
+                            hostname=str(worker["hostname"]),
+                            registered_at=str(worker["started_at"]),
+                        )
+                        is True
+                    )
+                    is_dead = replaced
             if is_dead:
                 with self.connection() as db:
                     groups = [
@@ -3544,7 +3612,7 @@ class Registry(WorkflowRegistry):
                     ]
                 from nro.orchestration.execution import ShutdownUnconfirmed, process_group_alive
 
-                allocation_ended = (
+                allocation_ended = replaced or (
                     bool(worker.get("slurm_job_id"))
                     and RegistryLock._slurm_terminal(str(worker["slurm_job_id"])) is True
                 )
