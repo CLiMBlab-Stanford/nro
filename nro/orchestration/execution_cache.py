@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import sys
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,16 +29,54 @@ class CacheCollection:
     reason: str | None = None
 
 
-def cache_lock(control: Path) -> RegistryLock:
+_HELD = threading.local()
+
+
+class _CacheLock:
+    """Hold the execution-cache lock, reentrantly within one thread.
+
+    A thread that already holds the lock for a control directory enters again
+    without waiting. Without this, a caller that holds the lock and then calls
+    a ``cache_publication`` function would wait on its own lock until timeout.
+    Other threads and processes still wait as before.
+    """
+
+    def __init__(self, lock: RegistryLock) -> None:
+        self._lock = lock
+        self._key = str(lock.path)
+        self._outer = False
+
+    def __enter__(self) -> "_CacheLock":
+        held = getattr(_HELD, "paths", None)
+        if held is None:
+            held = _HELD.paths = {}
+        if held.get(self._key, 0) == 0:
+            self._lock.acquire()
+            self._outer = True
+        held[self._key] = held.get(self._key, 0) + 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        held = _HELD.paths
+        held[self._key] -= 1
+        if self._outer:
+            del held[self._key]
+            self._lock.release()
+
+
+def cache_lock(control: Path) -> _CacheLock:
     """Serialize cache collection with publication of execution references.
 
-    Acquire this lock before the registry lock when both are needed.
+    Acquire this lock before the registry lock when both are needed. Nested
+    acquisition in the same thread does not wait.
     """
     paths = ControlPaths(control)
     paths.require_current_layout()
     ensure_shared_directory(paths.cache)
-    return RegistryLock(
-        paths.cache / "execution-cache.lock", paths.cache / "execution-cache.recovery-lock"
+    return _CacheLock(
+        RegistryLock(
+            paths.cache / "execution-cache.lock", paths.cache / "execution-cache.recovery-lock"
+        )
     )
 
 

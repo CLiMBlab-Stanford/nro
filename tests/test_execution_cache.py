@@ -209,6 +209,34 @@ def test_collection_waits_for_reference_publication(cache):
     assert source.exists() and site.exists()
 
 
+def test_cache_lock_is_reentrant_within_a_thread(cache):
+    registry, _source, _site = cache
+    lock_dir = registry.paths.control / "shared" / "cache" / "execution-cache.lock"
+    blocked = threading.Event()
+
+    def other_thread():
+        lock = cache_lock(registry.paths.control)
+        lock._lock.timeout = 0.2
+        try:
+            with lock:
+                pass
+        except Exception:
+            blocked.set()
+
+    with cache_lock(registry.paths.control):
+        # A nested acquisition, as when a holder calls a cache_publication
+        # function, must not wait on its own lock.
+        with cache_lock(registry.paths.control):
+            pass
+        assert any(lock_dir.parent.glob("execution-cache.lock*"))
+        worker = threading.Thread(target=other_thread)
+        worker.start()
+        worker.join(5)
+        assert blocked.is_set()
+    with cache_lock(registry.paths.control):
+        pass
+
+
 def test_cache_purge_ignores_all_artifact_selectors(cache, capsys):
     registry, source, site = cache
     args = [
