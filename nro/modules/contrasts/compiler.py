@@ -263,8 +263,6 @@ def realize_run_node(node: dict, events, confounds, config: dict) -> dict:
         for name in confounds
         if name not in outliers and re.search(denoising["confounds_regex"], name)
     ]
-    if any(name.startswith("global_signal") for name in nuisance):
-        raise ValueError("Contrasts does not remove global signal")
     node["Model"]["X"] = [*predictors, *nuisance, *outliers, 1]
     rules.update(event_columns=predictors, nuisance_columns=nuisance, outlier_columns=outliers)
     return node
