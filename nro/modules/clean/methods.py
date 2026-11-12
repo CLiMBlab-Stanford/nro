@@ -10,7 +10,7 @@ from nro.methods.context import ManifestRecord, ModuleMethods, participants
 TITLE = "Denoising"
 CONTEXT_VERSION = 1
 
-DEFAULT_CONFOUNDS_REGEX = r"^(global_signal|framewise_displacement|trans_[xyz]|rot_[xyz]|a_comp_cor_0[0-4]|cosine.*|.*_outlier.*)$"
+DEFAULT_CONFOUNDS_REGEX = r"^(global_gm_signal|framewise_displacement|trans_[xyz]|rot_[xyz]|a_comp_cor_0[0-4]|cosine.*|.*_outlier.*)$"
 DEFAULT_TEMPORAL_MASK_REGEX = ".*outlier.*"
 
 CONTEXT_FIELDS = {

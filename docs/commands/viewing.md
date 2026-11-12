@@ -231,8 +231,10 @@ maximum. The signed scheme colors positive values up to the maximum and
 negative values down to the minimum.
 
 A blank minimum, maximum, or threshold uses a default for the displayed map,
-shown greyed in the field. Defaults come from the map's 2nd and 98th
-percentiles and change when you pick another map in the layer. A value you
+shown greyed in the field. Network layers default to the blue scheme with a
+threshold and minimum of 0.3 and a maximum of 0.6, matching the correlation
+scale of `ica_correlation` maps. Other defaults come from the map's 2nd and
+98th percentiles and change when you pick another map in the layer. A value you
 type stays in effect when you change maps, until you edit or clear it. With
 the signed scheme, setting only the maximum or only the minimum mirrors it on
 the other side. A chosen color scheme also persists across maps. A blank

@@ -1,7 +1,7 @@
 markup: main
 overwrite: false
 connectivity_source: dynconn
-parcellation_strategy: ica
+parcellation_strategy: ica_correlation
 feature_reduction:
   maximum_dimensions: 1000
   oversampling: 10

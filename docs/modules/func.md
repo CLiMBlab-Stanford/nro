@@ -96,8 +96,9 @@ so check it instead of assuming a run used the default path.
    DVARS, and numbered outlier families. `global_signal` averages the whole
    brain mask. `global_gm_signal` averages FreeSurfer aseg cerebral-cortex
    voxels after scaling each voxel's time course to unit standard deviation,
-   so every cortical voxel contributes equally. It can replace `global_signal`
-   in a cleaning or contrasts `confounds_regex`. See
+   so every cortical voxel contributes equally. It is the global regressor in
+   the default cleaning `confounds_regex`, and `global_signal` remains
+   available. See
    [denoising](../methods/denoising.md).
 9. **Publish.** nro produces T1w and MNI volumes and left and right fsnative
    and template GIFTI time courses. Native surfaces and registration spheres

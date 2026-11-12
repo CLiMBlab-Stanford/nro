@@ -1025,6 +1025,28 @@ def test_equivalent_model_edit_does_not_rerun_completed_module(tmp_path, edit):
     assert not any("model_set" in json.dumps(d) for d in (compiled, json.loads(output.read_text())))
 
 
+def test_configured_global_signal_is_a_contrasts_nuisance_regressor():
+    config = dict(ConfigStore().load_configuration("contrasts", "main").values)
+    assert "global_signal" not in config["confounds_regex"]
+    config["confounds_regex"] = r"^(csf|global_signal)$"
+    source = {
+        "predictors": ["trial_type.*"],
+        "transformations": [{"Name": "Factor", "Input": "trial_type"}],
+        "contrasts": {"S": {"trial_type.S": 1}},
+    }
+    events = pd.DataFrame(
+        {"onset": [5, 25, 45, 65], "duration": [5] * 4, "trial_type": ["S", "N", "S", "N"]}
+    )
+    rng = np.random.default_rng(0)
+    confounds = pd.DataFrame({"csf": rng.normal(size=100), "global_signal": rng.normal(size=100)})
+
+    model = compile_model(source, "task/main", config, sessions=False)
+    design = build_design(model["Nodes"][0], events, confounds, 1, config)
+
+    rules = design.metadata["StatsModelNode"]["Model"]["Software"]["nro"]
+    assert rules["nuisance_columns"] == ["csf", "global_signal"]
+
+
 def test_event_transforms_and_hrf_are_source_aware():
     config = ConfigStore().load_configuration("contrasts", "main").values
     source = {

@@ -41,9 +41,9 @@ regressors.
 
 ## Confound regression
 
-By default, the connectivity nuisance model contains global signal, framewise
-displacement, the six rigid-body motion parameters, the first five aCompCor
-components, and DCT-II cosine drifts. aCompCor is estimated from combined
+By default, the connectivity nuisance model contains the cerebral-cortex signal
+`global_gm_signal`, framewise displacement, the six rigid-body motion
+parameters, the first five aCompCor components, and DCT-II cosine drifts. aCompCor is estimated from combined
 white-matter and CSF voxels. The source confounds table also contains the
 36-parameter model of Satterthwaite et al.
 ([2013](https://doi.org/10.1016/j.neuroimage.2012.08.052)). Alternative clean

@@ -18,7 +18,7 @@ thresholded at {{ gm_mask_threshold | num }}.
 Frames marked by {% if default_temporal_mask %}any outlier column{% else %}the configured outlier columns{% endif %}
 were censored: they were excluded from model fitting, and their output values
 are model reconstructions. Nuisance regressors were
-{% if default_confounds %}global signal, FD, the six rigid-body motion parameters, the first five anatomical CompCor components, and the cosine drift terms{% else %}a configured selection of confound columns, recorded in the methods trace{% endif %}.
+{% if default_confounds %}the mean cerebral-cortex signal, averaged over FreeSurfer cortical voxels after scaling each voxel to unit variance, FD, the six rigid-body motion parameters, the first five anatomical CompCor components, and the cosine drift terms{% else %}a configured selection of confound columns, recorded in the methods trace{% endif %}.
 A real Fourier basis spanning {{ high_pass_hz | num }} to {{ low_pass_hz | num }} Hz
 was constructed{% if regress_out_task %}, together with task regressors where events were available{% endif %}{% if detrend %} and detrending terms{% endif %}.
 On retained frames, nuisance regressors were projected into this passband,

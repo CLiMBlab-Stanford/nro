@@ -204,7 +204,7 @@ def test_confounds_loads_epi_once(
 
     required = {f"trans_{axis}" for axis in "xyz"}
     required |= {f"rot_{axis}" for axis in "xyz"}
-    required |= {"global_signal", "framewise_displacement"}
+    required |= {"global_gm_signal", "framewise_displacement"}
     required |= {f"a_comp_cor_{index:02d}" for index in range(2)}
     assert required.issubset(selected.columns)
     assert any(column.startswith("cosine") for column in selected.columns)

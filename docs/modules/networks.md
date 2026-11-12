@@ -16,13 +16,13 @@ The source is a static workflow dependency, so requesting `networks` plans only
 the selected source. Anatomy is always a direct dependency because it is
 needed to project the reference atlases.
 
-`parcellation_strategy` selects the estimator: `ica`, the default,
-`ica_correlation`, `clustering`, or `oslom`. OSLOM is valid only with a `microparcellation` source. The same
+`parcellation_strategy` selects the estimator: `ica_correlation`, the default,
+`ica`, `clustering`, or `oslom`. OSLOM is valid only with a `microparcellation` source. The same
 input preparation, labeling, and publication stages surround every strategy.
 
 The packaged workflows cover the common combinations. `main` uses dynconn with
-ICA, `ica-correlation` uses dynconn with ICA correlation maps, and `clustering`
-uses dynconn with repeated clustering. `oslom` uses
+ICA correlation maps, `ica-loading` uses dynconn with ICA loading maps, and
+`clustering` uses dynconn with repeated clustering. `oslom` uses
 microparcellation with OSLOM. `dynconn-networks` is an explicit name for
 the default dynconn source.
 

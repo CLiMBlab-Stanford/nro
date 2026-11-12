@@ -7,8 +7,9 @@ space. It never combines participants or fits population-level models.
 
 ## Inputs
 
-`contrasts` depends on `func` and does not use `clean`. Its nuisance model
-excludes global signal. It reads the canonical `desc-preproc` series from the
+`contrasts` depends on `func` and does not use `clean`. Its default nuisance
+model contains no global signal regressor. A `confounds_regex` that selects one
+is allowed. It reads the canonical `desc-preproc` series from the
 selected functional workflow, whether or not that workflow applied ICA-AROMA.
 To compare denoising choices, use separate workflows.
 
@@ -190,7 +191,7 @@ prefix.
 | Key | Effect |
 | --- | --- |
 | `input_filter` | Restrict source runs by stable BIDS entity values. Alternatives for one entity form a set; different entities intersect. |
-| `confounds_regex` | Select continuous nuisance candidates from `confounds.tsv`. Selected global signal columns are rejected. |
+| `confounds_regex` | Select continuous nuisance candidates from `confounds.tsv`. The default omits global signal columns. |
 | `temporal_mask_regex` | One-hot columns whose union excludes frames from estimation. |
 | `nuisance_variance_explained` | Desired fraction of standardized nuisance variance, subject to the rank cap. |
 | `minimum_temporal_rank` | Absolute number of post-task dimensions protected from nuisance removal. |

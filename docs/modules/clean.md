@@ -79,7 +79,8 @@ defines the exact names and types.
 
 **Nuisance selection.** `confounds_regex` selects continuous nuisance
 candidates, and `temporal_mask_regex` selects the censoring columns. The
-default candidates are global signal, FD, the six base motion parameters, the
+default candidates are the cerebral-cortex signal `global_gm_signal`, FD, the
+six base motion parameters, the
 first five aCompCor components, cosine drifts, and outlier columns. The outlier
 columns also define the temporal mask, so they are zero on every retained row
 and are dropped before nuisance PCA. `nuisance_variance_explained` is a

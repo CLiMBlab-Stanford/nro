@@ -60,8 +60,6 @@ def build_design(
     full = event_design(node, events, observed_confounds, tr)
     if not np.isfinite(full.to_numpy()).all():
         raise ValueError("Selected design variables contain nonfinite values")
-    if any(name.startswith("global_signal") for name in full):
-        raise ValueError("Contrasts does not remove global signal")
     nuisance_names = rules["nuisance_columns"]
     names = [name for name in full if name not in nuisance_names and name not in outlier_names]
     task = full[names].to_numpy()[retained]

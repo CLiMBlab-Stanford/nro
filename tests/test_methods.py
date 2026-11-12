@@ -474,7 +474,7 @@ def test_connectivity_contexts_count_runs_and_report_strategy() -> None:
     assert context["fitted_dimensions"] == ["900", "950"]
 
     networks = networks_methods.methods(values["networks"], records, workflow=values).context
-    assert networks["strategy"] == "ica" and networks["low_rank_source"]
+    assert networks["strategy"] == "ica_correlation" and networks["low_rank_source"]
     assert networks["spaces"] == ["T1w", "fsnative"] and networks["smoothing_mm"] == ["2"]
     with pytest.raises(MethodsReportError, match="strategy 'oslom'"):
         networks_methods.methods(
