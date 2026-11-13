@@ -35,6 +35,8 @@ def test_create_has_only_generic_starters(tmp_path):
         hardware_profiles=0,
         bidsify=1,
         scanplan_parsers=1,
+        stimuli=0,
+        stimulus_annotations=0,
     )
     for kind in CONFIGURATION_CLASSES:
         assert not (root / "configs" / kind / f"main_{kind}.yml").exists()

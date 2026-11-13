@@ -56,6 +56,7 @@ def _validator(root: Path):
             require_site=require_site,
             inherited_site=inherited_site,
             inherited_roots=inherited_roots,
+            published=root,
         )
 
     return validate

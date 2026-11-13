@@ -107,7 +107,10 @@ def test_wizard_chooses_id_and_retains_snapshot_provenance(tmp_path, monkeypatch
         return next(answers)
 
     monkeypatch.setattr("builtins.input", input_value)
-    text = _events({"config": {"event_store": str(tmp_path), "event_rules": []}}, item)
+    text, stimulus_files = _events(
+        {"config": {"event_store": str(tmp_path), "event_rules": []}}, item
+    )
+    assert stimulus_files == {}
     assert "[task/one]" not in prompts[0]
     assert text == EVENTS.replace("A", "B")
     assert item["events_source"] == {

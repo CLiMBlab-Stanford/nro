@@ -147,6 +147,7 @@ def _draft(store: ConfigStore, target: DefinitionTarget, args: argparse.Namespac
     return model_draft(
         paths,
         conditions=args.conditions,
+        annotation=getattr(args, "annotation", None),
         source_tasks=tasks if tasks != (analysis,) else (),
         choose=_choose_column if interactive else None,
     )
@@ -226,6 +227,10 @@ def build_parser(action: str, *, prog: str) -> argparse.ArgumentParser:
                 )
                 command.add_argument(
                     "--conditions", help="Event column to use as categorical conditions"
+                )
+                command.add_argument(
+                    "--annotation",
+                    help="Draft from this stimulus annotation instead of the run events",
                 )
         else:
             command.add_argument(

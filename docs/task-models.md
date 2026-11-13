@@ -80,6 +80,62 @@ as `task-ANALYSIS`. This is an on-disk compatibility convention, and the
 analysis label need not be a source BIDS task. The public model snapshot and
 the compiled Stats Models document record the actual source tasks.
 
+## Models from stimulus annotations
+
+A naturalistic stimulus, such as a story, can be modeled at several temporal
+grains: sentences, words, or phonemes. Instead of repeating that timing in
+every run's `events.tsv`, store it once per stimulus in the project's
+`stimuli/` directory. The run events then record only when each stimulus was
+presented, and a model chooses the grain with `annotation`.
+
+The layout follows the draft BIDS stimuli extension (BEP044), which is not part
+of a released BIDS version:
+
+```text
+stimuli/
+  stim-story1_annot-words_events.tsv
+  stim-story1_annot-phonemes_events.tsv
+sub-01/func/sub-01_task-story_run-1_events.tsv
+```
+
+In the run events, a row with a `stim_id` value such as `stim-story1` is a
+presentation row. Its `onset` is the run time at which the stimulus started.
+Each annotation file has `onset` and `duration` columns, with onsets in seconds
+from the start of the stimulus, and any other columns the model needs.
+
+```yaml
+annotation: words
+conditions: word_class
+contrasts:
+  content: {content: 1}
+  CvF: {content: 0.5, function: -0.5}
+```
+
+`annotation` names the `annot-<label>` to use, in letters and digits. Before
+fitting, `contrasts` replaces each presentation row with the rows of
+`stimuli/<stim_id>_annot-<annotation>_events.tsv`. It adds the presentation
+onset to each annotation onset and copies the presentation row's other columns,
+such as `trial_type`, onto every expanded row. Rows without a `stim_id`, such as
+button presses, are kept. The `StartTime` adjustment applies after expansion.
+
+Planning checks every selected run before any work is scheduled. `nro run`
+exits with an error that names the project, participant, model, and missing
+file, lists the annotations that are present for the stimulus, and suggests
+`nro stimuli sync PROJECT`. Planning or fitting stops with an error when:
+
+- the run events have no `stim_id` values;
+- a presented stimulus has no file for the named annotation;
+- an event column other than `onset` and `duration` appears in both the run
+  events and the annotation file;
+- an annotation event ends after the end of a presentation with a positive
+  `duration`;
+- the stimulus has `part-<label>` annotation files. Parts are not supported yet.
+
+Models without `annotation` use the run events unchanged. The annotation label
+is part of the scientific model, so variants that differ only in `annotation`
+are separate models. Annotation files are inputs of the fit, and editing one
+makes the fits that use it stale.
+
 ## Predictors and transformations
 
 Use `predictors` instead of `conditions` when the design needs numeric

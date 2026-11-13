@@ -5,6 +5,7 @@ import re
 from copy import deepcopy
 
 from .models import contrast_weights, validate_model
+from .stimuli import validate_annotation_label
 
 NUISANCE_KEYS = (
     "confounds_regex",
@@ -53,6 +54,7 @@ def task_node(source: dict) -> dict:
         or any(not isinstance(v, str) or not v for v in predictors)
     ):
         raise ValueError("Provide conditions or a nonempty list of event predictors")
+    annotation = validate_annotation_label(source["annotation"]) if "annotation" in source else None
     hrf = source.get("hrf", "glover")
     if hrf not in {"spm", "glover", None}:
         raise ValueError("hrf must be spm, glover or null")
@@ -114,6 +116,7 @@ def task_node(source: dict) -> dict:
                     "event_predictors": predictors,
                     "default_hrf": hrf,
                     "hrf_overrides": overrides,
+                    **({"annotation": annotation} if annotation else {}),
                 }
             },
         },

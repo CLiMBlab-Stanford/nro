@@ -36,6 +36,7 @@ command uses the BIDS root from the global site configuration.
 | [Accepting development artifacts](promotion.md) | `promote` |
 | [Methods reporting](../methods/reporting.md) | `methods` |
 | [Study analyses](studies.md) | `study` |
+| [Stimulus annotations](../stimulus-files.md) | `stimuli sync` |
 
 ```{toctree}
 :maxdepth: 1

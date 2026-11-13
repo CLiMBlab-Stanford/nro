@@ -27,6 +27,8 @@ DEFINITIONS/
 ├── hardware/gradient_unwarping.yml
 ├── events/TASK/index.yml
 ├── events/TASK/*.tsv
+├── stimuli/stimuli.tsv
+├── stimuli/stim-LABEL_annot-LABEL_events.{tsv,json}
 ├── bidsify/PROFILE.yml
 └── scanplans/parser.py
 ```
@@ -39,6 +41,7 @@ DEFINITIONS/
 | `markup/` | [Source markup](#source-markup) that selects manual anatomical inputs and excludes known-bad BIDS paths. |
 | `hardware/` | [Gradient-unwarping hardware](#gradient-unwarping-hardware) policy. |
 | `events/` | [Event tables](event-files.md) that supply stimulus timing during bidsification. |
+| `stimuli/` | Optional [stimulus annotations](stimulus-files.md) that `nro stimuli sync` copies into projects. |
 | `bidsify/` | [Ingestion profiles](commands/bidsify.md) that describe conversion rules and worker resources. |
 | `scanplans/` | An optional [site scan-plan parser](commands/scanplans.md) that connects those profiles to a local or Google Drive source. |
 

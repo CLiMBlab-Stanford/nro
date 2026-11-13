@@ -43,6 +43,7 @@ configuration
 definitions
 task-models
 event-files
+stimulus-files
 ```
 
 ```{toctree}

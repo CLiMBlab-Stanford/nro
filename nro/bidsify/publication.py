@@ -168,6 +168,15 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
                 "Destination project has active derivative attempts; stop them before publication"
             )
 
+    stimulus_messages: list[str] = []
+
+    def publish_project_stimuli() -> None:
+        # Runs under the publication guard before each receipt, so a repaired
+        # publication copies any stimulus annotations it had not reached.
+        from .stimuli import publish_stimuli
+
+        stimulus_messages[:] = publish_stimuli(record, store.project_root(record["project"]))
+
     def write_receipt() -> None:
         secure_directory(receipt.parent)
         atomic_write_text(
@@ -196,6 +205,7 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
     with publication_guard() as db:
         require_ownership(db)
         if target.exists() and inventory(target) == approval["outputs"]:
+            publish_project_stimuli()
             write_receipt()
             journal.unlink(missing_ok=True)
             completed = True
@@ -214,6 +224,7 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
                         "Interrupted publication has an unexpected candidate; operator review is required"
                     )
                 temporary.rename(target)
+                publish_project_stimuli()
                 write_receipt()
                 journal.unlink(missing_ok=True)
                 completed = True
@@ -223,7 +234,7 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
                 restored = True
     if completed:
         remove_completed_transaction()
-        return {"published_path": str(target)}
+        return {"published_path": str(target), "stimulus_messages": stimulus_messages}
 
     if temporary.exists():
         if inventory(temporary) != approval["outputs"]:
@@ -280,7 +291,8 @@ def publish(record: dict, registry, *, branch_paths: BranchPaths | None = None) 
             if not target.exists() and backup.exists():
                 backup.rename(target)
             raise
+        publish_project_stimuli()
         write_receipt()
         journal.unlink(missing_ok=True)
     remove_completed_transaction()
-    return {"published_path": str(target)}
+    return {"published_path": str(target), "stimulus_messages": stimulus_messages}
