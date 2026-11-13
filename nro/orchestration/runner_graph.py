@@ -186,6 +186,21 @@ def path_mtime(path: Path) -> float:
         return float("-inf")
 
 
+def output_mtime(path: Path) -> float:
+    """Return when a step produced an output.
+
+    A symlinked output counts from when the link was written, not from its
+    target's mtime. Pass-through steps link to unchanged source files, and
+    their targets can be much older than the step's inputs.
+    """
+    if path.is_symlink():
+        try:
+            return float(path.lstat().st_mtime)
+        except OSError:
+            return float("-inf")
+    return path_mtime(path)
+
+
 def artifact_decision(
     outputs: Iterable[Path],
     force: bool,
@@ -218,9 +233,9 @@ def artifact_decision(
     if not input_paths:
         return False, "Output(s) exist and are up to date."
     oldest_output = (
-        path_mtime(freshness_path)
+        output_mtime(freshness_path)
         if freshness_path is not None
-        else min(path_mtime(path) for path in output_paths)
+        else min(output_mtime(path) for path in output_paths)
     )
     stale_inputs = [str(path) for path in input_paths if path_mtime(path) > oldest_output]
     if stale_inputs:
