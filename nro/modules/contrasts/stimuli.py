@@ -6,15 +6,20 @@ a ``stim_id`` value records when a stimulus started. An annotation file
 the start of that stimulus.
 """
 
+from __future__ import annotations
+
 import hashlib
 import re
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from nro.engine.bids import bids_dataset_root
-from nro.engine.events import validate_events
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+# numpy and pandas are imported inside functions: planning imports this module
+# for its error type and label check, and planning must not load array stacks.
 
 ANNOTATION_LABEL = re.compile(r"[A-Za-z0-9]+")
 STIMULUS_ID = re.compile(r"stim-[A-Za-z0-9]+")
@@ -108,6 +113,8 @@ def annotation_inputs(events_path: Path, run_path: Path, annotation: str) -> tup
     Missing annotations raise errors here so that they are reported before
     work is scheduled.
     """
+    import pandas as pd
+
     events = pd.read_csv(events_path, sep="\t")
     root = bids_dataset_root(run_path)
     return tuple(
@@ -135,6 +142,11 @@ def expand_presentations(
     collisions and for annotations that outlast a presentation with a positive
     duration.
     """
+    import numpy as np
+    import pandas as pd
+
+    from nro.engine.events import validate_events
+
     presentation_ids(events, source)
     stimulus = events["stim_id"].notna()
     loaded = {}
