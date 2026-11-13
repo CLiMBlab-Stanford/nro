@@ -45,6 +45,7 @@ def validate_task_model(value: dict) -> dict:
         "description",
         "model_set",
         "tasks",
+        "annotation",
         "conditions",
         "predictors",
         "hrf",
@@ -135,6 +136,8 @@ def _canonical_model(serialized: str) -> dict:
     }
     if "tasks" in source:
         result["tasks"] = list(source_tasks(source))
+    if "annotation" in rules:
+        result["annotation"] = rules["annotation"]
     return result
 
 

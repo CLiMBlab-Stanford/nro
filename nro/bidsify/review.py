@@ -13,8 +13,10 @@ from nro.definitions.events import EventFile, EventStore
 from nro.engine.events import validate_events
 
 from .config import ALLOWED_TYPES, bids_label
+from .errors import BidsificationError
 from .identity import identity_issues
 from .scanplans import apply_scanplan
+from .stimuli import referenced_ids, snapshot_stimuli
 
 
 class SkipSession(Exception):
@@ -83,6 +85,11 @@ def issues(record: dict, *, prepared: bool) -> list[str]:
                         else None
                     )
                     validate_events(Path(item.get("events") or ""), duration=duration)
+                    named = referenced_ids(Path(item["events"]).read_text())
+                    if named and set(named) - _snapshotted(item):
+                        unresolved.append(
+                            f"{name}: review the events again to snapshot stimulus annotations"
+                        )
                 except (ValueError, OSError, KeyError):
                     unresolved.append(f"{name}: valid events are required")
             if prepared:
@@ -173,7 +180,19 @@ def _entities(answer: str) -> dict:
     return parsed
 
 
-def _events(record: dict, item: dict) -> str | None:
+def _snapshotted(item: dict) -> set[str]:
+    """Return the stimulus IDs whose annotations the acquisition has snapshotted."""
+    snapshot = item.get("stimuli") or {}
+    return {row["stimulus_id"] for row in snapshot.get("stimulus_rows", [])}
+
+
+def _events(record: dict, item: dict) -> tuple[str, dict[str, str]] | None:
+    """Ask for reviewed events and snapshot the stimulus annotations they name.
+
+    Return the events text and the stimulus file texts to store, or None
+    when the reviewer defers. Events that name stimuli outside the catalog
+    are rejected and the reviewer is asked again.
+    """
     config = record["config"]
     catalog = EventStore(config["event_store"])
     task = item["entities"].get("task", "")
@@ -210,7 +229,8 @@ def _events(record: dict, item: dict) -> str | None:
                 event_path = Path(answer).expanduser().resolve()
                 text = event_path.read_text()
             validate_events(StringIO(text), duration=duration)
-        except (ValueError, OSError) as error:
+            stimuli, stimulus_files = snapshot_stimuli(text, config)
+        except (ValueError, OSError, BidsificationError) as error:
             print(str(error))
             continue
         if (
@@ -225,7 +245,14 @@ def _events(record: dict, item: dict) -> str | None:
                 != hashlib.sha256(text.encode("utf-8")).hexdigest()
             ):
                 item.pop("events_source", None)
-            return text
+            if stimuli:
+                item["stimuli"] = stimuli
+                print(
+                    "Snapshotted stimulus annotations: " + ", ".join(sorted(stimuli["annotations"]))
+                )
+            else:
+                item.pop("stimuli", None)
+            return text, stimulus_files
         return
 
 
@@ -311,6 +338,7 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
     requires_preparation = False
     for index in range(len(record["acquisitions"])):
         event_files = {}
+        stimulus_files = {}
         item = deepcopy(record["acquisitions"][index])
         if item.get("scanplan_include") is False:
             item["confirmed"] = True
@@ -394,9 +422,11 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
             if item["suffix"] != "bold" or item_requires_preparation:
                 pass
             elif item["entities"].get("task") != "rest":
-                text = _events(record, item)
-                if text is not None:
-                    event_files[item["id"]] = text
+                reviewed = _events(record, item)
+                if reviewed is not None:
+                    event_files[item["id"]] = reviewed[0]
+                    if reviewed[1]:
+                        stimulus_files[item["id"]] = reviewed[1]
             if item["suffix"] != "bold" or item_requires_preparation:
                 record["acquisitions"][index] = item
                 record["approval"] = None
@@ -406,6 +436,7 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
                     expected_revision=record["revision"],
                     review_token=review_token,
                     event_files=event_files,
+                    stimulus_files=stimulus_files,
                 )
                 continue
             refs = [
@@ -438,6 +469,7 @@ def wizard(store, record: dict, *, review_token: str) -> dict:
             expected_revision=record["revision"],
             review_token=review_token,
             event_files=event_files,
+            stimulus_files=stimulus_files,
         )
     record["issues"] = issues(record, prepared=prepared)
     if requires_preparation:

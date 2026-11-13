@@ -30,6 +30,7 @@ CATEGORIES = (
     "hardware",
     "bidsify",
     "scanplans",
+    "stimuli",
 )
 
 
@@ -39,12 +40,15 @@ def validate_store(
     require_site: bool = False,
     inherited_site: Path | None = None,
     inherited_roots: tuple[Path, ...] = (),
+    published: Path | None = None,
 ) -> dict[str, int]:
     """Check every definition and reference without changing files or registry state.
 
     Validate filenames, compiled configurations and models, workflow references,
-    event tables, and ingestion profiles. Empty model and event catalogs are
-    allowed. Raise ValueError with all discovered problems. This does not check
+    event tables, stimulus annotations, and ingestion profiles. Empty model,
+    event, and stimulus catalogs are allowed. When ``published`` names the
+    store as currently published, changed stimulus annotations must raise
+    their ``NROVersion``. Raise ValueError with all discovered problems. This does not check
     scientific suitability, credentials, or availability of external resources.
     """
     from nro.bidsify.config import load_config
@@ -71,6 +75,8 @@ def validate_store(
         hardware_profiles=0,
         bidsify=0,
         scanplan_parsers=0,
+        stimuli=0,
+        stimulus_annotations=0,
     )
 
     def check(path, operation):
@@ -85,7 +91,7 @@ def validate_store(
         directory = root / category
         # Markup and scan-plan parsing are optional site capabilities. Missing
         # directories preserve the default behavior for either capability.
-        optional = {"markup", "hardware", "scanplans"}
+        optional = {"markup", "hardware", "scanplans", "stimuli"}
         if not require_site:
             optional.add("site")
         if not directory.is_dir() and category not in optional:
@@ -230,6 +236,16 @@ def validate_store(
             if path.suffix == ".tsv" and path not in referenced:
                 errors.append(f"Unindexed event table: {path}")
         counts["event_tsvs"] = len(referenced)
+
+    from nro.definitions.stimuli import validate_catalog
+
+    stimulus_count, annotation_count, stimulus_errors = validate_catalog(
+        root,
+        inherited_roots=tuple(path for path in inherited_roots if path != root),
+        published=published,
+    )
+    errors.extend(stimulus_errors)
+    counts["stimuli"], counts["stimulus_annotations"] = stimulus_count, annotation_count
 
     if not any((candidate / "bidsify/main.yml").is_file() for candidate in store.roots):
         errors.append("Missing bidsify/main.yml in the definitions chain")

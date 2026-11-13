@@ -715,36 +715,43 @@ def main(argv: list[str] | None = None, *, prog: str = "nro.bin.run") -> None:
 
     planner = Planner(registry, bids_root=bids_root)
     scientific_revisions = registry.work_item_revisions() if branch_execution else {}
-    if args.study_analysis:
-        plan = _plan_study_analysis(args, selection, planner, registry, store)
-    elif args.resume:
-        plan = planner.plan_registered_targets(
-            _resume_targets(
-                resumed_rows,
-                requested_workflows=requested_resume_workflows,
-            ),
-            workflows=workflows,
-            registered_workflows=registered_workflows,
-            memory_gb=args.worker_memory,
-            max_memory_gb=args.worker_max_memory,
-        )
-    else:
-        plan = planner.plan(
-            projects=projects,
-            requested_participants=selection.participants,
-            modules=modules,
-            workflows=workflows,
-            registered_workflows=registered_workflows,
-            selectors=selection.runs,
-            spaces=selection.spaces,
-            smoothing_levels=selection.smoothing,
-            memory_gb=args.worker_memory,
-            max_memory_gb=args.worker_max_memory,
-            models=selection.models,
-            model_sets=selection.model_sets,
-            analyses=selection.analyses,
-            lineage_ids=selection.lineages,
-        )
+    from nro.modules.contrasts.stimuli import StimulusAnnotationError
+
+    try:
+        if args.study_analysis:
+            plan = _plan_study_analysis(args, selection, planner, registry, store)
+        elif args.resume:
+            plan = planner.plan_registered_targets(
+                _resume_targets(
+                    resumed_rows,
+                    requested_workflows=requested_resume_workflows,
+                ),
+                workflows=workflows,
+                registered_workflows=registered_workflows,
+                memory_gb=args.worker_memory,
+                max_memory_gb=args.worker_max_memory,
+            )
+        else:
+            plan = planner.plan(
+                projects=projects,
+                requested_participants=selection.participants,
+                modules=modules,
+                workflows=workflows,
+                registered_workflows=registered_workflows,
+                selectors=selection.runs,
+                spaces=selection.spaces,
+                smoothing_levels=selection.smoothing,
+                memory_gb=args.worker_memory,
+                max_memory_gb=args.worker_max_memory,
+                models=selection.models,
+                model_sets=selection.model_sets,
+                analyses=selection.analyses,
+                lineage_ids=selection.lineages,
+            )
+    except StimulusAnnotationError as error:
+        # Planning runs in a child process whose stderr becomes the user's
+        # error, so exit with the message instead of a traceback.
+        raise SystemExit(str(error)) from None
     if selection.participants:
         absent = sorted(set(selection.participants) - plan.present_participants)
         if absent:

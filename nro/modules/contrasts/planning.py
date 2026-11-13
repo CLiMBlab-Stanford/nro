@@ -9,6 +9,7 @@ from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.planning_context import work_item_key
 
 from .paths import artifact_root, completion_path, work_item_prefix
+from .stimuli import StimulusAnnotationError, annotation_inputs
 from .task_models import load_task_model, scientific_model, source_tasks
 
 
@@ -63,11 +64,41 @@ def select_model_runs(
 
 
 def direct_inputs(
-    runs, config: dict, participant: str, entities: dict, *, markup=None
+    runs, config: dict, participant: str, entities: dict, *, markup=None, model: dict | None = None
 ) -> tuple[Path, ...]:
-    """Resolve inherited events; model semantics are tracked in the contract."""
-    selected = select_model_runs(runs, config, participant, entities=entities)
-    return tuple(resolve_bids_table(run.path, suffix="events", markup=markup) for run in selected)
+    """Resolve inherited events and stimulus annotations for the selected runs.
+
+    Model semantics are tracked in the contract. When the model names an
+    annotation, a run whose events lack ``stim_id`` values or whose stimuli lack
+    that annotation raises an error here, before work is scheduled.
+    """
+    identifier = f"{entities['task']}/{entities['model']}"
+    annotation = scientific_model(model or load_task_model(identifier)).get("annotation")
+    selected = selected_runs(runs, identifier, participant, config["input_filter"], model=model)
+    paths = []
+    for run in selected:
+        events = resolve_bids_table(run.path, suffix="events", markup=markup)
+        paths.append(events)
+        if annotation:
+            paths.extend(annotation_inputs(events, run.path, annotation))
+    return tuple(dict.fromkeys(paths))
+
+
+def _planned_inputs(context, runs, values, entities, model_id, document) -> tuple[Path, ...]:
+    """Resolve direct inputs, naming the project, participant, and model on failure."""
+    try:
+        return direct_inputs(
+            runs,
+            values,
+            context.participant,
+            entities,
+            markup=context.source_markup,
+            model=document,
+        )
+    except StimulusAnnotationError as error:
+        raise StimulusAnnotationError(
+            f"{context.project}/sub-{context.participant}, model {model_id}: {error}"
+        ) from error
 
 
 def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
@@ -146,12 +177,8 @@ def plan_work_items(context, upstream, descriptor) -> tuple[WorkItemSpec, ...]:
                             ]
                         )
                     ),
-                    input_paths=direct_inputs(
-                        runs,
-                        values,
-                        context.participant,
-                        entities,
-                        markup=context.source_markup,
+                    input_paths=_planned_inputs(
+                        context, runs, values, entities, model_id, document
                     ),
                     output_root=root,
                     output_prefix=prefix,

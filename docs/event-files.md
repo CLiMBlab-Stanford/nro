@@ -6,6 +6,12 @@ of supplying a file. The catalog lives in `DEFINITIONS/events` in the selected
 [definitions store](definitions.md). Its files describe stimulus timing and
 condition labels. They do not define contrasts models or request processing.
 
+Fine-grained timing within a stimulus, such as word onsets in a story, can
+instead live in stimulus annotation files in the project's `stimuli/`
+directory. The run events then mark only when each stimulus started. See
+[models from stimulus annotations](task-models.md#models-from-stimulus-annotations).
+Those annotations have their own [catalog](stimulus-files.md).
+
 ## Catalog layout
 
 Each task directory contains an `index.yml`:

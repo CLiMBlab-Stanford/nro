@@ -13,7 +13,7 @@ import yaml
 from scipy.ndimage import gaussian_filter
 
 from nro.definitions.schema import scientific_values
-from nro.engine.bids import BidsRun, resolve_bids_table
+from nro.engine.bids import BidsRun, bids_dataset_root, resolve_bids_table
 from nro.engine.container import ContainerSettings, build_container
 from nro.engine.image_paths import sidecar_json_path
 from nro.engine.io import (
@@ -46,6 +46,7 @@ from .models import validate_run_groups
 from .paths import artifact_root, completion_path, node_prefix, work_item_prefix
 from .report import write_design
 from .statistics import RunFit, UnidentifiableDesignError, fit_glm, percent_signal_change
+from .stimuli import annotation_inputs, expand_presentations
 from .task_models import scientific_model
 
 LOG = logging.getLogger(__name__)
@@ -194,8 +195,15 @@ def create_fit_step(
     prefix: Path,
     base: dict,
     config: dict,
+    annotation_paths: tuple[Path, ...] = (),
 ) -> Step:
-    """Declare one independent run fit, with runtime omissions recorded in its manifest."""
+    """Declare one independent run fit, with runtime omissions recorded in its manifest.
+
+    When the model names an annotation, presentation rows are expanded from
+    ``annotation_paths`` before the StartTime adjustment, and the expanded
+    table is saved beside the design.
+    """
+    annotation = node["Model"]["Software"]["nro"].get("annotation")
     manifest = prefix.with_name(prefix.name + "_manifest.json")
 
     def reusable_fit(inputs: tuple[Path, ...]) -> tuple[dict, dict, dict] | None:
@@ -234,6 +242,18 @@ def create_fit_step(
             "input_denoising": _input_denoising(run.stem, metadata["Denoising"]),
         }
         tr = float(metadata["RepetitionTime"])
+        expanded_outputs = []
+        if annotation:
+            events, annotation_sources = expand_presentations(
+                events,
+                annotation=annotation,
+                dataset_root=bids_dataset_root(run.path),
+                source=events_path,
+            )
+            fit_base["annotation"] = {"label": annotation, "stimuli": annotation_sources}
+            expanded_path = prefix.with_name(prefix.name + f"_annot-{annotation}_events.tsv")
+            atomic_write_text(expanded_path, events.to_csv(sep="\t", index=False))
+            expanded_outputs.append(expanded_path)
         events["onset"] -= float(metadata.get("StartTime", 0))
         compiled_path = prefix.with_name(prefix.name + "_statsmodel.json")
         compiled = deepcopy(base["model_document"])
@@ -247,7 +267,7 @@ def create_fit_step(
             _write_manifest(
                 manifest,
                 fit_base,
-                outputs=[compiled_path],
+                outputs=[compiled_path, *expanded_outputs],
                 records=[],
                 sources={},
                 omissions=[
@@ -260,7 +280,12 @@ def create_fit_step(
                 ],
             )
             return
-        design_outputs = [compiled_path, *write_design(prefix, design)]
+        if annotation:
+            design.metadata["PredictorSources"] = {
+                name: f"events.tsv+annot-{annotation}" if origin == "events.tsv" else origin
+                for name, origin in design.metadata["PredictorSources"].items()
+            }
+        design_outputs = [compiled_path, *expanded_outputs, *write_design(prefix, design)]
         entities = {"subject": base["participant"]}
         entities.update(
             {
@@ -285,6 +310,7 @@ def create_fit_step(
             *images,
             confounds_path,
             events_path,
+            *annotation_paths,
             sidecar_json_path(original_images[0]),
         )
         reusable = reusable_fit(fit_inputs)
@@ -364,7 +390,13 @@ def create_fit_step(
     return Step.python(
         name=f"Fit {run.stem}",
         outputs=(manifest,),
-        inputs=(*images, confounds_path, events_path, sidecar_json_path(original_images[0])),
+        inputs=(
+            *images,
+            confounds_path,
+            events_path,
+            *annotation_paths,
+            sidecar_json_path(original_images[0]),
+        ),
         action=action,
         validate=partial(
             validate_completion,
@@ -616,6 +648,7 @@ def build_module(
         )
         confounds = original[0].parent / f"{run.stem}_desc-confounds_timeseries.tsv"
         events = resolve_bids_table(run.path, suffix="events")
+        annotation = root_node["Model"]["Software"]["nro"].get("annotation")
         step = create_fit_step(
             run=run,
             images=images,
@@ -626,6 +659,9 @@ def build_module(
             prefix=destination,
             base={**base, "node": root_node["Name"]},
             config=config,
+            annotation_paths=(
+                annotation_inputs(events, run.path, annotation) if annotation else ()
+            ),
         )
         runner.add_step(
             step.with_parameters(

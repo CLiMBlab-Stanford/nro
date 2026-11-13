@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from nro.engine.bids import discover_raw_runs, resolve_bids_table
+from nro.engine.bids import bids_dataset_root, discover_raw_runs, resolve_bids_table
+from nro.modules.contrasts.stimuli import (
+    available_annotations,
+    expand_presentations,
+    presentation_ids,
+    validate_annotation_label,
+)
 from nro.modules.contrasts.task_models import validate_task_model
 
 
@@ -56,18 +62,27 @@ def model_draft(
     paths: Sequence[Path],
     *,
     conditions: str | None = None,
+    annotation: str | None = None,
     source_tasks: Sequence[str] = (),
     choose: Callable[[tuple[str, ...]], str] | None = None,
     report: Callable[[str], None] = print,
 ) -> str:
     """Infer categorical effects from the union of event tables.
 
-    Prefer trial_type; otherwise ask choose to select a common event column.
+    Prefer trial_type unless drafting from an annotation; otherwise ask choose
+    to select a common event column.
     Numeric predictors and between-condition contrasts are not inferred. Labels
     use the same pandas parsing as contrasts execution. The draft has no model
     set membership and still needs scientific review.
+
+    With annotation, each table is first expanded from the stimulus annotation
+    files of its BIDS project, as contrasts does before fitting. Without it,
+    tables that reference stimuli report the annotations available for them.
     """
+    if annotation is not None:
+        validate_annotation_label(annotation)
     tables = []
+    stimuli = {}
     for path in dict.fromkeys(paths):
         with path.open(encoding="utf-8", newline="") as stream:
             header = next(csv.reader(stream, delimiter="\t"), [])
@@ -80,12 +95,38 @@ def model_draft(
             values = pd.to_numeric(table[name], errors="coerce").to_numpy(float)
             if not np.isfinite(values).all() or (name == "duration" and (values < 0).any()):
                 raise ValueError(f"Invalid {name} values: {path}")
+        if annotation is not None or "stim_id" in table:
+            try:
+                root = bids_dataset_root(path)
+            except ValueError as error:
+                if annotation is None:
+                    root = None
+                else:
+                    raise ValueError(
+                        f"--annotation needs event files inside a BIDS project: {path}"
+                    ) from error
+            if annotation is not None:
+                table, _ = expand_presentations(
+                    table, annotation=annotation, dataset_root=root, source=path
+                )
+            elif root is not None and table["stim_id"].notna().any():
+                for stim_id, labels in available_annotations(
+                    root, presentation_ids(table, path)
+                ).items():
+                    stimuli.setdefault(stim_id, set()).update(labels)
         tables.append((path, table))
     if not tables:
         raise ValueError("At least one event file is required")
     common = set.intersection(*(set(table.columns) for _, table in tables)) - {"onset", "duration"}
     columns = set.union(*(set(table.columns) for _, table in tables)) - {"onset", "duration"}
     report(f"Inspected {len(tables)} distinct event table(s).")
+    if annotation is not None:
+        report(f"Expanded stimulus presentations from annot-{annotation}.")
+    for stim_id, labels in sorted(stimuli.items()):
+        report(
+            f"  Stimulus {stim_id} annotations: {', '.join(sorted(labels)) or 'none'}; "
+            "use --annotation LABEL to draft from one"
+        )
     for name in sorted(columns):
         present = [table[name] for _, table in tables if name in table]
         kinds = {
@@ -96,9 +137,11 @@ def model_draft(
             f"  {name}: {'/'.join(sorted(kinds))}; present in {len(present)}/{len(tables)} tables"
         )
     if conditions is None:
-        if "trial_type" in common:
+        # Copied presentation labels such as trial_type rarely define the
+        # conditions of an annotation model, so ask instead of defaulting.
+        if annotation is None and "trial_type" in common:
             conditions = "trial_type"
-        elif "trial_type" in columns:
+        elif annotation is None and "trial_type" in columns:
             raise ValueError(
                 "trial_type is absent from some tables; narrow discovery or specify --conditions COLUMN"
             )
@@ -148,6 +191,7 @@ def model_draft(
     )
     model = {
         "model_set": [],
+        **({"annotation": annotation} if annotation is not None else {}),
         **({"tasks": list(dict.fromkeys(source_tasks))} if source_tasks else {}),
         "conditions": conditions,
         "contrasts": contrasts,

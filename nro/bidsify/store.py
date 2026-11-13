@@ -409,9 +409,13 @@ class IngestionStore:
         expected_revision: int,
         review_token: str,
         event_files: dict[str, str] | None = None,
+        stimulus_files: dict[str, dict[str, str]] | None = None,
     ) -> dict:
         """Save decisions and event snapshots under a valid session lease and revision.
 
+        stimulus_files maps acquisition IDs to stimulus annotation file texts by
+        filename, for the snapshot described in the acquisition's ``stimuli``.
+        They are stored content-addressed like events.
         event_files maps acquisition IDs to reviewed TSV text. Each snapshot
         has a content-addressed name, so a failed record write cannot replace
         an earlier decision's file. Rejected revisions/leases write no files.
@@ -478,6 +482,35 @@ class IngestionStore:
                 else:
                     atomic_write_text(destination, text, mode=0o660, durable=True)
                 acquisitions[acquisition]["events"] = str(destination)
+            if set(stimulus_files or {}) - acquisitions.keys():
+                raise ValueError("Stimulus snapshots must belong to an acquisition in this request")
+            for acquisition, texts in (stimulus_files or {}).items():
+                from .paths import secure_directory
+
+                snapshot = acquisitions[acquisition].get("stimuli")
+                if not snapshot:
+                    raise ValueError("Stimulus files need the acquisition's stimulus snapshot")
+                for name, source in snapshot["annotations"].items():
+                    if hashlib.sha256(texts[name].encode("utf-8")).hexdigest() != source["sha256"]:
+                        raise ValueError("Stimulus provenance does not match the reviewed snapshot")
+                stored = {}
+                for name, text in texts.items():
+                    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    destination = (
+                        Path(current["config"]["staging"])
+                        / current["id"]
+                        / "stimuli"
+                        / f"{digest}-{name}"
+                    )
+                    secure_directory(destination.parent)
+                    if destination.is_symlink():
+                        raise ValueError("Stimulus snapshots cannot be symbolic links")
+                    if not destination.exists():
+                        atomic_write_text(destination, text, mode=0o660, durable=True)
+                    elif destination.read_text() != text:
+                        raise ValueError("An existing stimulus snapshot has changed")
+                    stored[name] = str(destination)
+                snapshot["files"] = stored
             record["revision"] += 1
             record["executor_uid"] = os.getuid()
             if record["state"] == "queued" and self.execution is not None:

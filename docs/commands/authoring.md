@@ -71,6 +71,14 @@ configured BIDS root. Both accept the glob and `re:` patterns described under
 The initializer reads conditions from the `trial_type` column. Pass
 `--conditions COLUMN` to use another column without being prompted.
 
+When the event tables reference stimuli through `stim_id`, the initializer
+lists the annotations present in each project's `stimuli/` directory. Pass
+`--annotation LABEL` to draft from one of them. The tables are then expanded
+from the annotation files, as `contrasts` does before fitting, and the draft
+includes `annotation: LABEL`. An annotation draft does not default to
+`trial_type`; pass `--conditions COLUMN` or choose a column when prompted.
+`--annotation` requires event files inside a BIDS project.
+
 The generated model contains the union of observed conditions, the SPM HRF,
 and one contrast per condition against the implicit baseline. Review the
 design before fitting it. Event discovery cannot tell whether a design is

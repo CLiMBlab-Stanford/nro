@@ -191,6 +191,14 @@ synchronizing events with the first stored volume, for the condition labels,
 and for removing identifying text. See the
 [BIDS events specification](https://bids-specification.readthedocs.io/en/stable/modality-agnostic-files/events.html).
 
+When an events table has a `stim_id` column, review also snapshots every
+annotation of the named stimuli from the [stimulus catalog](../stimulus-files.md).
+Review rejects a stimulus that is not in the catalog and asks for events again.
+Publication copies the snapshots into the project's `stimuli/` directory. An
+existing project copy that differs from the reviewed version is kept, and the
+publication result reports it; use `nro stimuli sync` to compare it with the
+catalog. Later catalog edits do not change an accepted snapshot.
+
 ### Fieldmap and SBRef associations
 
 Reviewed fieldmaps receive `B0FieldIdentifier` and `IntendedFor`, and BOLD

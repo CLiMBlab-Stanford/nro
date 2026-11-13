@@ -22,6 +22,11 @@ models. See [first-level models](../task-models.md) for the YAML format,
 transformations, and model sets, and [model commands](../commands/models.md)
 for registration.
 
+Event timing comes from each run's inherited `events.tsv`. A model with
+`annotation` also reads the matching stimulus annotation files from the
+project's `stimuli/` directory. See
+[models from stimulus annotations](../task-models.md#models-from-stimulus-annotations).
+
 ## Requesting fits
 
 A request without a model selector uses model set `main`. This example assumes
@@ -143,6 +148,12 @@ Filenames include model variant, task, space, smoothing, Stats Models node
 name, and any run or session entities. Run filenames from a multi-task model
 also keep the source `task-` entity. These names are BIDS-like, but nro does not
 claim validator compliance.
+
+**Annotation models.** For a model with `annotation`, each run directory also
+holds the expanded events table as `..._annot-<label>_events.tsv`. The run
+manifest records the annotation label and the path and SHA-256 of each
+annotation file used. In the design JSON, `PredictorSources` reports event
+predictors as `events.tsv+annot-<label>`.
 
 **Statistic maps.** Each node target has one dense-scalar CIFTI for each
 available statistic: effect, variance, t, and degrees of freedom. Contrasts are
