@@ -23,6 +23,27 @@ def test_shared_artifact_rule_detects_newer_input_without_deleting_output(
     assert output.exists()
 
 
+def test_symlinked_output_counts_from_when_the_link_was_written(tmp_path: Path) -> None:
+    raw = tmp_path / "raw_bold.nii.gz"
+    motion = tmp_path / "motion.par"
+    output = tmp_path / "desc-marss_bold.nii.gz"
+    raw.write_text("acquired long ago")
+    motion.write_text("estimated later")
+    old, later = raw.stat().st_mtime - 10_000, raw.stat().st_mtime - 100
+    os.utime(raw, (old, old))
+    os.utime(motion, (later, later))
+    # A pass-through step links its output to the unchanged source file.
+    output.symlink_to(raw)
+
+    assert artifact_decision((output,), False, inputs=(motion,))[0] is False
+
+    newer = output.lstat().st_mtime + 2
+    os.utime(motion, (newer, newer))
+    should_run, reason = artifact_decision((output,), False, inputs=(motion,))
+    assert should_run
+    assert "newer" in reason
+
+
 def test_missing_inputs_are_ignored_but_existing_private_changes_are_not(
     tmp_path: Path,
 ) -> None:
