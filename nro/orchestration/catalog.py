@@ -28,6 +28,8 @@ from nro.modules.contrasts.task_models import (
 )
 from nro.modules.dynconn.contract import dynconn_output_contract
 from nro.modules.dynconn.planning import plan_work_items as plan_dynconn_work_items
+from nro.modules.fcgradients.contract import fcgradients_output_contract
+from nro.modules.fcgradients.planning import plan_work_items as plan_fcgradients_work_items
 from nro.modules.func.contract import final_resampling_contract, functional_output_contract
 from nro.modules.func.planning import plan_work_items as plan_func_work_items
 from nro.modules.microparcellation.contract import microparcellation_output_contract
@@ -80,6 +82,10 @@ def _microparcellation_processing_contract() -> Mapping[str, object]:
 
 def _networks_processing_contract() -> Mapping[str, object]:
     return {"output_metadata": networks_output_contract()}
+
+
+def _fcgradients_processing_contract() -> Mapping[str, object]:
+    return {"output_metadata": fcgradients_output_contract()}
 
 
 def _contrasts_processing_contract() -> Mapping[str, object]:
@@ -185,6 +191,14 @@ BUILTIN_MODULES = (
         resource_class="medium",
         plan=plan_networks_work_items,
         processing_contract=_networks_processing_contract,
+    ),
+    ModuleDescriptor(
+        name="fcgradients",
+        scope="subject",
+        output_format="Subject-level CIFTI functional-connectivity gradient maps and metadata",
+        resource_class="large",
+        plan=plan_fcgradients_work_items,
+        processing_contract=_fcgradients_processing_contract,
     ),
     ModuleDescriptor(
         name="contrasts",

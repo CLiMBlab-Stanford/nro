@@ -42,7 +42,7 @@ def test_run_defaults() -> None:
     selection = core_selection(args)
     assert selection.participants == ()
     assert selection.projects == ()
-    assert selection.modules == ("microparcellation", "networks", "contrasts")
+    assert selection.modules == ("microparcellation", "networks", "fcgradients", "contrasts")
     assert selection.workflows == ("main",)
     assert selection.spaces == ("fsnative",)
     assert selection.smoothing == (2,)
@@ -1491,7 +1491,7 @@ def test_run_continues_past_unavailable_participant(
     result = json.loads(capsys.readouterr().out)
 
     assert result["participants"] == {"demo": ["01"]}
-    assert result["work_items"] == 6
+    assert result["work_items"] == 7
     assert {
         "project": "demo",
         "participant": "01",
@@ -1614,8 +1614,8 @@ def test_bare_request_keeps_networks_when_no_task_models_match(
     request = json.loads(capsys.readouterr().out)
     assert request["projects"] == ["climblab_multisession"]
     assert request["participants"] == {"climblab_multisession": ["01", "02"]}
-    assert request["modules"] == ["microparcellation", "networks", "contrasts"]
-    assert request["work_items"] == 12
+    assert request["modules"] == ["microparcellation", "networks", "fcgradients", "contrasts"]
+    assert request["work_items"] == 14
     assert request["concurrency"] == 50
 
 
@@ -1650,7 +1650,7 @@ def test_run_requests_each_selected_branch_across_projects(
         argv.extend(["-m", *modules])
     run_main(argv)
     result = json.loads(capsys.readouterr().out)
-    selected = modules or ("microparcellation", "networks", "contrasts")
+    selected = modules or ("microparcellation", "networks", "fcgradients", "contrasts")
     assert result["modules"] == list(selected)
     registry = Registry.for_project("alpha", bids_root=bids)
     rows = registry.work_item_rows()

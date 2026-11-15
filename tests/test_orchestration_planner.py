@@ -434,6 +434,41 @@ def test_dynconn_backed_networks_select_only_the_configured_source(tmp_path: Pat
     assert not any("microparcellation" in str(path) for path in by_module["networks"].input_paths)
 
 
+@pytest.mark.parametrize("space", ["fsnative", "T1w"])
+def test_fcgradients_depend_on_dynconn_and_anatomy(tmp_path: Path, space: str) -> None:
+    bids = tmp_path / "bids"
+    subject = bids / "demo" / "sub-01"
+    _write(subject / "anat" / "sub-01_T1w.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.nii.gz")
+    _write(subject / "func" / "sub-01_task-rest_run-1_bold.json", "{}")
+    workflow = ConfigStore().resolve("main")
+    registry = Registry.for_project("demo", bids_root=bids)
+    registered = registry.register_workflow(workflow)
+
+    work_items = build_subject_work_items(
+        project="demo",
+        participant="01",
+        module="fcgradients",
+        workflow=workflow,
+        registered=registered,
+        registry=registry,
+        bids_root=bids,
+        spaces=(space,),
+        smoothing_levels=(2,),
+    )
+    by_module = {item.module: item for item in work_items}
+
+    assert set(by_module) == {"anat", "func", "clean", "dynconn", "fcgradients"}
+    gradient = by_module["fcgradients"]
+    assert gradient.dependencies == (by_module["dynconn"].key, by_module["anat"].key)
+    assert gradient.entities == {"space": space, "smoothing": "2"}
+    assert any("dynamicConnectivity_manifest" in path.name for path in gradient.input_paths)
+    assert {path.name for path in gradient.expected_outputs} == {
+        f"sub-01_space-{space}_smoothing-2mm_desc-fcGradient_manifest.yaml",
+        f"sub-01_space-{space}_smoothing-2mm_desc-fcGradientIndex_manifest.json",
+    }
+
+
 def test_planner_can_reproduce_one_exact_registered_target(branch_registry, tmp_path):
     complete = _plan_modules(branch_registry, tmp_path, ("clean",))
     target = next(

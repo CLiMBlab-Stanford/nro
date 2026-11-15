@@ -24,17 +24,20 @@ contains these modules:
   connectivity.
 - `networks` estimates individualized functional networks from either
   microparcel connectivity or dynamic-connectivity time series.
+- `fcgradients` maps sharp changes in functional connectivity from
+  dynamic-connectivity time series.
 - `contrasts` estimates task effects from `func` outputs using registered task
   models.
 
 The arrows show dependencies:
 
 ```text
-[anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn] ────────────┐
+[anat] ──► [func] ──┬──► [clean] ──┬──► [dynconn] ──┬─────────┐
+                    │              │                └──► [fcgradients]
                     │              └──► [microparcellation] ──┴──► [networks]
                     └──► [contrasts]
 
-[anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, contrasts}
+[anat] ── "direct anatomical inputs" ──► {clean, microparcellation, networks, fcgradients, contrasts}
 
 Only one of the two configured inputs to `networks` is active in a workflow.
 ```
@@ -70,7 +73,7 @@ nro run -p 01 -P example
 ```
 
 With no `--module`, the request reaches every workflow endpoint: currently
-`dynconn`, `networks`, and `contrasts`. Shared upstream work runs once. To stop
+`microparcellation`, `networks`, `fcgradients`, and `contrasts`. Shared upstream work runs once. To stop
 at a particular module or select several participants:
 
 ```bash

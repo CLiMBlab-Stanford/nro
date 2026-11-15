@@ -1,0 +1,14 @@
+markup: main
+overwrite: false
+backend: workbench_correlation_gradient
+mask: null
+mask_threshold: 0.5
+workbench:
+  fisher_z: true
+  double_correlation: false
+  fisher_z_first: true
+  presmooth_fwhm_mm: 0.0
+  surface_exclude_mm: 0.0
+  volume_exclude_mm: 0.0
+  memory_limit_gb: null
+wb_command: site:workbench
