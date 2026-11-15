@@ -129,7 +129,7 @@ def work_item_paths(
     if include_public:
         if module == "anat":
             derivative_paths.append(owned_output_root)
-        elif module in {"dynconn", "microparcellation", "networks"}:
+        elif module in {"dynconn", "microparcellation", "networks", "fcgradients"}:
             derivative_paths.extend(
                 prefix_owned_paths(
                     output_root,
@@ -176,7 +176,7 @@ def work_item_paths(
             target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
             run_prefix = output_prefix.removesuffix(f"_{target}")
             work_paths.append(base / run_prefix / target)
-        elif module in {"dynconn", "microparcellation", "networks"}:
+        elif module in {"dynconn", "microparcellation", "networks", "fcgradients"}:
             target = f"space-{entities['space']}_smoothing-{entities['smoothing']}mm"
             work_paths.append(
                 project_work_derivatives

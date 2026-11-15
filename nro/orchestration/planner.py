@@ -344,6 +344,7 @@ class Planner:
                 "dynconn",
                 "microparcellation",
                 "networks",
+                "fcgradients",
             }:
                 selectors = None
             elif target.module == "contrasts":
@@ -516,9 +517,9 @@ class Planner:
     ) -> tuple[WorkItemSpec, ...]:
         """Build the requested logical work-item graph for one participant."""
         target = normalize_module(module)
-        if (target in {"dynconn", "microparcellation", "networks"} and selectors) or (
-            target == "contrasts" and set(selectors or {}) - {"task"}
-        ):
+        if (
+            target in {"dynconn", "microparcellation", "networks", "fcgradients"} and selectors
+        ) or (target == "contrasts" and set(selectors or {}) - {"task"}):
             raise ValueError(
                 "Run selectors cannot define a subject-level multirun derivative. "
                 "Use the module configuration's input selection instead."
@@ -554,10 +555,12 @@ class Planner:
             )
         if selectors and target_descriptor.select_models is None:
             runs = tuple(run for run in runs if matches_selectors(run.entities, selectors))
-        if target in {"dynconn", "microparcellation", "networks"}:
+        if target in {"dynconn", "microparcellation", "networks", "fcgradients"}:
             filter_class = (
                 workflow.configuration("networks").values["connectivity_source"]
                 if target == "networks"
+                else "dynconn"
+                if target == "fcgradients"
                 else target
             )
             aggregate_filter = workflow.configuration(filter_class).values.get("input_filter", {})

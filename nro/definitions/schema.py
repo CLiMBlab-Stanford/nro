@@ -397,6 +397,23 @@ SCHEMAS = {
         },
         "labeling": {"enabled": BOOL, "candidates_per_reference": COUNT},
     },
+    "fcgradients": {
+        "markup": OPTIONAL_TEXT,
+        "overwrite": EXEC_BOOL,
+        "backend": enum("workbench_correlation_gradient"),
+        "mask": OPTIONAL_TEXT,
+        "mask_threshold": Field("float", minimum=0, maximum=1, exclusive_maximum=True),
+        "workbench": {
+            "fisher_z": BOOL,
+            "double_correlation": BOOL,
+            "fisher_z_first": BOOL,
+            "presmooth_fwhm_mm": NONNEGATIVE,
+            "surface_exclude_mm": NONNEGATIVE,
+            "volume_exclude_mm": NONNEGATIVE,
+            "memory_limit_gb": Field("float", minimum=0, nullable=True, execution=True),
+        },
+        "wb_command": Field("str", nonempty=True, execution=True),
+    },
 }
 
 RUNTIME_FIELDS = {
@@ -410,6 +427,7 @@ RUNTIME_FIELDS = {
     "microparcellation": {"anat_directory": TEXT, "clean_directory": TEXT},
     "dynconn": {"anat_directory": TEXT, "clean_directory": TEXT},
     "networks": {"anat_directory": TEXT, "source_directory": TEXT},
+    "fcgradients": {"anat_directory": TEXT, "dynconn_directory": TEXT},
 }
 
 
@@ -527,7 +545,7 @@ def scientific_values(kind: str, values: dict) -> dict:
         return result
 
     schema = SCHEMAS[kind]
-    if kind in {"dynconn", "microparcellation", "networks"}:
+    if kind in {"dynconn", "microparcellation", "networks", "fcgradients"}:
         schema = {
             **schema,
             "output": {"overwrite": EXEC_BOOL, "work_directory": Field("str", execution=True)},
@@ -554,6 +572,10 @@ def scientific_values(kind: str, values: dict) -> dict:
             result.pop("marss_min_multiband_factor", None)
     if kind == "dynconn" and result.get("low_rank") is False:
         result.pop("low_rank_options", None)
+    if kind == "fcgradients":
+        workbench = result.get("workbench")
+        if isinstance(workbench, dict) and workbench.get("double_correlation") is False:
+            workbench.pop("fisher_z_first", None)
     if kind == "networks":
         source = result.get("connectivity_source")
         strategy = result.get("parcellation_strategy")

@@ -11,7 +11,7 @@ that pass between the parts. Shared vocabulary is defined in
 ## Code layout
 
 The scientific modules are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `contrasts`. One closed built-in catalog
+`microparcellation`, `networks`, `fcgradients`, and `contrasts`. One closed built-in catalog
 collects the metadata the planner needs about each of them. Each scientific
 package builds its own work items, and the central planner walks dependencies
 across modules.

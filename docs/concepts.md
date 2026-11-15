@@ -41,7 +41,7 @@ product
 
 A **configuration class** is the set of parameters that one scientific module
 accepts. The current classes are `anat`, `func`, `clean`, `dynconn`,
-`microparcellation`, `networks`, and `contrasts`.
+`microparcellation`, `networks`, `fcgradients`, and `contrasts`.
 
 A **module configuration** gives a value for every local parameter of one
 configuration class. It has a stable, readable ID. Configuration files are the

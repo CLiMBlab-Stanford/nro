@@ -128,3 +128,36 @@ def surface_geometry(
         find_fsaverage_surface(hemi=hemi, surface=surface, n_vertices=count)
         for hemi, count in zip(hemispheres, vertex_counts)
     )  # type: ignore[return-value]
+
+
+def dense_surface_geometry(
+    anat_path: Path,
+    participant: str,
+    surface: str,
+    space: str,
+    dense: Path,
+) -> tuple[Path, Path]:
+    """Resolve native or fsaverage geometry for a two-hemisphere dense CIFTI file.
+
+    Native geometry comes from the anatomy manifest. Template geometry is chosen
+    from the vertex count of each cortical structure, which must be ordered left
+    then right.
+    """
+
+    if space == "fsnative":
+        return anatomical_surface_paths(anat_path, participant, surface, space)
+    import nibabel as nib
+
+    axis = nib.load(str(dense)).header.get_axis(1)
+    if not isinstance(axis, nib.cifti2.BrainModelAxis):
+        raise ValueError(f"Expected CIFTI brain models: {dense}")
+    structures = tuple(axis.iter_structures())
+    if tuple(name for name, _, _ in structures) != (
+        "CIFTI_STRUCTURE_CORTEX_LEFT",
+        "CIFTI_STRUCTURE_CORTEX_RIGHT",
+    ):
+        raise ValueError(f"Surface CIFTI must contain ordered left and right cortex: {dense}")
+    return tuple(
+        find_fsaverage_surface(hemi=hemi, surface=surface, n_vertices=int(part.nvertices[name]))
+        for hemi, (name, _, part) in zip(("L", "R"), structures)
+    )  # type: ignore[return-value]

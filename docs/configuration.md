@@ -57,6 +57,7 @@ belong to `nro.site`. They are set during site setup, not through `nro def`.
 | `dynconn` | dynconn | `dynconn` | [Dynamic connectivity](modules/dynconn.md) |
 | `microparcellation` | microparcellation | `microparcellation` | [Microparcellation](modules/microparcellation.md) |
 | `networks` | networks | `networks` | [Networks](modules/networks.md) |
+| `fcgradients` | fcgradients | `fcgradients` | [Functional-connectivity gradients](modules/fcgradients.md) |
 | `contrasts` | contrasts | `contrasts` | [First-level models](modules/contrasts.md) |
 
 [First-level models](task-models.md) are separate from contrasts
@@ -150,11 +151,12 @@ derivative stale.
 The execution-only fields are:
 
 - the `overwrite` setting of anat, func, clean, dynconn, contrasts,
-  microparcellation, and networks;
+  microparcellation, networks, and fcgradients;
 - the `verbose` setting of anat, func, and clean, and func `io_chunk_vols`;
 - contrasts `spatial_block_size`;
-- microparcellation `connectivity.temporal_block_size`; and
-- networks `oslom.timeout_seconds`.
+- microparcellation `connectivity.temporal_block_size`;
+- networks `oslom.timeout_seconds`; and
+- fcgradients `workbench.memory_limit_gb` and `wb_command`.
 
 Every other setting is scientific. This includes random seeds, solver
 tolerances, iteration counts, clustering batch size, and software resource

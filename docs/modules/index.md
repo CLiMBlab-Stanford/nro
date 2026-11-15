@@ -13,6 +13,7 @@ clean
 dynconn
 microparcellation
 networks
+fcgradients
 contrasts
 ```
 
@@ -24,7 +25,8 @@ participant's anatomy. `clean` runs once per acquisition, space, and smoothing
 level.
 
 `dynconn`, `microparcellation`, and `networks` each combine one participant's
-cleaned runs for one space and smoothing level. The planner records source
+cleaned runs for one space and smoothing level. `fcgradients` reads the
+`dynconn` series for the same target. The planner records source
 selections that it excludes because they are unusable. Exclusions based on run
 quality happen later and are recorded in artifact metadata.
 

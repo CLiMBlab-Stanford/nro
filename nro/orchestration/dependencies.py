@@ -11,6 +11,7 @@ _PRIMARY_DEPENDENCIES: dict[str, str | None] = {
     "dynconn": "clean",
     "microparcellation": "clean",
     "networks": None,
+    "fcgradients": "dynconn",
     "contrasts": "func",
 }
 
@@ -21,6 +22,7 @@ _DIRECT_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "dynconn": ("clean",),
     "microparcellation": ("clean", "anat"),
     "networks": (),
+    "fcgradients": ("dynconn", "anat"),
     "contrasts": ("func", "anat"),
 }
 

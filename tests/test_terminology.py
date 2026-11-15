@@ -38,6 +38,7 @@ def test_code_defines_the_canonical_system_vocabulary() -> None:
         "dynconn",
         "microparcellation",
         "networks",
+        "fcgradients",
         "contrasts",
     )
     assert CONFIGURATION_CLASSES == MODULES == MODULE_NAMES

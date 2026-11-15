@@ -45,6 +45,7 @@ CONFIGURATION_FILE_SUFFIX = {
     "dynconn": "dynconn",
     "microparcellation": "microparcellation",
     "networks": "networks",
+    "fcgradients": "fcgradients",
     "contrasts": "contrasts",
 }
 
@@ -138,6 +139,9 @@ class WorkflowRegistry:
                 values["anat_directory"] = directories["anat"]
                 source = str(values["connectivity_source"])
                 values["source_directory"] = directories[source]
+            elif configuration_class == "fcgradients":
+                values["anat_directory"] = directories["anat"]
+                values["dynconn_directory"] = directories["dynconn"]
             suffix = CONFIGURATION_FILE_SUFFIX[configuration_class]
             directory = directories[configuration_class]
             runtime_path = runtime_directory / f"{directory}_{suffix}.yml"
