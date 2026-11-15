@@ -1883,7 +1883,6 @@ def serve(
                 print(f"Scheduler heartbeat failed: {error}", flush=True)
 
     heartbeat_thread = threading.Thread(target=renew_lease, name="scheduler-heartbeat")
-    heartbeat_thread.start()
     executors = {
         "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
         "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
@@ -1976,9 +1975,6 @@ def serve(
         changed_event.set()
         capacity_event.set()
 
-    for record in prepare(registry):
-        future = coordinator.submit(record, _executor_for(record, executors))
-        future.add_done_callback(lambda completed, item=record: note_completion(item, completed))
     listener_thread = threading.Thread(
         target=_listen,
         name="scheduler-listener",
@@ -1995,7 +1991,6 @@ def serve(
             "changed": changed_event,
         },
     )
-    listener_thread.start()
     idle_since = None
     capacity_future = None
     maintenance_future = None
@@ -2007,7 +2002,17 @@ def serve(
     last_reconciliation = time.monotonic() - MAINTENANCE_INTERVAL_SECONDS
     last_request_activity = time.monotonic()
     last_snapshot = time.monotonic()
+    # Startup failures must reach the teardown below. Otherwise the heartbeat
+    # and check-in threads keep the process alive and the scheduler looks
+    # active while nothing serves requests.
     try:
+        heartbeat_thread.start()
+        for record in prepare(registry):
+            future = coordinator.submit(record, _executor_for(record, executors))
+            future.add_done_callback(
+                lambda completed, item=record: note_completion(item, completed)
+            )
+        listener_thread.start()
         capacity_event.set()
         while not _STOP:
             now = time.monotonic()
@@ -2093,9 +2098,11 @@ def serve(
     finally:
         _PLANNING_STOP.set()
         heartbeat_stop.set()
-        heartbeat_thread.join()
+        if heartbeat_thread.ident is not None:
+            heartbeat_thread.join()
         listener_stop.set()
-        listener_thread.join()
+        if listener_thread.ident is not None:
+            listener_thread.join()
         listener.close()
         readers.shutdown(wait=True, cancel_futures=False)
         for pool in ingress.values():

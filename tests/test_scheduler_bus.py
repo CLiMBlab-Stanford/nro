@@ -2,6 +2,7 @@
 
 import json
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
@@ -1321,3 +1322,59 @@ def test_scheduler_routes_worker_and_command_ingress_separately():
 
     assert len(worker_pool.calls) == 1
     assert len(command_pool.calls) == 1
+
+
+def test_scheduler_startup_failure_stops_service_threads(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    from nro.orchestration import scheduler_implementation, scheduler_requests
+    from nro.orchestration.registry import RegistryLockTimeout
+    from nro.site import configuration
+
+    metadata = sqlite3.connect(":memory:", check_same_thread=False)
+    metadata.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+
+    class FakeRegistry:
+        @contextmanager
+        def scheduler_session(self):
+            yield
+
+        def initialize(self):
+            pass
+
+        def abandon_prepared_submissions(self):
+            pass
+
+        @contextmanager
+        def connection(self, **_options):
+            yield metadata
+
+    class FailingCoordinator:
+        def __init__(self, registry, operation):
+            pass
+
+        def submit(self, record, executor):
+            raise RegistryLockTimeout("Scheduler registry connection is busy")
+
+    deactivated = []
+    monkeypatch.setattr(configuration, "settings", lambda: ({"registry": str(tmp_path)},))
+    monkeypatch.setattr(scheduler_implementation, "require_worker_source", lambda control: None)
+    monkeypatch.setattr(Registry, "for_project", lambda *args, **kwargs: FakeRegistry())
+    monkeypatch.setattr(scheduler_bus, "publish_startup_progress", lambda *args: None)
+    monkeypatch.setattr(scheduler_bus, "activate", lambda *args, **kwargs: {"job_id": None})
+    monkeypatch.setattr(scheduler_bus, "deactivate", lambda *args: deactivated.append(args))
+    pending = scheduler_bus.create_message({"operation": "purge"}, kind="command")
+    monkeypatch.setattr(scheduler_requests, "prepare", lambda registry: (pending,))
+    monkeypatch.setattr(scheduler_requests, "RequestCoordinator", FailingCoordinator)
+    monkeypatch.setattr(scheduler_service.signal, "signal", lambda *args: None)
+
+    with pytest.raises(RegistryLockTimeout):
+        scheduler_service.serve(launch_token="launch", bids_root=tmp_path / "BIDS")
+
+    service_threads = [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.name.startswith("scheduler-") and thread.is_alive()
+    ]
+    assert service_threads == []
+    assert deactivated == [(tmp_path, "launch")]
