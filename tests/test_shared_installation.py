@@ -595,3 +595,69 @@ def test_publish_restores_both_bindings_when_cutover_fails(tmp_path, monkeypatch
 
     assert record_path.read_text() == '{"old": true}\n'
     assert binding.read_text() == '{"old": true}\n'
+
+
+def test_schema_migration_records_the_stopped_pool_before_activation(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    _mock_service(
+        monkeypatch,
+        tmp_path,
+        (
+            {"workers": 0, "submissions": 0, "attempts": 0, "ingestion": 0},
+            {
+                "workers": 0,
+                "submissions": 0,
+                "attempts": 0,
+                "ingestion": 0,
+                "action": "stop",
+                "done": True,
+                "stopped_jobs": [],
+                "failures": [],
+            },
+        ),
+    )
+    events = []
+    current = registry.stored_schema_version()
+    monkeypatch.setattr(registry, "stored_schema_version", lambda: current - 1)
+    monkeypatch.setattr(
+        registry,
+        "worker_pool_activity",
+        lambda **_options: {
+            "workers": [{"id": "worker-1"}],
+            "submissions": [{"id": 7, "slurm_job_id": "123", "state": "running"}],
+        },
+    )
+    monkeypatch.setattr(
+        worker_control,
+        "stop_worker_pool_for_repair",
+        lambda _registry: events.append("stopped") or {"worker_rows": [{"id": "worker-1"}]},
+    )
+    monkeypatch.setattr(
+        registry, "migrate_schema", lambda: events.append("migrated") or tmp_path / "backup"
+    )
+    monkeypatch.setattr(
+        registry,
+        "confirm_worker_shutdown",
+        lambda ids: events.append(("confirmed", tuple(ids))) or {},
+    )
+    monkeypatch.setattr(
+        registry,
+        "update_submission",
+        lambda submission_id, *, state: events.append(("submission", submission_id, state)),
+    )
+    monkeypatch.setattr(registry, "finish_repair_stop", lambda: None)
+
+    shared_installation.prepare_pool(
+        registry,
+        checkout=tmp_path / "main",
+        confirm=lambda _activity: "stop",
+        update_schema=True,
+    )
+
+    assert events[:4] == [
+        "stopped",
+        "migrated",
+        ("confirmed", ("worker-1",)),
+        ("submission", 7, "cancelled"),
+    ]

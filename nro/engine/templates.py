@@ -83,6 +83,45 @@ def find_fsaverage_template_surface(
     )
 
 
+FSLR_32K_VERTEX_COUNT = 32492
+
+
+def find_fslr_32k_resampling_geometry(
+    *,
+    hemi: str,
+    roots: tuple[Path, ...] | None = None,
+) -> tuple[Path, Path]:
+    """Find the 32k fsLR sphere in fsaverage coordinates and its cortex label.
+
+    The sphere places the fsLR 32k mesh on the fsaverage registration sphere, so
+    data on fsaverage, fsaverage6, or a participant's FreeSurfer ``sphere.reg``
+    can be resampled to fsLR 32k directly. The label marks cortex outside the
+    medial wall. Empty TemplateFlow placeholders do not count as present.
+    """
+    searched: list[Path] = []
+    for root in templateflow_roots() if roots is None else roots:
+        directory = root / "tpl-fsLR"
+        searched.append(directory)
+        sphere = directory / f"tpl-fsLR_space-fsaverage_hemi-{hemi}_den-32k_sphere.surf.gii"
+        label = directory / f"tpl-fsLR_hemi-{hemi}_den-32k_desc-nomedialwall_dparc.label.gii"
+        try:
+            if all(
+                path.is_file()
+                and path.stat().st_size > 0
+                and gifti_vertex_count(path) == FSLR_32K_VERTEX_COUNT
+                for path in (sphere, label)
+            ):
+                return sphere, label
+        except (OSError, ValueError, nib.filebasedimages.ImageFileError):
+            continue
+    locations = ", ".join(str(path) for path in searched) or "no local TemplateFlow root"
+    raise FileNotFoundError(
+        f"Could not find the hemisphere-{hemi} 32k fsLR sphere in fsaverage space and "
+        f"its medial-wall label under {locations}. Rerun nro setup to install the "
+        "pinned TemplateFlow resources."
+    )
+
+
 def find_mni_gray_matter_mask(*, space: str, functional: Path) -> Path:
     """Find the local TemplateFlow GM probability map nearest the functional resolution.
 

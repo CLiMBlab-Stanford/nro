@@ -17,5 +17,9 @@
   "tpl-fsaverage/tpl-fsaverage_hemi-L_den-41k_sphere.surf.gii": ["2af0c9e2e5e5bc73f812f7a0f7c93483", "mfuwj8kX23J6TwmQHUyoOcPLNoeAHRcX"],
   "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_white.surf.gii": ["b9b13e57e16d4bce813034f66bf5ce3d", "wRIEz9mhE780L6PAvo3pqDwvJoJPM43C"],
   "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_pial.surf.gii": ["498e3941ec50adfd2c772f219def4fa1", "CVJ1WQS5zVD2dXJHtozycsdA6f5EAMGT"],
-  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_sphere.surf.gii": ["dd84f143c1993446954dbf1ac41ef92f", "JWqTYQUYh.sWDuLwhswD1ncVg2rK3fx9"]
+  "tpl-fsaverage/tpl-fsaverage_hemi-R_den-41k_sphere.surf.gii": ["dd84f143c1993446954dbf1ac41ef92f", "JWqTYQUYh.sWDuLwhswD1ncVg2rK3fx9"],
+  "tpl-fsLR/tpl-fsLR_space-fsaverage_hemi-L_den-32k_sphere.surf.gii": ["c1390ecd78b0f3bd7600dd655bbcf413", "xeWJRY6Mi_iB6ntlRiNZcZAgTnooROgK"],
+  "tpl-fsLR/tpl-fsLR_space-fsaverage_hemi-R_den-32k_sphere.surf.gii": ["2d02bca8d1b82cb06ce989528c913dcf", "P7JF4WqzKqBr2ZDL6hZSCBXkFGqgJLek"],
+  "tpl-fsLR/tpl-fsLR_hemi-L_den-32k_desc-nomedialwall_dparc.label.gii": ["ea5700a41b739775c31f8ba708b61fac", "UVI6EfAOUmutwXC8g1sr.RT0WFOf9tPU"],
+  "tpl-fsLR/tpl-fsLR_hemi-R_den-32k_desc-nomedialwall_dparc.label.gii": ["09f84b7e336ddc818cab7999bd096d3d", "Ul7g6SU0xFEYGvXiOyHNdrjwW_PuPQ2M"]
 }

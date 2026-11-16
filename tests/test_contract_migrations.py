@@ -563,3 +563,21 @@ def test_contract_chain_rejects_gaps_and_future_versions() -> None:
     chain = ContractMigrationChain(module="example")
     with pytest.raises(ValueError, match="Unsupported"):
         chain.normalize({"module": "example", "contract_schema": 2})
+
+
+def test_fcgradients_before_surface_mesh_used_target_resolution() -> None:
+    current = ConfigStore().load_configuration("fcgradients", "main").values
+    historical = {key: value for key, value in current.items() if key != "surface_mesh"}
+    contract = {"module": "fcgradients", "configuration": "fingerprint", "processing": {}}
+
+    _, migrated = migrate_contract({**contract, "contract_schema": 4}, historical)
+    _, fresh = migrate_contract(
+        {**contract, "contract_schema": current_contract_schema("fcgradients")}, current
+    )
+
+    assert migrated is not None and fresh is not None
+    assert migrated["surface_mesh"] == "target"
+    assert fresh["surface_mesh"] == current["surface_mesh"] == "fsLR32k"
+    assert configuration_fingerprint(
+        "fcgradients", "main", migrated, scientific=True
+    ) != configuration_fingerprint("fcgradients", "main", fresh, scientific=True)

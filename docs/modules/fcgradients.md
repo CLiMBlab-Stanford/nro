@@ -30,12 +30,43 @@ gradient's direction.
 
 ## Inputs
 
-A surface target uses the `dynconn` `.dtseries.nii` directly. nro passes the
+A surface target starts from the `dynconn` `.dtseries.nii`. nro uses the
 participant's midthickness surfaces for `fsnative`, or the template
-midthickness surfaces that match each hemisphere's vertex count. The `dynconn`
-series covers whole meshes, including the medial wall. Its zero-valued
+midthickness surfaces that match each hemisphere's vertex count.
+
+By default, `surface_mesh: fsLR32k` computes the gradient on the 32k fsLR mesh
+and publishes it on the target mesh. Target-mesh gradients show a grid that
+follows the BOLD voxels, most visibly in sulci. The surface projection gives
+neighboring vertices nearly the same voxels, and the gradient turns the steps
+between those patches into ridges. The 32k mesh also has about a fifth as many
+cortical vertices as a typical `fsnative` mesh, and Workbench's time and memory
+grow with the square of the vertex count. The work item:
+
+1. resamples the series to 32k fsLR with area-weighted averaging
+   (`ADAP_BARY_AREA`). Each 32k vertex averages the target vertices it covers,
+   which removes the voxel patches;
+2. computes the gradient on the 32k midthickness, a barycentric resampling of
+   the target midthickness;
+3. resamples the gradient back to the target mesh with the same method.
+
+The 32k series, midthickness, and gradient stay in the work directory. nro
+resamples from the target mesh's sphere in fsaverage registration
+coordinates: the participant's FreeSurfer `sphere.reg` for `fsnative`, or the
+template sphere for `fsaverage` and `fsaverage6`. The 32k fsLR sphere in the
+same coordinates and the 32k medial-wall label come from the pinned
+TemplateFlow resources. This adds no registration and does not change `anat`.
+Vertices whose series has zero variance, mostly the medial wall, are left out
+of the resampling and are zero in the published map. The 32k medial wall is
+left out of the correlations.
+
+The map has 32k resolution even though it is published on the target mesh.
+`surface_mesh: target` computes the gradient on the target mesh instead. Its
+series covers whole meshes, including the medial wall. Those zero-valued
 locations correlate with nothing, so the medial-wall border can show a
 gradient that does not reflect cortex.
+
+Template targets use template geometry, so their gradient magnitudes do not
+reflect the participant's anatomy. The manifest records which anatomy was used.
 
 A volume target starts from the `dynconn` NIfTI series. nro restricts it to
 gray matter and converts it to a volume-only dense CIFTI series in the work
@@ -60,7 +91,9 @@ and filenames include the space and smoothing entities.
   grid. Voxels outside the mask are zero.
 * `_desc-fcGradient_manifest.yaml` records the backend, the Workbench version
   and options, the source `dynconn` manifest and representation, the geometry,
-  and the CIFTI structures with their location counts.
+  and the CIFTI structures with their location counts. For surface targets the
+  geometry includes the surface mesh and, on the 32k fsLR mesh, the resampling
+  methods, spheres, and medial-wall labels.
 * `_desc-fcGradientIndex_manifest.json` is the publication index.
 
 `nro scene` and `nro viz` show the surface map as a metric layer under
@@ -70,7 +103,11 @@ volume targets.
 ## Configuration
 
 `markup` and `overwrite` behave as in the other modules. `backend` selects the
-method. `mask` and `mask_threshold` apply only to volume targets.
+method. `surface_mesh` applies only to surface targets: `fsLR32k` computes the
+gradient on the 32k fsLR mesh, and `target` computes it on the target mesh.
+Artifacts made before this setting existed used `target`, so they become stale
+under the `fsLR32k` default. `mask` and `mask_threshold` apply only to volume
+targets.
 
 `workbench` holds the options for the Workbench backend:
 
@@ -83,7 +120,8 @@ method. `mask` and `mask_threshold` apply only to volume targets.
   `double_correlation` is on. It has no effect, and does not affect freshness,
   otherwise.
 * `presmooth_fwhm_mm` smooths each correlation map before taking gradients.
-  Zero disables it.
+  Zero disables it. On the 32k fsLR mesh, distances are measured on the 32k
+  midthickness, as are those of `surface_exclude_mm`.
 * `surface_exclude_mm` and `volume_exclude_mm` drop locations within that
   distance of each seed, where local autocorrelation dominates the map. Zero
   disables exclusion.

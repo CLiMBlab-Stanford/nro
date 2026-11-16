@@ -698,6 +698,14 @@ def test_template_catalog_covers_host_template_inputs():
             for surface in ("white", "pial", "midthickness", "sphere")
         }
         assert required <= installed
+    assert {
+        Path(f"tpl-fsLR/tpl-fsLR_{name}")
+        for hemisphere in ("L", "R")
+        for name in (
+            f"space-fsaverage_hemi-{hemisphere}_den-32k_sphere.surf.gii",
+            f"hemi-{hemisphere}_den-32k_desc-nomedialwall_dparc.label.gii",
+        )
+    } <= catalog
 
 
 def test_invalid_path_update_is_atomic(isolated_site):

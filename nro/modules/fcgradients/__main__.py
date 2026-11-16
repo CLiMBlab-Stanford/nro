@@ -25,6 +25,7 @@ from nro.engine.targets import (
     supported_output_spaces,
     target_output_names,
 )
+from nro.engine.templates import find_fslr_32k_resampling_geometry
 from nro.engine.workbench import resolve_workbench_command
 from nro.modules.dynconn.contract import dynconn_output_paths
 from nro.orchestration.execution_context import ExecutionContext
@@ -81,11 +82,28 @@ def make_target_config(
     domain = "surface" if is_surface_space(space) else "volume"
     timeseries, representation = _source_series(source_manifest, domain)
     surfaces: tuple[Path, ...] = ()
+    spheres: tuple[Path, ...] = ()
+    mesh_spheres: tuple[Path, ...] = ()
+    mesh_labels: tuple[Path, ...] = ()
     mask = None
+    surface_mesh = str(config["surface_mesh"])
     if domain == "surface":
         surfaces = dense_surface_geometry(
             anatomical_manifest.parent, participant, "midthickness", space, timeseries
         )
+        if surface_mesh == "fsLR32k":
+            # FreeSurfer's sphere.reg places native vertices on the fsaverage
+            # sphere; template targets use their own spheres, which are already there.
+            spheres = dense_surface_geometry(
+                anatomical_manifest.parent,
+                participant,
+                "sphere.reg" if space == "fsnative" else "sphere",
+                space,
+                timeseries,
+            )
+            geometry = tuple(find_fslr_32k_resampling_geometry(hemi=hemi) for hemi in ("L", "R"))
+            mesh_spheres = tuple(sphere for sphere, _ in geometry)
+            mesh_labels = tuple(label for _, label in geometry)
     else:
         mask = infer_gray_matter_mask(
             ((timeseries,),),
@@ -122,6 +140,9 @@ def make_target_config(
             space=space,
             smoothing_mm=smoothing_mm,
             surfaces=surfaces,
+            spheres=spheres,
+            mesh_spheres=mesh_spheres,
+            mesh_labels=mesh_labels,
             mask=mask,
             mask_threshold=float(config["mask_threshold"]),
         ),
@@ -132,6 +153,7 @@ def make_target_config(
             overwrite=config["overwrite"] if overwrite is None else overwrite,
         ),
         backend=str(config["backend"]),
+        surface_mesh=surface_mesh,
         workbench=WorkbenchConfig(**config["workbench"]),
         wb_command=resolve_workbench_command(config["wb_command"]),
     )

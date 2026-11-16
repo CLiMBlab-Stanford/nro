@@ -1,6 +1,7 @@
 markup: main
 overwrite: false
 backend: workbench_correlation_gradient
+surface_mesh: fsLR32k
 mask: null
 mask_threshold: 0.5
 workbench:

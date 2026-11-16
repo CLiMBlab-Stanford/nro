@@ -20,7 +20,7 @@ from .core import (
 )
 
 
-def _source_selection_chain(module: str) -> ContractMigrationChain:
+def _source_selection_chain(module: str, *extensions: ContractMigration) -> ContractMigrationChain:
     return ContractMigrationChain(
         module=module,
         migrations=(
@@ -37,12 +37,26 @@ def _source_selection_chain(module: str) -> ContractMigrationChain:
                 destination=4,
                 summary="Treat the host container runtime as execution infrastructure",
             ),
+            *extensions,
         ),
     )
 
 
+FCGRADIENTS_CHAIN = _source_selection_chain(
+    "fcgradients",
+    ContractMigration(
+        destination=5,
+        summary="Compute surface gradients on a 32k fsLR intermediate mesh",
+        configuration=(AddField("surface_mesh", default="fsLR32k", historical="target"),),
+    ),
+)
+
 CHAINS = {
-    module: ANAT_CHAIN if module == "anat" else _source_selection_chain(module)
+    module: ANAT_CHAIN
+    if module == "anat"
+    else FCGRADIENTS_CHAIN
+    if module == "fcgradients"
+    else _source_selection_chain(module)
     for module in MODULE_NAMES
 }
 
