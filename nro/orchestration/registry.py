@@ -59,6 +59,98 @@ if TYPE_CHECKING:
 _WAIT_NOTICE_SECONDS = 0.75
 
 
+# Claim readiness predicate. The list form orders candidates by claim
+# priority; the single form re-checks one candidate with the same predicate
+# immediately before it is claimed.
+_CLAIM_FROM = """
+FROM work_items t
+JOIN module_lineages ci ON ci.id=t.module_lineage_id
+"""
+_CLAIM_WHERE = """
+WHERE t.resource_class IN ({placeholders})
+  AND t.memory_gb <= ?
+  AND {write_ready}
+  AND t.artifact_state != 'fresh'
+  AND NOT EXISTS (
+      SELECT 1 FROM metadata publication
+      WHERE publication.key='bids_publication:' || t.project
+  )
+  AND NOT (
+      t.module IN ('dynconn', 'microparcellation')
+      AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
+  )
+  AND EXISTS (
+      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
+      WHERE td.work_item_id=t.id AND up.artifact_state != 'fresh'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
+      AND active.state IN ('queued', 'running', 'cancel_requested')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
+      AND task.generation=t.current_generation
+      AND task.revision_fingerprint=t.revision_fingerprint
+      AND task.state IN ('pending','running','error')
+  )
+  AND (
+      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
+      OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
+      OR COALESCE((SELECT error_type FROM attempts old
+                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
+         IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
+             'WorkerAllocationExpired', 'WorkItemGraphChanged',
+             'RegistryUnavailable')
+             OR COALESCE((SELECT error_type FROM attempts old
+                  WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
+                = 'ResourcePreconditionChanged'
+      OR EXISTS (
+          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
+          AND r.updated_at > COALESCE(
+              (SELECT CASE WHEN old.state='cancelled'
+                       THEN old.started_at ELSE old.completed_at END
+               FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
+              '')
+      )
+  )
+"""
+_CLAIM_ORDER = """
+ORDER BY CASE WHEN EXISTS (
+             SELECT 1 FROM resource_step_tasks resumed
+             WHERE resumed.work_item_id=t.id
+               AND resumed.generation=t.current_generation
+               AND resumed.revision_fingerprint=t.revision_fingerprint
+               AND resumed.state='success'
+         ) THEN 0 ELSE 1 END,
+         CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
+                      WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
+         t.participant, t.work_item_key
+"""
+# The scheduler reuses one ordered candidate list for this long. Each claim
+# still validates its candidate, so the list only affects order and how soon
+# newly ready work is seen.
+CLAIM_CANDIDATE_TTL_SECONDS = 5.0
+CLAIM_CANDIDATE_LIMIT = 256
+_CLAIM_CANDIDATES: dict[tuple, tuple[float, list[int]]] = {}
+_CLAIM_CANDIDATES_LOCK = threading.Lock()
+
+
+def _claim_sql(placeholders: str, *, single: bool) -> str:
+    where = _CLAIM_WHERE.format(placeholders=placeholders, write_ready=dependency_state.WRITE_READY)
+    if single:
+        return (
+            "SELECT t.*, ci.config_fingerprint"
+            + _CLAIM_FROM
+            + where.replace("WHERE t.resource_class", "WHERE t.id=? AND t.resource_class", 1)
+        )
+    return "SELECT t.id" + _CLAIM_FROM + where + _CLAIM_ORDER + "LIMIT ?"
+
+
 class SessionMutex:
     """Reentrant lock that records how long its outermost holder has held it.
 
@@ -1923,6 +2015,62 @@ class Registry(WorkflowRegistry):
             dependency_state.synchronize(db, now=now)
         return {"workers": workers, "attempts": attempts, "ingestion": ingestion}
 
+    def _next_claim_candidate(
+        self,
+        db: sqlite3.Connection,
+        resource_classes: Sequence[str],
+        memory_gb: int,
+    ) -> sqlite3.Row | None:
+        """Return the highest-priority ready work item that still passes the claim predicate.
+
+        In the scheduler process, the ordered candidate list is cached per
+        resource classes and memory tier for ``CLAIM_CANDIDATE_TTL_SECONDS``.
+        A cached candidate is used only after the full predicate accepts it
+        again inside the caller's transaction.
+        """
+        placeholders = ",".join("?" for _ in resource_classes)
+        classes = tuple(resource_classes)
+        single = _claim_sql(placeholders, single=True)
+
+        def candidates(limit: int) -> list[int]:
+            return [
+                int(row[0])
+                for row in db.execute(
+                    _claim_sql(placeholders, single=False), (*classes, memory_gb, limit)
+                )
+            ]
+
+        def validated(work_item_id: int) -> sqlite3.Row | None:
+            return db.execute(single, (work_item_id, *classes, memory_gb)).fetchone()
+
+        if self._process_session() is None:
+            ids = candidates(1)
+            return validated(ids[0]) if ids else None
+        key = (str(self.paths.database.resolve()), classes, int(memory_gb))
+        with _CLAIM_CANDIDATES_LOCK:
+            cached = _CLAIM_CANDIDATES.get(key)
+        if cached is not None and time.monotonic() - cached[0] >= CLAIM_CANDIDATE_TTL_SECONDS:
+            cached = None
+        while True:
+            rebuilt = cached is None
+            if rebuilt:
+                cached = (time.monotonic(), candidates(CLAIM_CANDIDATE_LIMIT))
+                with _CLAIM_CANDIDATES_LOCK:
+                    _CLAIM_CANDIDATES[key] = cached
+            pending = cached[1]
+            while True:
+                with _CLAIM_CANDIDATES_LOCK:
+                    if not pending:
+                        break
+                    work_item_id = pending.pop(0)
+                row = validated(work_item_id)
+                if row is not None:
+                    return row
+            if rebuilt:
+                return None
+            # The cached list ran out; one fresh query decides.
+            cached = None
+
     def claim_ready_work_item(
         self,
         worker_id: str,
@@ -1932,7 +2080,6 @@ class Registry(WorkflowRegistry):
     ) -> "ExecutionEnvelope | None":
         """Claim one demanded, nonfresh work item whose upstream work items are fresh."""
         resource_classes = tuple(resource_classes) or WORK_ITEM_RESOURCE_CLASSES
-        placeholders = ",".join("?" for _ in resource_classes)
         now = utcnow()
         with self.connection(write=True) as db:
             worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -1965,76 +2112,7 @@ class Registry(WorkflowRegistry):
             active += ingestion_active
             if concurrency < 1 or active >= concurrency:
                 return None
-            row = db.execute(
-                f"""
-                SELECT t.*, ci.config_fingerprint
-                FROM work_items t
-                JOIN module_lineages ci ON ci.id=t.module_lineage_id
-                WHERE t.resource_class IN ({placeholders})
-                  AND t.memory_gb <= ?
-                  AND {dependency_state.WRITE_READY}
-                  AND t.artifact_state != 'fresh'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM metadata publication
-                      WHERE publication.key='bids_publication:' || t.project
-                  )
-                  AND NOT (
-                      t.module IN ('dynconn', 'microparcellation')
-                      AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
-                  )
-                  AND EXISTS (
-                      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
-                      WHERE td.work_item_id=t.id AND up.artifact_state != 'fresh'
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
-                      AND active.state IN ('queued', 'running', 'cancel_requested')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
-                      AND task.generation=t.current_generation
-                      AND task.revision_fingerprint=t.revision_fingerprint
-                      AND task.state IN ('pending','running','error')
-                  )
-                  AND (
-                      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
-                      OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
-                      OR COALESCE((SELECT error_type FROM attempts old
-                                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
-                         IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                             'WorkerAllocationExpired', 'WorkItemGraphChanged',
-                             'RegistryUnavailable')
-                             OR COALESCE((SELECT error_type FROM attempts old
-                                  WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
-                                = 'ResourcePreconditionChanged'
-                      OR EXISTS (
-                          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
-                          AND r.updated_at > COALESCE(
-                              (SELECT CASE WHEN old.state='cancelled'
-                                       THEN old.started_at ELSE old.completed_at END
-                               FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
-                              '')
-                      )
-                  )
-                ORDER BY CASE WHEN EXISTS (
-                             SELECT 1 FROM resource_step_tasks resumed
-                             WHERE resumed.work_item_id=t.id
-                               AND resumed.generation=t.current_generation
-                               AND resumed.revision_fingerprint=t.revision_fingerprint
-                               AND resumed.state='success'
-                         ) THEN 0 ELSE 1 END,
-                         CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
-                                      WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
-                         t.participant, t.work_item_key
-                LIMIT 1
-                """,
-                (*resource_classes, memory_gb),
-            ).fetchone()
+            row = self._next_claim_candidate(db, resource_classes, memory_gb)
             if row is None:
                 return None
             work_item = dict(row)
