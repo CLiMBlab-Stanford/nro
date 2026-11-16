@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import zlib
 
 _COMPRESSED = b"NROZ1\0"
 _COMPRESSION_THRESHOLD = 4096
+# An active request's plan can hold tens of thousands of specifications.
+# Decoding and re-encoding it on every maintenance pass held the registry
+# lock for tens of seconds, although stored plans never change. These caches
+# are keyed by a digest of the stored value, so they stay correct for any
+# registry and need no invalidation.
+_PLAN_CACHE_LIMIT = 64
+_CANONICAL_PLANS: dict[tuple[bool, bytes], None] = {}
+_PLAN_SUMMARIES: dict[bytes, dict] = {}
+
+
+def _plan_digest(value: str | bytes) -> bytes:
+    data = value if isinstance(value, bytes) else value.encode()
+    return hashlib.blake2b(data, digest_size=16).digest()
+
+
+def _remember(cache: dict, key, value) -> None:
+    if len(cache) >= _PLAN_CACHE_LIMIT:
+        cache.clear()
+    cache[key] = value
 
 
 def decode_plan(value: str | bytes) -> dict:
@@ -26,6 +46,26 @@ def encode_plan(payload: dict) -> str | bytes:
     if len(encoded) < _COMPRESSION_THRESHOLD:
         return encoded.decode()
     return _COMPRESSED + zlib.compress(encoded, level=6)
+
+
+def plan_reconciliation_summary(value: str | bytes) -> dict:
+    """Return the fields branch reconciliation reads before deciding to replay.
+
+    The result has ``has_specifications``, ``branch``, ``registry_id``, and
+    ``inherited``. Callers must treat it as read-only.
+    """
+    digest = _plan_digest(value)
+    summary = _PLAN_SUMMARIES.get(digest)
+    if summary is None:
+        payload = decode_plan(value)
+        summary = {
+            "has_specifications": "specifications" in payload,
+            "branch": payload.get("branch"),
+            "registry_id": payload.get("registry_id"),
+            "inherited": tuple(payload.get("inherited", ())),
+        }
+        _remember(_PLAN_SUMMARIES, digest, summary)
+    return summary
 
 
 def terminal_plan(payload: dict) -> str | bytes:
@@ -57,12 +97,19 @@ def compact_terminal_plans(database: sqlite3.Connection) -> int:
     while rows := cursor.fetchmany(64):
         updates = []
         for row in rows:
-            payload = decode_plan(row["payload_json"])
-            if row["state"] == "active" and payload.get("inherited"):
+            active = row["state"] == "active"
+            stored = row["payload_json"]
+            if (active, _plan_digest(stored)) in _CANONICAL_PLANS:
+                continue
+            payload = decode_plan(stored)
+            if active and payload.get("inherited"):
                 encoded = encode_plan(payload)
             else:
                 encoded = terminal_plan(payload)
-            if encoded != row["payload_json"]:
+            # Both encodings are deterministic, so the stored or rewritten
+            # value is canonical for this request state from now on.
+            _remember(_CANONICAL_PLANS, (active, _plan_digest(encoded)), None)
+            if encoded != stored:
                 updates.append((encoded, row["request_id"]))
         database.executemany(
             "UPDATE request_plans SET payload_json=? WHERE request_id=?",

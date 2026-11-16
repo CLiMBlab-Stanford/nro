@@ -202,7 +202,21 @@ worker capacity this way, and the scheduler never imports development code.
 
 Cached status reads an atomic JSON snapshot. The `status.json` manifest
 combines a reusable static graph with a small dynamic-state component, so
-routine execution changes do not rewrite the whole cached report.
+routine execution changes do not rewrite the whole cached report. The scheduler
+publishes a new snapshot after a change once requests have paused for two
+seconds. While requests keep arriving, it publishes at most every 30 seconds,
+so cached status can lag that much behind.
+
+The scheduler log prefixes each line with a UTC timestamp. Sending SIGUSR1 to a
+scheduler or worker process writes the stack of every thread to its log. If the
+scheduler's service loop or its registry lock makes no progress for two
+minutes, the scheduler writes those stacks itself, and repeats every two
+minutes while the stall lasts. When background work such as maintenance or
+capacity planning causes a stall of 15 minutes, the scheduler exits with
+status 75. Its lease then expires, the next command or worker starts a
+replacement, and the replacement replays every recorded request. A stall inside
+a command or worker request never ends the scheduler, because the replacement
+would replay that request into the same stall.
 
 The scheduler keeps current state, not an unbounded history of requests and
 allocations. It preserves active demand, the provenance of existing

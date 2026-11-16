@@ -73,6 +73,19 @@ def invalidate(
     )
     if include_roots:
         descendants = tuple(sorted(set(descendants).union(roots)))
+    return _apply_invalidation(db, descendants, now=now, reason=reason, error_type=error_type)
+
+
+def _apply_invalidation(
+    db: sqlite3.Connection,
+    descendants: Iterable[int],
+    *,
+    now: str,
+    reason: str,
+    error_type: str,
+) -> list[dict]:
+    """Mark fresh work items stale and request cancellation of their attempts."""
+    descendants = tuple(descendants)
     if not descendants:
         return []
     descendant_values = json_values(descendants)
@@ -105,9 +118,6 @@ def synchronize(db: sqlite3.Connection, *, now: str) -> list[dict]:
                   updated_at=? WHERE id IN (SELECT work_item_id FROM artifact_mutations) AND artifact_state='fresh'""",
         (now,),
     )
-    roots = {
-        row[0] for row in db.execute("SELECT id FROM work_items WHERE artifact_state!='fresh'")
-    }
     changed = [
         row[0]
         for row in db.execute("""SELECT edge.work_item_id
@@ -123,18 +133,59 @@ def synchronize(db: sqlite3.Connection, *, now: str) -> list[dict]:
         include_roots=True,
         reason="A completed artifact used an earlier upstream generation",
     )
-    roots.update(
+    changed_pins = [
         row[0]
         for row in db.execute(f"""SELECT pinned.upstream_work_item_id
         FROM attempt_dependencies pinned JOIN work_items upstream ON upstream.id=pinned.upstream_work_item_id
         JOIN attempts reader ON reader.id=pinned.attempt_id
         WHERE reader.state IN {ACTIVE} AND pinned.generation!=upstream.current_generation""")
-    )
-    return cancelled + invalidate(
+    ]
+    # Invalidation changes only fresh work items and queued or running
+    # attempts. Every non-fresh work item is a root, so any such target is
+    # reachable from a root through fresh intermediates alone. Recursing only
+    # through fresh work items therefore reaches every target that a full
+    # descendant walk would, without revisiting the whole non-fresh graph.
+    affected = [
+        row[0]
+        for row in db.execute(
+            f"""WITH RECURSIVE
+        changed_pins(id) AS ({JSON_VALUES}),
+        target(id) AS (
+            SELECT id FROM work_items WHERE artifact_state='fresh'
+            UNION SELECT work_item_id FROM attempts WHERE state IN ('queued','running')
+        ),
+        affected(id) AS (
+            SELECT target.id FROM target WHERE EXISTS (
+                SELECT 1 FROM work_item_dependencies edge
+                JOIN work_items upstream ON upstream.id=edge.upstream_work_item_id
+                WHERE edge.work_item_id=target.id
+                  AND (upstream.artifact_state!='fresh' OR upstream.id IN changed_pins)
+            ) OR EXISTS (
+                SELECT 1 FROM attempts reader
+                JOIN attempt_dependencies pinned ON pinned.attempt_id=reader.id
+                JOIN work_items upstream ON upstream.id=pinned.upstream_work_item_id
+                WHERE reader.work_item_id=target.id AND reader.state IN {ACTIVE}
+                  AND (upstream.artifact_state!='fresh' OR upstream.id IN changed_pins)
+            )
+            UNION SELECT edge.work_item_id FROM affected parent
+            JOIN work_items through ON through.id=parent.id AND through.artifact_state='fresh'
+            JOIN work_item_dependencies edge ON edge.upstream_work_item_id=parent.id
+            WHERE edge.work_item_id IN target
+            UNION SELECT reader.work_item_id FROM affected parent
+            JOIN work_items through ON through.id=parent.id AND through.artifact_state='fresh'
+            JOIN attempt_dependencies pinned ON pinned.upstream_work_item_id=parent.id
+            JOIN attempts reader ON reader.id=pinned.attempt_id AND reader.state IN {ACTIVE}
+            WHERE reader.work_item_id IN target
+        ) SELECT id FROM affected ORDER BY id""",
+            (json_values(changed_pins),),
+        )
+    ]
+    return cancelled + _apply_invalidation(
         db,
-        roots,
+        affected,
         now=now,
         reason="A resolved upstream artifact is missing, stale, or changed generation",
+        error_type="UpstreamStale",
     )
 
 

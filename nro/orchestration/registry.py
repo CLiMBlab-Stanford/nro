@@ -59,13 +59,206 @@ if TYPE_CHECKING:
 _WAIT_NOTICE_SECONDS = 0.75
 
 
+# Claim readiness predicate. The list form orders candidates by claim
+# priority; the single form re-checks one candidate with the same predicate
+# immediately before it is claimed.
+_CLAIM_FROM = """
+FROM work_items t
+JOIN module_lineages ci ON ci.id=t.module_lineage_id
+"""
+_CLAIM_WHERE = """
+WHERE t.resource_class IN ({placeholders})
+  AND t.memory_gb <= ?
+  AND {write_ready}
+  AND t.artifact_state != 'fresh'
+  AND NOT EXISTS (
+      SELECT 1 FROM metadata publication
+      WHERE publication.key='bids_publication:' || t.project
+  )
+  AND NOT (
+      t.module IN ('dynconn', 'microparcellation')
+      AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
+  )
+  AND EXISTS (
+      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
+      WHERE td.work_item_id=t.id AND up.artifact_state != 'fresh'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
+      AND active.state IN ('queued', 'running', 'cancel_requested')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
+      AND task.generation=t.current_generation
+      AND task.revision_fingerprint=t.revision_fingerprint
+      AND task.state IN ('pending','running','error')
+  )
+  AND (
+      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
+      OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
+      OR COALESCE((SELECT error_type FROM attempts old
+                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
+         IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
+             'WorkerAllocationExpired', 'WorkItemGraphChanged',
+             'RegistryUnavailable')
+             OR COALESCE((SELECT error_type FROM attempts old
+                  WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
+                = 'ResourcePreconditionChanged'
+      OR EXISTS (
+          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
+          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
+          AND r.updated_at > COALESCE(
+              (SELECT CASE WHEN old.state='cancelled'
+                       THEN old.started_at ELSE old.completed_at END
+               FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
+              '')
+      )
+  )
+"""
+_CLAIM_ORDER = """
+ORDER BY CASE WHEN EXISTS (
+             SELECT 1 FROM resource_step_tasks resumed
+             WHERE resumed.work_item_id=t.id
+               AND resumed.generation=t.current_generation
+               AND resumed.revision_fingerprint=t.revision_fingerprint
+               AND resumed.state='success'
+         ) THEN 0 ELSE 1 END,
+         CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
+                      WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
+         t.participant, t.work_item_key
+"""
+# The scheduler reuses one ordered candidate list for this long. Each claim
+# still validates its candidate, so the list only affects order and how soon
+# newly ready work is seen.
+CLAIM_CANDIDATE_TTL_SECONDS = 5.0
+CLAIM_CANDIDATE_LIMIT = 256
+_CLAIM_CANDIDATES: dict[tuple, tuple[float, list[int]]] = {}
+_CLAIM_CANDIDATES_LOCK = threading.Lock()
+
+
+def _claim_sql(placeholders: str, *, single: bool) -> str:
+    where = _CLAIM_WHERE.format(placeholders=placeholders, write_ready=dependency_state.WRITE_READY)
+    if single:
+        return (
+            "SELECT t.*, ci.config_fingerprint"
+            + _CLAIM_FROM
+            + where.replace("WHERE t.resource_class", "WHERE t.id=? AND t.resource_class", 1)
+        )
+    return "SELECT t.id" + _CLAIM_FROM + where + _CLAIM_ORDER + "LIMIT ?"
+
+
+# Threads that run background registry work. They take the scheduler session
+# lock only after waiting request threads have had it, for up to
+# BACKGROUND_LOCK_DEFER_SECONDS, so user and worker requests go first.
+BACKGROUND_THREAD_PREFIXES = (
+    "scheduler-maintenance",
+    "scheduler-reconciliation",
+    "scheduler-capacity",
+)
+BACKGROUND_LOCK_DEFER_SECONDS = 5.0
+
+
+class SessionMutex:
+    """Reentrant lock that serves request threads before background threads.
+
+    A thread whose name starts with one of ``background_prefixes`` waits while
+    any other thread is waiting, for up to ``defer_seconds``. After that it is
+    overdue, and request threads let it go next, so background work cannot
+    starve. The scheduler watchdog
+    reads ``held_since`` and ``holder`` from another thread to detect a
+    registry transaction that has stopped making progress.
+    """
+
+    def __init__(
+        self,
+        *,
+        background_prefixes: tuple[str, ...] = BACKGROUND_THREAD_PREFIXES,
+        defer_seconds: float = BACKGROUND_LOCK_DEFER_SECONDS,
+    ) -> None:
+        """Create an unheld lock."""
+        self._condition = threading.Condition(threading.Lock())
+        self._background_prefixes = background_prefixes
+        self._defer_seconds = defer_seconds
+        self._owner: int | None = None
+        self._depth = 0
+        self._waiting_requests = 0
+        self._overdue_background = 0
+        self.held_since: float | None = None
+        self.holder: str | None = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Acquire the lock, recording a monotonic start time on first entry."""
+        me = threading.get_ident()
+        name = threading.current_thread().name
+        background = name.startswith(self._background_prefixes)
+        now = time.monotonic()
+        deadline = None if timeout is None or timeout < 0 else now + timeout
+        defer_until = now + self._defer_seconds
+        with self._condition:
+            if self._owner == me:
+                self._depth += 1
+                return True
+            if not background:
+                self._waiting_requests += 1
+            overdue = False
+            try:
+                while True:
+                    now = time.monotonic()
+                    if background and not overdue and now >= defer_until:
+                        overdue = True
+                        self._overdue_background += 1
+                    if background:
+                        deferring = self._waiting_requests and not overdue
+                    else:
+                        deferring = self._overdue_background > 0
+                    if self._owner is None and not deferring:
+                        break
+                    if not blocking or (deadline is not None and now >= deadline):
+                        return False
+                    waits = [value - now for value in (deadline,) if value is not None]
+                    if background and not overdue:
+                        waits.append(defer_until - now)
+                    self._condition.wait(min(waits) if waits else None)
+                self._owner = me
+                self._depth = 1
+                self.held_since = time.monotonic()
+                self.holder = name
+                return True
+            finally:
+                if overdue:
+                    self._overdue_background -= 1
+                    self._condition.notify_all()
+                if not background:
+                    self._waiting_requests -= 1
+                    if not self._waiting_requests:
+                        self._condition.notify_all()
+
+    def release(self) -> None:
+        """Release one level of ownership."""
+        with self._condition:
+            if self._owner != threading.get_ident():
+                raise RuntimeError(
+                    "Registry session lock released by a thread that does not own it"
+                )
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self.held_since = None
+                self.holder = None
+                self._condition.notify_all()
+
+
 @dataclass
 class _ProcessRegistrySession:
     """Share one fenced connection among registry handles in this process."""
 
     connection: sqlite3.Connection
     fence: "RegistryLock"
-    mutex: threading.RLock
+    mutex: SessionMutex
 
 
 _PROCESS_REGISTRY_SESSIONS: dict[Path, _ProcessRegistrySession] = {}
@@ -812,6 +1005,11 @@ class Registry(WorkflowRegistry):
             )
         return connection
 
+    def session_mutex(self) -> SessionMutex | None:
+        """Return this process's scheduler session lock, if a session is open."""
+        session = self._process_session()
+        return None if session is None else session.mutex
+
     def _process_session(self) -> _ProcessRegistrySession | None:
         """Return this process's live scheduler session for the shared database."""
         key = self.paths.database.resolve()
@@ -839,7 +1037,14 @@ class Registry(WorkflowRegistry):
         try:
             self._initialize_locked()
             connection = self._connect_locked(shared_across_threads=True)
-            session = _ProcessRegistrySession(connection, fence, threading.RLock())
+            # The cross-host fence already excludes every other registry
+            # client. Holding SQLite's file lock for the whole session avoids
+            # a shared-filesystem lock round trip on every transaction, which
+            # cut small commits on NFS from 1.8 ms to 0.6 ms. The lock is taken
+            # at the first access and released when the connection closes.
+            connection.execute("PRAGMA locking_mode=EXCLUSIVE")
+            connection.execute("SELECT 1 FROM metadata LIMIT 1").fetchall()
+            session = _ProcessRegistrySession(connection, fence, SessionMutex())
             with _PROCESS_REGISTRY_SESSIONS_LOCK:
                 if key in _PROCESS_REGISTRY_SESSIONS:
                     raise RuntimeError(f"Registry session appeared concurrently: {key}")
@@ -1885,6 +2090,62 @@ class Registry(WorkflowRegistry):
             dependency_state.synchronize(db, now=now)
         return {"workers": workers, "attempts": attempts, "ingestion": ingestion}
 
+    def _next_claim_candidate(
+        self,
+        db: sqlite3.Connection,
+        resource_classes: Sequence[str],
+        memory_gb: int,
+    ) -> sqlite3.Row | None:
+        """Return the highest-priority ready work item that still passes the claim predicate.
+
+        In the scheduler process, the ordered candidate list is cached per
+        resource classes and memory tier for ``CLAIM_CANDIDATE_TTL_SECONDS``.
+        A cached candidate is used only after the full predicate accepts it
+        again inside the caller's transaction.
+        """
+        placeholders = ",".join("?" for _ in resource_classes)
+        classes = tuple(resource_classes)
+        single = _claim_sql(placeholders, single=True)
+
+        def candidates(limit: int) -> list[int]:
+            return [
+                int(row[0])
+                for row in db.execute(
+                    _claim_sql(placeholders, single=False), (*classes, memory_gb, limit)
+                )
+            ]
+
+        def validated(work_item_id: int) -> sqlite3.Row | None:
+            return db.execute(single, (work_item_id, *classes, memory_gb)).fetchone()
+
+        if self._process_session() is None:
+            ids = candidates(1)
+            return validated(ids[0]) if ids else None
+        key = (str(self.paths.database.resolve()), classes, int(memory_gb))
+        with _CLAIM_CANDIDATES_LOCK:
+            cached = _CLAIM_CANDIDATES.get(key)
+        if cached is not None and time.monotonic() - cached[0] >= CLAIM_CANDIDATE_TTL_SECONDS:
+            cached = None
+        while True:
+            rebuilt = cached is None
+            if rebuilt:
+                cached = (time.monotonic(), candidates(CLAIM_CANDIDATE_LIMIT))
+                with _CLAIM_CANDIDATES_LOCK:
+                    _CLAIM_CANDIDATES[key] = cached
+            pending = cached[1]
+            while True:
+                with _CLAIM_CANDIDATES_LOCK:
+                    if not pending:
+                        break
+                    work_item_id = pending.pop(0)
+                row = validated(work_item_id)
+                if row is not None:
+                    return row
+            if rebuilt:
+                return None
+            # The cached list ran out; one fresh query decides.
+            cached = None
+
     def claim_ready_work_item(
         self,
         worker_id: str,
@@ -1894,7 +2155,6 @@ class Registry(WorkflowRegistry):
     ) -> "ExecutionEnvelope | None":
         """Claim one demanded, nonfresh work item whose upstream work items are fresh."""
         resource_classes = tuple(resource_classes) or WORK_ITEM_RESOURCE_CLASSES
-        placeholders = ",".join("?" for _ in resource_classes)
         now = utcnow()
         with self.connection(write=True) as db:
             worker = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -1927,76 +2187,7 @@ class Registry(WorkflowRegistry):
             active += ingestion_active
             if concurrency < 1 or active >= concurrency:
                 return None
-            row = db.execute(
-                f"""
-                SELECT t.*, ci.config_fingerprint
-                FROM work_items t
-                JOIN module_lineages ci ON ci.id=t.module_lineage_id
-                WHERE t.resource_class IN ({placeholders})
-                  AND t.memory_gb <= ?
-                  AND {dependency_state.WRITE_READY}
-                  AND t.artifact_state != 'fresh'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM metadata publication
-                      WHERE publication.key='bids_publication:' || t.project
-                  )
-                  AND NOT (
-                      t.module IN ('dynconn', 'microparcellation')
-                      AND t.artifact_reason LIKE 'Selected raw run universe changed:%'
-                  )
-                  AND EXISTS (
-                      SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                      WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM work_item_dependencies td JOIN work_items up ON up.id=td.upstream_work_item_id
-                      WHERE td.work_item_id=t.id AND up.artifact_state != 'fresh'
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM attempts active WHERE active.work_item_id=t.id
-                      AND active.state IN ('queued', 'running', 'cancel_requested')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM resource_step_tasks task WHERE task.work_item_id=t.id
-                      AND task.generation=t.current_generation
-                      AND task.revision_fingerprint=t.revision_fingerprint
-                      AND task.state IN ('pending','running','error')
-                  )
-                  AND (
-                      NOT EXISTS (SELECT 1 FROM attempts old WHERE old.work_item_id=t.id)
-                      OR COALESCE((SELECT state FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '') = 'success'
-                      OR COALESCE((SELECT error_type FROM attempts old
-                                   WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
-                         IN ('UpstreamStale', 'UpstreamFailed', 'WorkerTerminated',
-                             'WorkerAllocationExpired', 'WorkItemGraphChanged',
-                             'RegistryUnavailable')
-                             OR COALESCE((SELECT error_type FROM attempts old
-                                  WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1), '')
-                                = 'ResourcePreconditionChanged'
-                      OR EXISTS (
-                          SELECT 1 FROM request_work_items rt JOIN requests r ON r.id=rt.request_id
-                          WHERE rt.work_item_id=t.id AND rt.demand_state='active' AND r.state='active'
-                          AND r.updated_at > COALESCE(
-                              (SELECT CASE WHEN old.state='cancelled'
-                                       THEN old.started_at ELSE old.completed_at END
-                               FROM attempts old WHERE old.work_item_id=t.id ORDER BY id DESC LIMIT 1),
-                              '')
-                      )
-                  )
-                ORDER BY CASE WHEN EXISTS (
-                             SELECT 1 FROM resource_step_tasks resumed
-                             WHERE resumed.work_item_id=t.id
-                               AND resumed.generation=t.current_generation
-                               AND resumed.revision_fingerprint=t.revision_fingerprint
-                               AND resumed.state='success'
-                         ) THEN 0 ELSE 1 END,
-                         CASE t.module WHEN 'anat' THEN 1 WHEN 'func' THEN 2 WHEN 'clean' THEN 3
-                                      WHEN 'microparcellation' THEN 4 WHEN 'dynconn' THEN 4 ELSE 5 END,
-                         t.participant, t.work_item_key
-                LIMIT 1
-                """,
-                (*resource_classes, memory_gb),
-            ).fetchone()
+            row = self._next_claim_candidate(db, resource_classes, memory_gb)
             if row is None:
                 return None
             work_item = dict(row)
@@ -3106,7 +3297,6 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
                 return []
-            dependency_state.synchronize(db, now=utcnow())
             from nro.bidsify.index import IngestionIndex
 
             supports_ingestion = resource_class == "large"
@@ -3134,6 +3324,81 @@ class Registry(WorkflowRegistry):
                     "SELECT value FROM metadata WHERE key='gpu_concurrency'"
                 ).fetchone()
                 desired = int(gpu_limit[0]) if gpu_limit is not None else 1
+
+            def allocated_workers(
+                minimum_memory: int = 0,
+                *,
+                whole_cpu_pool: bool = False,
+                idle_memory_floor: int = 0,
+            ) -> int:
+                # Idle workers smaller than idle_memory_floor cannot claim the
+                # work this tier needs, so they do not count against its
+                # concurrency budget. They exit after their idle timeout.
+                allocation_classes = (
+                    ("large", "long")
+                    if whole_cpu_pool and resource_class in {"large", "long"}
+                    else (resource_class,)
+                )
+                class_placeholders = ",".join("?" for _ in allocation_classes)
+                return int(
+                    db.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT 'submission:' || ss.id AS allocation
+                            FROM scheduler_submissions ss
+                            WHERE ss.resource_class IN ({class_placeholders}) AND ss.memory_gb>=?
+                              AND (
+                                  ss.state IN ('running','cancel_requested')
+                                  OR (
+                                      ss.state IN ('prepared','submitted')
+                                      AND ss.predecessor_worker_id IS NULL
+                                  )
+                              )
+                              AND NOT (
+                                  ss.memory_gb<? AND EXISTS (
+                                      SELECT 1 FROM workers idle
+                                      WHERE idle.slurm_job_id=ss.slurm_job_id
+                                        AND idle.state='idle' AND idle.lease_expires_at>?
+                                  )
+                              )
+                            UNION ALL
+                            SELECT 'worker:' || w.id AS allocation
+                            FROM workers w
+                            WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
+                              AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
+                              AND NOT (w.state='idle' AND w.memory_gb<?)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM scheduler_submissions ss
+                                  WHERE ss.slurm_job_id=w.slurm_job_id
+                                    AND (
+                                        ss.state IN ('running','cancel_requested')
+                                        OR (
+                                            ss.state IN ('prepared','submitted')
+                                            AND ss.predecessor_worker_id IS NULL
+                                        )
+                                    )
+                              )
+                        )
+                        """,
+                        (
+                            *allocation_classes,
+                            minimum_memory,
+                            idle_memory_floor,
+                            time.time(),
+                            time.time(),
+                            *allocation_classes,
+                            minimum_memory,
+                            idle_memory_floor,
+                        ),
+                    ).fetchone()[0]
+                )
+
+            global_limit = max(desired, ingestion_limit)
+            if allocated_workers(whole_cpu_pool=True, idle_memory_floor=memory_gb) >= global_limit:
+                # Every branch below caps the submission count at the free
+                # pool capacity, so a full pool needs no readiness pass.
+                return []
+            dependency_state.synchronize(db, now=utcnow())
             compatible = compatible_work_item_classes(resource_class)
             placeholders = ",".join("?" for _ in compatible)
             active_work_items = int(
@@ -3226,79 +3491,10 @@ class Registry(WorkflowRegistry):
                         (resource_class, minimum_memory_gb, memory_gb),
                     ).fetchone()[0]
                 )
-            global_limit = max(desired, ingestion_limit)
             desired = min(
                 global_limit,
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
-
-            def allocated_workers(
-                minimum_memory: int = 0,
-                *,
-                whole_cpu_pool: bool = False,
-                idle_memory_floor: int = 0,
-            ) -> int:
-                # Idle workers smaller than idle_memory_floor cannot claim the
-                # work this tier needs, so they do not count against its
-                # concurrency budget. They exit after their idle timeout.
-                allocation_classes = (
-                    ("large", "long")
-                    if whole_cpu_pool and resource_class in {"large", "long"}
-                    else (resource_class,)
-                )
-                class_placeholders = ",".join("?" for _ in allocation_classes)
-                return int(
-                    db.execute(
-                        f"""
-                        SELECT COUNT(*) FROM (
-                            SELECT 'submission:' || ss.id AS allocation
-                            FROM scheduler_submissions ss
-                            WHERE ss.resource_class IN ({class_placeholders}) AND ss.memory_gb>=?
-                              AND (
-                                  ss.state IN ('running','cancel_requested')
-                                  OR (
-                                      ss.state IN ('prepared','submitted')
-                                      AND ss.predecessor_worker_id IS NULL
-                                  )
-                              )
-                              AND NOT (
-                                  ss.memory_gb<? AND EXISTS (
-                                      SELECT 1 FROM workers idle
-                                      WHERE idle.slurm_job_id=ss.slurm_job_id
-                                        AND idle.state='idle' AND idle.lease_expires_at>?
-                                  )
-                              )
-                            UNION ALL
-                            SELECT 'worker:' || w.id AS allocation
-                            FROM workers w
-                            WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
-                              AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
-                              AND NOT (w.state='idle' AND w.memory_gb<?)
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM scheduler_submissions ss
-                                  WHERE ss.slurm_job_id=w.slurm_job_id
-                                    AND (
-                                        ss.state IN ('running','cancel_requested')
-                                        OR (
-                                            ss.state IN ('prepared','submitted')
-                                            AND ss.predecessor_worker_id IS NULL
-                                        )
-                                    )
-                              )
-                        )
-                        """,
-                        (
-                            *allocation_classes,
-                            minimum_memory,
-                            idle_memory_floor,
-                            time.time(),
-                            time.time(),
-                            *allocation_classes,
-                            minimum_memory,
-                            idle_memory_floor,
-                        ),
-                    ).fetchone()[0]
-                )
 
             capable_allocations = allocated_workers(memory_gb)
             pool_allocations = allocated_workers(whole_cpu_pool=True, idle_memory_floor=memory_gb)

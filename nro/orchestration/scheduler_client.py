@@ -109,6 +109,7 @@ def _start_direct_attempt(
     *,
     timeout: float,
     durable: bool,
+    expires_at: float | None = None,
 ) -> _DirectAttempt:
     """Start one daemon RPC so the caller can continue rendering wait state."""
     from nro.orchestration.scheduler_rpc import request
@@ -118,7 +119,18 @@ def _start_direct_attempt(
 
     def send_request() -> None:
         try:
-            results.put((request(active, record, timeout=timeout, durable=durable), None))
+            results.put(
+                (
+                    request(
+                        active,
+                        record,
+                        timeout=timeout,
+                        durable=durable,
+                        expires_at=expires_at,
+                    ),
+                    None,
+                )
+            )
         except BaseException as error:
             results.put((None, error))
 
@@ -464,6 +476,9 @@ def _exchange(
         if response is not None:
             return _response_result(response)
     started = time.monotonic()
+    # A non-durable request is abandoned at its timeout, so the scheduler may
+    # discard it instead of spending a registry transaction on it later.
+    expires_at = None if durable or timeout is None else time.time() + timeout
     last_recovery_check = started
     last_launch_check = started
     ended_job: str | None = None
@@ -503,6 +518,7 @@ def _exchange(
                     record,
                     timeout=3600.0 if timeout is None else max(1.0, timeout),
                     durable=durable,
+                    expires_at=expires_at,
                 )
             outcome = direct_attempt.outcome() if direct_attempt is not None else None
             if outcome is not None:

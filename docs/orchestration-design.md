@@ -150,10 +150,37 @@ they run, so a replacement controller can replay a request that was never
 resolved. Atomic launch election and fencing let only the current controller
 act.
 
+Short worker requests, such as claims, attempt updates, and pool-expansion
+requests, run together on one thread. The controller collects them for up to
+50 ms and runs them in one transaction, which registers each request, applies
+it, and stores its response. A batch stops taking requests after 250 ms of
+work. The controller answers only after the transaction commits. If it stops
+first, nothing from the batch is recorded, and each worker sends its request
+again to the replacement under the same identity. Completions, successor and
+adaptive capacity requests, and ingestion keep separate transactions because
+they inspect shared storage or call Slurm between them. Within a batch, events
+that release capacity, such as finished attempts and closing workers, run
+before claims. Worker check-ins and the shutdown, cancellation, and
+attempt-summary polls join the same batches. They keep their deadlines: a poll
+whose worker has stopped waiting is answered without touching the registry.
+
+Requests go before background work. Maintenance, allocation reconciliation, and
+capacity planning take the registry only when no request thread is waiting
+for it. A background thread that has waited 5 s goes next, so it cannot
+starve. Each maintenance step is a separate short transaction, so maintenance
+lets waiting requests in between steps.
+
 The controller uses rollback journaling and short transactions. No transaction
 spans scientific computation, Slurm waits, network waits, or bulk filesystem
 work. Queueing at the controller has no timeout, but communication with a live
 controller does. Commands show a small progress indicator while they wait.
+
+The controller holds SQLite's file lock in exclusive mode for its whole session,
+so each transaction skips a lock round trip on the shared filesystem. While a
+controller runs, no other process can open the scheduler database, including
+`sqlite3` and read-only inspection. The database stays in rollback-journal mode.
+Write-ahead logging would need every opener to use exclusive locking too,
+because its shared-memory index is unsafe on NFS.
 
 After relevant changes, the controller publishes a JSON read model in parts. A
 small atomic manifest points to a reusable static work-item graph and to the

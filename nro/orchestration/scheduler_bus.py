@@ -598,12 +598,16 @@ def _split_status_snapshot(value: dict[str, Any]) -> tuple[dict[str, Any], dict[
 
 
 def _write_status_json(path: Path, value: dict[str, Any]) -> None:
-    """Durably publish compact JSON used only as a machine-facing read model."""
+    """Atomically publish compact JSON used only as a machine-facing read model.
+
+    The write skips fsync. The snapshot is a cache that every scheduler
+    rebuilds, and the atomic rename still keeps readers from seeing a partial
+    file after a process is killed.
+    """
     atomic_write_text(
         path,
         json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n",
         mode=0o664,
-        durable=True,
     )
 
 

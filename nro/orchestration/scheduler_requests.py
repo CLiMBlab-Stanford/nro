@@ -100,6 +100,23 @@ def prepare(registry) -> tuple[dict, ...]:
     return tuple(validate_message(json.loads(row[0])) for row in rows)
 
 
+def lookup(registry, record: dict) -> dict | None:
+    """Return a request's committed response, if any, without registering it."""
+    _encoded_record, digest = _encoded(record)
+    with registry.connection(session_timeout=REQUEST_REGISTRATION_TIMEOUT_SECONDS) as db:
+        row = db.execute(
+            "SELECT record_fingerprint,state,response_json FROM scheduler_requests WHERE id=?",
+            (record["id"],),
+        ).fetchone()
+    if row is None:
+        return None
+    if row["record_fingerprint"] != digest:
+        raise ValueError("Scheduler request identity was reused with different content")
+    if row["state"] == "completed":
+        return json.loads(row["response_json"])
+    return None
+
+
 def register(registry, record: dict) -> dict | None:
     """Register one request or return its previously committed response."""
     encoded, digest = _encoded(record)
@@ -197,7 +214,14 @@ class RequestCoordinator:
             existing = self._inflight.get(identifier)
             if existing is not None:
                 return existing
-        response = register(self.registry, record)
+        # A batching executor registers the request inside the transaction
+        # that also applies it and records its response, so the request costs
+        # no separate commit. Until that commit, the client keeps the record
+        # and resends it to a replacement scheduler.
+        if getattr(executor, "registers_in_batch", False):
+            response = lookup(self.registry, record)
+        else:
+            response = register(self.registry, record)
         if response is not None:
             return self.completed(response)
         with self._lock:

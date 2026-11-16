@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import hashlib
 import json
 import os
@@ -346,6 +347,9 @@ class Worker:
         self.resource_class = resource_class
         self.memory_gb = memory_gb
         self.idle_timeout = idle_timeout
+        # The state this worker last reported for an attempt, used for the
+        # release log line so that it needs no scheduler round trip.
+        self._reported_attempt: tuple[int, str, str | None] | None = None
         self.poll_interval = poll_interval
         self.deadline = (
             time.monotonic() + walltime_seconds if walltime_seconds is not None else None
@@ -396,6 +400,12 @@ class Worker:
         print(f"{utcnow()} nro worker {self.worker_id}: {message}", flush=True)
 
     def _attempt_summary(self, attempt_id: int) -> str:
+        reported = self._reported_attempt
+        if reported is not None and reported[0] == attempt_id:
+            summary = f"attempt state={reported[1]}"
+            if reported[2]:
+                summary += f"; error={reported[2]}"
+            return summary
         if hasattr(self.registry, "attempt_summary"):
             return self.registry.attempt_summary(attempt_id)
         with self.registry.connection() as db:
@@ -598,6 +608,7 @@ class Worker:
             error_type: str | None = None,
             error_message: str | None = None,
         ) -> None:
+            self._reported_attempt = (attempt_id, state, error_message)
             if resource_task_id is None:
                 self.registry.finish_attempt(
                     attempt_id,
@@ -1152,6 +1163,7 @@ class Worker:
         )
         idle_since: float | None = None
         idle_announced = False
+        expansion_pending = False
         try:
             while not self.stop_requested:
                 if self._retire_for_service():
@@ -1160,6 +1172,9 @@ class Worker:
                     self.stop_requested = True
                     self._log("shutdown requested by owning user")
                     break
+                if expansion_pending:
+                    expansion_pending = False
+                    self._expand_ready_pool()
                 if (
                     self.deadline is not None
                     and self.deadline - time.monotonic() <= self.drain_seconds
@@ -1238,11 +1253,9 @@ class Worker:
                     f"{time.monotonic() - started_at:.3f}s; {self._attempt_summary(attempt_id)}; "
                     f"work-item log: {work_item.log_path}"
                 )
-                if self.registry.worker_shutdown_requested(self.worker_id):
-                    self.stop_requested = True
-                    self._log("shutdown requested by owning user")
-                    break
-                self._expand_ready_pool()
+                # The next iteration checks for shutdown, then asks for pool
+                # expansion, then claims, so a hand-off needs one shutdown poll.
+                expansion_pending = True
             return 0
         except BaseException as error:
             self._log(f"fatal worker error: {type(error).__name__}: {error}")
@@ -1285,6 +1298,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     """Run one reusable worker until it drains or receives shutdown."""
     args = build_parser().parse_args(argv)
+    faulthandler.register(signal.SIGUSR1, file=sys.__stderr__, all_threads=True)
     from nro.orchestration.scheduler_implementation import require_worker_source
     from nro.site.configuration import settings
 
