@@ -401,6 +401,7 @@ SCHEMAS = {
         "markup": OPTIONAL_TEXT,
         "overwrite": EXEC_BOOL,
         "backend": enum("workbench_correlation_gradient"),
+        "surface_mesh": enum("fsLR32k", "target"),
         "mask": OPTIONAL_TEXT,
         "mask_threshold": Field("float", minimum=0, maximum=1, exclusive_maximum=True),
         "workbench": {

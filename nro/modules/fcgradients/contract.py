@@ -7,6 +7,14 @@ from nro.engine.artifact_metadata import validate_metadata_fields
 
 BACKENDS = ("workbench_correlation_gradient",)
 
+SURFACE_MESHES = ("fsLR32k", "target")
+"""Meshes on which surface gradients can be computed.
+
+``fsLR32k`` resamples the series to the 32k fsLR mesh, computes the gradient
+there, and resamples the map back to the target mesh. ``target`` computes it on
+the target mesh directly.
+"""
+
 FCGRADIENTS_MANIFEST_FIELDS = {
     "domain": "string",
     "space": "string",
