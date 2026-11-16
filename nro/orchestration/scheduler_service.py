@@ -1,6 +1,7 @@
 """Run the ephemeral service that owns the central scheduler registry."""
 
 import argparse
+import faulthandler
 import fcntl
 import json
 import os
@@ -61,11 +62,36 @@ _STOP = False
 _PLANNING_STOP = threading.Event()
 MAINTENANCE_INTERVAL_SECONDS = 30.0
 STATUS_PUBLISH_INTERVAL_SECONDS = 1.0
-STATUS_MAX_STALENESS_SECONDS = 5.0
+# Building a snapshot reads every work item under the registry lock. While
+# requests keep arriving, publish at most this often.
+STATUS_MAX_STALENESS_SECONDS = 30.0
 BACKGROUND_QUIET_SECONDS = 2.0
 WORKER_CHECKIN_BATCH_SECONDS = 0.5
 WORKER_CHECKIN_BATCH_LIMIT = 256
+# Every worker asks for pool expansion after each release. One capacity pass
+# per interval serves a whole wave of releases.
+CAPACITY_MIN_INTERVAL_SECONDS = 10.0
 _CAPACITY_REQUEST_PREFIX = "capacity_request:"
+_EXPIRED_RESPONSE = {
+    "error": "The caller stopped waiting before the scheduler served this request",
+    "error_type": "RequestExpired",
+}
+# The watchdog dumps every thread's stack once the service loop or the
+# registry session lock has made no progress for the first interval, and
+# exits after the second so that a client starts a replacement scheduler.
+SCHEDULER_STALL_DUMP_SECONDS = 120.0
+SCHEDULER_STALL_EXIT_SECONDS = 900.0
+SCHEDULER_STALL_EXIT_CODE = 75
+WATCHDOG_POLL_SECONDS = 5.0
+# A replacement scheduler replays recorded requests. Exiting while a request
+# holds the registry would replay that request into the same stall, so only
+# background work may trigger an exit.
+_BACKGROUND_THREAD_PREFIXES = (
+    "MainThread",
+    "scheduler-maintenance",
+    "scheduler-reconciliation",
+    "scheduler-capacity",
+)
 
 
 class _ActivitySignal:
@@ -86,6 +112,133 @@ class _ActivitySignal:
             active = bool(self._count)
             self._count = 0
             return active
+
+
+class _TimestampedStream:
+    """Prefix each line written to a text stream with a UTC timestamp."""
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._line_start = True
+
+    def write(self, text: str) -> int:
+        with self._lock:
+            pieces = []
+            for line in text.splitlines(keepends=True):
+                if self._line_start:
+                    pieces.append(datetime.now(timezone.utc).isoformat() + " ")
+                pieces.append(line)
+                self._line_start = line.endswith("\n")
+            self._stream.write("".join(pieces))
+        return len(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
+def _install_diagnostics() -> None:
+    """Timestamp service output and dump all thread stacks on SIGUSR1."""
+    if not isinstance(sys.stdout, _TimestampedStream):
+        sys.stdout = _TimestampedStream(sys.stdout)
+    if not isinstance(sys.stderr, _TimestampedStream):
+        sys.stderr = _TimestampedStream(sys.stderr)
+    faulthandler.register(signal.SIGUSR1, file=sys.__stderr__, all_threads=True)
+
+
+class _StallWatchdog:
+    """Exit a scheduler whose background work stopped the service loop.
+
+    A stuck scheduler keeps renewing its lease from the heartbeat thread, so
+    clients would otherwise wait on it indefinitely. After the exit, the lease
+    expires and the next client starts a replacement that replays durable
+    requests. A stall inside a request is reported with a stack dump at each
+    ``dump_after`` interval but never ends the process.
+    """
+
+    def __init__(
+        self,
+        mutex,
+        *,
+        dump_after: float = SCHEDULER_STALL_DUMP_SECONDS,
+        exit_after: float = SCHEDULER_STALL_EXIT_SECONDS,
+        poll: float = WATCHDOG_POLL_SECONDS,
+        exit_process: Callable[[int], None] = os._exit,
+    ) -> None:
+        self.mutex = mutex
+        self.dump_after = dump_after
+        self.exit_after = exit_after
+        self.poll = poll
+        self.exit_process = exit_process
+        self.progress = time.monotonic()
+        self._stop = threading.Event()
+        self._dumped_at: float | None = None
+        self._thread = threading.Thread(target=self._run, name="scheduler-watchdog", daemon=True)
+
+    def beat(self) -> None:
+        """Record one completed service-loop iteration."""
+        self.progress = time.monotonic()
+
+    def start(self) -> None:
+        self.progress = time.monotonic()
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def stall(self, now: float | None = None) -> tuple[float, str, bool]:
+        """Return the longest stall in seconds, what it is, and if it may exit."""
+        now = time.monotonic() if now is None else now
+        stalled = now - self.progress
+        what = "the service loop"
+        holder = getattr(self.mutex, "holder", None)
+        held_since = getattr(self.mutex, "held_since", None)
+        # The service loop waits on the registry lock, so a lock held by a
+        # request also stalls the loop. Attribute the stall to its holder.
+        if held_since is not None and now - held_since >= min(stalled, self.dump_after):
+            stalled = max(stalled, now - held_since)
+            what = f"the registry session lock held by {holder}"
+        else:
+            holder = None
+        exit_allowed = holder is None or str(holder).startswith(_BACKGROUND_THREAD_PREFIXES)
+        return stalled, what, exit_allowed
+
+    def check(self, now: float | None = None) -> bool:
+        """Dump or exit as the stall requires; return whether it exited."""
+        stalled, what, exit_allowed = self.stall(now)
+        if stalled < self.dump_after:
+            self._dumped_at = None
+            return False
+        exiting = exit_allowed and stalled >= self.exit_after
+        if self._dumped_at is None or stalled - self._dumped_at >= self.dump_after or exiting:
+            print(
+                f"WARNING: scheduler stall: {what} has made no progress for {stalled:.0f}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            faulthandler.dump_traceback(file=sys.__stderr__, all_threads=True)
+            self._dumped_at = stalled
+        if exiting:
+            print(
+                f"Scheduler exiting with status {SCHEDULER_STALL_EXIT_CODE} after a "
+                f"{stalled:.0f}s stall so that a replacement can serve requests",
+                file=sys.stderr,
+                flush=True,
+            )
+            self.exit_process(SCHEDULER_STALL_EXIT_CODE)
+            return True
+        return False
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.poll):
+            if self.check():
+                return
 
 
 def _request_stop(_signum, _frame) -> None:
@@ -434,8 +587,12 @@ def _validate_worker_event_locked(db, message: dict, *, registering: bool = Fals
 
 
 def _validate_worker_event(registry, message: dict, *, registering: bool = False) -> None:
-    """Fence stale workers and reject events older than the last applied sequence."""
-    with registry.connection(write=True) as db:
+    """Fence stale workers and reject events older than the last applied sequence.
+
+    The check only reads. A rejected event therefore costs no write
+    transaction, and an accepted one commits its sequence afterwards.
+    """
+    with registry.connection() as db:
         _validate_worker_event_locked(db, message, registering=registering)
 
 
@@ -526,10 +683,14 @@ class _WorkerCheckinBatcher:
         self._thread = threading.Thread(target=self._run, name="scheduler-checkin-batcher")
         self._thread.start()
 
-    def submit(self, record: dict) -> Future:
-        """Queue one check-in and return its eventual scheduler response."""
+    def submit(self, record: dict, *, expires_at: float | None = None) -> Future:
+        """Queue one check-in and return its eventual scheduler response.
+
+        A check-in whose caller stopped waiting before its batch ran is
+        answered as expired without touching the registry.
+        """
         future: Future = Future()
-        self._queue.put((record, future))
+        self._queue.put((record, future, expires_at))
         return future
 
     def close(self) -> None:
@@ -557,7 +718,16 @@ class _WorkerCheckinBatcher:
                     stopping = True
                     break
                 pending.append(item)
-            records = [record for record, _future in pending]
+            now = time.time()
+            live = []
+            for record, future, expires_at in pending:
+                if expires_at is not None and now >= expires_at:
+                    future.set_result(_EXPIRED_RESPONSE)
+                else:
+                    live.append((record, future))
+            if not live:
+                continue
+            records = [record for record, _future in live]
             try:
                 responses = _apply_worker_checkin_batch(
                     self.registry,
@@ -567,7 +737,7 @@ class _WorkerCheckinBatcher:
                 responses = [
                     {"error": str(error), "error_type": type(error).__name__} for _record in records
                 ]
-            for (_record, future), response in zip(pending, responses, strict=True):
+            for (_record, future), response in zip(live, responses, strict=True):
                 future.set_result(response)
 
 
@@ -1591,6 +1761,13 @@ def _complete_connection(
     _send_connection_response(connection, response)
 
 
+def _nondurable_response(registry, record: dict, *, values: dict, expires_at: float | None) -> dict:
+    """Serve one non-durable request unless its caller has stopped waiting."""
+    if expires_at is not None and time.time() >= expires_at:
+        return _EXPIRED_RESPONSE
+    return _message_response(registry, record, values=values)
+
+
 def _dispatch_connection(
     connection: socket.socket,
     record: dict,
@@ -1602,6 +1779,7 @@ def _dispatch_connection(
     executors: dict[str, ThreadPoolExecutor],
     checkins: _WorkerCheckinBatcher,
     changed: _ActivitySignal,
+    expires_at: float | None = None,
 ) -> None:
     """Schedule validated work without retaining an ingress thread."""
     try:
@@ -1612,7 +1790,7 @@ def _dispatch_connection(
             and payload.get("operation") == "worker"
             and payload.get("action") in {"heartbeat", "check_in"}
         ):
-            future = checkins.submit(record)
+            future = checkins.submit(record, expires_at=expires_at)
         elif durable:
             response = _submit_durable(record, coordinator, executor, changed)
             if "pending" not in response and not _quiet_message(record):
@@ -1620,7 +1798,13 @@ def _dispatch_connection(
             _send_connection_response(connection, response)
             return
         else:
-            future = executor.submit(_message_response, registry, record, values=values)
+            future = executor.submit(
+                _nondurable_response,
+                registry,
+                record,
+                values=values,
+                expires_at=expires_at,
+            )
         future.add_done_callback(
             lambda completed: _complete_connection(
                 connection,
@@ -1670,6 +1854,7 @@ def _handle_connection(
             executors=executors,
             checkins=checkins,
             changed=changed,
+            expires_at=envelope.get("expires_at"),
         )
     except BaseException as error:
         _send_connection_response(
@@ -1822,6 +2007,7 @@ def serve(
     global _STOP
     _STOP = False
     _PLANNING_STOP.clear()
+    _install_diagnostics()
     values = settings()[0]
     control = Path(values["registry"])
     publish_startup_progress(control, launch_token, "Validating scheduler implementation")
@@ -1991,11 +2177,13 @@ def serve(
             "changed": changed_event,
         },
     )
+    watchdog = _StallWatchdog(getattr(registry, "session_mutex", lambda: None)())
     idle_since = None
     capacity_future = None
     maintenance_future = None
     reconciliation_future = None
     capacity_pending = False
+    last_capacity = time.monotonic() - CAPACITY_MIN_INTERVAL_SECONDS
     snapshot_pending = True
     last_cleanup = 0.0
     last_maintenance = time.monotonic() - MAINTENANCE_INTERVAL_SECONDS
@@ -2013,6 +2201,7 @@ def serve(
                 lambda completed, item=record: note_completion(item, completed)
             )
         listener_thread.start()
+        watchdog.start()
         capacity_event.set()
         while not _STOP:
             now = time.monotonic()
@@ -2051,8 +2240,13 @@ def serve(
                 last_maintenance = time.monotonic()
             if capacity_event.consume():
                 capacity_pending = True
-            if capacity_pending and (capacity_future is None or capacity_future.done()):
+            if (
+                capacity_pending
+                and (capacity_future is None or capacity_future.done())
+                and now - last_capacity >= CAPACITY_MIN_INTERVAL_SECONDS
+            ):
                 capacity_pending = False
+                last_capacity = now
                 capacity_future = executors["capacity"].submit(_drain_pool_expansions, registry)
                 capacity_future.add_done_callback(note_capacity_completion)
             if changed_event.consume():
@@ -2085,6 +2279,7 @@ def serve(
                 idle_since = time.monotonic()
             elif time.monotonic() - idle_since >= idle_grace:
                 break
+            watchdog.beat()
             time.sleep(0.02 if handled_direct else 0.1)
         if snapshot_pending:
             generation += 1
@@ -2096,6 +2291,7 @@ def serve(
         publish_status_snapshot(registry, generation=generation, active=False)
         return 0
     finally:
+        watchdog.stop()
         _PLANNING_STOP.set()
         heartbeat_stop.set()
         if heartbeat_thread.ident is not None:

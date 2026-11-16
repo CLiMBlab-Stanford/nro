@@ -393,3 +393,79 @@ def test_compaction_retains_started_attempts_of_the_current_revision(tmp_path: P
             "cancelled",
             "running",
         ]
+
+
+def test_attempt_history_pruning_uses_work_item_indexes(tmp_path: Path) -> None:
+    """Each candidate attempt must not scan the artifact or resource-step tables."""
+    import inspect
+    import re
+
+    from nro.orchestration import registry_compaction
+
+    registry = Registry.for_project("demo", bids_root=tmp_path / "bids")
+    registry.initialize()
+    source = inspect.getsource(registry_compaction._remove_attempt_history)
+    statement = re.search(r'"""(DELETE FROM attempts AS candidate.*?)"""', source, re.S).group(1)
+    with registry.connection() as database:
+        plan = [row[-1] for row in database.execute("EXPLAIN QUERY PLAN " + statement)]
+    scans = [
+        step for step in plan if re.match(r"SCAN (TABLE )?(artifacts|resource_step_tasks)\b", step)
+    ]
+    assert scans == [], "\n".join(plan)
+
+
+def test_plan_compaction_skips_plans_it_already_verified(monkeypatch) -> None:
+    import sqlite3
+
+    from nro.orchestration import request_plans
+
+    database = sqlite3.connect(":memory:")
+    database.row_factory = sqlite3.Row
+    database.execute("CREATE TABLE requests(id TEXT PRIMARY KEY, state TEXT)")
+    database.execute("CREATE TABLE request_plans(request_id TEXT PRIMARY KEY, payload_json)")
+    payload = {"inherited": [{"id": 1}], "terminals": ["a"], "specifications": ["x" * 5000]}
+    database.execute("INSERT INTO requests VALUES ('r', 'active')")
+    database.execute("INSERT INTO request_plans VALUES ('r', ?)", (json.dumps(payload, indent=2),))
+
+    assert request_plans.compact_terminal_plans(database) == 1
+    assert (
+        decode_plan(database.execute("SELECT payload_json FROM request_plans").fetchone()[0])
+        == payload
+    )
+
+    def unexpected_decode(_value):
+        raise AssertionError("a verified plan must not be decoded again")
+
+    monkeypatch.setattr(request_plans, "decode_plan", unexpected_decode)
+    assert request_plans.compact_terminal_plans(database) == 0
+
+    database.execute("UPDATE requests SET state='satisfied'")
+    monkeypatch.undo()
+    assert request_plans.compact_terminal_plans(database) == 1
+    assert decode_plan(
+        database.execute("SELECT payload_json FROM request_plans").fetchone()[0]
+    ) == {"terminals": ["a"]}
+
+
+def test_plan_reconciliation_summary_reads_replay_fields() -> None:
+    from nro.orchestration.request_plans import plan_reconciliation_summary
+
+    stored = encode_plan(
+        {
+            "branch": "main",
+            "registry_id": "registry",
+            "inherited": [{"id": 3}],
+            "specifications": ["x" * 5000],
+        }
+    )
+    summary = plan_reconciliation_summary(stored)
+    assert summary == {
+        "has_specifications": True,
+        "branch": "main",
+        "registry_id": "registry",
+        "inherited": ({"id": 3},),
+    }
+    assert plan_reconciliation_summary(stored) is summary
+    assert (
+        plan_reconciliation_summary(encode_plan({"terminals": []}))["has_specifications"] is False
+    )

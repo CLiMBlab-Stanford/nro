@@ -14,7 +14,7 @@ from nro.orchestration.compiled_request import decode_spec
 from nro.orchestration.contracts import WorkItemSpec
 from nro.orchestration.execution_cache import cache_publication
 from nro.orchestration.execution_context import ExecutionContext
-from nro.orchestration.request_plans import decode_plan
+from nro.orchestration.request_plans import decode_plan, plan_reconciliation_summary
 
 
 def candidates_locked(
@@ -166,14 +166,14 @@ def reconcile_branch_requests(registry) -> int:
                 JOIN requests r ON r.id=p.request_id WHERE r.state='active' ORDER BY r.created_at DESC""")
             ]
             for request in requests:
-                payload = decode_plan(request["payload_json"])
+                summary = plan_reconciliation_summary(request["payload_json"])
                 # Requests without inherited inputs are compacted immediately
                 # after admission. Their registered graph is already complete
                 # and cannot require branch-local replay.
-                if "specifications" not in payload:
+                if not summary["has_specifications"]:
                     continue
-                owner = topology.records.get(payload["branch"])
-                if owner is None or owner.retired or owner.registry_id != payload["registry_id"]:
+                owner = topology.records.get(summary["branch"])
+                if owner is None or owner.retired or owner.registry_id != summary["registry_id"]:
                     ids = [
                         row[0]
                         for row in db.execute(
@@ -189,7 +189,7 @@ def reconcile_branch_requests(registry) -> int:
                     )
                     continue
                 needs_replay = False
-                for selected in payload.get("inherited", []):
+                for selected in summary["inherited"]:
                     row = db.execute(
                         "SELECT artifact_state,artifact_fingerprint FROM work_items WHERE id=?",
                         (selected["id"],),
@@ -198,12 +198,13 @@ def reconcile_branch_requests(registry) -> int:
                         row is None
                         or row["artifact_state"] != "fresh"
                         or row["artifact_fingerprint"] != selected["contract"]
-                        or selected["branch"] not in topology.ancestors(payload["branch"])
+                        or selected["branch"] not in topology.ancestors(summary["branch"])
                     ):
                         needs_replay = True
                         break
                 if not needs_replay:
                     continue
+                payload = decode_plan(request["payload_json"])
                 active_targets = {
                     row[0]
                     for row in db.execute(

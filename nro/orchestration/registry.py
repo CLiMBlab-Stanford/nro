@@ -59,13 +59,46 @@ if TYPE_CHECKING:
 _WAIT_NOTICE_SECONDS = 0.75
 
 
+class SessionMutex:
+    """Reentrant lock that records how long its outermost holder has held it.
+
+    The scheduler watchdog reads ``held_since`` and ``holder`` from another
+    thread to detect a registry transaction that has stopped making progress.
+    """
+
+    def __init__(self) -> None:
+        """Create an unheld lock."""
+        self._lock = threading.RLock()
+        self._depth = 0
+        self.held_since: float | None = None
+        self.holder: str | None = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Acquire the lock, recording a monotonic start time on first entry."""
+        acquired = self._lock.acquire(blocking, timeout)
+        if acquired:
+            self._depth += 1
+            if self._depth == 1:
+                self.held_since = time.monotonic()
+                self.holder = threading.current_thread().name
+        return acquired
+
+    def release(self) -> None:
+        """Release one level of ownership."""
+        self._depth -= 1
+        if self._depth == 0:
+            self.held_since = None
+            self.holder = None
+        self._lock.release()
+
+
 @dataclass
 class _ProcessRegistrySession:
     """Share one fenced connection among registry handles in this process."""
 
     connection: sqlite3.Connection
     fence: "RegistryLock"
-    mutex: threading.RLock
+    mutex: SessionMutex
 
 
 _PROCESS_REGISTRY_SESSIONS: dict[Path, _ProcessRegistrySession] = {}
@@ -812,6 +845,11 @@ class Registry(WorkflowRegistry):
             )
         return connection
 
+    def session_mutex(self) -> SessionMutex | None:
+        """Return this process's scheduler session lock, if a session is open."""
+        session = self._process_session()
+        return None if session is None else session.mutex
+
     def _process_session(self) -> _ProcessRegistrySession | None:
         """Return this process's live scheduler session for the shared database."""
         key = self.paths.database.resolve()
@@ -839,7 +877,7 @@ class Registry(WorkflowRegistry):
         try:
             self._initialize_locked()
             connection = self._connect_locked(shared_across_threads=True)
-            session = _ProcessRegistrySession(connection, fence, threading.RLock())
+            session = _ProcessRegistrySession(connection, fence, SessionMutex())
             with _PROCESS_REGISTRY_SESSIONS_LOCK:
                 if key in _PROCESS_REGISTRY_SESSIONS:
                     raise RuntimeError(f"Registry session appeared concurrently: {key}")
@@ -3106,7 +3144,6 @@ class Registry(WorkflowRegistry):
         with self.connection(write=True) as db:
             if db.execute("SELECT 1 FROM metadata WHERE key='maintenance_mode'").fetchone():
                 return []
-            dependency_state.synchronize(db, now=utcnow())
             from nro.bidsify.index import IngestionIndex
 
             supports_ingestion = resource_class == "large"
@@ -3134,6 +3171,81 @@ class Registry(WorkflowRegistry):
                     "SELECT value FROM metadata WHERE key='gpu_concurrency'"
                 ).fetchone()
                 desired = int(gpu_limit[0]) if gpu_limit is not None else 1
+
+            def allocated_workers(
+                minimum_memory: int = 0,
+                *,
+                whole_cpu_pool: bool = False,
+                idle_memory_floor: int = 0,
+            ) -> int:
+                # Idle workers smaller than idle_memory_floor cannot claim the
+                # work this tier needs, so they do not count against its
+                # concurrency budget. They exit after their idle timeout.
+                allocation_classes = (
+                    ("large", "long")
+                    if whole_cpu_pool and resource_class in {"large", "long"}
+                    else (resource_class,)
+                )
+                class_placeholders = ",".join("?" for _ in allocation_classes)
+                return int(
+                    db.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT 'submission:' || ss.id AS allocation
+                            FROM scheduler_submissions ss
+                            WHERE ss.resource_class IN ({class_placeholders}) AND ss.memory_gb>=?
+                              AND (
+                                  ss.state IN ('running','cancel_requested')
+                                  OR (
+                                      ss.state IN ('prepared','submitted')
+                                      AND ss.predecessor_worker_id IS NULL
+                                  )
+                              )
+                              AND NOT (
+                                  ss.memory_gb<? AND EXISTS (
+                                      SELECT 1 FROM workers idle
+                                      WHERE idle.slurm_job_id=ss.slurm_job_id
+                                        AND idle.state='idle' AND idle.lease_expires_at>?
+                                  )
+                              )
+                            UNION ALL
+                            SELECT 'worker:' || w.id AS allocation
+                            FROM workers w
+                            WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
+                              AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
+                              AND NOT (w.state='idle' AND w.memory_gb<?)
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM scheduler_submissions ss
+                                  WHERE ss.slurm_job_id=w.slurm_job_id
+                                    AND (
+                                        ss.state IN ('running','cancel_requested')
+                                        OR (
+                                            ss.state IN ('prepared','submitted')
+                                            AND ss.predecessor_worker_id IS NULL
+                                        )
+                                    )
+                              )
+                        )
+                        """,
+                        (
+                            *allocation_classes,
+                            minimum_memory,
+                            idle_memory_floor,
+                            time.time(),
+                            time.time(),
+                            *allocation_classes,
+                            minimum_memory,
+                            idle_memory_floor,
+                        ),
+                    ).fetchone()[0]
+                )
+
+            global_limit = max(desired, ingestion_limit)
+            if allocated_workers(whole_cpu_pool=True, idle_memory_floor=memory_gb) >= global_limit:
+                # Every branch below caps the submission count at the free
+                # pool capacity, so a full pool needs no readiness pass.
+                return []
+            dependency_state.synchronize(db, now=utcnow())
             compatible = compatible_work_item_classes(resource_class)
             placeholders = ",".join("?" for _ in compatible)
             active_work_items = int(
@@ -3226,79 +3338,10 @@ class Registry(WorkflowRegistry):
                         (resource_class, minimum_memory_gb, memory_gb),
                     ).fetchone()[0]
                 )
-            global_limit = max(desired, ingestion_limit)
             desired = min(
                 global_limit,
                 active_work_items + ready_work_items + ingestion_active + ingestion_ready,
             )
-
-            def allocated_workers(
-                minimum_memory: int = 0,
-                *,
-                whole_cpu_pool: bool = False,
-                idle_memory_floor: int = 0,
-            ) -> int:
-                # Idle workers smaller than idle_memory_floor cannot claim the
-                # work this tier needs, so they do not count against its
-                # concurrency budget. They exit after their idle timeout.
-                allocation_classes = (
-                    ("large", "long")
-                    if whole_cpu_pool and resource_class in {"large", "long"}
-                    else (resource_class,)
-                )
-                class_placeholders = ",".join("?" for _ in allocation_classes)
-                return int(
-                    db.execute(
-                        f"""
-                        SELECT COUNT(*) FROM (
-                            SELECT 'submission:' || ss.id AS allocation
-                            FROM scheduler_submissions ss
-                            WHERE ss.resource_class IN ({class_placeholders}) AND ss.memory_gb>=?
-                              AND (
-                                  ss.state IN ('running','cancel_requested')
-                                  OR (
-                                      ss.state IN ('prepared','submitted')
-                                      AND ss.predecessor_worker_id IS NULL
-                                  )
-                              )
-                              AND NOT (
-                                  ss.memory_gb<? AND EXISTS (
-                                      SELECT 1 FROM workers idle
-                                      WHERE idle.slurm_job_id=ss.slurm_job_id
-                                        AND idle.state='idle' AND idle.lease_expires_at>?
-                                  )
-                              )
-                            UNION ALL
-                            SELECT 'worker:' || w.id AS allocation
-                            FROM workers w
-                            WHERE w.state IN ('idle','running') AND w.lease_expires_at>?
-                              AND w.resource_class IN ({class_placeholders}) AND w.memory_gb>=?
-                              AND NOT (w.state='idle' AND w.memory_gb<?)
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM scheduler_submissions ss
-                                  WHERE ss.slurm_job_id=w.slurm_job_id
-                                    AND (
-                                        ss.state IN ('running','cancel_requested')
-                                        OR (
-                                            ss.state IN ('prepared','submitted')
-                                            AND ss.predecessor_worker_id IS NULL
-                                        )
-                                    )
-                              )
-                        )
-                        """,
-                        (
-                            *allocation_classes,
-                            minimum_memory,
-                            idle_memory_floor,
-                            time.time(),
-                            time.time(),
-                            *allocation_classes,
-                            minimum_memory,
-                            idle_memory_floor,
-                        ),
-                    ).fetchone()[0]
-                )
 
             capable_allocations = allocated_workers(memory_gb)
             pool_allocations = allocated_workers(whole_cpu_pool=True, idle_memory_floor=memory_gb)

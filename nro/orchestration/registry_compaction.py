@@ -210,6 +210,11 @@ def _remove_attempt_history(database: sqlite3.Connection) -> int:
         """UPDATE resource_step_tasks SET worker_id=NULL,attempt_id=NULL
            WHERE state NOT IN ('queued','running','cancel_requested')"""
     )
+    # Artifact rows and resource-step tasks always belong to their attempt's
+    # work item. Matching on work_item_id lets SQLite use the work-item
+    # indexes. Neither table indexes attempt_id, and a scan per candidate
+    # attempt held the registry lock for most of an hour on a registry with
+    # about a million artifact rows.
     cursor = database.execute(
         """DELETE FROM attempts AS candidate
            WHERE candidate.state NOT IN ('queued','running','cancel_requested')
@@ -217,11 +222,14 @@ def _remove_attempt_history(database: sqlite3.Connection) -> int:
                  SELECT 1 FROM completions WHERE completions.attempt_id=candidate.id
              )
              AND NOT EXISTS (
-                 SELECT 1 FROM artifacts WHERE artifacts.attempt_id=candidate.id
+                 SELECT 1 FROM artifacts
+                 WHERE artifacts.work_item_id=candidate.work_item_id
+                   AND artifacts.attempt_id=candidate.id
              )
              AND NOT EXISTS (
                  SELECT 1 FROM resource_step_tasks
-                 WHERE resource_step_tasks.attempt_id=candidate.id
+                 WHERE resource_step_tasks.work_item_id=candidate.work_item_id
+                   AND resource_step_tasks.attempt_id=candidate.id
              )
              AND NOT EXISTS (
                  SELECT 1 FROM work_items current

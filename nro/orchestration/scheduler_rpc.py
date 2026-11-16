@@ -56,21 +56,27 @@ def request(
     *,
     timeout: float,
     durable: bool,
+    expires_at: float | None = None,
 ) -> dict:
-    """Send one request to the active scheduler and return its response."""
+    """Send one request to the active scheduler and return its response.
+
+    ``expires_at`` is a Unix time after which the caller no longer waits for
+    a non-durable request. The scheduler discards the request unprocessed
+    once that time has passed.
+    """
     address = (str(active["host"]), int(active["port"]))
+    envelope = {
+        "protocol": int(active["protocol"]),
+        "token": str(active["token"]),
+        "generation": int(active["generation"]),
+        "durable": bool(durable),
+        "record": record,
+    }
+    if expires_at is not None:
+        envelope["expires_at"] = float(expires_at)
     with socket.create_connection(address, timeout=timeout) as connection:
         connection.settimeout(timeout)
-        send(
-            connection,
-            {
-                "protocol": int(active["protocol"]),
-                "token": str(active["token"]),
-                "generation": int(active["generation"]),
-                "durable": bool(durable),
-                "record": record,
-            },
-        )
+        send(connection, envelope)
         return receive(connection)
 
 
@@ -85,4 +91,11 @@ def validate_request(envelope: dict[str, Any], *, token: str) -> tuple[dict[str,
         or not isinstance(envelope.get("durable"), bool)
     ):
         raise ValueError("Scheduler endpoint is obsolete")
+    expires_at = envelope.get("expires_at")
+    if expires_at is not None and (
+        envelope["durable"]
+        or isinstance(expires_at, bool)
+        or not isinstance(expires_at, (int, float))
+    ):
+        raise ValueError("Only non-durable scheduler requests may expire")
     return validate_message(envelope.get("record")), envelope["durable"]

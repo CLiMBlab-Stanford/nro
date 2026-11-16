@@ -69,7 +69,7 @@ class WorkerSchedulerClient:
         try:
             return self._call(action, durable=False, **fields)
         except SchedulerError as error:
-            if error.error_type is not None:
+            if error.error_type not in (None, "RequestExpired"):
                 raise
             now = time.monotonic()
             if now - self._last_poll_warning >= WORKER_POLL_WARNING_INTERVAL_SECONDS:
