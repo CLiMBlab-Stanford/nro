@@ -151,37 +151,105 @@ def _claim_sql(placeholders: str, *, single: bool) -> str:
     return "SELECT t.id" + _CLAIM_FROM + where + _CLAIM_ORDER + "LIMIT ?"
 
 
-class SessionMutex:
-    """Reentrant lock that records how long its outermost holder has held it.
+# Threads that run background registry work. They take the scheduler session
+# lock only after waiting request threads have had it, for up to
+# BACKGROUND_LOCK_DEFER_SECONDS, so user and worker requests go first.
+BACKGROUND_THREAD_PREFIXES = (
+    "scheduler-maintenance",
+    "scheduler-reconciliation",
+    "scheduler-capacity",
+)
+BACKGROUND_LOCK_DEFER_SECONDS = 5.0
 
-    The scheduler watchdog reads ``held_since`` and ``holder`` from another
-    thread to detect a registry transaction that has stopped making progress.
+
+class SessionMutex:
+    """Reentrant lock that serves request threads before background threads.
+
+    A thread whose name starts with one of ``background_prefixes`` waits while
+    any other thread is waiting, for up to ``defer_seconds``. After that it is
+    overdue, and request threads let it go next, so background work cannot
+    starve. The scheduler watchdog
+    reads ``held_since`` and ``holder`` from another thread to detect a
+    registry transaction that has stopped making progress.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        background_prefixes: tuple[str, ...] = BACKGROUND_THREAD_PREFIXES,
+        defer_seconds: float = BACKGROUND_LOCK_DEFER_SECONDS,
+    ) -> None:
         """Create an unheld lock."""
-        self._lock = threading.RLock()
+        self._condition = threading.Condition(threading.Lock())
+        self._background_prefixes = background_prefixes
+        self._defer_seconds = defer_seconds
+        self._owner: int | None = None
         self._depth = 0
+        self._waiting_requests = 0
+        self._overdue_background = 0
         self.held_since: float | None = None
         self.holder: str | None = None
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
         """Acquire the lock, recording a monotonic start time on first entry."""
-        acquired = self._lock.acquire(blocking, timeout)
-        if acquired:
-            self._depth += 1
-            if self._depth == 1:
+        me = threading.get_ident()
+        name = threading.current_thread().name
+        background = name.startswith(self._background_prefixes)
+        now = time.monotonic()
+        deadline = None if timeout is None or timeout < 0 else now + timeout
+        defer_until = now + self._defer_seconds
+        with self._condition:
+            if self._owner == me:
+                self._depth += 1
+                return True
+            if not background:
+                self._waiting_requests += 1
+            overdue = False
+            try:
+                while True:
+                    now = time.monotonic()
+                    if background and not overdue and now >= defer_until:
+                        overdue = True
+                        self._overdue_background += 1
+                    if background:
+                        deferring = self._waiting_requests and not overdue
+                    else:
+                        deferring = self._overdue_background > 0
+                    if self._owner is None and not deferring:
+                        break
+                    if not blocking or (deadline is not None and now >= deadline):
+                        return False
+                    waits = [value - now for value in (deadline,) if value is not None]
+                    if background and not overdue:
+                        waits.append(defer_until - now)
+                    self._condition.wait(min(waits) if waits else None)
+                self._owner = me
+                self._depth = 1
                 self.held_since = time.monotonic()
-                self.holder = threading.current_thread().name
-        return acquired
+                self.holder = name
+                return True
+            finally:
+                if overdue:
+                    self._overdue_background -= 1
+                    self._condition.notify_all()
+                if not background:
+                    self._waiting_requests -= 1
+                    if not self._waiting_requests:
+                        self._condition.notify_all()
 
     def release(self) -> None:
         """Release one level of ownership."""
-        self._depth -= 1
-        if self._depth == 0:
-            self.held_since = None
-            self.holder = None
-        self._lock.release()
+        with self._condition:
+            if self._owner != threading.get_ident():
+                raise RuntimeError(
+                    "Registry session lock released by a thread that does not own it"
+                )
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self.held_since = None
+                self.holder = None
+                self._condition.notify_all()
 
 
 @dataclass

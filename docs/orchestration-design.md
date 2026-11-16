@@ -158,7 +158,15 @@ work. The controller answers only after the transaction commits. If it stops
 first, nothing from the batch is recorded, and each worker sends its request
 again to the replacement under the same identity. Completions, successor and
 adaptive capacity requests, and ingestion keep separate transactions because
-they inspect shared storage or call Slurm between them.
+they inspect shared storage or call Slurm between them. Within a batch, events
+that release capacity, such as finished attempts and closing workers, run
+before claims.
+
+Requests go before background work. Maintenance, allocation reconciliation, and
+capacity planning take the registry only when no request thread is waiting
+for it. A background thread that has waited 5 s goes next, so it cannot
+starve. Each maintenance step is a separate short transaction, so maintenance
+lets waiting requests in between steps.
 
 The controller uses rollback journaling and short transactions. No transaction
 spans scientific computation, Slurm waits, network waits, or bulk filesystem

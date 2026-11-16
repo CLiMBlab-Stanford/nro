@@ -692,6 +692,32 @@ def _apply_worker_checkin_batch(registry, messages: tuple[dict, ...]) -> list[di
     return responses
 
 
+# Within a batch, events that free or report on capacity run before claims, so
+# a slot released in the same batch can be claimed immediately.
+_RELEASING_WORKER_ACTIONS = frozenset(
+    {
+        "cancel_failed_descendants",
+        "close",
+        "finish_attempt",
+        "finish_resource_step",
+        "record_oom",
+        "submission_complete",
+    }
+)
+_CLAIMING_WORKER_ACTIONS = frozenset({"claim", "claim_resource_step"})
+
+
+def _batch_rank(args: tuple) -> int:
+    """Order batched calls: releases first, claims last, others in between."""
+    record = next((value for value in args if isinstance(value, dict) and "payload" in value), None)
+    action = (record or {}).get("payload", {}).get("action")
+    if action in _RELEASING_WORKER_ACTIONS:
+        return 0
+    if action in _CLAIMING_WORKER_ACTIONS:
+        return 2
+    return 1
+
+
 def _batched_worker_request(payload: dict) -> bool:
     """Return whether a durable worker request may join a shared transaction."""
     action = payload.get("action")
@@ -778,6 +804,9 @@ class _DurableBatcher:
             self._run_batch(pending)
 
     def _run_batch(self, pending: list) -> None:
+        # A worker sends one durable request at a time, so reordering across
+        # requests cannot reorder any single worker's events.
+        pending = sorted(pending, key=lambda item: _batch_rank(item[1]))
         outcomes = []
         try:
             with self.registry.connection(write=True):
