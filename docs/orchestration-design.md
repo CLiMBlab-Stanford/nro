@@ -155,6 +155,13 @@ spans scientific computation, Slurm waits, network waits, or bulk filesystem
 work. Queueing at the controller has no timeout, but communication with a live
 controller does. Commands show a small progress indicator while they wait.
 
+The controller holds SQLite's file lock in exclusive mode for its whole session,
+so each transaction skips a lock round trip on the shared filesystem. While a
+controller runs, no other process can open the scheduler database, including
+`sqlite3` and read-only inspection. The database stays in rollback-journal mode.
+Write-ahead logging would need every opener to use exclusive locking too,
+because its shared-memory index is unsafe on NFS.
+
 After relevant changes, the controller publishes a JSON read model in parts. A
 small atomic manifest points to a reusable static work-item graph and to the
 current dynamic execution state. Cached status reads join those parts without
