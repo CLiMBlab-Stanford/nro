@@ -163,3 +163,52 @@ def test_only_short_worker_requests_are_batched(payload, batched) -> None:
     assert (chosen is executors["batch"]) is batched
     poll = scheduler_service._executor_for({"payload": payload}, executors, durable=False)
     assert poll is executors["poll"]
+
+
+@pytest.mark.parametrize(
+    ("action", "batched"),
+    (("shutdown_requested", True), ("check_in", True), ("required_memory", False)),
+)
+def test_worker_polls_share_the_batch_thread(action, batched) -> None:
+    import socket
+    from concurrent.futures import Future
+
+    from nro.orchestration import scheduler_rpc
+
+    calls = []
+
+    class Recording:
+        def submit(self, function, *args, **kwargs):
+            calls.append((self, function, kwargs.get("expires_at")))
+            future: Future = Future()
+            future.set_result({"result": "served"})
+            return future
+
+    executors = {name: Recording() for name in ("worker", "poll", "completion", "batch")}
+
+    class Checkins:
+        def submit(self, record, *, expires_at=None):
+            return Recording().submit(None, expires_at=expires_at)
+
+    server, client = socket.socketpair()
+    try:
+        scheduler_service._dispatch_connection(
+            server,
+            _record(action),
+            False,
+            object(),
+            values={},
+            coordinator=None,
+            executors=executors,
+            checkins=Checkins(),
+            changed=scheduler_service._ActivitySignal(),
+            expires_at=123.0,
+        )
+        assert scheduler_rpc.receive(client) == {"result": "served"}
+    finally:
+        client.close()
+    executor, function, expires_at = calls[0]
+    assert (executor is executors["batch"]) is batched
+    assert expires_at == 123.0
+    if batched:
+        assert function is scheduler_service._nondurable_response

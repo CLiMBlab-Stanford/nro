@@ -705,6 +705,11 @@ _RELEASING_WORKER_ACTIONS = frozenset(
     }
 )
 _CLAIMING_WORKER_ACTIONS = frozenset({"claim", "claim_resource_step"})
+# Non-durable worker requests that read a little state and advance the
+# worker's event sequence. They share the durable batch's commit.
+_BATCHED_WORKER_POLLS = frozenset(
+    {"attempt_cancel_requested", "attempt_summary", "check_in", "heartbeat", "shutdown_requested"}
+)
 
 
 def _batch_rank(args: tuple) -> int:
@@ -1933,6 +1938,9 @@ def _nondurable_response(registry, record: dict, *, values: dict, expires_at: fl
     """Serve one non-durable request unless its caller has stopped waiting."""
     if expires_at is not None and time.time() >= expires_at:
         return _EXPIRED_RESPONSE
+    payload = record["payload"]
+    if payload.get("operation") == "worker" and payload.get("action") in {"heartbeat", "check_in"}:
+        return _apply_worker_checkin_batch(registry, (payload,))[0]
     return _message_response(registry, record, values=values)
 
 
@@ -1953,7 +1961,21 @@ def _dispatch_connection(
     try:
         executor = _executor_for(record, executors, durable=durable)
         payload = record["payload"]
-        if (
+        batched_poll = (
+            not durable
+            and "batch" in executors
+            and payload.get("operation") == "worker"
+            and payload.get("action") in _BATCHED_WORKER_POLLS
+        )
+        if batched_poll:
+            future = executors["batch"].submit(
+                _nondurable_response,
+                registry,
+                record,
+                values=values,
+                expires_at=expires_at,
+            )
+        elif (
             not durable
             and payload.get("operation") == "worker"
             and payload.get("action") in {"heartbeat", "check_in"}

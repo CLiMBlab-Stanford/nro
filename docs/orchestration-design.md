@@ -160,7 +160,9 @@ again to the replacement under the same identity. Completions, successor and
 adaptive capacity requests, and ingestion keep separate transactions because
 they inspect shared storage or call Slurm between them. Within a batch, events
 that release capacity, such as finished attempts and closing workers, run
-before claims.
+before claims. Worker check-ins and the shutdown, cancellation, and
+attempt-summary polls join the same batches. They keep their deadlines: a poll
+whose worker has stopped waiting is answered without touching the registry.
 
 Requests go before background work. Maintenance, allocation reconciliation, and
 capacity planning take the registry only when no request thread is waiting

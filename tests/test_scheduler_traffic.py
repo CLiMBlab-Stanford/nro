@@ -13,6 +13,13 @@ def _heartbeat(worker_id: str) -> dict:
     )
 
 
+def _poll(action: str) -> dict:
+    return scheduler_bus.create_message(
+        {"operation": "worker", "action": action, "worker_id": "worker"},
+        kind="worker",
+    )
+
+
 def _envelope(**extra) -> dict:
     return {
         "protocol": scheduler_bus.PROTOCOL,
@@ -49,7 +56,7 @@ def test_live_poll_is_served(monkeypatch):
         scheduler_service, "_message_response", lambda *_args, **_kwargs: {"result": "ok"}
     )
     response = scheduler_service._nondurable_response(
-        object(), _heartbeat("worker"), values={}, expires_at=time.time() + 60
+        object(), _poll("shutdown_requested"), values={}, expires_at=time.time() + 60
     )
     assert response == {"result": "ok"}
 
@@ -97,3 +104,18 @@ def test_worker_poll_still_raises_service_errors(monkeypatch):
     monkeypatch.setattr(client, "_call", failed)
     with pytest.raises(scheduler_client.SchedulerError):
         client.worker_shutdown_requested("worker")
+
+
+def test_batched_checkin_uses_the_checkin_logic(monkeypatch):
+    applied = []
+
+    def apply(_registry, messages):
+        applied.append(messages)
+        return [{"result": {"shutdown_requested": False}}]
+
+    monkeypatch.setattr(scheduler_service, "_apply_worker_checkin_batch", apply)
+    response = scheduler_service._nondurable_response(
+        object(), _poll("check_in"), values={}, expires_at=time.time() + 60
+    )
+    assert response == {"result": {"shutdown_requested": False}}
+    assert applied[0][0]["action"] == "check_in"
