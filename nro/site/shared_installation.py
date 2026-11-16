@@ -235,6 +235,7 @@ def prepare_pool(
                 "shared installation maintenance must update it"
             )
         activity = registry.worker_pool_activity(for_repair=True)
+        stopped = None
         if activity["workers"] or activity["submissions"]:
             choice = confirm(
                 {
@@ -251,11 +252,18 @@ def prepare_pool(
                 )
             from nro.orchestration.worker_control import stop_worker_pool_for_repair
 
-            stop_worker_pool_for_repair(registry)
+            stopped = stop_worker_pool_for_repair(registry)
         from nro.orchestration.registry_schema import SCHEMA as SCHEDULER_SCHEMA
 
         if SCHEDULER_SCHEMA.supports(stored_schema):
             backup = registry.migrate_schema()
+            if stopped is not None:
+                # The repair stop leaves worker bookkeeping alone because this
+                # release cannot write the older schema. Record the confirmed
+                # stop now, or its attempts would still block activation.
+                registry.confirm_worker_shutdown(row["id"] for row in stopped["worker_rows"])
+                for submission in activity["submissions"]:
+                    registry.update_submission(submission["id"], state="cancelled")
             if summary is None:
                 _cancel_orphaned_scheduler_requests(registry)
                 registry.finish_repair_stop()
