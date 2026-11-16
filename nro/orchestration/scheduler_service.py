@@ -68,6 +68,34 @@ STATUS_MAX_STALENESS_SECONDS = 30.0
 BACKGROUND_QUIET_SECONDS = 2.0
 WORKER_CHECKIN_BATCH_SECONDS = 0.5
 WORKER_CHECKIN_BATCH_LIMIT = 256
+# Durable worker requests that only make short registry changes run together
+# in one transaction per batch. A batch gathers requests for up to
+# DURABLE_BATCH_SECONDS and stops taking more once it has run for
+# DURABLE_BATCH_BUDGET_SECONDS, so it never holds the registry for long.
+DURABLE_BATCH_SECONDS = 0.05
+DURABLE_BATCH_LIMIT = 128
+DURABLE_BATCH_BUDGET_SECONDS = 0.25
+# record_completion inventories outputs on shared storage between its
+# transactions, successor and adaptive capacity requests call sbatch, and
+# ingestion stages files. Those keep separate transactions.
+_BATCHED_WORKER_ACTIONS = frozenset(
+    {
+        "attempt_cancel_requested",
+        "attempt_process",
+        "cancel_failed_descendants",
+        "claim",
+        "claim_resource_step",
+        "close",
+        "defer_resource_step",
+        "finish_attempt",
+        "finish_resource_step",
+        "record_oom",
+        "register",
+        "runner_graph_signature",
+        "submission_complete",
+        "submission_running",
+    }
+)
 # Every worker asks for pool expansion after each release. One capacity pass
 # per interval serves a whole wave of releases.
 CAPACITY_MIN_INTERVAL_SECONDS = 10.0
@@ -662,6 +690,115 @@ def _apply_worker_checkin_batch(registry, messages: tuple[dict, ...]) -> list[di
             _commit_worker_event_locked(db, message)
             responses.append({"result": result})
     return responses
+
+
+def _batched_worker_request(payload: dict) -> bool:
+    """Return whether a durable worker request may join a shared transaction."""
+    action = payload.get("action")
+    if action == "request_capacity":
+        return payload.get("kind") == "expand"
+    return action in _BATCHED_WORKER_ACTIONS
+
+
+class _DurableBatcher:
+    """Run queued durable requests in one registry transaction per batch.
+
+    The batcher behaves like an executor for ``RequestCoordinator``. Each
+    request registers itself, runs, and stores its response inside the batch
+    transaction, so a batch costs one commit however many requests it holds.
+    Futures resolve only after that commit. If the commit fails, every request
+    in the batch fails and is retried under its own identity.
+    """
+
+    registers_in_batch = True
+    _STOP = object()
+
+    def __init__(
+        self,
+        registry,
+        *,
+        interval: float = DURABLE_BATCH_SECONDS,
+        limit: int = DURABLE_BATCH_LIMIT,
+        budget: float = DURABLE_BATCH_BUDGET_SECONDS,
+    ) -> None:
+        self.registry = registry
+        self.interval = interval
+        self.limit = limit
+        self.budget = budget
+        self._queue: queue.Queue = queue.Queue()
+        self._carry: list = []
+        self._thread = threading.Thread(target=self._run, name="scheduler-batch")
+        self._thread.start()
+
+    def submit(self, function, /, *args, **kwargs) -> Future:
+        """Queue one call for the next batch and return its future."""
+        future: Future = Future()
+        self._queue.put((function, args, kwargs, future))
+        return future
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        """Finish queued calls, then stop the batch thread."""
+        self._queue.put(self._STOP)
+        if wait:
+            self._thread.join()
+
+    def _next(self, timeout: float | None):
+        """Return the next queued call, None when none arrives, or the stop marker."""
+        try:
+            if timeout is None:
+                return self._queue.get()
+            if timeout <= 0:
+                return self._queue.get_nowait()
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def _run(self) -> None:
+        stopping = False
+        while True:
+            pending, self._carry = self._carry, []
+            if not pending:
+                # After the stop marker, finish what is queued without waiting.
+                item = self._next(0.0 if stopping else None)
+                if item is None:
+                    return
+                if item is self._STOP:
+                    stopping = True
+                    continue
+                pending.append(item)
+            deadline = time.monotonic() + self.interval
+            while len(pending) < self.limit:
+                item = self._next(0.0 if stopping else deadline - time.monotonic())
+                if item is None:
+                    break
+                if item is self._STOP:
+                    stopping = True
+                    continue
+                pending.append(item)
+            self._run_batch(pending)
+
+    def _run_batch(self, pending: list) -> None:
+        outcomes = []
+        try:
+            with self.registry.connection(write=True):
+                started = time.monotonic()
+                for index, (function, args, kwargs, future) in enumerate(pending):
+                    if index and time.monotonic() - started >= self.budget:
+                        self._carry = pending[index:]
+                        break
+                    try:
+                        outcomes.append((future, function(*args, **kwargs), None))
+                    except BaseException as error:
+                        outcomes.append((future, None, error))
+        except BaseException as error:
+            for future, _result, _error in outcomes:
+                future.set_exception(error)
+            return
+        for future, result, error in outcomes:
+            if error is None:
+                future.set_result(result)
+            else:
+                future.set_exception(error)
 
 
 class _WorkerCheckinBatcher:
@@ -1711,6 +1848,8 @@ def _executor_for(
     if operation == "worker":
         if durable and record["payload"].get("action") == "record_completion":
             return executors["completion"]
+        if durable and "batch" in executors and _batched_worker_request(record["payload"]):
+            return executors["batch"]
         return executors["worker" if durable else "poll"]
     if operation == "plan_run":
         return executors["planner"]
@@ -2072,6 +2211,7 @@ def serve(
     executors = {
         "poll": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-poll"),
         "worker": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-worker"),
+        "batch": _DurableBatcher(registry),
         "completion": ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-completion"),
         "capacity": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-capacity"),
         "planner": ThreadPoolExecutor(max_workers=1, thread_name_prefix="scheduler-planner"),

@@ -150,6 +150,16 @@ they run, so a replacement controller can replay a request that was never
 resolved. Atomic launch election and fencing let only the current controller
 act.
 
+Short worker requests, such as claims, attempt updates, and pool-expansion
+requests, run together on one thread. The controller collects them for up to
+50 ms and runs them in one transaction, which registers each request, applies
+it, and stores its response. A batch stops taking requests after 250 ms of
+work. The controller answers only after the transaction commits. If it stops
+first, nothing from the batch is recorded, and each worker sends its request
+again to the replacement under the same identity. Completions, successor and
+adaptive capacity requests, and ingestion keep separate transactions because
+they inspect shared storage or call Slurm between them.
+
 The controller uses rollback journaling and short transactions. No transaction
 spans scientific computation, Slurm waits, network waits, or bulk filesystem
 work. Queueing at the controller has no timeout, but communication with a live
