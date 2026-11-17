@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -406,22 +407,39 @@ def sha256(path: Path) -> str:
 
 
 def _file_identity(path: Path) -> dict[str, int]:
-    """Return the filesystem identity used to reuse a prior checksum."""
+    """Return the size and modification time used to reuse a prior checksum.
+
+    Device numbers can differ between NFS clients, and the change time moves
+    whenever permissions or ownership change, so neither is recorded.
+    """
     stat = path.stat()
-    return {
-        "device": stat.st_dev,
-        "inode": stat.st_ino,
-        "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
-        "ctime_ns": stat.st_ctime_ns,
-    }
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _identity_matches(recorded: object, current: dict[str, int]) -> bool:
+    """Return whether a recorded identity has the current size and modification time.
+
+    Receipts written by earlier releases also record device, inode, and change
+    time; only the current fields are compared.
+    """
+    return isinstance(recorded, dict) and all(
+        recorded.get(key) == value for key, value in current.items()
+    )
+
+
+class ImageReceiptMismatch(RuntimeError):
+    """An installed image's bytes match neither its receipt nor its pinned checksum."""
+
+
+ReplacementConfirmation = Callable[[str, Path], bool]
+"""Ask whether to download a fresh copy of a mismatched image, given its key and path."""
 
 
 def verify_image_receipt(path: Path, receipt: Path) -> None:
     """Validate an acquired image, caching its verified filesystem identity."""
     document = json.loads(receipt.read_text(encoding="utf-8"))
     identity = _file_identity(path)
-    if document.get("file_identity") == identity:
+    if _identity_matches(document.get("file_identity"), identity):
         return
     if "file_identity" not in document and receipt.stat().st_mtime_ns >= path.stat().st_ctime_ns:
         # Legacy receipts were written only after the acquired image's checksum
@@ -432,7 +450,7 @@ def verify_image_receipt(path: Path, receipt: Path) -> None:
         return
     print(f"Verify container checksum: {path}", flush=True)
     if sha256(path) != document["sha256"]:
-        raise RuntimeError(f"Installed image differs from its acquisition receipt: {path}")
+        raise ImageReceiptMismatch(f"Installed image differs from its acquisition receipt: {path}")
     document["file_identity"] = identity
     atomic_write_json(receipt, document)
 
@@ -800,8 +818,21 @@ def check_installation(
     return results
 
 
-def _install_image(key: str, source: str, *, offline: bool, checksum: str | None = None) -> None:
-    """Acquire one configured container image under its resource lock."""
+def _install_image(
+    key: str,
+    source: str,
+    *,
+    offline: bool,
+    checksum: str | None = None,
+    confirm_replacement: ReplacementConfirmation | None = None,
+) -> None:
+    """Acquire one configured container image under its resource lock.
+
+    An image whose bytes match neither its receipt nor its pinned checksum is
+    replaced only when `confirm_replacement` approves; otherwise
+    ImageReceiptMismatch stops the installation. Offline setup never replaces
+    such an image.
+    """
     values, _ = settings()
     expose_managed_runtime_helpers(values["runtime"])
     path = Path(values[key])
@@ -865,7 +896,7 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
                     elif installed == recorded:
                         return outdated()
                     else:
-                        raise RuntimeError(
+                        raise ImageReceiptMismatch(
                             f"Installed image differs from its acquisition receipt: {path}"
                         )
             else:
@@ -882,7 +913,21 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
                 )
         return True
 
-    if reuse_existing():
+    replacement_approved = False
+
+    def reuse_or_approve_replacement() -> bool:
+        nonlocal replacement_approved
+        if replacement_approved:
+            return False
+        try:
+            return reuse_existing()
+        except ImageReceiptMismatch:
+            if offline or confirm_replacement is None or not confirm_replacement(key, path):
+                raise
+            replacement_approved = True
+            return False
+
+    if reuse_or_approve_replacement():
         print(f"Reuse {key}: {path}")
         return
     if offline:
@@ -892,7 +937,7 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
             "Install or load Singularity/Apptainer, then set execution.runtime with nro site."
         )
     with resource_lock(path):
-        if reuse_existing():
+        if reuse_or_approve_replacement():
             return
         action = "Updating" if path.is_file() else "Downloading"
         print(f"{action} {key} from {source}", flush=True)
@@ -929,14 +974,18 @@ def _install_image(key: str, source: str, *, offline: bool, checksum: str | None
         )
 
 
-def install_images(*, offline: bool = False) -> None:
+def install_images(
+    *, offline: bool = False, confirm_replacement: ReplacementConfirmation | None = None
+) -> None:
     """Acquire missing configured container images under resource locks.
 
     Stage and inspect downloads before publishing; write acquisition receipts.
     Existing nonempty images are reused. Offline mode rejects missing images.
+    `confirm_replacement` decides whether an image that no longer matches its
+    receipt is downloaded again; without it, such an image stops the install.
     """
     for key, source in required_images().items():
-        _install_image(key, source, offline=offline)
+        _install_image(key, source, offline=offline, confirm_replacement=confirm_replacement)
 
 
 def install_lesion_resources(*, offline: bool = False) -> None:
@@ -992,7 +1041,9 @@ exec "${{arguments[@]}}" {image} {executable} "$@"
 """
 
 
-def install_workbench(*, offline=False) -> None:
+def install_workbench(
+    *, offline=False, confirm_replacement: ReplacementConfirmation | None = None
+) -> None:
     """Install container-backed Workbench launchers or reuse a native override."""
     values, _ = settings()
     executable = Path(values["workbench"])
@@ -1007,6 +1058,7 @@ def install_workbench(*, offline=False) -> None:
         WORKBENCH_IMAGE_URL,
         offline=offline,
         checksum=WORKBENCH_IMAGE_SHA256,
+        confirm_replacement=confirm_replacement,
     )
     with resource_lock(root):
         executable.parent.mkdir(parents=True, exist_ok=True)

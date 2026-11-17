@@ -12,6 +12,7 @@ from nro.site.bootstrap import cancel_setup
 from nro.site.configuration import installation_record, settings, site_file
 from nro.site.dependencies import (
     QUNEX_TERMS,
+    ImageReceiptMismatch,
     check_installation,
     install_images,
     install_lesion_resources,
@@ -27,6 +28,16 @@ from nro.site.setup import edit_settings, migrate_site_configuration, save_setti
 def _accept_resource_terms() -> bool:
     response = input("Proceed under the linked software terms? [Y/n]: ").strip().lower()
     return response in {"", "y", "yes"}
+
+
+def _confirm_image_replacement(key: str, path: Path) -> bool:
+    print(
+        f"The installed {key} image no longer matches the checksum recorded when it was "
+        f"acquired: {path}",
+        flush=True,
+    )
+    response = input("Download a fresh copy and replace it? [y/N]: ").strip().lower()
+    return response in {"y", "yes"}
 
 
 def _main(argv=None, *, prog="nro setup"):
@@ -137,12 +148,19 @@ def _main(argv=None, *, prog="nro setup"):
             if not _accept_resource_terms():
                 raise RuntimeError("Resource setup cancelled")
         install_runtime(offline=args.offline)
-        install_images(offline=args.offline)
+        confirm_replacement = (
+            None
+            if args.non_interactive or args.offline or not sys.stdin.isatty()
+            else _confirm_image_replacement
+        )
+        install_images(offline=args.offline, confirm_replacement=confirm_replacement)
         if args.with_lesion:
             install_synthstroke_model(offline=args.offline)
         if not args.without_viewer:
             try:
-                install_workbench(offline=args.offline)
+                install_workbench(offline=args.offline, confirm_replacement=confirm_replacement)
+            except ImageReceiptMismatch:
+                raise
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 raise RuntimeError(
                     f"{error}\nWorkbench viewer setup failed. "

@@ -1960,6 +1960,78 @@ def test_oci_image_without_receipt_is_adopted_after_inspection(tmp_path, monkeyp
     assert receipt["sha256"] == dependencies.hashlib.sha256(payload).hexdigest()
 
 
+def _mismatched_pinned_image(tmp_path, monkeypatch):
+    """Install a pinned image whose bytes match neither its receipt nor its pin."""
+    target = tmp_path / "image.sif"
+    target.write_bytes(b"damaged container")
+    receipt = target.with_name(target.name + ".receipt.json")
+    receipt.write_text(
+        json.dumps({"sha256": dependencies.hashlib.sha256(b"old container").hexdigest()})
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "settings",
+        lambda: ({"runtime": "singularity", "test_image": str(target)}, {}),
+    )
+    monkeypatch.setattr(dependencies.shutil, "which", lambda _command: "/usr/bin/singularity")
+    monkeypatch.setattr(dependencies, "run_probe", lambda _command: None)
+    new = b"new container"
+    monkeypatch.setattr(
+        dependencies,
+        "download",
+        lambda _source, destination, *, checksum: destination.write_bytes(new),
+    )
+    return target, receipt, new
+
+
+def test_mismatched_image_is_replaced_after_approval(tmp_path, monkeypatch) -> None:
+    target, receipt, new = _mismatched_pinned_image(tmp_path, monkeypatch)
+    asked = []
+
+    dependencies._install_image(
+        "test_image",
+        "https://example.org/image.sif",
+        offline=False,
+        checksum=dependencies.hashlib.sha256(new).hexdigest(),
+        confirm_replacement=lambda key, path: asked.append((key, path)) or True,
+    )
+
+    assert asked == [("test_image", target)]
+    assert target.read_bytes() == new
+    assert json.loads(receipt.read_text())["sha256"] == dependencies.hashlib.sha256(new).hexdigest()
+
+
+@pytest.mark.parametrize("confirm", [None, lambda _key, _path: False])
+def test_mismatched_image_stops_installation_unless_approved(
+    tmp_path, monkeypatch, confirm
+) -> None:
+    target, _receipt, new = _mismatched_pinned_image(tmp_path, monkeypatch)
+
+    with pytest.raises(dependencies.ImageReceiptMismatch):
+        dependencies._install_image(
+            "test_image",
+            "https://example.org/image.sif",
+            offline=False,
+            checksum=dependencies.hashlib.sha256(new).hexdigest(),
+            confirm_replacement=confirm,
+        )
+
+    assert target.read_bytes() == b"damaged container"
+
+
+def test_offline_setup_never_offers_to_replace_a_mismatched_image(tmp_path, monkeypatch) -> None:
+    _target, _receipt, new = _mismatched_pinned_image(tmp_path, monkeypatch)
+
+    with pytest.raises(dependencies.ImageReceiptMismatch):
+        dependencies._install_image(
+            "test_image",
+            "https://example.org/image.sif",
+            offline=True,
+            checksum=dependencies.hashlib.sha256(new).hexdigest(),
+            confirm_replacement=lambda _key, _path: pytest.fail("offline setup asked"),
+        )
+
+
 def test_oci_image_rejects_an_old_pinned_source_offline(tmp_path, monkeypatch) -> None:
     target = tmp_path / "image.sif"
     payload = b"container"
@@ -2115,6 +2187,47 @@ def test_image_receipt_caches_and_rechecks_filesystem_identity(tmp_path, monkeyp
         dependencies.verify_image_receipt(image, receipt)
 
 
+def test_image_receipt_reuse_ignores_device_inode_and_change_time(tmp_path, monkeypatch) -> None:
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    stat = image.stat()
+    receipt = tmp_path / "image.sif.receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "sha256": "verified-earlier",
+                "file_identity": {
+                    "device": stat.st_dev + 1,
+                    "inode": stat.st_ino + 1,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "ctime_ns": stat.st_ctime_ns + 1,
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        dependencies, "sha256", lambda _path: pytest.fail("unchanged image was rehashed")
+    )
+
+    dependencies.verify_image_receipt(image, receipt)
+
+
+def test_image_receipt_rechecks_a_new_modification_time(tmp_path, monkeypatch) -> None:
+    image = tmp_path / "image.sif"
+    image.write_bytes(b"image")
+    receipt = tmp_path / "image.sif.receipt.json"
+    receipt.write_text(
+        json.dumps({"sha256": "stale", "file_identity": dependencies._file_identity(image)})
+    )
+    stat = image.stat()
+    os.utime(image, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    monkeypatch.setattr(dependencies, "sha256", lambda _path: "rewritten")
+
+    with pytest.raises(RuntimeError, match="differs from its acquisition receipt"):
+        dependencies.verify_image_receipt(image, receipt)
+
+
 def test_legacy_image_receipt_adopts_an_unchanged_acquisition(tmp_path, monkeypatch) -> None:
     image = tmp_path / "image.sif"
     image.write_bytes(b"image")
@@ -2216,7 +2329,11 @@ def test_workbench_installs_container_launchers(isolated_site, tmp_path, monkeyp
         (
             "workbench_image",
             dependencies.WORKBENCH_IMAGE_URL,
-            {"offline": False, "checksum": dependencies.WORKBENCH_IMAGE_SHA256},
+            {
+                "offline": False,
+                "checksum": dependencies.WORKBENCH_IMAGE_SHA256,
+                "confirm_replacement": None,
+            },
         )
     ]
     assert probes == [[str(command), "-version"]]
