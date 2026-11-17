@@ -266,7 +266,11 @@ def prepare_pool(
                     registry.update_submission(submission["id"], state="cancelled")
             if summary is None:
                 _cancel_orphaned_scheduler_requests(registry)
-                registry.finish_repair_stop()
+                if stopped is not None:
+                    # Only a repair stop in this run sets the repair barrier. With
+                    # no pool to stop, an earlier interrupted maintenance run may
+                    # have left its installation barrier, which is replaced below.
+                    registry.finish_repair_stop()
             print(
                 f"Migrated scheduler schema {stored_schema} to {SCHEMA_VERSION}; backup: {backup}",
                 flush=True,

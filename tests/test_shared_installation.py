@@ -661,3 +661,36 @@ def test_schema_migration_records_the_stopped_pool_before_activation(tmp_path, m
         ("confirmed", ("worker-1",)),
         ("submission", 7, "cancelled"),
     ]
+
+
+def test_schema_migration_after_interrupted_maintenance_keeps_its_barrier(tmp_path, monkeypatch):
+    registry = Registry.for_project("", bids_root=tmp_path / "BIDS")
+    registry.initialize()
+    _mock_service(monkeypatch, tmp_path, ())
+    # An earlier maintenance run stopped the pool and timed out, leaving its barrier.
+    shared_installation._set_installation_barrier(registry, tmp_path / "old", action="stop")
+    current = registry.stored_schema_version()
+    monkeypatch.setattr(registry, "stored_schema_version", lambda: current - 1)
+    monkeypatch.setattr(
+        registry, "worker_pool_activity", lambda **_options: {"workers": [], "submissions": []}
+    )
+    monkeypatch.setattr(registry, "migrate_schema", lambda: tmp_path / "backup")
+
+    shared_installation.prepare_pool(
+        registry,
+        checkout=tmp_path / "main",
+        confirm=lambda _activity: pytest.fail("No pool remains to stop"),
+        update_schema=True,
+    )
+
+    with registry.connection() as db:
+        barrier = dict(
+            db.execute(
+                "SELECT key, value FROM metadata WHERE key IN "
+                "('maintenance_mode', 'installation_checkout')"
+            ).fetchall()
+        )
+    assert barrier == {
+        "maintenance_mode": "installation",
+        "installation_checkout": str(tmp_path / "main"),
+    }
