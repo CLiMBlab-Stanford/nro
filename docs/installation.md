@@ -260,10 +260,16 @@ and resource locks, then publish completed files atomically. Image receipts
 record the source and the SHA-256 of the generated SIF. A receipt documents
 acquisition, not the history of a resource that already existed.
 
-After a large container's checksum is verified, nro associates it with the
-file's device, inode, size, and timestamps, so unchanged images avoid repeated
-multi-gigabyte reads. A changed identity triggers a new checksum before the
-cached identity is updated. Container identity checks inspect pinned OCI
+After a large container's checksum is verified, nro records the file's size
+and modification time in its receipt, so unchanged images avoid repeated
+multi-gigabyte reads. A changed size or modification time triggers a new
+checksum before the recorded identity is updated.
+
+If an image's checksum matches neither its receipt nor the pinned release, the
+installer asks whether to download a fresh copy. Declining stops the
+installation and leaves the file in place. Unattended (`--non-interactive`) and
+offline installations stop without asking. Images whose configured source or
+pinned version has changed are replaced without a prompt. Container identity checks inspect pinned OCI
 metadata without starting scientific software on the installation host.
 Explicit execution probes belong to `nro doctor --deep`.
 
